@@ -6,6 +6,7 @@ import type { Module, ModuleContext, ModuleManifest } from '../../core/types';
 import { ServiceNames } from '../../core/types';
 import { ToolRegistryImpl } from './registry';
 import { createSkillRegistry } from './skills';
+import { createSpecRegistry } from './specs';
 import { readTool } from './read';
 import { writeTool } from './write';
 import { editTool } from './edit';
@@ -13,6 +14,10 @@ import { shellTool } from './shell';
 import { useSkillTool } from './use_skill';
 import { useMcpTool } from './use_mcp';
 import { listMcpTool } from './list_mcp';
+import { listSpecTool } from './list_spec';
+import { getSpecTool } from './get_spec';
+import { globTool } from './glob';
+import { grepTool } from './grep';
 
 class ToolsModule implements Module {
   manifest!: ModuleManifest; // 由管理器注入
@@ -20,6 +25,7 @@ class ToolsModule implements Module {
   async initialize(ctx: ModuleContext): Promise<void> {
     const registry = new ToolRegistryImpl(ctx.logger);
     const skillRegistry = createSkillRegistry(ctx.env, ctx.logger);
+    const specRegistry = createSpecRegistry(ctx.env, ctx.logger);
 
     // 注册内置工具（根据配置过滤）
     const cfg = ctx.config.getAppConfig().tools;
@@ -31,6 +37,10 @@ class ToolsModule implements Module {
       ['use_skill', cfg.use_skill.enabled, useSkillTool],
       ['use_mcp', cfg.use_mcp.enabled, useMcpTool],
       ['list_mcp', cfg.list_mcp.enabled, listMcpTool],
+      ['list_spec', cfg.list_spec.enabled, listSpecTool],
+      ['get_spec', cfg.get_spec.enabled, getSpecTool],
+      ['glob', cfg.glob.enabled, globTool],
+      ['grep', cfg.grep.enabled, grepTool],
     ] as const;
 
     let registered = 0;
@@ -49,6 +59,10 @@ class ToolsModule implements Module {
       registrantType: 'module',
     });
     ctx.services.register(ServiceNames.SKILL_REGISTRY, skillRegistry, {
+      scope: 'tools',
+      registrantType: 'module',
+    });
+    ctx.services.register(ServiceNames.SPEC_REGISTRY, specRegistry, {
       scope: 'tools',
       registrantType: 'module',
     });

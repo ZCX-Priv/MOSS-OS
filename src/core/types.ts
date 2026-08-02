@@ -189,6 +189,10 @@ export interface AppConfig {
     use_skill: { enabled: boolean };
     use_mcp: { enabled: boolean };
     list_mcp: { enabled: boolean };
+    list_spec: { enabled: boolean };
+    get_spec: { enabled: boolean };
+    glob: { enabled: boolean };
+    grep: { enabled: boolean };
   };
   mcpServers: Record<string, unknown>;
   security: {
@@ -352,6 +356,8 @@ export const ServiceNames = {
   SERVER_INSTANCE: 'server.instance',
   /** Skill 注册表（由 tools 模组注册） */
   SKILL_REGISTRY: 'skill.registry',
+  /** Spec 注册表（由 tools 模组注册） */
+  SPEC_REGISTRY: 'spec.registry',
 } as const;
 
 /**

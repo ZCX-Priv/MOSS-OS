@@ -6,7 +6,7 @@ import { SessionStore } from './session';
 import { LLMError, type UnifiedRequest } from '../llm/types';
 import type { AgentMessage, AgentEngine, AgentEvent, AgentRunInput, AgentRunResult } from '../contracts';
 import type { LLMRouter, ToolRegistry, MCPManager } from '../contracts';
-import type { ConfigService, EventBus, Logger, ServiceRegistry, Environment } from '../../core/types';
+import type { ConfigService, EventBus, Logger, ServiceRegistry, Environment, ApiConfig } from '../../core/types';
 import { ServiceNames } from '../../core/types';
 import type { ToolResult } from '../tools/types';
 
@@ -57,8 +57,10 @@ export class AgentEngineImpl implements AgentEngine {
     const toolRegistry = this.services.tryResolve<ToolRegistry>(ServiceNames.TOOL_REGISTRY);
     const mcpManager = this.services.tryResolve<MCPManager>(ServiceNames.MCP_MANAGER);
 
-    // 构建会话 + 系统提示
-    const systemPrompt = buildSystemPrompt(this.env, cwd);
+    // 构建会话 + 系统提示（注入模型信息用于 {{model_id}}/{{model_name}} 变量替换）
+    const apiCfg = this.config.getApiConfig();
+    const modelDisplayName = resolveModelDisplayName(apiCfg, model);
+    const systemPrompt = buildSystemPrompt(this.env, cwd, model, modelDisplayName);
     const session = this.sessions.getOrCreate(sessionId, systemPrompt);
     this.sessions.addUserMessage(session, userMessage);
 
@@ -401,4 +403,17 @@ export class AgentEngineImpl implements AgentEngine {
       };
     }
   }
+}
+
+/**
+ * 从 apiConfig 反查 model 所属 provider，返回 `${providerName}/${model}` 作为可读模型名。
+ * 找不到匹配的 provider 则返回 model 本身。
+ */
+function resolveModelDisplayName(apiConfig: ApiConfig, model: string): string {
+  for (const [providerName, provider] of Object.entries(apiConfig.providers)) {
+    if (provider.models.includes(model)) {
+      return `${providerName}/${model}`;
+    }
+  }
+  return model;
 }
