@@ -24,5 +24,5 @@ description: MCP 使用规范——use_mcp/list_mcp 调用、MCP 工具命名与
 - MCP 工具调用失败时（如认证错误、超时），向用户说明并建议检查 MCP 配置。
 
 ## 配置位置
-- MCP 服务器配置：包内 `mcps/`，用户目录 `~/.moss-os/mcps/`（同名覆盖）。
+- MCP 服务器配置：包内 `mcps/`，用户目录 `~/.moss/mcps/`（同名覆盖）。
 - 配置格式：JSON（参考 `mcps/filesystem.example.json`）。

@@ -35,13 +35,13 @@ export interface Environment {
   readonly isLinux: boolean;
   /** 用户主目录 */
   readonly homeDir: string;
-  /** MOSS-OS 用户数据目录：~/.moss-os */
+  /** MOSS-OS 用户数据目录：~/.moss */
   readonly dataDir: string;
-  /** MOSS-OS 配置目录：~/.moss-os/config */
+  /** MOSS-OS 配置目录：~/.moss/config */
   readonly configDir: string;
-  /** MOSS-OS 日志目录：~/.moss-os/logs */
+  /** MOSS-OS 日志目录：~/.moss/logs */
   readonly logsDir: string;
-  /** PID 文件路径：~/.moss-os/moss.pid */
+  /** PID 文件路径：~/.moss/moss.pid */
   readonly pidFile: string;
   /** 运行时 Bun 版本 */
   readonly runtimeVersion: string;
@@ -185,6 +185,7 @@ export interface AppConfig {
     read: { enabled: boolean };
     write: { enabled: boolean; requireConfirmation: boolean };
     edit: { enabled: boolean; requireConfirmation: boolean };
+    delete: { enabled: boolean; requireConfirmation: boolean };
     shell: { enabled: boolean; timeout: number; requireConfirmation: boolean };
     use_skill: { enabled: boolean };
     use_mcp: { enabled: boolean };
@@ -193,6 +194,8 @@ export interface AppConfig {
     get_spec: { enabled: boolean };
     glob: { enabled: boolean };
     grep: { enabled: boolean };
+    todo: { enabled: boolean };
+    ask: { enabled: boolean };
   };
   mcpServers: Record<string, unknown>;
   security: {
@@ -222,6 +225,8 @@ export interface ProviderConfig {
 export interface ConfigService {
   /** 加载配置（首次运行自动从模板复制） */
   load(): Promise<void>;
+  /** 配置加载失败时回退到默认配置（降级运行，仅内存） */
+  loadDefaults(): void;
   /** 获取当前应用配置（只读视图） */
   getAppConfig(): AppConfig;
   /** 获取当前 API 配置（只读视图） */

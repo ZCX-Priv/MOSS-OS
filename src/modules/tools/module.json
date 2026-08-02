@@ -1,7 +1,7 @@
 {
   "name": "tools",
   "version": "1.0.0",
-  "description": "Built-in tools: read, write, edit, shell, use_skill, use_mcp, list_mcp, list_spec, get_spec",
+  "description": "Built-in tools: read, write, edit, delete, shell, use_skill, use_mcp, list_mcp, list_spec, get_spec, todo, ask",
   "type": "module",
   "dependencies": {}
 }

@@ -1,6 +1,6 @@
 // src/modules/tools/skills.ts
 // Skill 注册表：从 skills/ 目录动态加载 .md 文件（YAML front-matter + Markdown body）。
-// 加载顺序：包内模板 skills/ → 用户目录 ~/.moss-os/skills/（同名覆盖）。
+// 加载顺序：包内模板 skills/ → 用户目录 ~/.moss/skills/（同名覆盖）。
 // 支持热重载：监听用户 skills 目录变更，自动增删 skill。
 
 import { stat } from 'node:fs/promises';
@@ -94,7 +94,7 @@ class SkillRegistryImpl implements SkillRegistry {
 }
 
 /**
- * 创建 Skill 注册表：从包内 skills/ 与用户 ~/.moss-os/skills/ 加载 .md 文件。
+ * 创建 Skill 注册表：从包内 skills/ 与用户 ~/.moss/skills/ 加载 .md 文件。
  * 用户目录同名 skill 覆盖包内模板。监听用户目录变更实现热重载。
  */
 export function createSkillRegistry(env: Environment, logger: Logger): SkillRegistry {

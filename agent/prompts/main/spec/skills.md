@@ -18,4 +18,4 @@ description: Skill 使用规范——何时调用 use_skill 及 4 个内置 skil
 ## 调用方式
 - 工具：`use_skill`，参数为 skill 名（如 `code-review`）。
 - 部分 skill 支持 `{{placeholder}}` 占位符，由调用方通过 args 提供（如 `explain` 的 `{{topic}}`）。
-- skill 文件位置：包内 `skills/`，用户目录 `~/.moss-os/skills/`（同名覆盖）。
+- skill 文件位置：包内 `skills/`，用户目录 `~/.moss/skills/`（同名覆盖）。

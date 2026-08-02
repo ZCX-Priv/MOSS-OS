@@ -71,7 +71,7 @@ export class HttpRouter {
       return {
         status: 200,
         headers: { 'Content-Type': 'text/html; charset=utf-8' },
-        body: '<html><body><h1>MOSS-OS</h1><p>Frontend not built. Run <code>npm run build:frontend</code>.</p></body></html>',
+        body: '<html><body><h1>MOSS-OS</h1><p>WebUI not built. Run <code>npm run build:webui</code>.</p></body></html>',
       };
     }
 

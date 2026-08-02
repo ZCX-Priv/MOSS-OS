@@ -17,7 +17,7 @@
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "build": "node scripts/build.mjs",
-    "build:frontend": "vite build",
+    "build:webui": "vite build",
     "build:backend": "bun build src/main.ts --outfile dist/server.js --target bun",
     "start": "bun src/main.ts start --foreground",
     "start:daemon": "bun src/main.ts start",

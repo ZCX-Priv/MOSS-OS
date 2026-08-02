@@ -75,6 +75,8 @@ export class WsHandler {
         return this.handleChatAbort(state, msg);
       case 'session.subscribe':
         return this.handleSessionSubscribe(state, msg);
+      case 'tool.ask.reply':
+        return this.handleAskReply(state, msg);
       default:
         return;
     }
@@ -174,5 +176,28 @@ export class WsHandler {
       state.sessionId = msg.sessionId;
       state.conn.send({ type: 'session.subscribed', sessionId: msg.sessionId });
     }
+  }
+
+  /** 处理前端对 ask 工具的回复 */
+  private handleAskReply(state: ConnectionState, msg: WSMessage): void {
+    const agent = this.services.tryResolve<AgentEngine>('agent.engine');
+    if (!agent) {
+      state.conn.send({ type: 'error', payload: { message: 'Agent engine not available' } });
+      return;
+    }
+    const payload = (msg.payload ?? {}) as { toolCallId?: string; answer?: string };
+    if (!payload.toolCallId || typeof payload.answer !== 'string') {
+      state.conn.send({ type: 'error', payload: { message: 'toolCallId and answer required' } });
+      return;
+    }
+    const ok = agent.resolveAsk(payload.toolCallId, payload.answer);
+    if (!ok) {
+      state.conn.send({
+        type: 'error',
+        payload: { message: `No pending ask for toolCallId=${payload.toolCallId}` },
+      });
+      return;
+    }
+    state.conn.send({ type: 'tool.ask.accepted', toolCallId: payload.toolCallId });
   }
 }

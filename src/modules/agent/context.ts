@@ -2,7 +2,7 @@
 // 系统提示词构建 + 工具描述注入。
 // 系统提示词从 agent/prompts/main/ 下的 md 文件按序拼接：
 //   system/soul → base/identity → rule/rules → 其他 *.md（字母序）
-// 用户目录（~/.moss-os/agent/prompts/main/）同名覆盖包内。
+// 用户目录（~/.moss/agent/prompts/main/）同名覆盖包内。
 // 全部缺失则回退 FALLBACK_SYSTEM_PROMPT。
 // 末尾追加规范引导段落，告知 agent 可用 list_spec/get_spec 按需读取规范。
 

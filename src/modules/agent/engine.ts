@@ -17,6 +17,12 @@ export class AgentEngineImpl implements AgentEngine {
   private readonly eventBus: EventBus;
   private readonly logger: Logger;
   private readonly env: Environment;
+  /** pending ask 调用：toolCallId -> { resolve, reject, timer } */
+  private readonly pendingAsks = new Map<string, {
+    resolve: (answer: string) => void;
+    reject: (err: Error) => void;
+    timer: ReturnType<typeof setTimeout>;
+  }>();
 
   constructor(deps: {
     services: ServiceRegistry;
@@ -218,6 +224,9 @@ export class AgentEngineImpl implements AgentEngine {
 
     onEvent({ type: 'done', sessionId, finishReason });
 
+    // 兜底清理未完成的 ask（正常流程下应已被 resolve/reject）
+    this.cleanupPendingAsks();
+
     this.logger.info(`Agent run complete`, { sessionId, turn, finishReason });
 
     return {
@@ -351,6 +360,35 @@ export class AgentEngineImpl implements AgentEngine {
       logger: this.logger,
       services: this.services,
       signal: ctx.signal,
+      askUser: (question: string) => {
+        return new Promise<string>((resolve, reject) => {
+          const timer = setTimeout(() => {
+            this.pendingAsks.delete(ctx.toolCallId);
+            reject(new Error('ask timeout (5min)'));
+          }, 5 * 60 * 1000);
+          this.pendingAsks.set(ctx.toolCallId, { resolve, reject, timer });
+          // 中断时立即 reject
+          if (ctx.signal) {
+            ctx.signal.addEventListener(
+              'abort',
+              () => {
+                if (this.pendingAsks.has(ctx.toolCallId)) {
+                  clearTimeout(timer);
+                  this.pendingAsks.delete(ctx.toolCallId);
+                  reject(new Error('aborted'));
+                }
+              },
+              { once: true },
+            );
+          }
+          ctx.onEvent({
+            type: 'ask',
+            sessionId: ctx.sessionId,
+            toolCallId: ctx.toolCallId,
+            question,
+          });
+        });
+      },
     });
 
     // tool:after hook
@@ -362,6 +400,25 @@ export class AgentEngineImpl implements AgentEngine {
     });
 
     return result;
+  }
+
+  /** 前端回复 ask 提问。匹配到 pending 则 resolve 并返回 true。 */
+  resolveAsk(toolCallId: string, answer: string): boolean {
+    const pending = this.pendingAsks.get(toolCallId);
+    if (!pending) return false;
+    clearTimeout(pending.timer);
+    this.pendingAsks.delete(toolCallId);
+    pending.resolve(answer);
+    return true;
+  }
+
+  /** 清理所有未完成的 pending ask（run 结束时兜底）。 */
+  private cleanupPendingAsks(): void {
+    for (const [, pending] of this.pendingAsks) {
+      clearTimeout(pending.timer);
+      pending.reject(new Error('session ended'));
+    }
+    this.pendingAsks.clear();
   }
 
   private async executeMcpTool(

@@ -60,21 +60,27 @@ const appConfigSchema = z.object({
     workingDirectory: z.string(),
   }),
   tools: z.object({
-    read: z.object({ enabled: z.boolean() }),
-    write: z.object({ enabled: z.boolean(), requireConfirmation: z.boolean() }),
-    edit: z.object({ enabled: z.boolean(), requireConfirmation: z.boolean() }),
+    read: z.object({ enabled: z.boolean() }).default({ enabled: true }),
+    write: z.object({ enabled: z.boolean(), requireConfirmation: z.boolean() })
+      .default({ enabled: true, requireConfirmation: true }),
+    edit: z.object({ enabled: z.boolean(), requireConfirmation: z.boolean() })
+      .default({ enabled: true, requireConfirmation: false }),
+    delete: z.object({ enabled: z.boolean(), requireConfirmation: z.boolean() })
+      .default({ enabled: true, requireConfirmation: true }),
     shell: z.object({
       enabled: z.boolean(),
       timeout: z.number().int().positive(),
       requireConfirmation: z.boolean(),
-    }),
-    use_skill: z.object({ enabled: z.boolean() }),
-    use_mcp: z.object({ enabled: z.boolean() }),
-    list_mcp: z.object({ enabled: z.boolean() }),
+    }).default({ enabled: true, timeout: 30000, requireConfirmation: true }),
+    use_skill: z.object({ enabled: z.boolean() }).default({ enabled: true }),
+    use_mcp: z.object({ enabled: z.boolean() }).default({ enabled: true }),
+    list_mcp: z.object({ enabled: z.boolean() }).default({ enabled: true }),
     list_spec: z.object({ enabled: z.boolean() }).default({ enabled: true }),
     get_spec: z.object({ enabled: z.boolean() }).default({ enabled: true }),
     glob: z.object({ enabled: z.boolean() }).default({ enabled: true }),
     grep: z.object({ enabled: z.boolean() }).default({ enabled: true }),
+    todo: z.object({ enabled: z.boolean() }).default({ enabled: true }),
+    ask: z.object({ enabled: z.boolean() }).default({ enabled: true }),
   }),
   mcpServers: z.record(z.string(), z.unknown()),
   security: z.object({
@@ -109,6 +115,7 @@ export function defaultAppConfig(): AppConfig {
       read: { enabled: true },
       write: { enabled: true, requireConfirmation: true },
       edit: { enabled: true, requireConfirmation: false },
+      delete: { enabled: true, requireConfirmation: true },
       shell: { enabled: true, timeout: 30000, requireConfirmation: true },
       use_skill: { enabled: true },
       use_mcp: { enabled: true },
@@ -117,6 +124,8 @@ export function defaultAppConfig(): AppConfig {
       get_spec: { enabled: true },
       glob: { enabled: true },
       grep: { enabled: true },
+      todo: { enabled: true },
+      ask: { enabled: true },
     },
     mcpServers: {},
     security: { authToken: '', bindLocalhostOnly: true },
@@ -212,6 +221,16 @@ class ConfigServiceImpl implements ConfigService {
       this.startWatcher(appPath, apiPath);
       this.watcherStarted = true;
     }
+  }
+
+  /**
+   * 配置加载失败时回退到默认配置（降级运行）。
+   * 仅在 load() 抛错时由 kernel 调用，保证后续 getAppConfig()/getApiConfig() 可用。
+   */
+  loadDefaults(): void {
+    this.appConfig = defaultAppConfig();
+    this.apiConfig = defaultApiConfig();
+    this.logger.warn('Config fallback to defaults (in-memory only, disk file unchanged)');
   }
 
   getAppConfig(): AppConfig {

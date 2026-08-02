@@ -19,7 +19,9 @@ export function detectEnvironment(): Environment {
   else if (nodePlatform === 'linux') p = 'linux';
 
   const home = homedir();
-  const dataDir = join(home, '.moss-os');
+  const dataDir = join(home, '.moss');
+  // 一次性迁移：旧目录 .moss-os → .moss（仅当新目录不存在且旧目录存在时）
+  migrateLegacyDataDir(join(home, '.moss-os'), dataDir);
   const configDir = join(dataDir, 'config');
   const logsDir = join(dataDir, 'logs');
   const pidFile = join(dataDir, 'moss.pid');
@@ -85,4 +87,21 @@ function findUpPackageJson(start: string): string | null {
     current = parent;
   }
   return null;
+}
+
+/**
+ * 一次性迁移：将旧的 ~/.moss-os 目录重命名为 ~/.moss。
+ * 仅当新目录不存在且旧目录存在时执行，避免覆盖已有数据或重复迁移。
+ */
+function migrateLegacyDataDir(oldDir: string, newDir: string): void {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const fs = require('node:fs');
+    if (!fs.existsSync(newDir) && fs.existsSync(oldDir)) {
+      fs.renameSync(oldDir, newDir);
+      // 迁移成功不打印（此时 logger 尚未创建），仅静默完成
+    }
+  } catch {
+    // 迁移失败不阻断启动，后续 mkdirRecursive 会创建新目录
+  }
 }

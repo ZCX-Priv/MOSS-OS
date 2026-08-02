@@ -132,7 +132,7 @@ class ServerModule implements Module {
       if (port !== cfg.server.port) {
         this.ctx.logger.warn(
           `autoPort: configured port ${cfg.server.port} unavailable, using ${port}. ` +
-          `If using vite dev proxy (hardcoded to ${cfg.server.port}), WS/HTTP from frontend may fail. ` +
+          `If using vite dev proxy (hardcoded to ${cfg.server.port}), WS/HTTP from webui may fail. ` +
           `Set server.autoPort=false or free port ${cfg.server.port}.`,
         );
       }

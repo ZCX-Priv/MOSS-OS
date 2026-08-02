@@ -2,7 +2,7 @@
 // Spec 注册表：从 agent/prompts/main/spec/ 目录递归加载 .md 文件
 // （YAML front-matter + Markdown body），支持子目录组织。
 // 加载顺序：包内模板 agent/prompts/main/spec/ → 用户目录
-// ~/.moss-os/agent/prompts/main/spec/（同 id 覆盖）。
+// ~/.moss/agent/prompts/main/spec/（同 id 覆盖）。
 // 支持热重载：递归监听用户 spec 目录变更，自动增删 spec。
 
 import { stat } from 'node:fs/promises';
@@ -99,7 +99,7 @@ class SpecRegistryImpl implements SpecRegistry {
 
 /**
  * 创建 Spec 注册表：从包内 agent/prompts/main/spec/ 与用户
- * ~/.moss-os/agent/prompts/main/spec/ 递归加载 .md 文件。
+ * ~/.moss/agent/prompts/main/spec/ 递归加载 .md 文件。
  * 用户目录同 id 覆盖包内模板。监听用户目录变更实现热重载。
  */
 export function createSpecRegistry(env: Environment, logger: Logger): SpecRegistry {

@@ -2,7 +2,7 @@
 // MCP 多服务器生命周期管理。
 //
 // 服务器定义来源（按优先级合并）：
-//   1. ~/.moss-os/mcps/*.json  （用户实例，每个文件一个 server）
+//   1. ~/.moss/mcps/*.json  （用户实例，每个文件一个 server）
 //   2. <packageRoot>/mcps/*.json （默认模板，首次运行时复制到用户目录）
 //   3. config.json.mcpServers   （已 deprecated，仅为向后兼容保留；非空时 warn）
 
@@ -64,7 +64,7 @@ export class MCPManagerImpl implements MCPManager {
     const builtinDir = join(this.env.packageRoot, 'mcps');
     await this.loadFromDir(defs, builtinDir).catch(() => {});
 
-    // 2. 用户目录 ~/.moss-os/mcps/*.json（首次运行从包内复制）
+    // 2. 用户目录 ~/.moss/mcps/*.json（首次运行从包内复制）
     const userDir = join(this.env.dataDir, 'mcps');
     await this.ensureUserMcpsDir(userDir, builtinDir);
     await this.loadFromDir(defs, userDir).catch(() => {});
@@ -76,7 +76,7 @@ export class MCPManagerImpl implements MCPManager {
       const legacyNames = Object.keys(legacyServers);
       if (legacyNames.length > 0) {
         this.logger.warn(
-          `config.json "mcpServers" is deprecated, please migrate to ~/.moss-os/mcps/*.json files. ` +
+          `config.json "mcpServers" is deprecated, please migrate to ~/.moss/mcps/*.json files. ` +
             `Legacy entries will be merged but may be overridden by directory files.`,
           { legacyNames },
         );
@@ -154,7 +154,7 @@ export class MCPManagerImpl implements MCPManager {
     const serverCfg = this.serverDefs.get(serverName);
     if (!serverCfg) {
       throw new Error(
-        `MCP server "${serverName}" not found. Check ~/.moss-os/mcps/${serverName}.json or config.json.mcpServers.`,
+        `MCP server "${serverName}" not found. Check ~/.moss/mcps/${serverName}.json or config.json.mcpServers.`,
       );
     }
 

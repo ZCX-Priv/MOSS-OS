@@ -100,5 +100,15 @@ export type AgentEvent =
   | { type: 'assistant-thinking'; sessionId: string; text: string }
   | { type: 'tool-call-start'; sessionId: string; toolName: string; toolCallId: string; args: unknown }
   | { type: 'tool-call-end'; sessionId: string; toolName: string; toolCallId: string; result: ToolResult }
+  | { type: 'ask'; sessionId: string; toolCallId: string; question: string }
   | { type: 'error'; sessionId: string; message: string }
   | { type: 'done'; sessionId: string; finishReason: string };
+
+/** 工具发起的、待用户回复的提问 */
+export interface PendingAsk {
+  toolCallId: string;
+  sessionId: string;
+  question: string;
+  /** 收到时间，用于排序 */
+  createdAt: number;
+}

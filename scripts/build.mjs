@@ -3,7 +3,7 @@
 // 使用：node scripts/build.mjs
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, rmSync, renameSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -12,7 +12,7 @@ const __dirname = dirname(__filename);
 const ROOT = resolve(__dirname, '..');
 
 const DIST = resolve(ROOT, 'dist');
-const FRONTEND_DIST = resolve(DIST, 'frontend');
+const WEBUI_DIST = resolve(DIST, 'webui');
 const BACKEND_OUT = resolve(DIST, 'server.js');
 
 function log(msg) {
@@ -92,13 +92,13 @@ function buildBackend() {
 }
 
 // ============================================================================
-// 步骤 3: 构建前端 (Vite build -> dist/frontend/)
+// 步骤 3: 构建前端 (Vite build -> dist/webui/)
 // ============================================================================
 function buildFrontend() {
-  log('Building frontend (Vite)...');
-  const frontendDir = resolve(ROOT, 'frontend');
-  if (!existsSync(frontendDir)) {
-    error(`Frontend directory not found: ${frontendDir}`);
+  log('Building webui (Vite)...');
+  const webuiDir = resolve(ROOT, 'webui');
+  if (!existsSync(webuiDir)) {
+    error(`WebUI directory not found: ${webuiDir}`);
     process.exit(1);
   }
   // 优先 npx vite build（兼容环境），否则 fallback 到 node node_modules/vite/bin/vite.js
@@ -113,11 +113,11 @@ function buildFrontend() {
     }
     run('node', [viteBin, 'build'], { cwd: ROOT });
   }
-  if (!existsSync(FRONTEND_DIST)) {
-    error(`Frontend build output not found: ${FRONTEND_DIST}`);
+  if (!existsSync(WEBUI_DIST)) {
+    error(`WebUI build output not found: ${WEBUI_DIST}`);
     process.exit(1);
   }
-  log(`Frontend built: ${FRONTEND_DIST}`);
+  log(`WebUI built: ${WEBUI_DIST}`);
 }
 
 // ============================================================================
@@ -127,8 +127,8 @@ function verifyArtifacts() {
   log('Verifying artifacts...');
   const required = [
     BACKEND_OUT,
-    FRONTEND_DIST,
-    resolve(FRONTEND_DIST, 'index.html'),
+    WEBUI_DIST,
+    resolve(WEBUI_DIST, 'index.html'),
   ];
   for (const p of required) {
     if (!existsSync(p)) {

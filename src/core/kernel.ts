@@ -66,9 +66,13 @@ export class Microkernel {
       this.logger.setLevel(cfgLevel);
       this.logger.info('Config loaded', { logLevel: cfgLevel });
     } catch (err) {
-      this.logger.error('Failed to load config, using defaults', {
+      this.logger.error('Failed to load config, falling back to defaults', {
         error: err instanceof Error ? err.message : String(err),
       });
+      // 真正回退到默认配置，避免后续所有模块因 "Config not loaded" 连锁失败
+      this.config.loadDefaults();
+      const cfgLevel = this.config.getAppConfig().daemon.logLevel;
+      this.logger.setLevel(cfgLevel);
     }
 
     // 3. 构建模组上下文（完整能力）

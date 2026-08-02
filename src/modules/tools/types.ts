@@ -43,6 +43,8 @@ export interface ToolContext {
   services: import('../../core/types').ServiceRegistry;
   /** 中断信号 */
   signal?: AbortSignal;
+  /** 向用户提问并阻塞等待回复（若运行环境不支持交互则 undefined） */
+  askUser?: (question: string) => Promise<string>;
 }
 
 export type ToolEvent =

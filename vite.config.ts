@@ -2,13 +2,13 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { resolve } from 'node:path';
 
-// Vite 配置：前端构建到 dist/frontend/
+// Vite 配置：前端构建到 dist/webui/
 export default defineConfig({
-  root: 'frontend',
+  root: 'webui',
   plugins: [react()],
   resolve: {
     alias: {
-      '@': resolve(process.cwd(), 'frontend/src'),
+      '@': resolve(process.cwd(), 'webui/src'),
     },
   },
   server: {
@@ -25,7 +25,7 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: resolve(process.cwd(), 'dist/frontend'),
+    outDir: resolve(process.cwd(), 'dist/webui'),
     emptyOutDir: true,
     sourcemap: false,
     target: 'es2022',

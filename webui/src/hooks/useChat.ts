@@ -17,6 +17,8 @@ export function useChat() {
     appendToMessage,
     updateMessage,
     setIsGenerating,
+    addPendingAsk,
+    removePendingAsk,
     input,
     setInput,
     selectedModel,
@@ -98,6 +100,16 @@ export function useChat() {
           }
           break;
         }
+        case 'ask': {
+          // 工具向用户提问：加入 pending 列表，等待用户在 UI 上回复
+          addPendingAsk({
+            toolCallId: event.toolCallId,
+            sessionId,
+            question: event.question,
+            createdAt: Date.now(),
+          });
+          break;
+        }
         case 'error': {
           const errMsg: ChatMessage = {
             id: genId(),
@@ -117,6 +129,8 @@ export function useChat() {
             delete pendingAssistantRef.current[sessionId];
           }
           setIsGenerating(false);
+          // agent.run 结束，后端会兜底 reject 未完成的 ask；前端清空 UI 上的待答提问
+          useStore.getState().clearPendingAsks();
           break;
         }
         default:
@@ -132,7 +146,7 @@ export function useChat() {
       }
     });
     return unsub;
-  }, [activeSessionId, addMessage, appendToMessage, updateMessage, setIsGenerating]);
+  }, [activeSessionId, addMessage, appendToMessage, updateMessage, setIsGenerating, addPendingAsk]);
 
   const sendMessage = useCallback(
     (text?: string) => {
@@ -176,5 +190,18 @@ export function useChat() {
     setIsGenerating(false);
   }, [activeSessionId, setIsGenerating]);
 
-  return { sendMessage, abort };
+  /** 回复工具发起的提问 */
+  const replyAsk = useCallback((toolCallId: string, answer: string) => {
+    const ask = useStore.getState().pendingAsks.find((a) => a.toolCallId === toolCallId);
+    if (!ask) return;
+    wsClient.send({
+      type: 'tool.ask.reply',
+      sessionId: ask.sessionId,
+      payload: { toolCallId, answer },
+    });
+    // 乐观移除：后端收到后会 resolve Promise，工具继续执行
+    removePendingAsk(toolCallId);
+  }, [removePendingAsk]);
+
+  return { sendMessage, abort, replyAsk };
 }

@@ -1,5 +1,5 @@
 {
-  "extends": "../tsconfig.frontend.json",
+  "extends": "../tsconfig.webui.json",
   "compilerOptions": {
     "jsx": "react-jsx",
     "baseUrl": ".",

@@ -24,6 +24,7 @@
     "read":      { "enabled": true },
     "write":     { "enabled": true, "requireConfirmation": true },
     "edit":      { "enabled": true, "requireConfirmation": false },
+    "delete":    { "enabled": true, "requireConfirmation": true },
     "shell":     { "enabled": true, "timeout": 30000, "requireConfirmation": true },
     "use_skill": { "enabled": true },
     "use_mcp":   { "enabled": true },
@@ -31,7 +32,9 @@
     "list_spec": { "enabled": true },
     "get_spec":  { "enabled": true },
     "glob":      { "enabled": true },
-    "grep":      { "enabled": true }
+    "grep":      { "enabled": true },
+    "todo":      { "enabled": true },
+    "ask":       { "enabled": true }
   },
   "mcpServers": {},
   "security": {

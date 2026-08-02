@@ -10,6 +10,7 @@ import { createSpecRegistry } from './specs';
 import { readTool } from './read';
 import { writeTool } from './write';
 import { editTool } from './edit';
+import { deleteTool } from './delete';
 import { shellTool } from './shell';
 import { useSkillTool } from './use_skill';
 import { useMcpTool } from './use_mcp';
@@ -18,6 +19,8 @@ import { listSpecTool } from './list_spec';
 import { getSpecTool } from './get_spec';
 import { globTool } from './glob';
 import { grepTool } from './grep';
+import { createTodoTool } from './todo';
+import { askTool } from './ask';
 
 class ToolsModule implements Module {
   manifest!: ModuleManifest; // 由管理器注入
@@ -29,10 +32,12 @@ class ToolsModule implements Module {
 
     // 注册内置工具（根据配置过滤）
     const cfg = ctx.config.getAppConfig().tools;
+    const todoTool = createTodoTool(ctx.env);
     const tools = [
       ['read', cfg.read.enabled, readTool],
       ['write', cfg.write.enabled, writeTool],
       ['edit', cfg.edit.enabled, editTool],
+      ['delete', cfg.delete.enabled, deleteTool],
       ['shell', cfg.shell.enabled, shellTool],
       ['use_skill', cfg.use_skill.enabled, useSkillTool],
       ['use_mcp', cfg.use_mcp.enabled, useMcpTool],
@@ -41,6 +46,8 @@ class ToolsModule implements Module {
       ['get_spec', cfg.get_spec.enabled, getSpecTool],
       ['glob', cfg.glob.enabled, globTool],
       ['grep', cfg.grep.enabled, grepTool],
+      ['todo', cfg.todo.enabled, todoTool],
+      ['ask', cfg.ask.enabled, askTool],
     ] as const;
 
     let registered = 0;

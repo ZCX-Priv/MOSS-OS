@@ -77,19 +77,19 @@ function startBackend() {
 }
 
 function startFrontend() {
-  log('frontend', 'starting (vite)...');
+  log('webui', 'starting (vite)...');
   const viteBin = resolve(ROOT, 'node_modules/vite/bin/vite.js');
   if (existsSync(viteBin)) {
-    return spawnChild('frontend', 'node', [viteBin], {
+    return spawnChild('webui', 'node', [viteBin], {
       env: { ...process.env, FORCE_COLOR: '1' },
     });
   }
   if (hasNpx()) {
-    return spawnChild('frontend', 'npx', ['vite'], {
+    return spawnChild('webui', 'npx', ['vite'], {
       env: { ...process.env, FORCE_COLOR: '1' },
     });
   }
-  log('frontend', 'ERROR: vite not found. Run "npm install" first.');
+  log('webui', 'ERROR: vite not found. Run "npm install" first.');
   process.exit(1);
 }
 
@@ -117,7 +117,7 @@ function main() {
   console.log('=========================================');
   console.log(' MOSS-OS Dev');
   console.log('  Backend: http://127.0.0.1:7766');
-  console.log('  Frontend: http://127.0.0.1:5173');
+  console.log('  WebUI: http://127.0.0.1:5173');
   console.log('=========================================');
   startBackend();
   startFrontend();

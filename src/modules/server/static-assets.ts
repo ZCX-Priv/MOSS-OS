@@ -1,5 +1,5 @@
 // src/plugins/server/static-assets.ts
-// 前端静态资源服务：从 dist/frontend 读取，SPA fallback。
+// 前端静态资源服务：从 dist/webui 读取，SPA fallback。
 
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join, extname, normalize } from 'node:path';
@@ -31,7 +31,7 @@ export class StaticAssets {
   private readonly exists: boolean;
 
   constructor(env: Environment) {
-    this.root = join(env.packageRoot, 'dist', 'frontend');
+    this.root = join(env.packageRoot, 'dist', 'webui');
     this.indexHtml = join(this.root, 'index.html');
     this.exists = existsSync(this.root) && existsSync(this.indexHtml);
   }

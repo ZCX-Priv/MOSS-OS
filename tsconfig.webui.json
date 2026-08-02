@@ -21,9 +21,9 @@
     "useDefineForClassFields": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["frontend/src/*"]
+      "@/*": ["webui/src/*"]
     }
   },
-  "include": ["frontend/src/**/*.ts", "frontend/src/**/*.tsx"],
+  "include": ["webui/src/**/*.ts", "webui/src/**/*.tsx"],
   "exclude": ["node_modules", "dist", "src"]
 }

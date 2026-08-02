@@ -73,6 +73,12 @@ export interface AgentEngine {
    * @returns 最终的 assistant 消息
    */
   run(input: AgentRunInput): Promise<AgentRunResult>;
+
+  /**
+   * 前端回复 ask 工具的提问。
+   * @returns true 表示匹配到 pending ask 并已 resolve；false 表示无匹配（可能已超时或不存在）。
+   */
+  resolveAsk(toolCallId: string, answer: string): boolean;
 }
 
 export interface AgentRunInput {
@@ -96,6 +102,7 @@ export type AgentEvent =
   | { type: 'assistant-thinking'; sessionId: string; text: string }
   | { type: 'tool-call-start'; sessionId: string; toolName: string; toolCallId: string; args: unknown }
   | { type: 'tool-call-end'; sessionId: string; toolName: string; toolCallId: string; result: ToolResult }
+  | { type: 'ask'; sessionId: string; toolCallId: string; question: string }
   | { type: 'error'; sessionId: string; message: string }
   | { type: 'done'; sessionId: string; finishReason: string };
 
