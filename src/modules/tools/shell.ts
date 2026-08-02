@@ -56,7 +56,8 @@ export const shellTool: Tool = {
       ? isAbsolute(p.cwd) ? normalize(p.cwd) : normalize(resolve(ctx.cwd, p.cwd))
       : ctx.cwd || process.cwd();
 
-    const timeoutMs = p.timeout ?? 30000;
+    // 优先级：调用参数 > config.tools.shell.timeout > 硬编码 30000
+    const timeoutMs = p.timeout ?? (ctx.toolConfig?.timeout as number | undefined) ?? 30000;
 
     // Windows 用 cmd.exe /c，POSIX 用 /bin/sh -c
     const isWindows = process.platform === 'win32';

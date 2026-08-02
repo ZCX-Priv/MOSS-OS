@@ -1,5 +1,10 @@
 // frontend/src/hooks/useChat.ts
 // 对话 hook：通过 WS 流式对话
+//
+// 本文件导出两个 hook：
+// - useChatEvents：WS 事件处理单例，负责把后端事件流转成 store 状态更新。
+//   只应在应用根组件（App.tsx）调用一次，重复调用会导致同一事件被多次处理。
+// - useChat：对话 action 函数（sendMessage / abort / replyAsk），可在任意组件调用。
 
 import { useCallback, useEffect, useRef } from 'react';
 import { useStore } from '../store';
@@ -10,7 +15,11 @@ function genId(): string {
   return `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-export function useChat() {
+/**
+ * WS 事件处理单例 hook：订阅 wsClient.onMessage，把后端事件流转换成 store 状态更新。
+ * 只应在应用根组件调用一次（App.tsx），重复调用会导致同一事件被多次处理。
+ */
+export function useChatEvents() {
   const {
     activeSessionId,
     addMessage,
@@ -18,12 +27,6 @@ export function useChat() {
     updateMessage,
     setIsGenerating,
     addPendingAsk,
-    removePendingAsk,
-    input,
-    setInput,
-    selectedModel,
-    selectedProvider,
-    workingDirectory,
   } = useStore();
 
   const pendingAssistantRef = useRef<Record<string, ChatMessage>>({});
@@ -147,6 +150,24 @@ export function useChat() {
     });
     return unsub;
   }, [activeSessionId, addMessage, appendToMessage, updateMessage, setIsGenerating, addPendingAsk]);
+}
+
+/**
+ * 对话 action hook：提供 sendMessage / abort / replyAsk 三个动作函数。
+ * 可在任意组件调用，不会产生 WS 事件重复订阅。
+ */
+export function useChat() {
+  const {
+    activeSessionId,
+    addMessage,
+    setInput,
+    setIsGenerating,
+    selectedModel,
+    selectedProvider,
+    workingDirectory,
+    removePendingAsk,
+    input,
+  } = useStore();
 
   const sendMessage = useCallback(
     (text?: string) => {

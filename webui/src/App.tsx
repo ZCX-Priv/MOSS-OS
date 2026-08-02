@@ -5,6 +5,7 @@ import { useEffect } from 'react';
 import { useStore } from './store';
 import { wsClient } from './api/ws';
 import { useConfig } from './hooks/useConfig';
+import { useChatEvents } from './hooks/useChat';
 import { Sidebar } from './components/Sidebar';
 import { ChatPanel } from './components/ChatPanel';
 import { ConfigPanel } from './components/ConfigPanel';
@@ -14,6 +15,7 @@ import { McpPanel } from './components/McpPanel';
 export function App() {
   const { activePanel, setWsStatus } = useStore();
   useConfig();
+  useChatEvents(); // 全局 WS 事件订阅单例，只挂载一次
 
   // 启动 WS 连接
   useEffect(() => {

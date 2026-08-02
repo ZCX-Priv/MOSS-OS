@@ -158,6 +158,10 @@ export interface ProtectedServiceRegistry {
 // 配置服务
 // ============================================================================
 
+// type-only import：编译时擦除，无运行时循环依赖
+// ToolsConfig 从 manifest 的 Zod schema 推导，保持类型与 schema 永远一致
+import type { ToolsConfig } from '../modules/tools/manifest';
+
 /** 应用配置（config.json）的结构 —— 由 config-service 中 Zod schema 严格校验 */
 export interface AppConfig {
   version: number;
@@ -181,22 +185,8 @@ export interface AppConfig {
     maxTurns: number;
     workingDirectory: string;
   };
-  tools: {
-    read: { enabled: boolean };
-    write: { enabled: boolean; requireConfirmation: boolean };
-    edit: { enabled: boolean; requireConfirmation: boolean };
-    delete: { enabled: boolean; requireConfirmation: boolean };
-    shell: { enabled: boolean; timeout: number; requireConfirmation: boolean };
-    use_skill: { enabled: boolean };
-    use_mcp: { enabled: boolean };
-    list_mcp: { enabled: boolean };
-    list_spec: { enabled: boolean };
-    get_spec: { enabled: boolean };
-    glob: { enabled: boolean };
-    grep: { enabled: boolean };
-    todo: { enabled: boolean };
-    ask: { enabled: boolean };
-  };
+  // tools 类型从 manifest 自动推导（单一真相源），新增工具无需手动改此文件
+  tools: ToolsConfig;
   mcpServers: Record<string, unknown>;
   security: {
     authToken: string;

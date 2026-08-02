@@ -14,6 +14,7 @@ import type {
   LogLevel,
   ProviderConfig,
 } from './types';
+import { buildToolsSchema, buildToolsDefaults } from '../modules/tools/manifest';
 
 // ============================================================================
 // Zod Schemas
@@ -59,29 +60,8 @@ const appConfigSchema = z.object({
     maxTurns: z.number().int().positive(),
     workingDirectory: z.string(),
   }),
-  tools: z.object({
-    read: z.object({ enabled: z.boolean() }).default({ enabled: true }),
-    write: z.object({ enabled: z.boolean(), requireConfirmation: z.boolean() })
-      .default({ enabled: true, requireConfirmation: true }),
-    edit: z.object({ enabled: z.boolean(), requireConfirmation: z.boolean() })
-      .default({ enabled: true, requireConfirmation: false }),
-    delete: z.object({ enabled: z.boolean(), requireConfirmation: z.boolean() })
-      .default({ enabled: true, requireConfirmation: true }),
-    shell: z.object({
-      enabled: z.boolean(),
-      timeout: z.number().int().positive(),
-      requireConfirmation: z.boolean(),
-    }).default({ enabled: true, timeout: 30000, requireConfirmation: true }),
-    use_skill: z.object({ enabled: z.boolean() }).default({ enabled: true }),
-    use_mcp: z.object({ enabled: z.boolean() }).default({ enabled: true }),
-    list_mcp: z.object({ enabled: z.boolean() }).default({ enabled: true }),
-    list_spec: z.object({ enabled: z.boolean() }).default({ enabled: true }),
-    get_spec: z.object({ enabled: z.boolean() }).default({ enabled: true }),
-    glob: z.object({ enabled: z.boolean() }).default({ enabled: true }),
-    grep: z.object({ enabled: z.boolean() }).default({ enabled: true }),
-    todo: z.object({ enabled: z.boolean() }).default({ enabled: true }),
-    ask: z.object({ enabled: z.boolean() }).default({ enabled: true }),
-  }),
+  // tools schema 从 manifest 自动构建（单一真相源），新增工具无需手动改此文件
+  tools: buildToolsSchema(),
   mcpServers: z.record(z.string(), z.unknown()),
   security: z.object({
     authToken: z.string(),
@@ -111,22 +91,8 @@ export function defaultAppConfig(): AppConfig {
       maxTurns: 25,
       workingDirectory: '',
     },
-    tools: {
-      read: { enabled: true },
-      write: { enabled: true, requireConfirmation: true },
-      edit: { enabled: true, requireConfirmation: false },
-      delete: { enabled: true, requireConfirmation: true },
-      shell: { enabled: true, timeout: 30000, requireConfirmation: true },
-      use_skill: { enabled: true },
-      use_mcp: { enabled: true },
-      list_mcp: { enabled: true },
-      list_spec: { enabled: true },
-      get_spec: { enabled: true },
-      glob: { enabled: true },
-      grep: { enabled: true },
-      todo: { enabled: true },
-      ask: { enabled: true },
-    },
+    // tools 默认值从 manifest 自动构建（单一真相源）
+    tools: buildToolsDefaults() as AppConfig['tools'],
     mcpServers: {},
     security: { authToken: '', bindLocalhostOnly: true },
   };

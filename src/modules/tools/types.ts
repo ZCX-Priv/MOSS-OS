@@ -45,6 +45,8 @@ export interface ToolContext {
   signal?: AbortSignal;
   /** 向用户提问并阻塞等待回复（若运行环境不支持交互则 undefined） */
   askUser?: (question: string) => Promise<string>;
+  /** 当前工具的配置（从 config.tools[name] 读取，供工具消费如 timeout/requireConfirmation） */
+  toolConfig?: Record<string, unknown>;
 }
 
 export type ToolEvent =
