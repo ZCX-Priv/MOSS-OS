@@ -1,0 +1,81 @@
+// src/plugins/daemon/index.ts
+// 守护进程插件：运行时维护 PID 文件、监听信号优雅退出。
+// 注意：实际的 detach/fork 在 CLI 命令中完成；此插件负责运行时的 PID 文件维护。
+
+import type { Plugin, PluginContext, PluginMetadata } from '../../core/types';
+import { writePidFile, removePidFile } from '../../utils/pid';
+import type { ServerInstanceLike } from '../contracts';
+
+class DaemonPlugin implements Plugin {
+  metadata: PluginMetadata = {
+    name: 'daemon',
+    version: '1.0.0',
+    description: 'Daemon runtime: PID file management, graceful shutdown',
+    dependencies: {
+      server: '^1.0.0',
+    },
+  };
+
+  private ctx!: PluginContext;
+  private shutdownHandlersRegistered = false;
+
+  async initialize(ctx: PluginContext): Promise<void> {
+    this.ctx = ctx;
+    const cfg = ctx.config.getAppConfig();
+    if (!cfg.daemon.enabled) {
+      ctx.logger.info('Daemon plugin disabled by config');
+      return;
+    }
+
+    // 等待 server 启动后写入带端口的 PID 文件
+    // server 插件在 daemon 之前初始化，这里直接 resolve
+    const server = ctx.services.tryResolve<ServerInstanceLike>('server.instance');
+    const port = server?.port ?? cfg.server.port;
+
+    writePidFile(ctx.env.pidFile, {
+      pid: process.pid,
+      startedAt: new Date().toISOString(),
+      port,
+    });
+
+    ctx.logger.info('Daemon plugin initialized', {
+      pid: process.pid,
+      port,
+      pidFile: ctx.env.pidFile,
+    });
+
+    // 注册优雅退出处理（仅一次）
+    if (!this.shutdownHandlersRegistered) {
+      this.registerShutdownHandlers();
+      this.shutdownHandlersRegistered = true;
+    }
+  }
+
+  async destroy(): Promise<void> {
+    removePidFile(this.ctx.env.pidFile);
+    this.ctx.logger.info('Daemon plugin stopped, PID file removed');
+  }
+
+  private registerShutdownHandlers(): void {
+    const handle = async (signal: string) => {
+      this.ctx.logger.info(`Received ${signal}, shutting down gracefully`);
+      // 通知其他插件
+      await this.ctx.eventBus.broadcast('kernel:shutdown', { signal });
+      // 清理 PID 文件
+      removePidFile(this.ctx.env.pidFile);
+      // 给一点时间让其他清理完成
+      setTimeout(() => process.exit(0), 500);
+    };
+
+    process.on('SIGINT', () => handle('SIGINT'));
+    process.on('SIGTERM', () => handle('SIGTERM'));
+    // Windows 没有 SIGTERM/SIGHUP，但有 SIGBREAK
+    if (this.ctx.env.isWindows) {
+      process.on('SIGBREAK', () => handle('SIGBREAK'));
+    } else {
+      process.on('SIGHUP', () => handle('SIGHUP'));
+    }
+  }
+}
+
+export default new DaemonPlugin();

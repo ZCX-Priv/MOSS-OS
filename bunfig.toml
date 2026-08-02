@@ -1,0 +1,4 @@
+# Bun 配置
+[install]
+# 使用 npm 作为包管理器（用户规则：禁止 CDN，统一 npm）
+registry = "https://registry.npmjs.org/"

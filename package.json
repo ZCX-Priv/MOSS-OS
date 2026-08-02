@@ -1,0 +1,50 @@
+{
+  "name": "moss-os",
+  "version": "1.0.0",
+  "description": "MOSS-OS - 微内核 + 插件化架构的 AI Agent 应用",
+  "type": "module",
+  "bin": {
+    "moss": "bin/moss.js"
+  },
+  "files": [
+    "dist/",
+    "config/",
+    "bin/"
+  ],
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "node scripts/build.mjs",
+    "build:frontend": "vite build",
+    "build:backend": "bun build src/main.ts --outfile dist/server.js --target bun",
+    "start": "bun src/main.ts start --foreground",
+    "start:daemon": "bun src/main.ts start",
+    "stop": "bun src/main.ts stop",
+    "status": "bun src/main.ts status",
+    "restart": "bun src/main.ts restart",
+    "update": "bun src/main.ts update",
+    "version": "bun src/main.ts version",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "bun-types": "^1.1.42",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^9.0.1",
+    "remark-gfm": "^4.0.0",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11",
+    "zustand": "^4.5.5"
+  },
+  "engines": {
+    "bun": ">=1.1.0"
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "server": {
+    "host": "127.0.0.1",
+    "port": 7766,
+    "autoPort": true
+  },
+  "daemon": {
+    "enabled": true,
+    "logLevel": "info"
+  },
+  "update": {
+    "autoCheck": true,
+    "channel": "stable",
+    "checkIntervalHours": 24
+  },
+  "agent": {
+    "defaultModel": "deepseek-chat",
+    "maxTokens": 8192,
+    "maxTurns": 25,
+    "workingDirectory": ""
+  },
+  "tools": {
+    "read":      { "enabled": true },
+    "write":     { "enabled": true, "requireConfirmation": true },
+    "edit":      { "enabled": true, "requireConfirmation": false },
+    "shell":     { "enabled": true, "timeout": 30000, "requireConfirmation": true },
+    "use_skill": { "enabled": true },
+    "use_mcp":   { "enabled": true },
+    "list_mcp":  { "enabled": true }
+  },
+  "mcpServers": {},
+  "security": {
+    "authToken": "",
+    "bindLocalhostOnly": true
+  }
+}
