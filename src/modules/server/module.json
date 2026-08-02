@@ -1,0 +1,7 @@
+{
+  "name": "server",
+  "version": "1.0.0",
+  "description": "HTTP + WebSocket server based on Bun.serve",
+  "type": "module",
+  "dependencies": {}
+}

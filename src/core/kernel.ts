@@ -1,12 +1,13 @@
 // src/core/kernel.ts
-// Microkernel 主类：组装所有内核服务，编排插件生命周期。
+// Microkernel 主类：组装所有内核服务，编排模组/插件生命周期。
+// 模组（modules）拥有高权限，先加载；插件（plugins）权限较低，后加载。
 
 import { detectEnvironment } from './env';
 import { createRootLogger } from './logger';
 import { createEventBus } from './event-bus';
 import { createServiceRegistry } from './service-registry';
 import { createConfigService } from './config-service';
-import { PluginManager, type PluginManagerOptions } from './plugin-manager';
+import { ExtensionManager, type ExtensionManagerOptions } from './extension-manager';
 import type {
   KernelContext,
   Logger,
@@ -14,16 +15,16 @@ import type {
   ServiceRegistry,
   ConfigService,
   Environment,
-  PluginContext,
-  PluginState,
+  ModuleContext,
+  ExtensionState,
   LogLevel,
 } from './types';
 
 export interface KernelStartOptions {
   /** 前台运行（不 detach） */
   foreground?: boolean;
-  /** 插件管理器选项 */
-  plugins?: PluginManagerOptions;
+  /** 扩展管理器选项 */
+  extensions?: ExtensionManagerOptions;
   /** 初始日志级别 */
   logLevel?: LogLevel;
 }
@@ -34,7 +35,7 @@ export class Microkernel {
   private eventBus: EventBus | null = null;
   private services: ServiceRegistry | null = null;
   private config: ConfigService | null = null;
-  private pluginManager: PluginManager | null = null;
+  private extensionManager: ExtensionManager | null = null;
   private started = false;
 
   async start(options: KernelStartOptions = {}): Promise<KernelContext> {
@@ -70,8 +71,8 @@ export class Microkernel {
       });
     }
 
-    // 3. 构建插件上下文
-    const context: PluginContext = {
+    // 3. 构建模组上下文（完整能力）
+    const moduleCtx: ModuleContext = {
       logger: this.logger,
       config: this.config,
       eventBus: this.eventBus,
@@ -79,19 +80,29 @@ export class Microkernel {
       env: this.env,
     };
 
-    // 4. 发现并加载插件
-    this.pluginManager = new PluginManager(context, options.plugins ?? {});
-    await this.pluginManager.discoverAndLoad();
+    // 4. 发现并加载扩展（模组 + 插件）
+    this.extensionManager = new ExtensionManager(moduleCtx, options.extensions ?? {});
+    await this.extensionManager.discoverAndLoad();
 
-    // 5. 按序初始化插件
-    await this.pluginManager.initializeAll();
+    // 5. 按序初始化扩展
+    await this.extensionManager.initializeAll();
+
+    // 暴露扩展状态查询服务（供 health 路由等使用；非受保护服务名）
+    this.services.register(
+      'kernel.extensions',
+      {
+        getStates: () => this.extensionManager!.getExtensionStates(),
+        getActiveCount: () => this.extensionManager!.getActiveExtensionCount(),
+      },
+      { scope: 'kernel', registrantType: 'module' },
+    );
 
     this.started = true;
     await this.eventBus.broadcast('kernel:ready', { pid: this.env.pid });
 
-    const activeCount = this.pluginManager.getActivePluginNames().length;
+    const activeCount = this.extensionManager.getActiveExtensionCount();
     this.logger.info('MOSS-OS kernel ready', {
-      activePlugins: activeCount,
+      activeExtensions: activeCount,
       services: this.services.list(),
     });
 
@@ -105,8 +116,8 @@ export class Microkernel {
     this.logger?.info('MOSS-OS kernel stopping');
     await this.eventBus?.broadcast('kernel:shutdown', {});
 
-    if (this.pluginManager) {
-      await this.pluginManager.destroyAll();
+    if (this.extensionManager) {
+      await this.extensionManager.destroyAll();
     }
     this.started = false;
     this.logger?.info('MOSS-OS kernel stopped');
@@ -117,7 +128,7 @@ export class Microkernel {
   }
 
   private makeContext(): KernelContext {
-    if (!this.logger || !this.config || !this.eventBus || !this.services || !this.env || !this.pluginManager) {
+    if (!this.logger || !this.config || !this.eventBus || !this.services || !this.env || !this.extensionManager) {
       throw new Error('Kernel not fully initialized');
     }
     return {
@@ -128,8 +139,10 @@ export class Microkernel {
       env: this.env,
       kernel: {
         stop: () => this.stop(),
-        getPluginStates: (): Record<string, PluginState> =>
-          this.pluginManager!.getPluginStates(),
+        getExtensionStates: (): {
+          modules: Record<string, ExtensionState>;
+          plugins: Record<string, ExtensionState>;
+        } => this.extensionManager!.getExtensionStates(),
       },
     };
   }

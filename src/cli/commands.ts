@@ -232,7 +232,40 @@ async function cmdStatus(): Promise<number> {
   console.log(`  Started at: ${info.startedAt}`);
   if (info.port) console.log(`  Port:       ${info.port}`);
   console.log(`  Data dir:   ${env.dataDir}`);
+
+  // 尝试通过 /api/health 获取运行时信息（模组/插件计数、服务列表）
+  if (info.port) {
+    const health = await fetchHealthInfo(info.port).catch(() => null);
+    if (health) {
+      const moduleCount = typeof health.modules === 'number' ? health.modules : 0;
+      const pluginCount = typeof health.plugins === 'number' ? health.plugins : 0;
+      const serviceCount = Array.isArray(health.services) ? health.services.length : 0;
+      console.log(`  Modules:    ${moduleCount}`);
+      console.log(`  Plugins:    ${pluginCount}`);
+      console.log(`  Services:   ${serviceCount}`);
+    }
+  }
   return 0;
+}
+
+interface HealthInfo {
+  modules?: number;
+  plugins?: number;
+  services?: string[];
+}
+
+/** 调用本地 /api/health 获取运行时统计 */
+async function fetchHealthInfo(port: number): Promise<HealthInfo | null> {
+  try {
+    const resp = await fetch(`http://127.0.0.1:${port}/api/health`, {
+      signal: AbortSignal.timeout(2000),
+    });
+    if (!resp.ok) return null;
+    const data = (await resp.json()) as HealthInfo & { status?: string };
+    return data;
+  } catch {
+    return null;
+  }
 }
 
 async function cmdRestart(): Promise<number> {

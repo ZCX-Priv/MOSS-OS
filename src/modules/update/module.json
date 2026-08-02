@@ -1,0 +1,7 @@
+{
+  "name": "update",
+  "version": "1.0.0",
+  "description": "Update checker: query npm registry for new versions",
+  "type": "module",
+  "dependencies": {}
+}

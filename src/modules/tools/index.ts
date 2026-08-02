@@ -1,10 +1,11 @@
-// src/plugins/tools/index.ts
-// Tools 插件入口：注册 ToolRegistry + 内置工具 + SkillRegistry。
+// src/modules/tools/index.ts
+// Tools 模组入口：注册 ToolRegistry + 内置工具 + SkillRegistry。
+// 清单来自 module.json，由 ExtensionManager 注入 manifest。
 
-import type { Plugin, PluginContext, PluginMetadata } from '../../core/types';
+import type { Module, ModuleContext, ModuleManifest } from '../../core/types';
 import { ServiceNames } from '../../core/types';
 import { ToolRegistryImpl } from './registry';
-import { createSkillRegistry, SKILL_REGISTRY_SERVICE } from './skills';
+import { createSkillRegistry } from './skills';
 import { readTool } from './read';
 import { writeTool } from './write';
 import { editTool } from './edit';
@@ -13,17 +14,12 @@ import { useSkillTool } from './use_skill';
 import { useMcpTool } from './use_mcp';
 import { listMcpTool } from './list_mcp';
 
-class ToolsPlugin implements Plugin {
-  metadata: PluginMetadata = {
-    name: 'tools',
-    version: '1.0.0',
-    description: 'Built-in tools: read, write, edit, shell, use_skill, use_mcp, list_mcp',
-    dependencies: {},
-  };
+class ToolsModule implements Module {
+  manifest!: ModuleManifest; // 由管理器注入
 
-  async initialize(ctx: PluginContext): Promise<void> {
+  async initialize(ctx: ModuleContext): Promise<void> {
     const registry = new ToolRegistryImpl(ctx.logger);
-    const skillRegistry = createSkillRegistry();
+    const skillRegistry = createSkillRegistry(ctx.env, ctx.logger);
 
     // 注册内置工具（根据配置过滤）
     const cfg = ctx.config.getAppConfig().tools;
@@ -47,12 +43,22 @@ class ToolsPlugin implements Plugin {
       }
     }
 
-    // 注册服务
-    ctx.services.register(ServiceNames.TOOL_REGISTRY, registry, { scope: 'tools' });
-    ctx.services.register(SKILL_REGISTRY_SERVICE, skillRegistry, { scope: 'tools' });
+    // 注册服务（受保护服务名，由模组注册）
+    ctx.services.register(ServiceNames.TOOL_REGISTRY, registry, {
+      scope: 'tools',
+      registrantType: 'module',
+    });
+    ctx.services.register(ServiceNames.SKILL_REGISTRY, skillRegistry, {
+      scope: 'tools',
+      registrantType: 'module',
+    });
 
-    ctx.logger.info('Tools plugin initialized', { tools: registered });
+    ctx.logger.info('Tools module initialized', { tools: registered });
   }
 }
 
-export default new ToolsPlugin();
+export default (manifest: ModuleManifest): Module => {
+  const m = new ToolsModule();
+  m.manifest = manifest;
+  return m;
+};

@@ -1,0 +1,9 @@
+{
+  "name": "daemon",
+  "version": "1.0.0",
+  "description": "Daemon runtime: PID file management, graceful shutdown",
+  "type": "module",
+  "dependencies": {
+    "server": "^1.0.0"
+  }
+}

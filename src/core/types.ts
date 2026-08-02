@@ -112,7 +112,16 @@ export interface EventBus {
 
 export interface ServiceRegistry {
   /** 注册服务。若已存在同名服务且未强制覆盖则抛错。 */
-  register<T>(name: string, service: T, options?: { override?: boolean; scope?: string }): void;
+  register<T>(
+    name: string,
+    service: T,
+    options?: {
+      override?: boolean;
+      scope?: string;
+      /** 注册者类型：module 放行，plugin 受 ProtectedServiceNames 约束 */
+      registrantType?: 'module' | 'plugin';
+    },
+  ): void;
   /** 解析服务，不存在则抛错 */
   resolve<T>(name: string): T;
   /** 尝试解析，不存在返回 null */
@@ -124,6 +133,25 @@ export interface ServiceRegistry {
   unregisterScope(scope: string): void;
   /** 列出所有已注册服务名 */
   list(): string[];
+}
+
+/**
+ * 受保护服务注册表接口（PluginContext.services 的类型）。
+ * 插件通过此视图访问服务：仅可消费 consumeServices 白名单内的服务，
+ * 注册时受 ProtectedServiceNames 约束。
+ */
+export interface ProtectedServiceRegistry {
+  tryResolve<T>(name: string): T | null;
+  resolve<T>(name: string): T;
+  has(name: string): boolean;
+  list(): string[];
+  /** 插件注册：受保护服务名会被拒绝 */
+  register<T>(
+    name: string,
+    service: T,
+    options?: { override?: boolean; scope?: string; registrantType?: 'plugin' },
+  ): void;
+  unregister(name: string): void;
 }
 
 // ============================================================================
@@ -205,28 +233,15 @@ export interface ConfigService {
 }
 
 // ============================================================================
-// 插件系统
+// 扩展系统（模组 Module + 插件 Plugin）
 // ============================================================================
+// 模组：权限仅次于内核，先加载，可注册受保护服务。
+// 插件：权限较低，后加载，不可注册受保护服务，只能消费声明过的服务。
+// 清单文件（module.json / plugin.json）替代原 metadata 字段。
 
-export interface PluginMetadata {
-  /** 唯一标识（kebab-case） */
-  name: string;
-  version: string;
-  description?: string;
-  /** 依赖的其他插件：插件名 -> 版本范围 */
-  dependencies?: Record<string, string>;
-}
+export type ExtensionType = 'module' | 'plugin';
 
-/** 内核注入给插件的能力 */
-export interface PluginContext {
-  logger: Logger;
-  config: ConfigService;
-  eventBus: EventBus;
-  services: ServiceRegistry;
-  env: Environment;
-}
-
-export type PluginState =
+export type ExtensionState =
   | 'loaded'
   | 'initializing'
   | 'active'
@@ -234,12 +249,69 @@ export type PluginState =
   | 'shutdown'
   | 'error';
 
-/** 插件主接口 */
+/** 扩展基础清单字段（来自 module.json / plugin.json） */
+export interface ExtensionManifest {
+  /** 唯一标识（kebab-case） */
+  name: string;
+  version: string;
+  description?: string;
+  /** 扩展类型，由清单文件名隐式决定，此处用于运行时校验 */
+  type: ExtensionType;
+  /** 依赖的其他扩展：名称 -> 版本范围 */
+  dependencies?: Record<string, string>;
+  /** 权限声明（主要对插件生效；模组隐式拥有全部权限） */
+  permissions?: {
+    /** 需要注册的服务名（插件受 ProtectedServiceNames 约束） */
+    registerServices?: string[];
+    /** 需要消费的服务名白名单 */
+    consumeServices?: string[];
+  };
+}
+
+/** 模组清单（module.json 解析结果） */
+export interface ModuleManifest extends ExtensionManifest {
+  type: 'module';
+}
+
+/** 插件清单（plugin.json 解析结果） */
+export interface PluginManifest extends ExtensionManifest {
+  type: 'plugin';
+}
+
+/** 模组上下文：完整能力 */
+export interface ModuleContext {
+  logger: Logger;
+  config: ConfigService;
+  eventBus: EventBus;
+  services: ServiceRegistry;
+  env: Environment;
+}
+
+/** 插件上下文：受限能力（services 为 ProtectedServiceRegistry） */
+export interface PluginContext {
+  logger: Logger;
+  config: ConfigService;
+  eventBus: EventBus;
+  services: ProtectedServiceRegistry;
+  env: Environment;
+}
+
+/** 模组主接口（高权限） */
+export interface Module {
+  manifest: ModuleManifest;
+  initialize(context: ModuleContext): Promise<void>;
+  destroy?(): Promise<void>;
+}
+
+/** 插件主接口（低权限） */
 export interface Plugin {
-  metadata: PluginMetadata;
+  manifest: PluginManifest;
   initialize(context: PluginContext): Promise<void>;
   destroy?(): Promise<void>;
 }
+
+/** 沿用旧名：扩展状态（与原 PluginState 等价） */
+export type PluginState = ExtensionState;
 
 /** 内核导出的统一上下文（供 CLI / 外部代码使用） */
 export interface KernelContext {
@@ -250,7 +322,8 @@ export interface KernelContext {
   env: Environment;
   kernel: {
     stop(): Promise<void>;
-    getPluginStates(): Record<string, PluginState>;
+    /** 返回所有扩展状态（modules + plugins） */
+    getExtensionStates(): { modules: Record<string, ExtensionState>; plugins: Record<string, ExtensionState> };
   };
 }
 
@@ -268,7 +341,7 @@ export const KernelEvents = {
 } as const;
 
 // ============================================================================
-// 标准服务名（由各插件注册）
+// 标准服务名（由各模组注册）
 // ============================================================================
 
 export const ServiceNames = {
@@ -277,4 +350,14 @@ export const ServiceNames = {
   MCP_MANAGER: 'mcp.manager',
   AGENT_ENGINE: 'agent.engine',
   SERVER_INSTANCE: 'server.instance',
+  /** Skill 注册表（由 tools 模组注册） */
+  SKILL_REGISTRY: 'skill.registry',
 } as const;
+
+/**
+ * 受保护的服务名集合：仅模组可注册，插件不可注册。
+ * = ServiceNames 全部值。
+ */
+export const ProtectedServiceNames: ReadonlySet<string> = new Set<string>(
+  Object.values(ServiceNames),
+);

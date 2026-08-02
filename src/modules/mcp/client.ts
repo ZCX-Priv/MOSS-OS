@@ -1,12 +1,17 @@
-// src/plugins/mcp/client.ts
+// src/modules/mcp/client.ts
 // 单服务器 MCP Client 封装：动态 import @modelcontextprotocol/sdk。
 //
-// SDK 1.30+ 的入口分布：
-//   - Client                           @modelcontextprotocol/sdk/client
-//   - StdioClientTransport             @modelcontextprotocol/sdk/client/stdio
-//   - StreamableHTTPClientTransport    @modelcontextprotocol/sdk/client/streamableHttp
-// 由于 SDK 不存在根 index.js（package.json "." 子路径指向的文件缺失），
-// 必须按子路径分别 import。这里用动态 import 拆分以避免顶层依赖。
+// 支持三种传输：
+//   - stdio  (StdioClientTransport)
+//   - http   (StreamableHTTPClientTransport, 2025-03-26 新标准)
+//   - sse    (SSEClientTransport, 旧标准)
+// 当 http 连接失败时，自动回退到 sse 重试一次（兼容旧 MCP server）。
+//
+// SDK 入口分布：
+//   - Client                                @modelcontextprotocol/sdk/client
+//   - StdioClientTransport                  @modelcontextprotocol/sdk/client/stdio
+//   - StreamableHTTPClientTransport         @modelcontextprotocol/sdk/client/streamableHttp
+//   - SSEClientTransport                    @modelcontextprotocol/sdk/client/sse
 
 import type { EventBus, Logger } from '../../core/types';
 
@@ -15,14 +20,14 @@ import type { EventBus, Logger } from '../../core/types';
 // ============================================================================
 
 export interface ServerConfig {
-  /** 传输类型：stdio 或 http */
-  transport: 'stdio' | 'http';
-  /** stdio: 命令；http: URL */
+  /** 传输类型：stdio | http | sse */
+  transport: 'stdio' | 'http' | 'sse';
+  /** stdio: 命令；http/sse: URL */
   command?: string;
   args?: string[];
   env?: Record<string, string>;
   url?: string;
-  /** 自定义请求头（http 传输） */
+  /** 自定义请求头（http / sse 传输） */
   headers?: Record<string, string>;
 }
 
@@ -46,8 +51,7 @@ export interface McpClientEntry {
 // ============================================================================
 // MCP SDK 客户端的最小化类型契约
 // ----------------------------------------------------------------------------
-// 我们不直接依赖 SDK 的类型（避免版本差异导致类型不兼容），而是定义一个
-// 与 SDK Client 行为兼容的最小接口。这样动态 import 后 cast 到此接口即可。
+// 不直接依赖 SDK 类型（避免版本差异），定义与 SDK Client 行为兼容的最小接口。
 // ============================================================================
 
 interface McpSdkClient {
@@ -75,6 +79,10 @@ interface McpSdkModule {
     url: URL,
     opts?: { requestInit?: { headers?: Record<string, string> } },
   ) => McpSdkTransport;
+  SSEClientTransport?: new (
+    url: URL,
+    opts?: { requestInit?: { headers?: Record<string, string> } },
+  ) => McpSdkTransport;
 }
 
 // ============================================================================
@@ -88,6 +96,8 @@ export class McpClient {
   private readonly config: ServerConfig;
   private readonly logger: Logger;
   private readonly eventBus: EventBus;
+  /** 实际使用的传输（http 可能回退为 sse） */
+  private effectiveTransport: 'stdio' | 'http' | 'sse' | null = null;
 
   constructor(name: string, config: ServerConfig, logger: Logger, eventBus: EventBus) {
     this.name = name;
@@ -106,23 +116,23 @@ export class McpClient {
 
     let transport: McpSdkTransport;
     if (this.config.transport === 'stdio') {
-      const stdioMod = (await import('@modelcontextprotocol/sdk/client/stdio')) as McpSdkModule;
-      const StdioTransport = stdioMod.StdioClientTransport;
-      if (!StdioTransport) throw new Error('StdioClientTransport not available in MCP SDK');
-      if (!this.config.command) throw new Error('stdio transport requires "command"');
-      transport = new StdioTransport({
-        command: this.config.command,
-        args: this.config.args ?? [],
-        env: this.config.env,
-      });
+      transport = await this.createStdioTransport();
+      this.effectiveTransport = 'stdio';
     } else if (this.config.transport === 'http') {
-      const httpMod = (await import('@modelcontextprotocol/sdk/client/streamableHttp')) as McpSdkModule;
-      const HttpTransport = httpMod.StreamableHTTPClientTransport;
-      if (!HttpTransport) throw new Error('StreamableHTTPClientTransport not available in MCP SDK');
-      if (!this.config.url) throw new Error('http transport requires "url"');
-      transport = new HttpTransport(new URL(this.config.url), {
-        requestInit: { headers: this.config.headers },
-      });
+      // 尝试新标准 StreamableHTTP，失败则自动回退到 SSE
+      try {
+        transport = await this.createHttpTransport();
+        this.effectiveTransport = 'http';
+      } catch (err) {
+        this.logger.warn(`MCP "${this.name}" http transport failed, falling back to sse`, {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        transport = await this.createSseTransport();
+        this.effectiveTransport = 'sse';
+      }
+    } else if (this.config.transport === 'sse') {
+      transport = await this.createSseTransport();
+      this.effectiveTransport = 'sse';
     } else {
       throw new Error(`Unknown transport: ${this.config.transport}`);
     }
@@ -133,9 +143,33 @@ export class McpClient {
       { capabilities: {} },
     );
 
-    // 连接
-    await this.sdkClient.connect(transport);
-    this.logger.info(`MCP client "${this.name}" connected`, { transport: this.config.transport });
+    // 连接（http 若失败也尝试回退 SSE）
+    try {
+      await this.sdkClient.connect(transport);
+    } catch (err) {
+      if (this.config.transport === 'http' && this.effectiveTransport === 'http') {
+        // http connect 失败，回退 SSE
+        this.logger.warn(`MCP "${this.name}" http connect failed, retrying with sse`, {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        await this.sdkClient.close().catch(() => {});
+        this.sdkClient = null;
+        transport = await this.createSseTransport();
+        this.effectiveTransport = 'sse';
+        this.sdkClient = new Client(
+          { name: 'moss-os', version: '1.0.0' },
+          { capabilities: {} },
+        );
+        await this.sdkClient.connect(transport);
+      } else {
+        throw err;
+      }
+    }
+
+    this.logger.info(`MCP client "${this.name}" connected`, {
+      transport: this.config.transport,
+      effective: this.effectiveTransport,
+    });
 
     // 列出工具
     await this.refreshTools();
@@ -150,6 +184,7 @@ export class McpClient {
       }
       this.sdkClient = null;
       this.tools = [];
+      this.effectiveTransport = null;
     }
   }
 
@@ -159,6 +194,10 @@ export class McpClient {
 
   getToolCount(): number {
     return this.tools.length;
+  }
+
+  getEffectiveTransport(): 'stdio' | 'http' | 'sse' | null {
+    return this.effectiveTransport;
   }
 
   async refreshTools(): Promise<void> {
@@ -207,5 +246,41 @@ export class McpClient {
       content,
       isError: result.isError ?? false,
     };
+  }
+
+  // ========================================================================
+  // 传输构造
+  // ========================================================================
+
+  private async createStdioTransport(): Promise<McpSdkTransport> {
+    const stdioMod = (await import('@modelcontextprotocol/sdk/client/stdio')) as McpSdkModule;
+    const StdioTransport = stdioMod.StdioClientTransport;
+    if (!StdioTransport) throw new Error('StdioClientTransport not available in MCP SDK');
+    if (!this.config.command) throw new Error('stdio transport requires "command"');
+    return new StdioTransport({
+      command: this.config.command,
+      args: this.config.args ?? [],
+      env: this.config.env,
+    });
+  }
+
+  private async createHttpTransport(): Promise<McpSdkTransport> {
+    const httpMod = (await import('@modelcontextprotocol/sdk/client/streamableHttp')) as McpSdkModule;
+    const HttpTransport = httpMod.StreamableHTTPClientTransport;
+    if (!HttpTransport) throw new Error('StreamableHTTPClientTransport not available in MCP SDK');
+    if (!this.config.url) throw new Error('http transport requires "url"');
+    return new HttpTransport(new URL(this.config.url), {
+      requestInit: { headers: this.config.headers },
+    });
+  }
+
+  private async createSseTransport(): Promise<McpSdkTransport> {
+    const sseMod = (await import('@modelcontextprotocol/sdk/client/sse')) as McpSdkModule;
+    const SseTransport = sseMod.SSEClientTransport;
+    if (!SseTransport) throw new Error('SSEClientTransport not available in MCP SDK');
+    if (!this.config.url) throw new Error('sse transport requires "url"');
+    return new SseTransport(new URL(this.config.url), {
+      requestInit: { headers: this.config.headers },
+    });
   }
 }

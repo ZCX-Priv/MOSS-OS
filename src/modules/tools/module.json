@@ -1,0 +1,7 @@
+{
+  "name": "tools",
+  "version": "1.0.0",
+  "description": "Built-in tools: read, write, edit, shell, use_skill, use_mcp, list_mcp",
+  "type": "module",
+  "dependencies": {}
+}

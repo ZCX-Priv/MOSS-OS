@@ -1,28 +1,31 @@
-// src/plugins/llm/index.ts
-// LLM 适配插件入口：注册 LLMRouter 服务。
+// src/modules/llm/index.ts
+// LLM 适配模组入口：注册 LLMRouter 服务。
+// 清单来自 module.json，由 ExtensionManager 注入 manifest。
 
-import type { Plugin, PluginContext, PluginMetadata } from '../../core/types';
+import type { Module, ModuleContext, ModuleManifest } from '../../core/types';
 import { ServiceNames } from '../../core/types';
 import { LLMRouterImpl } from './router';
 
-class LLMPlugin implements Plugin {
-  metadata: PluginMetadata = {
-    name: 'llm',
-    version: '1.0.0',
-    description: 'LLM adapter plugin: openai-chat, openai-responses, anthropic, gemini',
-    dependencies: {},
-  };
+class LLMModule implements Module {
+  manifest!: ModuleManifest; // 由管理器注入
 
-  async initialize(ctx: PluginContext): Promise<void> {
+  async initialize(ctx: ModuleContext): Promise<void> {
     const router = new LLMRouterImpl(ctx.config, ctx.eventBus, ctx.logger);
-    ctx.services.register(ServiceNames.LLM_ROUTER, router, { scope: 'llm' });
+    ctx.services.register(ServiceNames.LLM_ROUTER, router, {
+      scope: 'llm',
+      registrantType: 'module',
+    });
 
     const apiCfg = ctx.config.getApiConfig();
-    ctx.logger.info('LLM plugin initialized', {
+    ctx.logger.info('LLM module initialized', {
       providers: Object.keys(apiCfg.providers),
       defaultProvider: apiCfg.defaultProvider,
     });
   }
 }
 
-export default new LLMPlugin();
+export default (manifest: ModuleManifest): Module => {
+  const m = new LLMModule();
+  m.manifest = manifest;
+  return m;
+};

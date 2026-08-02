@@ -1,34 +1,28 @@
-// src/plugins/daemon/index.ts
-// 守护进程插件：运行时维护 PID 文件、监听信号优雅退出。
-// 注意：实际的 detach/fork 在 CLI 命令中完成；此插件负责运行时的 PID 文件维护。
+// src/modules/daemon/index.ts
+// 守护进程模组：运行时维护 PID 文件、监听信号优雅退出。
+// 注意：实际的 detach/fork 在 CLI 命令中完成；此模组负责运行时的 PID 文件维护。
+// 清单来自 module.json，由 ExtensionManager 注入 manifest。
 
-import type { Plugin, PluginContext, PluginMetadata } from '../../core/types';
+import type { Module, ModuleContext, ModuleManifest } from '../../core/types';
 import { writePidFile, removePidFile } from '../../utils/pid';
 import type { ServerInstanceLike } from '../contracts';
 
-class DaemonPlugin implements Plugin {
-  metadata: PluginMetadata = {
-    name: 'daemon',
-    version: '1.0.0',
-    description: 'Daemon runtime: PID file management, graceful shutdown',
-    dependencies: {
-      server: '^1.0.0',
-    },
-  };
+class DaemonModule implements Module {
+  manifest!: ModuleManifest; // 由管理器注入
 
-  private ctx!: PluginContext;
+  private ctx!: ModuleContext;
   private shutdownHandlersRegistered = false;
 
-  async initialize(ctx: PluginContext): Promise<void> {
+  async initialize(ctx: ModuleContext): Promise<void> {
     this.ctx = ctx;
     const cfg = ctx.config.getAppConfig();
     if (!cfg.daemon.enabled) {
-      ctx.logger.info('Daemon plugin disabled by config');
+      ctx.logger.info('Daemon module disabled by config');
       return;
     }
 
     // 等待 server 启动后写入带端口的 PID 文件
-    // server 插件在 daemon 之前初始化，这里直接 resolve
+    // server 模组在 daemon 之前初始化，这里直接 resolve
     const server = ctx.services.tryResolve<ServerInstanceLike>('server.instance');
     const port = server?.port ?? cfg.server.port;
 
@@ -38,7 +32,7 @@ class DaemonPlugin implements Plugin {
       port,
     });
 
-    ctx.logger.info('Daemon plugin initialized', {
+    ctx.logger.info('Daemon module initialized', {
       pid: process.pid,
       port,
       pidFile: ctx.env.pidFile,
@@ -53,13 +47,13 @@ class DaemonPlugin implements Plugin {
 
   async destroy(): Promise<void> {
     removePidFile(this.ctx.env.pidFile);
-    this.ctx.logger.info('Daemon plugin stopped, PID file removed');
+    this.ctx.logger.info('Daemon module stopped, PID file removed');
   }
 
   private registerShutdownHandlers(): void {
     const handle = async (signal: string) => {
       this.ctx.logger.info(`Received ${signal}, shutting down gracefully`);
-      // 通知其他插件
+      // 通知其他模组
       await this.ctx.eventBus.broadcast('kernel:shutdown', { signal });
       // 清理 PID 文件
       removePidFile(this.ctx.env.pidFile);
@@ -78,4 +72,8 @@ class DaemonPlugin implements Plugin {
   }
 }
 
-export default new DaemonPlugin();
+export default (manifest: ModuleManifest): Module => {
+  const m = new DaemonModule();
+  m.manifest = manifest;
+  return m;
+};

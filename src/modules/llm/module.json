@@ -1,0 +1,7 @@
+{
+  "name": "llm",
+  "version": "1.0.0",
+  "description": "LLM adapter module: openai-chat, openai-responses, anthropic, gemini",
+  "type": "module",
+  "dependencies": {}
+}

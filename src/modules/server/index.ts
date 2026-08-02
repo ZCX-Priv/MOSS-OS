@@ -1,7 +1,8 @@
-// src/plugins/server/index.ts
-// Server 插件入口：基于 Bun.serve 启动 HTTP + WebSocket 服务。
+// src/modules/server/index.ts
+// Server 模组入口：基于 Bun.serve 启动 HTTP + WebSocket 服务。
+// 清单来自 module.json，由 ExtensionManager 注入 manifest。
 
-import type { Plugin, PluginContext, PluginMetadata } from '../../core/types';
+import type { Module, ModuleContext, ModuleManifest } from '../../core/types';
 import { ServiceNames } from '../../core/types';
 import { HttpRouter } from './http-router';
 import { WsHandler } from './ws-handler';
@@ -44,14 +45,10 @@ interface BunWebSocket {
   __id?: string;
 }
 
-class ServerPlugin implements Plugin {
-  metadata: PluginMetadata = {
-    name: 'server',
-    version: '1.0.0',
-    description: 'HTTP + WebSocket server based on Bun.serve',
-  };
+class ServerModule implements Module {
+  manifest!: ModuleManifest; // 由管理器注入
 
-  private ctx!: PluginContext;
+  private ctx!: ModuleContext;
   private router!: HttpRouter;
   private wsHandler!: WsHandler;
   private assets!: StaticAssets;
@@ -59,7 +56,7 @@ class ServerPlugin implements Plugin {
   private actualPort = 0;
   private actualHost = '127.0.0.1';
 
-  async initialize(ctx: PluginContext): Promise<void> {
+  async initialize(ctx: ModuleContext): Promise<void> {
     this.ctx = ctx;
     this.assets = new StaticAssets(ctx.env);
     this.router = new HttpRouter(ctx.config, ctx.logger, this.assets);
@@ -83,9 +80,12 @@ class ServerPlugin implements Plugin {
         if (this.server) await this.server.stop();
       },
     };
-    ctx.services.register(ServiceNames.SERVER_INSTANCE, instance, { scope: 'server' });
+    ctx.services.register(ServiceNames.SERVER_INSTANCE, instance, {
+      scope: 'server',
+      registrantType: 'module',
+    });
 
-    ctx.logger.info(`Server plugin started at http://${this.actualHost}:${this.actualPort}`, {
+    ctx.logger.info(`Server module started at http://${this.actualHost}:${this.actualPort}`, {
       staticAssets: this.assets.isAvailable(),
     });
   }
@@ -93,7 +93,7 @@ class ServerPlugin implements Plugin {
   async destroy(): Promise<void> {
     if (this.server) {
       await this.server.stop();
-      this.ctx.logger.info('Server plugin stopped');
+      this.ctx.logger.info('Server module stopped');
     }
   }
 
@@ -272,4 +272,8 @@ async function handleHttp(
   return new Response(responseBody, { status: result.status, headers: respHeaders });
 }
 
-export default new ServerPlugin();
+export default (manifest: ModuleManifest): Module => {
+  const m = new ServerModule();
+  m.manifest = manifest;
+  return m;
+};

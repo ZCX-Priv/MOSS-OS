@@ -1,0 +1,10 @@
+{
+  "name": "agent",
+  "version": "1.0.0",
+  "description": "Agent ReAct engine: LLM + tool loop",
+  "type": "module",
+  "dependencies": {
+    "llm": "^1.0.0",
+    "tools": "^1.0.0"
+  }
+}

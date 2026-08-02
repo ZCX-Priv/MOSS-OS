@@ -1,36 +1,32 @@
-// src/plugins/update/index.ts
-// 更新检查插件：定时检查 npm registry 版本，通过事件总线广播更新通知。
+// src/modules/update/index.ts
+// 更新检查模组：定时检查 npm registry 版本，通过事件总线广播更新通知。
+// 清单来自 module.json，由 ExtensionManager 注入 manifest。
 
-import type { Plugin, PluginContext, PluginMetadata } from '../../core/types';
+import type { Module, ModuleContext, ModuleManifest } from '../../core/types';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const NPM_REGISTRY_URL = 'https://registry.npmjs.org';
 const PACKAGE_NAME = 'moss-os';
 
-class UpdatePlugin implements Plugin {
-  metadata: PluginMetadata = {
-    name: 'update',
-    version: '1.0.0',
-    description: 'Update checker: query npm registry for new versions',
-    dependencies: {},
-  };
+class UpdateModule implements Module {
+  manifest!: ModuleManifest; // 由管理器注入
 
-  private ctx!: PluginContext;
+  private ctx!: ModuleContext;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private currentVersion = '0.0.0';
 
-  async initialize(ctx: PluginContext): Promise<void> {
+  async initialize(ctx: ModuleContext): Promise<void> {
     this.ctx = ctx;
     this.currentVersion = this.readCurrentVersion();
 
     const cfg = ctx.config.getAppConfig().update;
     if (!cfg.autoCheck) {
-      ctx.logger.info('Update plugin: autoCheck disabled');
+      ctx.logger.info('Update module: autoCheck disabled');
       return;
     }
 
-    ctx.logger.info('Update plugin initialized', {
+    ctx.logger.info('Update module initialized', {
       currentVersion: this.currentVersion,
       channel: cfg.channel,
       checkIntervalHours: cfg.checkIntervalHours,
@@ -90,7 +86,7 @@ class UpdatePlugin implements Plugin {
           package: PACKAGE_NAME,
         });
 
-        // 通知前端（通过 Server 插件转发 WS）
+        // 通知前端（通过 Server 模组转发 WS）
         const server = this.ctx.services.tryResolve<{ broadcastWS: (msg: unknown) => void }>('server.instance');
         server?.broadcastWS({
           type: 'update:available',
@@ -123,4 +119,8 @@ function isNewerVersion(latest: string, current: string): boolean {
   return lc > cc;
 }
 
-export default new UpdatePlugin();
+export default (manifest: ModuleManifest): Module => {
+  const m = new UpdateModule();
+  m.manifest = manifest;
+  return m;
+};

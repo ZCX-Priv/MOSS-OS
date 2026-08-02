@@ -9,7 +9,10 @@
   "files": [
     "dist/",
     "config/",
-    "bin/"
+    "bin/",
+    "modules/",
+    "skills/",
+    "mcps/"
   ],
   "scripts": {
     "dev": "node scripts/dev.mjs",
