@@ -443,7 +443,12 @@ export class AgentEngineImpl implements AgentEngine {
       return {
         content: result.content.map(c => {
           if (c.type === 'text') return { type: 'text' as const, text: c.text };
-          return { type: 'image' as const, source: { data: c.data, mimeType: c.mimeType } };
+          if (c.type === 'image') {
+            return { type: 'image' as const, source: { data: c.data, mimeType: c.mimeType } };
+          }
+          // resource: 优先用 text 字段，否则生成占位符（无法映射为 image source 结构）
+          const resText = c.text ?? `[resource: ${c.uri} (${c.mimeType ?? 'unknown'})]`;
+          return { type: 'text' as const, text: resText };
         }),
         isError: result.isError,
         metadata: { server: serverName, tool: toolName },

@@ -6,7 +6,7 @@
 //   2. <packageRoot>/mcps/*.json （默认模板，首次运行时复制到用户目录）
 //   3. config.json.mcpServers   （已 deprecated，仅为向后兼容保留；非空时 warn）
 
-import { McpClient, type McpClientEntry, type ServerConfig } from './client';
+import { McpClient, type McpClientEntry, type McpToolResult, type ServerConfig } from './client';
 import type { MCPManager } from '../contracts';
 import type { ConfigService, EventBus, Environment, Logger } from '../../core/types';
 import { readdir, readFile, stat, mkdir, copyFile } from 'node:fs/promises';
@@ -248,10 +248,7 @@ export class MCPManagerImpl implements MCPManager {
     serverName: string,
     toolName: string,
     args: unknown,
-  ): Promise<{
-    content: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }>;
-    isError?: boolean;
-  }> {
+  ): Promise<McpToolResult> {
     const entry = this.entries.get(serverName);
     if (!entry || entry.status !== 'connected') {
       throw new Error(`MCP server "${serverName}" not connected`);

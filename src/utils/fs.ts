@@ -3,6 +3,7 @@
 
 import { resolve, normalize, isAbsolute, relative, sep } from 'node:path';
 import { existsSync, statSync, readFileSync } from 'node:fs';
+import { isValidUtf8, stripBom } from './encoding';
 
 /**
  * 解析工作目录下的路径：
@@ -42,22 +43,14 @@ export function assertPathInside(path: string, base: string): void {
 export function isBinaryFile(path: string, sampleSize = 8192): boolean {
   const fd = readFileSync(path); // Buffer
   const sample = fd.length > sampleSize ? fd.subarray(0, sampleSize) : fd;
+  if (sample.length === 0) return false;
   // NUL 字节是二进制的强信号
   if (sample.includes(0)) return true;
-  // 统计非可打印（非 ASCII 文本）比例
-  let nonText = 0;
-  for (let i = 0; i < sample.length; i++) {
-    const b = sample[i];
-    // 允许 \t \n \r
-    if (b === 0x09 || b === 0x0a || b === 0x0d) continue;
-    // 允许 ASCII 可打印范围 0x20-0x7e
-    if (b < 0x20 || b > 0x7e) {
-      // 允许 UTF-8 高字节（0x80-0xff），但若比例过高视为二进制
-      nonText++;
-    }
-  }
-  // 阈值 30%
-  return sample.length > 0 && nonText / sample.length > 0.3;
+  // 合法 UTF-8 视为文本（含中文等多字节字符）。
+  // 旧版用 30% 非可打印比例阈值，会把纯中文 UTF-8 文件误判为二进制
+  // （中文字节全在 0x80-0xff，nonText 比例轻松超 60%）。
+  // 改用严格 UTF-8 字节级验证：合法 UTF-8 即文本，否则视为二进制。
+  return !isValidUtf8(sample as Buffer);
 }
 
 /**
@@ -68,7 +61,8 @@ export function readLinesWithNumbers(
   offset = 1,
   limit = 2000,
 ): { text: string; totalLines: number; returnedLines: number } {
-  const content = readFileSync(path, 'utf8');
+  // 读取后剥离 UTF-8 BOM，避免第一行行号后出现不可见字符 \uFEFF
+  const content = stripBom(readFileSync(path, 'utf8'));
   const allLines = content.split('\n');
   const totalLines = allLines.length;
   const start = Math.max(0, offset - 1);

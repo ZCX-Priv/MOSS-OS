@@ -145,7 +145,11 @@ export interface MCPManager {
   }>;
   /** 调用 MCP 工具 */
   callTool(serverName: string, toolName: string, args: unknown): Promise<{
-    content: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }>;
+    content: Array<
+      | { type: 'text'; text: string }
+      | { type: 'image'; data: string; mimeType: string }
+      | { type: 'resource'; uri: string; mimeType?: string; text?: string; blob?: string }
+    >;
     isError?: boolean;
   }>;
   /** 启动/重启指定服务器 */

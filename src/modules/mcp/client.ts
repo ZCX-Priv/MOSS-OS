@@ -38,7 +38,11 @@ export interface McpToolInfo {
 }
 
 export interface McpToolResult {
-  content: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }>;
+  content: Array<
+    | { type: 'text'; text: string }
+    | { type: 'image'; data: string; mimeType: string }
+    | { type: 'resource'; uri: string; mimeType?: string; text?: string; blob?: string }
+  >;
   isError?: boolean;
 }
 
@@ -59,7 +63,7 @@ interface McpSdkClient {
   close(): Promise<void>;
   listTools(): Promise<{ tools: Array<{ name: string; description?: string; inputSchema?: unknown }> }>;
   callTool(req: { name: string; arguments?: Record<string, unknown> }): Promise<{
-    content?: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
+    content?: Array<{ type: string; text?: string; data?: string; mimeType?: string; uri?: string; blob?: string }>;
     isError?: boolean;
   }>;
 }
@@ -239,6 +243,15 @@ export class McpClient {
             data: part.data ?? '',
             mimeType: part.mimeType ?? 'image/png',
           });
+        } else if (part.type === 'resource') {
+          // MCP resource 类型：保留 uri/mimeType/text/blob 字段，不再静默丢弃
+          content.push({
+            type: 'resource',
+            uri: part.uri ?? '',
+            mimeType: part.mimeType,
+            text: part.text,
+            blob: part.blob,
+          });
         }
       }
     }
@@ -257,10 +270,21 @@ export class McpClient {
     const StdioTransport = stdioMod.StdioClientTransport;
     if (!StdioTransport) throw new Error('StdioClientTransport not available in MCP SDK');
     if (!this.config.command) throw new Error('stdio transport requires "command"');
+    // 合并环境变量：继承当前进程 + 用户配置 + UTF-8 引导（避免子进程 GBK 输出乱码）
+    const env = {
+      ...process.env,
+      ...this.config.env,
+      PYTHONUTF8: '1',
+      PYTHONIOENCODING: 'utf-8',
+    } as Record<string, string>;
+    if (process.platform !== 'win32') {
+      env.LANG = env.LANG ?? 'zh_CN.UTF-8';
+      env.LC_ALL = env.LC_ALL ?? 'zh_CN.UTF-8';
+    }
     return new StdioTransport({
       command: this.config.command,
       args: this.config.args ?? [],
-      env: this.config.env,
+      env,
     });
   }
 

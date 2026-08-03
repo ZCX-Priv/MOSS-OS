@@ -5,6 +5,7 @@
 import { readdirSync, readFileSync, statSync, type Dirent } from 'node:fs';
 import { isAbsolute, normalize, join } from 'node:path';
 import { isBinaryFile } from '../../utils/fs';
+import { stripBom } from '../../utils/encoding';
 import { globToRegex, IGNORED_DIRS } from './glob';
 import type { Tool, ToolResult } from './types';
 
@@ -136,7 +137,7 @@ export const grepTool: Tool = {
 
       let content: string;
       try {
-        content = readFileSync(file, 'utf8');
+        content = stripBom(readFileSync(file, 'utf8'));
       } catch {
         continue;
       }

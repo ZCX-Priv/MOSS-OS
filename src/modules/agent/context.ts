@@ -160,7 +160,9 @@ function fileExists(path: string): boolean {
 }
 
 function readFile(path: string): string {
-  return readFileSync(path, 'utf8');
+  // 读取后剥离 UTF-8 BOM，避免 \uFEFF 注入系统提示
+  const raw = readFileSync(path, 'utf8');
+  return raw.charCodeAt(0) === 0xFEFF ? raw.slice(1) : raw;
 }
 
 /** 平台名转为可读名称 */

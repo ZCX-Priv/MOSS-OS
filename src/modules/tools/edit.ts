@@ -3,6 +3,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { isAbsolute, normalize } from 'node:path';
+import { hasUtf8Bom, stripBom } from '../../utils/encoding';
 import type { Tool, ToolResult } from './types';
 
 export const editTool: Tool = {
@@ -69,8 +70,11 @@ export const editTool: Tool = {
     }
 
     let content: string;
+    let hadBom = false;
     try {
-      content = readFileSync(absPath, 'utf8');
+      const rawBuf = readFileSync(absPath);
+      hadBom = hasUtf8Bom(rawBuf);
+      content = stripBom(rawBuf.toString('utf8'));
     } catch (err) {
       return {
         content: [{ type: 'text', text: `Error reading file: ${err instanceof Error ? err.message : err}` }],
@@ -111,7 +115,8 @@ export const editTool: Tool = {
     }
 
     try {
-      writeFileSync(absPath, newContent, 'utf8');
+      // 保留原文件 BOM（若有），保持编码一致性
+      writeFileSync(absPath, hadBom ? '\uFEFF' + newContent : newContent, 'utf8');
       ctx.logger.info(`File edited: ${absPath}`, { replacements });
       return {
         content: [

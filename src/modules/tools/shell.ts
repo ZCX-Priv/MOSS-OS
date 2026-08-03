@@ -2,6 +2,7 @@
 // shell 工具：执行 shell 命令，捕获 stdout/stderr/exitCode。
 
 import { isAbsolute, normalize } from 'node:path';
+import { decodeShellOutput } from '../../utils/encoding';
 import type { Tool, ToolResult } from './types';
 
 export const shellTool: Tool = {
@@ -59,12 +60,26 @@ export const shellTool: Tool = {
     // 优先级：调用参数 > config.tools.shell.timeout > 硬编码 30000
     const timeoutMs = p.timeout ?? (ctx.toolConfig?.timeout as number | undefined) ?? 30000;
 
-    // Windows 用 cmd.exe /c，POSIX 用 /bin/sh -c
+    // Windows 用 cmd.exe /c（前置 chcp 65001 切换 UTF-8 代码页，避免 GBK 输出乱码），
+    // POSIX 用 /bin/sh -c
     const isWindows = process.platform === 'win32';
     const shell = isWindows ? 'cmd.exe' : '/bin/sh';
-    const shellArgs = isWindows ? ['/c', p.command] : ['-c', p.command];
+    const actualCommand = isWindows
+      ? `chcp 65001 >nul && ${p.command}`
+      : p.command;
+    const shellArgs = isWindows ? ['/c', actualCommand] : ['-c', p.command];
 
-    const env = { ...process.env, ...p.env };
+    // 环境变量引导子进程使用 UTF-8 输出
+    const env = {
+      ...process.env,
+      ...p.env,
+      PYTHONUTF8: '1',
+      PYTHONIOENCODING: 'utf-8',
+    } as Record<string, string>;
+    if (!isWindows) {
+      env.LANG = env.LANG ?? 'zh_CN.UTF-8';
+      env.LC_ALL = env.LC_ALL ?? 'zh_CN.UTF-8';
+    }
 
     ctx.logger.info(`Shell execute: ${p.command}`, { cwd, timeoutMs });
 
@@ -84,9 +99,11 @@ export const shellTool: Tool = {
       // 等待完成，带超时
       const exitCode = await waitForProcWithTimeout(proc, timeoutMs, ctx);
 
-      // 读取输出
-      const stdout = await new Response(proc.stdout).text();
-      const stderr = await new Response(proc.stderr).text();
+      // 读取输出（字节级读取 + 智能解码，避免 GBK 输出被强制 UTF-8 解码导致乱码）
+      const stdoutBuf = Buffer.from(await new Response(proc.stdout).arrayBuffer());
+      const stderrBuf = Buffer.from(await new Response(proc.stderr).arrayBuffer());
+      const stdout = decodeShellOutput(stdoutBuf);
+      const stderr = decodeShellOutput(stderrBuf);
 
       let truncated = false;
       let stdoutText = stdout;
