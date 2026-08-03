@@ -38,9 +38,12 @@ function run(cmd, args, opts = {}) {
 }
 
 function detectBun() {
-  // 优先使用 bun
+  // 优先使用直接可用的 bun 命令
   const r = spawnSync('bun', ['--version'], { shell: process.platform === 'win32' });
-  if (r.status === 0) return 'bun';
+  if (r.status === 0) return { cmd: 'bun', args: [] };
+  // 回退到 npx bun（兼容 bun 以 npm 包形式全局安装但不在 PATH 的场景）
+  const r2 = spawnSync('npx', ['bun', '--version'], { shell: process.platform === 'win32' });
+  if (r2.status === 0) return { cmd: 'npx', args: ['bun'] };
   return null;
 }
 
@@ -77,7 +80,8 @@ function buildBackend() {
     process.exit(1);
   }
   // bun build src/main.ts --outfile dist/server.js --target bun
-  run(bun, [
+  run(bun.cmd, [
+    ...bun.args,
     'build',
     entry,
     '--outfile', BACKEND_OUT,
