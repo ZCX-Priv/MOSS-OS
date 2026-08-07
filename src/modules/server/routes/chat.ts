@@ -29,7 +29,6 @@ export function createChatHandler(services: ServiceRegistry): RouteHandler {
         sessionId,
         userMessage: body.message,
         model: body.model,
-        provider: body.provider,
         cwd: body.cwd || process.cwd(),
         onEvent: (e) => events.push(e),
       });
@@ -59,7 +58,6 @@ export interface ChatRequestBody {
   message: string;
   sessionId?: string;
   model?: string;
-  provider?: string;
   cwd?: string;
 }
 

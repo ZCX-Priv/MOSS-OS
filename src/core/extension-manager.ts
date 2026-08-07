@@ -6,7 +6,8 @@
 // 清单替代原 metadata，index.ts 导出工厂函数 (manifest) => Module | Plugin
 
 import { readdir, stat, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { join, dirname } from 'node:path';
 import type {
   Environment,
   EventBus,
@@ -69,12 +70,66 @@ export class ExtensionManager {
   private readonly options: ExtensionManagerOptions;
   /** 合并后的加载顺序（模组在前，插件在后；各自内部按拓扑序） */
   private loadOrder: Array<{ name: string; kind: 'module' | 'plugin' }> = [];
+  /** 被用户禁用的扩展名集合（持久化到 ~/.moss/extensions.json） */
+  private readonly disabledExtensions = new Set<string>();
 
   constructor(coreCtx: KernelCoreContext, options: ExtensionManagerOptions = {}) {
     this.coreCtx = coreCtx;
     this.logger = coreCtx.logger.child('ExtensionManager');
     this.env = coreCtx.env;
     this.options = options;
+    this.loadDisabledList();
+  }
+
+  /** 加载禁用列表 from ~/.moss/extensions.json */
+  private loadDisabledList(): void {
+    const disabledPath = join(this.env.dataDir, 'extensions.json');
+    try {
+      const raw = readFileSync(disabledPath, 'utf8');
+      const parsed = JSON.parse(raw) as { disabled?: string[] };
+      if (Array.isArray(parsed.disabled)) {
+        for (const name of parsed.disabled) {
+          this.disabledExtensions.add(name);
+        }
+      }
+    } catch {
+      // 文件不存在或解析失败，空集合
+    }
+  }
+
+  /** 持久化禁用列表 to ~/.moss/extensions.json */
+  private saveDisabledList(): void {
+    const disabledPath = join(this.env.dataDir, 'extensions.json');
+    try {
+      mkdirSync(dirname(disabledPath), { recursive: true });
+      const data = { disabled: Array.from(this.disabledExtensions) };
+      writeFileSync(disabledPath, JSON.stringify(data, null, 2), 'utf8');
+    } catch (err) {
+      this.logger.error('Failed to save extensions.json', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /** 启用扩展（从禁用列表移除，下次启动生效） */
+  enable(name: string): boolean {
+    if (!this.disabledExtensions.has(name)) return false;
+    this.disabledExtensions.delete(name);
+    this.saveDisabledList();
+    return true;
+  }
+
+  /** 禁用扩展（加入禁用列表，下次启动生效） */
+  disable(name: string): boolean {
+    if (this.disabledExtensions.has(name)) return false;
+    this.disabledExtensions.add(name);
+    this.saveDisabledList();
+    return true;
+  }
+
+  /** 检查扩展是否被禁用 */
+  isDisabled(name: string): boolean {
+    return this.disabledExtensions.has(name);
   }
 
   /**
@@ -110,14 +165,23 @@ export class ExtensionManager {
       plugins: pluginCandidates.map(c => c.name),
     });
 
+    // 过滤掉被用户禁用的扩展
+    const enabledModuleCandidates = moduleCandidates.filter(c => !this.disabledExtensions.has(c.name));
+    const enabledPluginCandidates = pluginCandidates.filter(c => !this.disabledExtensions.has(c.name));
+    if (this.disabledExtensions.size > 0) {
+      this.logger.info(`Skipping disabled extensions`, {
+        disabled: Array.from(this.disabledExtensions),
+      });
+    }
+
     // 并行 import 所有扩展
     const [moduleResults, pluginResults] = await Promise.all([
-      Promise.allSettled(moduleCandidates.map(c => this.loadModule(c))),
-      Promise.allSettled(pluginCandidates.map(c => this.loadPlugin(c))),
+      Promise.allSettled(enabledModuleCandidates.map(c => this.loadModule(c))),
+      Promise.allSettled(enabledPluginCandidates.map(c => this.loadPlugin(c))),
     ]);
 
     moduleResults.forEach((r, idx) => {
-      const c = moduleCandidates[idx];
+      const c = enabledModuleCandidates[idx];
       if (r.status === 'fulfilled') {
         this.modules.set(r.value.manifest.name, r.value);
       } else {
@@ -127,7 +191,7 @@ export class ExtensionManager {
       }
     });
     pluginResults.forEach((r, idx) => {
-      const c = pluginCandidates[idx];
+      const c = enabledPluginCandidates[idx];
       if (r.status === 'fulfilled') {
         this.plugins.set(r.value.manifest.name, r.value);
       } else {
@@ -254,6 +318,57 @@ export class ExtensionManager {
     for (const e of this.modules.values()) if (e.state === 'active') count++;
     for (const e of this.plugins.values()) if (e.state === 'active') count++;
     return count;
+  }
+
+  /**
+   * 返回所有扩展的完整信息列表（供 /api/extensions 路由使用）。
+   * 包含已加载和被禁用（未加载）的扩展。
+   */
+  getExtensionList(): Array<{
+    name: string;
+    version: string;
+    description?: string;
+    type: 'module' | 'plugin';
+    state: ExtensionState;
+    enabled: boolean;
+  }> {
+    const list: Array<{
+      name: string;
+      version: string;
+      description?: string;
+      type: 'module' | 'plugin';
+      state: ExtensionState;
+      enabled: boolean;
+    }> = [];
+
+    for (const [name, entry] of this.modules) {
+      list.push({
+        name,
+        version: entry.manifest.version,
+        description: entry.manifest.description,
+        type: 'module',
+        state: entry.state,
+        enabled: !this.disabledExtensions.has(name),
+      });
+    }
+    for (const [name, entry] of this.plugins) {
+      list.push({
+        name,
+        version: entry.manifest.version,
+        description: entry.manifest.description,
+        type: 'plugin',
+        state: entry.state,
+        enabled: !this.disabledExtensions.has(name),
+      });
+    }
+
+    // 追加被禁用但未加载的扩展（仅在禁用列表中但不在 modules/plugins maps 中的）
+    // 注意：当前实现中，被禁用的扩展在 discoverAndLoad 时已被过滤，
+    // 所以它们不会出现在 modules/plugins maps 中。但由于我们没有持久化它们的
+    // manifest 信息，这里无法返回它们的 version/description。
+    // 前端可通过 enabled=false 标记识别。
+
+    return list;
   }
 
   // ========================================================================

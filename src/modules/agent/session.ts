@@ -5,9 +5,18 @@ import type { AgentMessage } from '../contracts';
 import type { UnifiedMessage } from '../llm/types';
 import type { Logger } from '../../core/types';
 
+/** 上下文文件轨迹（与前端 ContextFile 对齐） */
+export interface ContextFile {
+  path: string;
+  tokens?: number;
+  reason?: 'read' | 'edit' | 'write' | 'grep' | 'glob';
+}
+
 export interface Session {
   id: string;
-  /** 完整的对话历史（含系统提示） */
+  /** 系统提示词（独立存储，不混入对话历史） */
+  systemPrompt: string;
+  /** 对话历史（不含系统提示，仅 user/assistant/tool） */
   messages: AgentMessage[];
   /** 创建时间 */
   createdAt: string;
@@ -20,6 +29,8 @@ export interface Session {
 export class SessionStore {
   private readonly sessions = new Map<string, Session>();
   private readonly logger: Logger;
+  /** 按 sessionId 索引的上下文文件轨迹（read/edit/write/grep/glob 工具累积） */
+  private readonly contextFiles = new Map<string, ContextFile[]>();
 
   constructor(logger: Logger) {
     this.logger = logger;
@@ -31,7 +42,8 @@ export class SessionStore {
     if (!session) {
       session = {
         id: sessionId,
-        messages: [{ role: 'system', content: systemPrompt }],
+        systemPrompt,
+        messages: [],
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         totalTokens: 0,
@@ -55,6 +67,34 @@ export class SessionStore {
 
   delete(sessionId: string): void {
     this.sessions.delete(sessionId);
+    this.contextFiles.delete(sessionId);
+  }
+
+  // ========================================================================
+  // 上下文文件轨迹（供 WS context-updated 推送使用）
+  // ========================================================================
+
+  /** 追加/更新上下文文件轨迹（同 path 存在则更新 reason） */
+  addContextFile(sessionId: string, file: ContextFile): void {
+    const list = this.contextFiles.get(sessionId) ?? [];
+    const existing = list.find((f) => f.path === file.path);
+    if (existing) {
+      existing.reason = file.reason;
+    } else {
+      list.push({ ...file });
+    }
+    this.contextFiles.set(sessionId, list);
+  }
+
+  /** 获取某 session 的上下文文件列表 */
+  getContextFiles(sessionId: string): ContextFile[] {
+    return [...(this.contextFiles.get(sessionId) ?? [])];
+  }
+
+  /** 估算某 session 上下文文件的累计 token 数（粗略：path 长度 / 2） */
+  estimateContextTokens(sessionId: string): number {
+    const files = this.contextFiles.get(sessionId) ?? [];
+    return files.reduce((sum, f) => sum + Math.ceil((f.path.length + (f.tokens ?? 0)) / 2), 0);
   }
 
   /** 添加用户消息 */
@@ -98,7 +138,10 @@ export class SessionStore {
     // 粗略估算：char 数 / 2 ≈ token 数
     const estimateTokens = (text: string): number => Math.ceil(text.length / 2);
 
-    let totalTokens = 0;
+    // 系统提示词单独计算（不混入 messages）
+    const systemTokens = estimateTokens(session.systemPrompt);
+
+    let totalTokens = systemTokens;
     for (const m of session.messages) {
       totalTokens += estimateTokens(m.content);
       if (m.toolCalls) {
@@ -113,12 +156,10 @@ export class SessionStore {
       return;
     }
 
-    // 裁剪：保留 system（第一条）+ 最后 N 条
-    const system = session.messages[0];
-    const rest = session.messages.slice(1);
+    // 裁剪：保留 systemPrompt + 最后 N 条对话消息
+    const rest = session.messages;
 
     // 从后往前保留，直到不超过预算（系统提示预留）
-    const systemTokens = estimateTokens(system.content);
     const budget = maxTokens - systemTokens - 500; // 留 500 token 余量
     const kept: AgentMessage[] = [];
     let used = 0;
@@ -131,35 +172,42 @@ export class SessionStore {
     }
 
     // 注意：裁剪时不能切断 tool_calls 和 tool 结果的配对
-    // 若第一条保留的是 tool 结果但没有对应的 assistant tool_calls，向前补
-    if (kept.length > 0 && kept[0].role === 'tool') {
-      const firstToolCallId = kept[0].toolCallId;
-      // 找到对应的 assistant 消息
-      let foundIdx = -1;
-      for (let i = rest.length - kept.length - 1; i >= 0; i--) {
-        if (rest[i].role === 'assistant' && rest[i].toolCalls?.some(tc => tc.id === firstToolCallId)) {
-          foundIdx = i;
-          break;
+    // 1. 丢弃开头孤立的 tool 结果（对应的 assistant 不在 kept 中，无法形成完整配对）
+    while (kept.length > 0 && kept[0].role === 'tool') {
+      kept.shift();
+    }
+
+    // 2. 从后往前扫描，确保每个带 tool_calls 的 assistant 后面紧跟所有对应的 tool 结果
+    //    若有缺失，丢弃该 assistant 及其紧随的 tool 结果（整组丢弃）
+    for (let i = kept.length - 1; i >= 0; i--) {
+      const m = kept[i];
+      if (m.role === 'assistant' && m.toolCalls && m.toolCalls.length > 0) {
+        const expectedIds = new Set(m.toolCalls.map(tc => tc.id));
+        // 收集紧随其后的连续 tool 消息
+        let j = i + 1;
+        while (j < kept.length && kept[j].role === 'tool') {
+          j++;
         }
-      }
-      if (foundIdx >= 0) {
-        kept.unshift(rest[foundIdx]);
-      } else {
-        // 找不到配对，丢弃孤立的 tool 结果
-        while (kept.length > 0 && kept[0].role === 'tool') {
-          kept.shift();
+        // kept[i+1..j-1] 是连续的 tool 结果
+        const foundIds = new Set(
+          kept.slice(i + 1, j).map(t => t.toolCallId),
+        );
+        const allCovered = [...expectedIds].every(id => foundIds.has(id));
+        if (!allCovered) {
+          // 不完整，丢弃整组：assistant(i) + tool 结果(i+1..j-1)
+          kept.splice(i, j - i);
         }
       }
     }
 
-    session.messages = [system, ...kept];
+    session.messages = kept;
     session.totalTokens = systemTokens + used;
     this.logger.debug(`Context trimmed: ${session.messages.length} messages, ~${session.totalTokens} tokens`);
   }
 
-  /** 把 AgentMessage 转为 LLM UnifiedMessage */
+  /** 把 AgentMessage 转为 LLM UnifiedMessage（头部拼接系统提示词） */
   toUnifiedMessages(session: Session): UnifiedMessage[] {
-    return session.messages.map(m => ({
+    const conversation = session.messages.map(m => ({
       role: m.role,
       content: m.content,
       toolCallId: m.toolCallId,
@@ -170,5 +218,6 @@ export class SessionStore {
       })),
       name: m.name,
     }));
+    return [{ role: 'system', content: session.systemPrompt }, ...conversation];
   }
 }

@@ -4,7 +4,7 @@
 
 import type {
   LLMProvider,
-  ProviderConfig,
+  ModelConfig,
   ProviderFormat,
   StreamDelta,
   UnifiedMessage,
@@ -18,7 +18,7 @@ import type {
 export class OpenAIChatProvider implements LLMProvider {
   readonly format: ProviderFormat = 'openai-chat';
 
-  transformRequest(req: UnifiedRequest, cfg: ProviderConfig): unknown {
+  transformRequest(req: UnifiedRequest, cfg: ModelConfig): unknown {
     const body: Record<string, unknown> = {
       model: req.model,
       messages: req.messages.map(toOpenAIMessage),
@@ -131,7 +131,7 @@ export class OpenAIChatProvider implements LLMProvider {
     return deltas.length === 0 ? null : deltas.length === 1 ? deltas[0] : deltas;
   }
 
-  resolveEndpoint(cfg: ProviderConfig, _model: string): string {
+  resolveEndpoint(cfg: ModelConfig): string {
     // cfg.endpoint 通常是 https://api.deepseek.com 或 https://api.openai.com/v1
     // 兼容两种形式：已含 /v1 和未含 /v1
     const base = cfg.endpoint.replace(/\/$/, '');
@@ -141,7 +141,7 @@ export class OpenAIChatProvider implements LLMProvider {
     return `${base}/v1/chat/completions`;
   }
 
-  resolveHeaders(cfg: ProviderConfig): Record<string, string> {
+  resolveHeaders(cfg: ModelConfig): Record<string, string> {
     return {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${cfg.apiKey}`,

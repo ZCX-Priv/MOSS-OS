@@ -98,26 +98,26 @@ export type StreamDelta =
 
 export type ProviderFormat = 'openai-chat' | 'openai-responses' | 'anthropic' | 'gemini';
 
-export interface ProviderConfig {
+export interface ModelConfig {
   format: ProviderFormat;
   endpoint: string;
   apiKey: string;
-  models: string[];
+  model: string;
   thinking: ThinkingConfig;
 }
 
 export interface LLMProvider {
   readonly format: ProviderFormat;
   /** 将统一请求转换为原生请求体 */
-  transformRequest(req: UnifiedRequest, cfg: ProviderConfig): unknown;
+  transformRequest(req: UnifiedRequest, cfg: ModelConfig): unknown;
   /** 将原生响应转换为统一响应 */
   transformResponse(raw: unknown): UnifiedResponse;
   /** 将单个 SSE chunk 转换为 StreamDelta（流式专用） */
   transformStreamChunk(raw: string): StreamDelta | StreamDelta[] | null;
   /** 解析 endpoint URL（拼接 model 等） */
-  resolveEndpoint(cfg: ProviderConfig, model: string): string;
+  resolveEndpoint(cfg: ModelConfig): string;
   /** 构造鉴权头 */
-  resolveHeaders(cfg: ProviderConfig): Record<string, string>;
+  resolveHeaders(cfg: ModelConfig): Record<string, string>;
   /** 是否支持流式（默认 true） */
   supportsStream?: boolean;
 }

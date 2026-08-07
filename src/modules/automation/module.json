@@ -1,0 +1,10 @@
+{
+  "name": "automation",
+  "version": "1.0.0",
+  "description": "Automation service: cron-based scheduled agent runs with persistence",
+  "type": "module",
+  "dependencies": {
+    "agent": "^1.0.0",
+    "server": "^1.0.0"
+  }
+}

@@ -17,7 +17,7 @@
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "build": "node scripts/build.mjs",
-    "build:webui": "vite build",
+    "build:ui": "cd webui && npm run build",
     "build:backend": "bun build src/main.ts --outfile dist/server.js --target bun",
     "start": "bun src/main.ts start --foreground",
     "start:daemon": "bun src/main.ts start",
@@ -31,6 +31,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
+    "cron-parser": "^5.7.0",
     "iconv-lite": "^0.7.3",
     "zod": "^3.23.8"
   },

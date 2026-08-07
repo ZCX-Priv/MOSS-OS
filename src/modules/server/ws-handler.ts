@@ -2,8 +2,10 @@
 // WebSocket 消息分发：处理前端 WS 消息，转发 Agent 事件到客户端。
 
 import type { Logger, ServiceRegistry } from '../../core/types';
+import { ServiceNames } from '../../core/types';
 import type { WSMessage, WSMessageHandler, WSConnection } from './types';
 import type { AgentEngine, AgentEvent } from '../contracts';
+import type { AutomationService } from '../automation';
 
 interface ConnectionState {
   conn: WSConnection;
@@ -77,6 +79,12 @@ export class WsHandler {
         return this.handleSessionSubscribe(state, msg);
       case 'tool.ask.reply':
         return this.handleAskReply(state, msg);
+      case 'task.create':
+        return this.handleTaskCreate(state, msg);
+      case 'task.switch':
+        return this.handleTaskSwitch(state, msg);
+      case 'automation.run':
+        return this.handleAutomationRun(state, msg);
       default:
         return;
     }
@@ -114,7 +122,6 @@ export class WsHandler {
     const payload = (msg.payload ?? {}) as {
       message?: string;
       model?: string;
-      provider?: string;
       cwd?: string;
     };
 
@@ -139,7 +146,6 @@ export class WsHandler {
         sessionId,
         userMessage: payload.message,
         model: payload.model,
-        provider: payload.provider,
         cwd: payload.cwd || process.cwd(),
         onEvent,
         signal: abortController.signal,
@@ -199,5 +205,83 @@ export class WsHandler {
       return;
     }
     state.conn.send({ type: 'tool.ask.accepted', toolCallId: payload.toolCallId });
+  }
+
+  /**
+   * 阶段5.2：处理 task.create 入站消息。
+   * 调 agent.createTask 创建任务，返回 task.created。
+   * TaskItem.id 即 sessionId（计划假设3），前端可直接用该 id 订阅 session。
+   */
+  private handleTaskCreate(state: ConnectionState, msg: WSMessage): void {
+    const agent = this.services.tryResolve<AgentEngine & {
+      createTask?: (title: string, groupId?: string) => unknown;
+    }>(ServiceNames.AGENT_ENGINE);
+    if (!agent?.createTask) {
+      state.conn.send({ type: 'error', payload: { message: 'Agent engine createTask not available' } });
+      return;
+    }
+    const payload = (msg.payload ?? {}) as { title?: string; groupId?: string };
+    if (!payload.title || typeof payload.title !== 'string') {
+      state.conn.send({ type: 'error', payload: { message: 'title required' } });
+      return;
+    }
+    try {
+      const task = agent.createTask(payload.title, payload.groupId);
+      state.conn.send({ type: 'task.created', payload: { task } });
+      this.logger.info(`Task created via WS: ${(task as { id?: string }).id ?? ''}`);
+    } catch (err) {
+      state.conn.send({
+        type: 'error',
+        payload: { message: err instanceof Error ? err.message : String(err) },
+      });
+    }
+  }
+
+  /**
+   * 阶段5.2：处理 task.switch 入站消息。
+   * 设置 state.sessionId 为 task 对应 sessionId，返回 session.subscribed。
+   * TaskItem.id 即 sessionId（计划假设3）。
+   */
+  private handleTaskSwitch(state: ConnectionState, msg: WSMessage): void {
+    const payload = (msg.payload ?? {}) as { taskId?: string };
+    const taskId = payload.taskId ?? msg.sessionId;
+    if (!taskId) {
+      state.conn.send({ type: 'error', payload: { message: 'taskId required' } });
+      return;
+    }
+    state.sessionId = taskId;
+    state.conn.send({ type: 'session.subscribed', sessionId: taskId });
+    this.logger.debug(`WS task switched: ${taskId}`);
+  }
+
+  /**
+   * 阶段5.2：处理 automation.run 入站消息。
+   * 调 automation.trigger(id)，返回 automation.started。
+   * automation 模组未加载时返回 error。
+   */
+  private handleAutomationRun(state: ConnectionState, msg: WSMessage): void {
+    const automation = this.services.tryResolve<AutomationService>(ServiceNames.AUTOMATION_SERVICE);
+    if (!automation) {
+      state.conn.send({ type: 'error', payload: { message: 'Automation service not available' } });
+      return;
+    }
+    const payload = (msg.payload ?? {}) as { automationId?: string };
+    if (!payload.automationId) {
+      state.conn.send({ type: 'error', payload: { message: 'automationId required' } });
+      return;
+    }
+    try {
+      const { runId } = automation.trigger(payload.automationId);
+      state.conn.send({
+        type: 'automation.started',
+        payload: { automationId: payload.automationId, runId },
+      });
+      this.logger.info(`Automation triggered via WS: ${payload.automationId} (run ${runId})`);
+    } catch (err) {
+      state.conn.send({
+        type: 'error',
+        payload: { message: err instanceof Error ? err.message : String(err) },
+      });
+    }
   }
 }

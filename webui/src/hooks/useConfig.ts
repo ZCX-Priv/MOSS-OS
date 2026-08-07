@@ -1,45 +1,80 @@
-// frontend/src/hooks/useConfig.ts
-// 配置加载 hook
+// UI/src/hooks/useConfig.ts
+// 配置 hook：挂载时拉取 appConfig + apiConfig 写入 store；
+// 提供 updateAppConfig / updateApiConfig；
+// 订阅 config.changed WS 事件自动重拉配置。
 
-import { useEffect } from 'react';
+import { useEffect, useCallback } from 'react';
 import { useStore } from '../store';
 import { api } from '../api/http';
-import type { AppConfig, ApiConfig } from '../types';
+import { wsClient } from '../api/ws';
+import type { AppConfig, ApiConfig } from '../types/api';
+import { toast } from 'sonner';
 
 export function useConfig() {
-  const {
-    setAppConfig,
-    setApiConfig,
-    appConfig,
-    apiConfig,
-    setSelectedModel,
-    setWorkingDirectory,
-  } = useStore();
+  const setAppConfig = useStore((s) => s.setAppConfig);
+  const setApiConfig = useStore((s) => s.setApiConfig);
+  const setCurrentModel = useStore((s) => s.setCurrentModel);
+
+  const loadConfig = useCallback(async () => {
+    try {
+      const [app, apiCfg] = await Promise.all([api.getAppConfig(), api.getApiConfig()]);
+      setAppConfig(app);
+      setApiConfig(apiCfg);
+      // 从 appConfig 同步默认模型到 store
+      if (app.agent?.defaultModel) {
+        setCurrentModel(app.agent.defaultModel);
+      }
+      // 同步后端工作目录（终端运行目录）为默认 workingDirectory
+      if (app.agent?.workingDirectory && !useStore.getState().workingDirectory) {
+        useStore.getState().setWorkingDirectory(app.agent.workingDirectory);
+      }
+    } catch (err) {
+      // 后端未启动时静默（WS 会持续重连）
+      console.warn('loadConfig failed:', err);
+    }
+  }, [setAppConfig, setApiConfig, setCurrentModel]);
 
   useEffect(() => {
-    Promise.all([api.getAppConfig(), api.getApiConfig()])
-      .then(([app, apiCfg]) => {
-        setAppConfig(app);
-        setApiConfig(apiCfg);
-        setSelectedModel(app.agent.defaultModel);
-        setWorkingDirectory(app.agent.workingDirectory || '');
-      })
-      .catch((err) => {
-        console.error('Failed to load config:', err);
-      });
-  }, [setAppConfig, setApiConfig, setSelectedModel, setWorkingDirectory]);
+    void loadConfig();
+    // 订阅 config.changed WS 事件自动重拉
+    const unsub = wsClient.onMessage((msg) => {
+      if (msg.type === 'config.changed') {
+        void loadConfig();
+      }
+    });
+    return unsub;
+  }, [loadConfig]);
 
-  const updateAppConfig = async (patch: Partial<AppConfig>) => {
-    if (!appConfig) return;
-    const updated = await api.updateAppConfig(patch);
-    setAppConfig(updated);
-  };
+  const updateAppConfig = useCallback(
+    async (patch: Partial<AppConfig>) => {
+      try {
+        const updated = await api.updateAppConfig(patch);
+        setAppConfig(updated);
+        if (updated.agent?.defaultModel) {
+          setCurrentModel(updated.agent.defaultModel);
+        }
+        return updated;
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : String(err));
+        throw err;
+      }
+    },
+    [setAppConfig, setCurrentModel],
+  );
 
-  const updateApiConfig = async (patch: Partial<ApiConfig>) => {
-    if (!apiConfig) return;
-    const updated = await api.updateApiConfig(patch);
-    setApiConfig(updated);
-  };
+  const updateApiConfig = useCallback(
+    async (patch: Partial<ApiConfig>) => {
+      try {
+        const updated = await api.updateApiConfig(patch);
+        setApiConfig(updated);
+        return updated;
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : String(err));
+        throw err;
+      }
+    },
+    [setApiConfig],
+  );
 
-  return { appConfig, apiConfig, updateAppConfig, updateApiConfig };
+  return { appConfig: useStore((s) => s.appConfig), apiConfig: useStore((s) => s.apiConfig), updateAppConfig, updateApiConfig, reload: loadConfig };
 }

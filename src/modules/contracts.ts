@@ -17,25 +17,15 @@ import type { Tool, ToolContext, ToolResult } from './tools/types';
 export interface LLMRouter {
   /**
    * 发送非流式请求。
-   * @param req 统一请求
-   * @param providerName 显式指定 provider；若 undefined 则按 model 反查
+   * @param req 统一请求（req.model 为 ModelConfig.id 或 API 模型名）
    */
-  complete(req: UnifiedRequest, providerName?: string): Promise<UnifiedResponse>;
+  complete(req: UnifiedRequest): Promise<UnifiedResponse>;
 
   /**
    * 发送流式请求。
    * @returns 异步迭代器，逐个产出 StreamDelta
    */
-  stream(
-    req: UnifiedRequest,
-    providerName?: string,
-  ): AsyncIterable<StreamDelta>;
-
-  /** 列出所有已配置的 provider 名称 */
-  listProviders(): string[];
-
-  /** 根据 model 名反查所属 provider */
-  resolveProviderForModel(model: string): string | null;
+  stream(req: UnifiedRequest): AsyncIterable<StreamDelta>;
 }
 
 // ============================================================================
@@ -87,8 +77,6 @@ export interface AgentRunInput {
   userMessage: string;
   /** 模型名（可选，默认从配置） */
   model?: string;
-  /** provider 名（可选） */
-  provider?: string;
   /** 工作目录 */
   cwd: string;
   /** 流式事件回调 */

@@ -6,7 +6,7 @@
 
 import type {
   LLMProvider,
-  ProviderConfig,
+  ModelConfig,
   ProviderFormat,
   StreamDelta,
   UnifiedMessage,
@@ -22,7 +22,7 @@ const ANTHROPIC_VERSION = '2023-06-01';
 export class AnthropicProvider implements LLMProvider {
   readonly format: ProviderFormat = 'anthropic';
 
-  transformRequest(req: UnifiedRequest, cfg: ProviderConfig): unknown {
+  transformRequest(req: UnifiedRequest, cfg: ModelConfig): unknown {
     // Anthropic：system 在顶层，messages 数组不含 system
     let systemText = '';
     const messages: unknown[] = [];
@@ -175,13 +175,13 @@ export class AnthropicProvider implements LLMProvider {
     return deltas.length === 0 ? null : deltas.length === 1 ? deltas[0] : deltas;
   }
 
-  resolveEndpoint(cfg: ProviderConfig, _model: string): string {
+  resolveEndpoint(cfg: ModelConfig): string {
     const base = cfg.endpoint.replace(/\/$/, '');
     if (base.endsWith('/v1')) return `${base}/messages`;
     return `${base}/v1/messages`;
   }
 
-  resolveHeaders(cfg: ProviderConfig): Record<string, string> {
+  resolveHeaders(cfg: ModelConfig): Record<string, string> {
     return {
       'Content-Type': 'application/json',
       'x-api-key': cfg.apiKey,

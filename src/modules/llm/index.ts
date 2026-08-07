@@ -18,8 +18,7 @@ class LLMModule implements Module {
 
     const apiCfg = ctx.config.getApiConfig();
     ctx.logger.info('LLM module initialized', {
-      providers: Object.keys(apiCfg.providers),
-      defaultProvider: apiCfg.defaultProvider,
+      modelCount: apiCfg.models.length,
     });
   }
 }

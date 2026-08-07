@@ -2,16 +2,19 @@
 // Agent ReAct 循环引擎。
 
 import { buildSystemPrompt, buildTools } from './context';
-import { SessionStore } from './session';
+import { SessionStore, type ContextFile } from './session';
+import { TaskStore, type TaskItem, type TaskGroup } from './task-store';
 import { LLMError, type UnifiedRequest } from '../llm/types';
 import type { AgentMessage, AgentEngine, AgentEvent, AgentRunInput, AgentRunResult } from '../contracts';
 import type { LLMRouter, ToolRegistry, MCPManager } from '../contracts';
 import type { ConfigService, EventBus, Logger, ServiceRegistry, Environment, ApiConfig } from '../../core/types';
 import { ServiceNames } from '../../core/types';
 import type { ToolResult } from '../tools/types';
+import { getTodoStorePath, readTodoStore } from '../tools/todo';
 
 export class AgentEngineImpl implements AgentEngine {
   private readonly sessions: SessionStore;
+  private readonly tasks: TaskStore;
   private readonly services: ServiceRegistry;
   private readonly config: ConfigService;
   private readonly eventBus: EventBus;
@@ -37,15 +40,15 @@ export class AgentEngineImpl implements AgentEngine {
     this.logger = deps.logger;
     this.env = deps.env;
     this.sessions = new SessionStore(deps.logger);
+    this.tasks = new TaskStore(deps.env, deps.logger);
   }
 
   async run(input: AgentRunInput): Promise<AgentRunResult> {
     const { sessionId, userMessage, cwd, onEvent, signal } = input;
     const cfg = this.config.getAppConfig().agent;
     const model = input.model ?? cfg.defaultModel;
-    const provider = input.provider;
 
-    this.logger.info(`Agent run start`, { sessionId, model, provider });
+    this.logger.info(`Agent run start`, { sessionId, model });
 
     // 解析依赖服务
     const llm = this.services.tryResolve<LLMRouter>(ServiceNames.LLM_ROUTER);
@@ -113,7 +116,7 @@ export class AgentEngineImpl implements AgentEngine {
       const toolCallAccumulators = new Map<number, { id: string; name: string; args: string }>();
 
       try {
-        for await (const delta of llm.stream(req, provider)) {
+        for await (const delta of llm.stream(req)) {
           if (signal?.aborted) break;
 
           switch (delta.type) {
@@ -199,8 +202,16 @@ export class AgentEngineImpl implements AgentEngine {
       // 执行工具调用
       for (const tc of toolCalls) {
         if (signal?.aborted) {
+          // abort 时补一个错误 tool 结果，保持 tool_calls 配对完整
+          // 否则 assistant 消息已带 tool_calls 但缺少对应 tool 结果，session 复用时会触发 HTTP 400
+          this.sessions.addToolMessage(
+            this.sessions.get(sessionId)!,
+            tc.id,
+            'Error: aborted by user',
+            tc.name,
+          );
           finishReason = 'aborted';
-          break;
+          continue;
         }
         await this.executeToolCall(tc, {
           sessionId,
@@ -254,9 +265,83 @@ export class AgentEngineImpl implements AgentEngine {
     return this.sessions.get(sessionId)?.messages ?? [];
   }
 
+  /** 获取会话上下文文件轨迹（阶段5.1：供 session-context 路由回填） */
+  getContextFiles(sessionId: string): ContextFile[] {
+    return this.sessions.getContextFiles(sessionId);
+  }
+
+  /** 估算会话上下文文件累计 token 数（阶段5.1：供 session-context 路由回填） */
+  estimateContextTokens(sessionId: string): number {
+    return this.sessions.estimateContextTokens(sessionId);
+  }
+
   /** 删除会话 */
   deleteSession(sessionId: string): void {
     this.sessions.delete(sessionId);
+  }
+
+  // ========================================================================
+  // 任务管理（供 Server 路由调用）
+  // ========================================================================
+
+  listTasks(): TaskItem[] {
+    return this.tasks.listTasks();
+  }
+
+  getTask(id: string): TaskItem | null {
+    return this.tasks.getTask(id);
+  }
+
+  createTask(title: string, groupId?: string): TaskItem {
+    return this.tasks.createTask(title, groupId);
+  }
+
+  updateTask(id: string, patch: { title?: string; groupId?: string }): TaskItem | null {
+    return this.tasks.updateTask(id, patch);
+  }
+
+  deleteTask(id: string): boolean {
+    return this.tasks.deleteTask(id);
+  }
+
+  listTaskGroups(): TaskGroup[] {
+    return this.tasks.listGroups();
+  }
+
+  createTaskGroup(name: string): TaskGroup {
+    return this.tasks.createGroup(name);
+  }
+
+  updateTaskGroup(id: string, patch: { name?: string }): TaskGroup | null {
+    return this.tasks.updateGroup(id, patch);
+  }
+
+  deleteTaskGroup(id: string, moveTasksTo?: string): boolean {
+    return this.tasks.deleteGroup(id, moveTasksTo);
+  }
+
+  /** 搜索任务标题 + 会话消息内容 */
+  searchAll(query: string): {
+    tasks: TaskItem[];
+    messages: Array<{ sessionId: string; messageId: string; text: string }>;
+  } {
+    const tasks = this.tasks.searchTasks(query);
+    const q = query.toLowerCase();
+    const messages: Array<{ sessionId: string; messageId: string; text: string }> = [];
+    for (const session of this.sessions.list()) {
+      for (const msg of session.messages) {
+        if (msg.role === 'user' || msg.role === 'assistant') {
+          if (msg.content.toLowerCase().includes(q)) {
+            messages.push({
+              sessionId: session.id,
+              messageId: `${session.id}-${session.messages.indexOf(msg)}`,
+              text: msg.content.slice(0, 200),
+            });
+          }
+        }
+      }
+    }
+    return { tasks, messages };
   }
 
   // ========================================================================
@@ -292,11 +377,19 @@ export class AgentEngineImpl implements AgentEngine {
     // 判断是否是 MCP 工具（mcp__server__tool 前缀）
     const mcpMatch = tc.name.match(/^mcp__([^_]+)__(.+)$/);
     let result: ToolResult;
-
-    if (mcpMatch) {
-      result = await this.executeMcpTool(mcpMatch[1], mcpMatch[2], args, ctx);
-    } else {
-      result = await this.executeBuiltinTool(tc.name, args, ctx);
+    try {
+      if (mcpMatch) {
+        result = await this.executeMcpTool(mcpMatch[1], mcpMatch[2], args, ctx);
+      } else {
+        result = await this.executeBuiltinTool(tc.name, args, ctx);
+      }
+    } catch (err) {
+      // 工具执行抛异常时，补一个错误 ToolResult，确保 addToolMessage 一定执行
+      // 否则 assistant 消息已带 tool_calls 但缺少对应 tool 结果，session 复用时会触发 HTTP 400
+      result = {
+        content: [{ type: 'text', text: `Error executing tool ${tc.name}: ${err instanceof Error ? err.message : String(err)}` }],
+        isError: true,
+      };
     }
 
     // 记录工具结果到会话
@@ -317,6 +410,79 @@ export class AgentEngineImpl implements AgentEngine {
       toolCallId,
       result,
     });
+
+    // 阶段5.1：工具执行副作用 WS 推送（todo-updated / context-updated / file-*）
+    this.notifyToolSideEffects(tc.name, args, sessionId);
+  }
+
+  /**
+   * 工具执行后的副作用 WS 推送（阶段5.1）：
+   * - todo 工具：推送 todo-updated
+   * - read/edit/write/grep/glob：更新 contextFiles 轨迹并推送 context-updated
+   * - write：额外推送 file-created
+   * - edit：额外推送 file-edited
+   * server 模组未加载时静默跳过，不阻断工具执行。
+   */
+  private notifyToolSideEffects(toolName: string, args: unknown, sessionId: string): void {
+    const server = this.services.tryResolve<{
+      sendToSession: (sid: string, msg: unknown) => void;
+    }>(ServiceNames.SERVER_INSTANCE);
+    if (!server) return;
+
+    try {
+      switch (toolName) {
+        case 'todo': {
+          const store = readTodoStore(getTodoStorePath(this.env));
+          const todos = store.items.filter((it) => it.sessionId === sessionId);
+          server.sendToSession(sessionId, {
+            type: 'todo-updated',
+            sessionId,
+            payload: { todos },
+          });
+          break;
+        }
+        case 'read':
+        case 'edit':
+        case 'write':
+        case 'grep':
+        case 'glob': {
+          const path = (args as { path?: string } | null)?.path;
+          if (!path) break;
+          const file: ContextFile = { path, reason: toolName as ContextFile['reason'] };
+          this.sessions.addContextFile(sessionId, file);
+          const files = this.sessions.getContextFiles(sessionId);
+          const totalTokens = this.sessions.estimateContextTokens(sessionId);
+          const maxTokens = this.config.getAppConfig().agent.maxTokens * 4;
+          server.sendToSession(sessionId, {
+            type: 'context-updated',
+            sessionId,
+            payload: { files, totalTokens, maxTokens },
+          });
+          if (toolName === 'write') {
+            server.sendToSession(sessionId, {
+              type: 'file-created',
+              sessionId,
+              payload: { path },
+            });
+          } else if (toolName === 'edit') {
+            server.sendToSession(sessionId, {
+              type: 'file-edited',
+              sessionId,
+              payload: { path },
+            });
+          }
+          break;
+        }
+        default:
+          break;
+      }
+    } catch (err) {
+      this.logger.warn('notifyToolSideEffects failed', {
+        toolName,
+        sessionId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   private async executeBuiltinTool(
@@ -468,14 +634,13 @@ export class AgentEngineImpl implements AgentEngine {
 }
 
 /**
- * 从 apiConfig 反查 model 所属 provider，返回 `${providerName}/${model}` 作为可读模型名。
- * 找不到匹配的 provider 则返回 model 本身。
+ * 从 apiConfig.models 反查 model 的显示名（cfg.name）。
+ * 先按 id 精确匹配，再按 model 字段（API 模型名）兜底；找不到返回 model 本身。
  */
 function resolveModelDisplayName(apiConfig: ApiConfig, model: string): string {
-  for (const [providerName, provider] of Object.entries(apiConfig.providers)) {
-    if (provider.models.includes(model)) {
-      return `${providerName}/${model}`;
-    }
-  }
+  const byId = apiConfig.models.find(m => m.id === model);
+  if (byId) return byId.name;
+  const byModel = apiConfig.models.find(m => m.model === model);
+  if (byModel) return byModel.name;
   return model;
 }

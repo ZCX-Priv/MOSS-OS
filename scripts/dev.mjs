@@ -77,20 +77,27 @@ function startBackend() {
 }
 
 function startFrontend() {
-  log('webui', 'starting (vite)...');
-  const viteBin = resolve(ROOT, 'node_modules/vite/bin/vite.js');
-  if (existsSync(viteBin)) {
-    return spawnChild('webui', 'node', [viteBin], {
-      env: { ...process.env, FORCE_COLOR: '1' },
-    });
+  log('ui', 'starting (vite in webui/)...');
+  const uiDir = resolve(ROOT, 'webui');
+  if (!existsSync(uiDir)) {
+    log('ui', `ERROR: webui directory not found: ${uiDir}`);
+    process.exit(1);
   }
-  if (hasNpx()) {
-    return spawnChild('webui', 'npx', ['vite'], {
-      env: { ...process.env, FORCE_COLOR: '1' },
-    });
-  }
-  log('webui', 'ERROR: vite not found. Run "npm install" first.');
-  process.exit(1);
+  // 在 webui/ 目录运行 npm run dev（webui/ 有独立 vite.config.ts，端口 3000，代理 /api 与 /ws 到后端 7766）
+  const child = spawn('npm', ['run', 'dev'], {
+    stdio: ['inherit', 'inherit', 'inherit'],
+    shell: isWin,
+    cwd: uiDir,
+    env: { ...process.env, FORCE_COLOR: '1' },
+  });
+  child.on('exit', (code, signal) => {
+    log('ui', `exited (code=${code}, signal=${signal})`);
+  });
+  child.on('error', err => {
+    log('ui', `error: ${err.message}`);
+  });
+  children.push(child);
+  return child;
 }
 
 function killAll() {
@@ -117,7 +124,7 @@ function main() {
   console.log('=========================================');
   console.log(' MOSS-OS Dev');
   console.log('  Backend: http://127.0.0.1:7766');
-  console.log('  WebUI: http://127.0.0.1:5173');
+  console.log('  UI: http://127.0.0.1:3000');
   console.log('=========================================');
   startBackend();
   startFrontend();

@@ -28,6 +28,61 @@ import {
   createConnectMcpServerHandler,
   createDisconnectMcpServerHandler,
 } from './routes/mcp';
+import { createListSkillsHandler, createGetSkillHandler } from './routes/skills';
+import { createSpecsHandler } from './routes/specs';
+import { createVersionHandler } from './routes/version';
+import {
+  createListModelsHandler,
+  createSetCurrentModelHandler,
+  createCreateModelHandler,
+  createUpdateModelHandler,
+  createDeleteModelHandler,
+  createTestModelHandler,
+  createReorderModelsHandler,
+} from './routes/models';
+import { createListTodosHandler, createReplaceTodosHandler } from './routes/todos';
+import { createSessionContextHandler } from './routes/session-context';
+import {
+  createListTasksHandler,
+  createCreateTaskHandler,
+  createGetTaskHandler,
+  createUpdateTaskHandler,
+  createDeleteTaskHandler,
+  createListTaskGroupsHandler,
+  createCreateTaskGroupHandler,
+  createUpdateTaskGroupHandler,
+  createDeleteTaskGroupHandler,
+} from './routes/tasks';
+import { createSearchHandler } from './routes/search';
+import {
+  createListAgentsHandler,
+  createCreateAgentHandler,
+  createGetAgentHandler,
+  createUpdateAgentHandler,
+  createDeleteAgentHandler,
+  createSetDefaultAgentHandler,
+} from './routes/agents';
+import { createListAutomationsHandler,
+  createCreateAutomationHandler,
+  createGetAutomationHandler,
+  createUpdateAutomationHandler,
+  createDeleteAutomationHandler,
+  createTriggerAutomationHandler,
+  createPauseAutomationHandler,
+  createResumeAutomationHandler,
+  createAutomationHistoryHandler,
+  createListAutomationTemplatesHandler,
+} from './routes/automations';
+import {
+  createListPluginsHandler,
+  createGetPluginHandler,
+  createUpdatePluginHandler,
+} from './routes/plugins';
+import {
+  createResolveDirectoryHandler,
+  createSuggestPathsHandler,
+  createPickDirectoryHandler,
+} from './routes/filesystem';
 
 interface BunServer {
   stop(): void | Promise<void>;
@@ -85,6 +140,16 @@ class ServerModule implements Module {
       registrantType: 'module',
     });
 
+    // 阶段5.3：订阅 config:changed 事件，转发为 WS config.changed
+    // 阶段5.4：订阅 extension:changed 事件，转发为 WS extension.changed
+    // 通过 EventBus 解耦，避免 config-service / kernel 直接依赖 server.instance（循环依赖）
+    ctx.eventBus.onAction('config:changed', (data) => {
+      this.wsHandler.broadcast({ type: 'config.changed', payload: data });
+    });
+    ctx.eventBus.onAction('extension:changed', (data) => {
+      this.wsHandler.broadcast({ type: 'extension.changed', payload: data });
+    });
+
     ctx.logger.info(`Server module started at http://${this.actualHost}:${this.actualPort}`, {
       staticAssets: this.assets.isAvailable(),
     });
@@ -100,9 +165,10 @@ class ServerModule implements Module {
   // ========================================================================
 
   private registerRoutes(): void {
-    const { config, services } = this.ctx;
+    const { config, services, env } = this.ctx;
 
     this.router.addRoute({ method: 'GET', pattern: '/api/health', handler: createHealthHandler(services), auth: false });
+    this.router.addRoute({ method: 'GET', pattern: '/api/version', handler: createVersionHandler(env), auth: false });
 
     this.router.addRoute({ method: 'GET', pattern: '/api/config', handler: createGetAppConfigHandler(config), auth: true });
     this.router.addRoute({ method: 'PUT', pattern: '/api/config', handler: createUpdateAppConfigHandler(config), auth: true });
@@ -114,12 +180,75 @@ class ServerModule implements Module {
     this.router.addRoute({ method: 'GET', pattern: '/api/session', handler: createListSessionsHandler(services), auth: true });
     this.router.addRoute({ method: 'DELETE', pattern: '/api/session/:id', handler: createDeleteSessionHandler(services), auth: true });
     this.router.addRoute({ method: 'GET', pattern: '/api/session/:id', handler: createSessionHistoryHandler(services), auth: true });
+    this.router.addRoute({ method: 'GET', pattern: '/api/sessions/:id/context', handler: createSessionContextHandler(services, config), auth: true });
 
     this.router.addRoute({ method: 'GET', pattern: '/api/mcp/servers', handler: createListMcpServersHandler(services), auth: true });
     this.router.addRoute({ method: 'GET', pattern: '/api/mcp/tools', handler: createListMcpToolsHandler(services), auth: true });
     this.router.addRoute({ method: 'POST', pattern: '/api/mcp/call', handler: createCallMcpToolHandler(services), auth: true });
     this.router.addRoute({ method: 'POST', pattern: '/api/mcp/connect', handler: createConnectMcpServerHandler(services), auth: true });
     this.router.addRoute({ method: 'POST', pattern: '/api/mcp/disconnect', handler: createDisconnectMcpServerHandler(services), auth: true });
+
+    // skills / specs
+    this.router.addRoute({ method: 'GET', pattern: '/api/skills', handler: createListSkillsHandler(services), auth: true });
+    this.router.addRoute({ method: 'GET', pattern: '/api/skills/:name', handler: createGetSkillHandler(services), auth: true });
+    this.router.addRoute({ method: 'GET', pattern: '/api/specs', handler: createSpecsHandler(services), auth: true });
+
+    // models
+    this.router.addRoute({ method: 'GET', pattern: '/api/models', handler: createListModelsHandler(config), auth: true });
+    this.router.addRoute({ method: 'PUT', pattern: '/api/models/current', handler: createSetCurrentModelHandler(config), auth: true });
+    this.router.addRoute({ method: 'PUT', pattern: '/api/models/reorder', handler: createReorderModelsHandler(config), auth: true });
+    this.router.addRoute({ method: 'POST', pattern: '/api/models', handler: createCreateModelHandler(config), auth: true });
+    this.router.addRoute({ method: 'POST', pattern: '/api/models/:id/test', handler: createTestModelHandler(services), auth: true });
+    this.router.addRoute({ method: 'PATCH', pattern: '/api/models/:id', handler: createUpdateModelHandler(config), auth: true });
+    this.router.addRoute({ method: 'DELETE', pattern: '/api/models/:id', handler: createDeleteModelHandler(config), auth: true });
+
+    // todos
+    this.router.addRoute({ method: 'GET', pattern: '/api/todos/:sessionId', handler: createListTodosHandler(env), auth: true });
+    this.router.addRoute({ method: 'PUT', pattern: '/api/todos/:sessionId', handler: createReplaceTodosHandler(env), auth: true });
+
+    // tasks + 分组
+    this.router.addRoute({ method: 'GET', pattern: '/api/tasks', handler: createListTasksHandler(services), auth: true });
+    this.router.addRoute({ method: 'POST', pattern: '/api/tasks', handler: createCreateTaskHandler(services), auth: true });
+    this.router.addRoute({ method: 'GET', pattern: '/api/tasks/:id', handler: createGetTaskHandler(services, env), auth: true });
+    this.router.addRoute({ method: 'PATCH', pattern: '/api/tasks/:id', handler: createUpdateTaskHandler(services), auth: true });
+    this.router.addRoute({ method: 'DELETE', pattern: '/api/tasks/:id', handler: createDeleteTaskHandler(services), auth: true });
+    this.router.addRoute({ method: 'GET', pattern: '/api/task-groups', handler: createListTaskGroupsHandler(services), auth: true });
+    this.router.addRoute({ method: 'POST', pattern: '/api/task-groups', handler: createCreateTaskGroupHandler(services), auth: true });
+    this.router.addRoute({ method: 'PATCH', pattern: '/api/task-groups/:id', handler: createUpdateTaskGroupHandler(services), auth: true });
+    this.router.addRoute({ method: 'DELETE', pattern: '/api/task-groups/:id', handler: createDeleteTaskGroupHandler(services), auth: true });
+
+    // 搜索
+    this.router.addRoute({ method: 'GET', pattern: '/api/search', handler: createSearchHandler(services), auth: true });
+
+    // agents
+    this.router.addRoute({ method: 'GET', pattern: '/api/agents', handler: createListAgentsHandler(services), auth: true });
+    this.router.addRoute({ method: 'POST', pattern: '/api/agents', handler: createCreateAgentHandler(services), auth: true });
+    this.router.addRoute({ method: 'GET', pattern: '/api/agents/:id', handler: createGetAgentHandler(services), auth: true });
+    this.router.addRoute({ method: 'PATCH', pattern: '/api/agents/:id', handler: createUpdateAgentHandler(services), auth: true });
+    this.router.addRoute({ method: 'DELETE', pattern: '/api/agents/:id', handler: createDeleteAgentHandler(services), auth: true });
+    this.router.addRoute({ method: 'PUT', pattern: '/api/agents/default', handler: createSetDefaultAgentHandler(services), auth: true });
+
+    // automations
+    this.router.addRoute({ method: 'GET', pattern: '/api/automations', handler: createListAutomationsHandler(services), auth: true });
+    this.router.addRoute({ method: 'POST', pattern: '/api/automations', handler: createCreateAutomationHandler(services), auth: true });
+    this.router.addRoute({ method: 'GET', pattern: '/api/automations/:id', handler: createGetAutomationHandler(services), auth: true });
+    this.router.addRoute({ method: 'PATCH', pattern: '/api/automations/:id', handler: createUpdateAutomationHandler(services), auth: true });
+    this.router.addRoute({ method: 'DELETE', pattern: '/api/automations/:id', handler: createDeleteAutomationHandler(services), auth: true });
+    this.router.addRoute({ method: 'POST', pattern: '/api/automations/:id/trigger', handler: createTriggerAutomationHandler(services), auth: true });
+    this.router.addRoute({ method: 'POST', pattern: '/api/automations/:id/pause', handler: createPauseAutomationHandler(services), auth: true });
+    this.router.addRoute({ method: 'POST', pattern: '/api/automations/:id/resume', handler: createResumeAutomationHandler(services), auth: true });
+    this.router.addRoute({ method: 'GET', pattern: '/api/automations/:id/history', handler: createAutomationHistoryHandler(services), auth: true });
+    this.router.addRoute({ method: 'GET', pattern: '/api/automation-templates', handler: createListAutomationTemplatesHandler(services), auth: true });
+
+    // plugins（阶段6.1：复用 kernel.extensions，映射为 PluginItem[]）
+    this.router.addRoute({ method: 'GET', pattern: '/api/plugins', handler: createListPluginsHandler(services), auth: true });
+    this.router.addRoute({ method: 'GET', pattern: '/api/plugins/:id', handler: createGetPluginHandler(services), auth: true });
+    this.router.addRoute({ method: 'PATCH', pattern: '/api/plugins/:id', handler: createUpdatePluginHandler(services), auth: true });
+
+    // filesystem（浏览器端文件夹选择：后端原生对话框拿真实绝对路径 + 搜索回退）
+    this.router.addRoute({ method: 'POST', pattern: '/api/filesystem/pick-directory', handler: createPickDirectoryHandler(env), auth: true });
+    this.router.addRoute({ method: 'POST', pattern: '/api/filesystem/resolve-directory', handler: createResolveDirectoryHandler(env), auth: true });
+    this.router.addRoute({ method: 'GET', pattern: '/api/filesystem/suggest-paths', handler: createSuggestPathsHandler(env), auth: true });
   }
 
   private async startServer(): Promise<void> {

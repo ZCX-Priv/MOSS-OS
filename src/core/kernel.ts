@@ -91,12 +91,23 @@ export class Microkernel {
     // 5. 按序初始化扩展
     await this.extensionManager.initializeAll();
 
-    // 暴露扩展状态查询服务（供 health 路由等使用；非受保护服务名）
+    // 暴露扩展管理服务（供 extensions 路由使用）
+    // 阶段5.4：enable/disable 后广播 extension:changed，由 server 模组订阅转发为 WS
     this.services.register(
       'kernel.extensions',
       {
         getStates: () => this.extensionManager!.getExtensionStates(),
         getActiveCount: () => this.extensionManager!.getActiveExtensionCount(),
+        getList: () => this.extensionManager!.getExtensionList(),
+        enable: (name: string) => {
+          this.extensionManager!.enable(name);
+          void this.eventBus!.broadcast('extension:changed', { name, action: 'enable' });
+        },
+        disable: (name: string) => {
+          this.extensionManager!.disable(name);
+          void this.eventBus!.broadcast('extension:changed', { name, action: 'disable' });
+        },
+        isDisabled: (name: string) => this.extensionManager!.isDisabled(name),
       },
       { scope: 'kernel', registrantType: 'module' },
     );

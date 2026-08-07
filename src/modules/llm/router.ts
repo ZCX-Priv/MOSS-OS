@@ -1,5 +1,5 @@
-// src/plugins/llm/router.ts
-// LLM 路由器：按 provider 路由 + 按模型自动匹配 + 流式/非流式分发。
+// src/modules/llm/router.ts
+// LLM 路由器：按 modelId 查找 ModelConfig + 流式/非流式分发。
 
 import { getProvider } from './providers';
 import { httpRequest } from './client';
@@ -7,12 +7,12 @@ import { parseSSEStream } from './stream';
 import { LLMError } from './types';
 import type {
   LLMProvider,
-  ProviderConfig,
+  ModelConfig,
   StreamDelta,
   UnifiedRequest,
   UnifiedResponse,
 } from './types';
-import type { ApiConfig, Logger, ConfigService, EventBus } from '../../core/types';
+import type { ConfigService, Logger, EventBus } from '../../core/types';
 import type { LLMRouter } from '../contracts';
 
 export class LLMRouterImpl implements LLMRouter {
@@ -26,24 +26,25 @@ export class LLMRouterImpl implements LLMRouter {
     this.logger = logger;
   }
 
-  async complete(req: UnifiedRequest, providerName?: string): Promise<UnifiedResponse> {
-    const { provider, cfg } = this.resolveProvider(req.model, providerName);
+  async complete(req: UnifiedRequest): Promise<UnifiedResponse> {
+    const cfg = this.resolveModel(req.model);
+    const provider = getProvider(cfg.format);
 
-    const endpoint = provider.resolveEndpoint(cfg, req.model);
+    const endpoint = provider.resolveEndpoint(cfg);
     const headers = provider.resolveHeaders(cfg);
-    const body = provider.transformRequest({ ...req, stream: false }, cfg);
+    const body = provider.transformRequest({ ...req, model: cfg.model, stream: false }, cfg);
 
     // 发出前 hook
     const processed = await this.eventBus.emit('llm:request:before', {
       endpoint,
       body,
       provider: cfg.format,
-      model: req.model,
+      model: cfg.model,
     });
     const finalEndpoint = processed.endpoint;
     const finalBody = processed.body;
 
-    this.logger.debug(`LLM request: ${req.model}`, {
+    this.logger.debug(`LLM request: ${cfg.model}`, {
       provider: cfg.format,
       endpoint: finalEndpoint,
     });
@@ -80,28 +81,29 @@ export class LLMRouterImpl implements LLMRouter {
     // 响应后 hook
     await this.eventBus.broadcast('llm:response:after', {
       provider: cfg.format,
-      model: req.model,
+      model: cfg.model,
       usage: result.usage,
     });
 
     return result;
   }
 
-  async *stream(req: UnifiedRequest, providerName?: string): AsyncIterable<StreamDelta> {
-    const { provider, cfg } = this.resolveProvider(req.model, providerName);
+  async *stream(req: UnifiedRequest): AsyncIterable<StreamDelta> {
+    const cfg = this.resolveModel(req.model);
+    const provider = getProvider(cfg.format);
 
-    const endpoint = this.resolveStreamEndpoint(provider, cfg, req.model);
+    const endpoint = this.resolveStreamEndpoint(provider, cfg);
     const headers = provider.resolveHeaders(cfg);
-    const body = provider.transformRequest({ ...req, stream: true }, cfg);
+    const body = provider.transformRequest({ ...req, model: cfg.model, stream: true }, cfg);
 
     const processed = await this.eventBus.emit('llm:request:before', {
       endpoint,
       body,
       provider: cfg.format,
-      model: req.model,
+      model: cfg.model,
     });
 
-    this.logger.debug(`LLM stream request: ${req.model}`, {
+    this.logger.debug(`LLM stream request: ${cfg.model}`, {
       provider: cfg.format,
       endpoint: processed.endpoint,
     });
@@ -141,69 +143,59 @@ export class LLMRouterImpl implements LLMRouter {
 
     await this.eventBus.broadcast('llm:response:after', {
       provider: cfg.format,
-      model: req.model,
+      model: cfg.model,
       stream: true,
     });
   }
 
-  listProviders(): string[] {
-    return Object.keys(this.config.getApiConfig().providers);
-  }
-
-  resolveProviderForModel(model: string): string | null {
-    const apiCfg = this.config.getApiConfig();
-    for (const [name, p] of Object.entries(apiCfg.providers)) {
-      if (p.models.includes(model)) return name;
-    }
-    return null;
-  }
-
   // ========================================================================
 
-  private resolveProvider(
-    model: string,
-    providerName?: string,
-  ): { provider: LLMProvider; cfg: ProviderConfig } {
+  /**
+   * 按 modelId 查找 ModelConfig：先按 id 精确匹配，找不到则按 model 字段（API 模型名）兜底。
+   * 找不到则抛 LLMError；apiKey 为空也抛 LLMError。
+   */
+  private resolveModel(modelId: string): ModelConfig {
     const apiCfg = this.config.getApiConfig();
-    let cfg: ProviderConfig | undefined;
-    let name: string | undefined = providerName;
 
-    if (!name) {
-      name = this.resolveProviderForModel(model) ?? apiCfg.defaultProvider;
-    }
-    cfg = apiCfg.providers[name];
-
-    if (!cfg) {
-      throw new LLMError(
-        `Provider "${name}" not found in api.json. Available: ${Object.keys(apiCfg.providers).join(', ')}`,
-        undefined,
-        false,
-      );
+    // 先按 id 精确匹配
+    const byId = apiCfg.models.find(m => m.id === modelId);
+    if (byId) {
+      this.ensureApiKey(byId);
+      return byId;
     }
 
-    // 空 apiKey 校验：避免无意义的 401 往返，给用户明确指引
+    // 兜底：按 model 字段（API 模型名）匹配
+    const byModel = apiCfg.models.find(m => m.model === modelId);
+    if (byModel) {
+      this.ensureApiKey(byModel);
+      return byModel;
+    }
+
+    throw new LLMError(
+      `Model "${modelId}" not found in api.json. Available: ${apiCfg.models.map(m => m.id).join(', ') || '(none)'}`,
+      undefined,
+      false,
+    );
+  }
+
+  /** 空 apiKey 校验：避免无意义的 401 往返，给用户明确指引 */
+  private ensureApiKey(cfg: ModelConfig): void {
     if (!cfg.apiKey) {
       throw new LLMError(
-        `Provider "${name}" 的 API Key 未配置，请在"API 配置"面板中填写。`,
+        `模型 "${cfg.model}" 的 API Key 未配置，请在设置中填写。`,
         undefined,
         false,
       );
     }
-
-    return { provider: getProvider(cfg.format), cfg };
   }
 
   /** 流式端点：Gemini 用 streamGenerateContent，其他 provider 用同 endpoint */
-  private resolveStreamEndpoint(
-    provider: LLMProvider,
-    cfg: ProviderConfig,
-    model: string,
-  ): string {
+  private resolveStreamEndpoint(provider: LLMProvider, cfg: ModelConfig): string {
     // Gemini 专用流式端点
     if (cfg.format === 'gemini') {
       const base = cfg.endpoint.replace(/\/$/, '');
-      return `${base}/models/${model}:streamGenerateContent?alt=sse`;
+      return `${base}/models/${cfg.model}:streamGenerateContent?alt=sse`;
     }
-    return provider.resolveEndpoint(cfg, model);
+    return provider.resolveEndpoint(cfg);
   }
 }

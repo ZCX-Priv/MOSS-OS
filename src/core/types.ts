@@ -196,20 +196,26 @@ export interface AppConfig {
 
 export type ApiConfig = {
   version: number;
-  defaultProvider: string;
-  providers: Record<string, ProviderConfig>;
+  models: ModelConfig[];
 };
 
-export interface ProviderConfig {
+export interface ModelConfig {
+  /** 内部唯一 id（如 "model_1734..."） */
+  id: string;
+  /** 显示名，如 "GPT-4o" */
+  name: string;
+  /** 发送给 API 的模型名，如 "gpt-4o" */
+  model: string;
   format: 'openai-chat' | 'openai-responses' | 'anthropic' | 'gemini';
   endpoint: string;
   apiKey: string;
-  models: string[];
   thinking: {
     enabled: boolean;
     effort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
     budgetTokens?: number;
   };
+  /** 上下文窗口档位，如 '200k' / '400k' / '1m'；可选 */
+  contextWindow?: string;
 }
 
 export interface ConfigService {
@@ -353,6 +359,12 @@ export const ServiceNames = {
   SKILL_REGISTRY: 'skill.registry',
   /** Spec 注册表（由 tools 模组注册） */
   SPEC_REGISTRY: 'spec.registry',
+  /** Agent 注册表（由 agents 模组注册） */
+  AGENTS_REGISTRY: 'agents.registry',
+  /** 自动化任务服务（由 automation 模组注册） */
+  AUTOMATION_SERVICE: 'automation.service',
+  /** 内核扩展管理服务（由 kernel 注册） */
+  KERNEL_EXTENSIONS: 'kernel.extensions',
 } as const;
 
 /**

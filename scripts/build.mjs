@@ -100,23 +100,16 @@ function buildBackend() {
 // ============================================================================
 function buildFrontend() {
   log('Building webui (Vite)...');
-  const webuiDir = resolve(ROOT, 'webui');
-  if (!existsSync(webuiDir)) {
-    error(`WebUI directory not found: ${webuiDir}`);
+  const uiDir = resolve(ROOT, 'webui');
+  if (!existsSync(uiDir)) {
+    error(`webui directory not found: ${uiDir}`);
     process.exit(1);
   }
-  // 优先 npx vite build（兼容环境），否则 fallback 到 node node_modules/vite/bin/vite.js
-  const npx = detectNpx();
-  if (npx) {
-    run(npx, ['vite', 'build'], { cwd: ROOT });
-  } else {
-    const viteBin = resolve(ROOT, 'node_modules/vite/bin/vite.js');
-    if (!existsSync(viteBin)) {
-      error('vite not found. Run "npm install" first.');
-      process.exit(1);
-    }
-    run('node', [viteBin, 'build'], { cwd: ROOT });
-  }
+  // 在 webui/ 目录运行 npm run build（webui/ 有独立的 vite.config.ts，产物输出到 ../dist/webui）
+  run('npm', ['run', 'build'], {
+    cwd: uiDir,
+    shell: process.platform === 'win32',
+  });
   if (!existsSync(WEBUI_DIST)) {
     error(`WebUI build output not found: ${WEBUI_DIST}`);
     process.exit(1);

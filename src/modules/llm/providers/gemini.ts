@@ -7,7 +7,7 @@
 
 import type {
   LLMProvider,
-  ProviderConfig,
+  ModelConfig,
   ProviderFormat,
   StreamDelta,
   UnifiedMessage,
@@ -21,7 +21,7 @@ import type {
 export class GeminiProvider implements LLMProvider {
   readonly format: ProviderFormat = 'gemini';
 
-  transformRequest(req: UnifiedRequest, cfg: ProviderConfig): unknown {
+  transformRequest(req: UnifiedRequest, cfg: ModelConfig): unknown {
     // Gemini：systemInstruction 在顶层，contents 数组不含 system
     let systemText = '';
     const contents: unknown[] = [];
@@ -169,22 +169,18 @@ export class GeminiProvider implements LLMProvider {
     return deltas.length === 0 ? null : deltas.length === 1 ? deltas[0] : deltas;
   }
 
-  resolveEndpoint(cfg: ProviderConfig, model: string): string {
+  resolveEndpoint(cfg: ModelConfig): string {
     const base = cfg.endpoint.replace(/\/$/, '');
-    const method = 'stream' in cfg ? 'streamGenerateContent' : 'generateContent';
-    // 我们通过请求体的 stream 字段控制，endpoint 始终用 generateContent
-    // 真正流式用 streamGenerateContent，但为简化，统一用 generateContent + SSE
-    // Gemini 流式：streamGenerateContent?alt=sse
-    return `${base}/models/${model}:generateContent`;
+    return `${base}/models/${cfg.model}:generateContent`;
   }
 
   /** 流式端点单独构造 */
-  resolveStreamEndpoint(cfg: ProviderConfig, model: string): string {
+  resolveStreamEndpoint(cfg: ModelConfig): string {
     const base = cfg.endpoint.replace(/\/$/, '');
-    return `${base}/models/${model}:streamGenerateContent?alt=sse`;
+    return `${base}/models/${cfg.model}:streamGenerateContent?alt=sse`;
   }
 
-  resolveHeaders(cfg: ProviderConfig): Record<string, string> {
+  resolveHeaders(cfg: ModelConfig): Record<string, string> {
     return {
       'Content-Type': 'application/json',
       'x-goog-api-key': cfg.apiKey,

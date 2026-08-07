@@ -1,7 +1,7 @@
-// frontend/src/api/ws.ts
-// WebSocket 客户端：自动重连
+// UI/src/api/ws.ts
+// WebSocket 客户端：自动重连。迁移自 webui/src/api/ws.ts，无业务改动。
 
-import type { WSMessage } from '../types';
+import type { WSMessage } from '../types/api';
 
 type MessageHandler = (msg: WSMessage) => void;
 type StatusHandler = (status: 'connecting' | 'open' | 'closed' | 'error') => void;

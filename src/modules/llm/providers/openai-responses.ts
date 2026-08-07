@@ -4,7 +4,7 @@
 
 import type {
   LLMProvider,
-  ProviderConfig,
+  ModelConfig,
   ProviderFormat,
   StreamDelta,
   UnifiedMessage,
@@ -18,7 +18,7 @@ import type {
 export class OpenAIResponsesProvider implements LLMProvider {
   readonly format: ProviderFormat = 'openai-responses';
 
-  transformRequest(req: UnifiedRequest, cfg: ProviderConfig): unknown {
+  transformRequest(req: UnifiedRequest, cfg: ModelConfig): unknown {
     // Responses API 用 input 数组替代 messages
     const input = req.messages.map(toResponsesInput);
 
@@ -165,13 +165,13 @@ export class OpenAIResponsesProvider implements LLMProvider {
     return deltas.length === 0 ? null : deltas.length === 1 ? deltas[0] : deltas;
   }
 
-  resolveEndpoint(cfg: ProviderConfig, _model: string): string {
+  resolveEndpoint(cfg: ModelConfig): string {
     const base = cfg.endpoint.replace(/\/$/, '');
     if (base.endsWith('/v1')) return `${base}/responses`;
     return `${base}/v1/responses`;
   }
 
-  resolveHeaders(cfg: ProviderConfig): Record<string, string> {
+  resolveHeaders(cfg: ModelConfig): Record<string, string> {
     return {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${cfg.apiKey}`,

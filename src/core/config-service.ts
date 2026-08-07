@@ -12,7 +12,7 @@ import type {
   EventBusSubscription,
   Logger,
   LogLevel,
-  ProviderConfig,
+  ModelConfig,
 } from './types';
 import { buildToolsSchema, buildToolsDefaults } from '../modules/tools/manifest';
 
@@ -30,12 +30,15 @@ const providerThinkingSchema = z.object({
   budgetTokens: z.number().int().positive().optional(),
 });
 
-const providerConfigSchema: z.ZodType<ProviderConfig> = z.object({
+const modelConfigSchema: z.ZodType<ModelConfig> = z.object({
+  id: z.string().min(1),
+  name: z.string(),
+  model: z.string(),
   format: z.enum(['openai-chat', 'openai-responses', 'anthropic', 'gemini']),
-  endpoint: z.string().url(),
+  endpoint: z.string(),
   apiKey: z.string(),
-  models: z.array(z.string()).min(1),
   thinking: providerThinkingSchema,
+  contextWindow: z.string().optional(),
 });
 
 const appConfigSchema = z.object({
@@ -71,8 +74,7 @@ const appConfigSchema = z.object({
 
 const apiConfigSchema = z.object({
   version: z.number().int().positive(),
-  defaultProvider: z.string(),
-  providers: z.record(z.string(), providerConfigSchema),
+  models: z.array(modelConfigSchema),
 });
 
 // ============================================================================
@@ -86,7 +88,7 @@ export function defaultAppConfig(): AppConfig {
     daemon: { enabled: true, logLevel: 'info' },
     update: { autoCheck: true, channel: 'stable', checkIntervalHours: 24 },
     agent: {
-      defaultModel: 'deepseek-chat',
+      defaultModel: '',
       maxTokens: 8192,
       maxTurns: 25,
       workingDirectory: '',
@@ -101,16 +103,7 @@ export function defaultAppConfig(): AppConfig {
 export function defaultApiConfig(): ApiConfig {
   return {
     version: 1,
-    defaultProvider: 'deepseek',
-    providers: {
-      deepseek: {
-        format: 'openai-chat',
-        endpoint: 'https://api.deepseek.com',
-        apiKey: '',
-        models: ['deepseek-chat', 'deepseek-reasoner'],
-        thinking: { enabled: false },
-      },
-    },
+    models: [],
   };
 }
 

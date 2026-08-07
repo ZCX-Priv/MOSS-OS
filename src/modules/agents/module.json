@@ -1,0 +1,7 @@
+{
+  "name": "agents",
+  "version": "1.0.0",
+  "description": "Agent registry: manage built-in and custom agents with persistence",
+  "type": "module",
+  "dependencies": {}
+}
