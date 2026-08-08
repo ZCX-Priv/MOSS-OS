@@ -5,7 +5,7 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import type { Tool, ToolResult } from './types';
+import type { Tool, ToolResult, ToolContext } from './types';
 import type { Environment } from '../../core/types';
 
 export type TodoStatus = 'pending' | 'in_progress' | 'completed';
@@ -71,7 +71,7 @@ export function writeTodoStore(path: string, store: TodoStore): void {
 
 /**
  * 创建 todo 工具。需要 env 以定位持久化路径 ~/.moss/todos.json。
- * create action 接受可选 sessionId 参数，写入新 item 的 sessionId 字段。
+ * sessionId 由 ToolContext 自动注入，无需 AI 传参。
  */
 export function createTodoTool(env: Environment): Tool {
   const storePath = getTodoStorePath(env);
@@ -109,10 +109,6 @@ export function createTodoTool(env: Environment): Tool {
           enum: ['pending', 'in_progress', 'completed'],
           description: 'New status. Only for update.',
         },
-        sessionId: {
-          type: 'string',
-          description: 'Optional session id to associate the todo with a specific session (create only).',
-        },
       },
       required: ['action'],
       additionalProperties: false,
@@ -120,14 +116,14 @@ export function createTodoTool(env: Environment): Tool {
     annotations: {
       idempotentHint: false,
     },
-    async execute(params): Promise<ToolResult> {
+    icon: 'list-checks',
+    async execute(params, ctx: ToolContext): Promise<ToolResult> {
       const p = params as {
         action: 'create' | 'update';
         text?: string;
         priority?: TodoPriority;
         id?: string;
         status?: TodoStatus;
-        sessionId?: string;
       };
 
       const store = readTodoStore(storePath);
@@ -144,7 +140,7 @@ export function createTodoTool(env: Environment): Tool {
           priority: p.priority ?? 'medium',
           createdAt: now,
           updatedAt: now,
-          ...(p.sessionId ? { sessionId: p.sessionId } : {}),
+          sessionId: ctx.sessionId,
         };
         store.items.push(item);
         store.nextId += 1;

@@ -82,6 +82,9 @@ interface UIState {
   mcpServers: McpServer[];
   mcpTools: McpTool[];
 
+  // --- 工具图标映射（toolName → icon 字符串，由 /api/tools 拉取） ---
+  toolIconMap: Record<string, string>;
+
   // --- WS ---
   wsStatus: 'connecting' | 'open' | 'closed' | 'error';
 
@@ -172,6 +175,9 @@ interface UIActions {
   setMcpServers: (s: McpServer[]) => void;
   setMcpTools: (t: McpTool[]) => void;
 
+  // 工具图标映射
+  setToolIconMap: (map: Record<string, string>) => void;
+
   // PendingAsk
   addPendingAsk: (ask: PendingAsk) => void;
   removePendingAsk: (toolCallId: string) => void;
@@ -239,6 +245,9 @@ export const useStore = create<Store>((set) => ({
   // --- MCP ---
   mcpServers: [],
   mcpTools: [],
+
+  // --- 工具图标映射 ---
+  toolIconMap: {},
 
   // --- WS ---
   wsStatus: 'closed',
@@ -405,6 +414,9 @@ export const useStore = create<Store>((set) => ({
   // --- Actions: MCP ---
   setMcpServers: (mcpServers) => set({ mcpServers }),
   setMcpTools: (mcpTools) => set({ mcpTools }),
+
+  // --- Actions: 工具图标映射 ---
+  setToolIconMap: (toolIconMap) => set({ toolIconMap }),
 
   // --- Actions: PendingAsk ---
   addPendingAsk: (ask) =>

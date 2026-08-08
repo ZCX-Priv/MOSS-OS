@@ -38,6 +38,7 @@ export const readTool: Tool = {
     readOnlyHint: true,
     idempotentHint: true,
   },
+  icon: 'file-text',
   async execute(params, ctx): Promise<ToolResult> {
     const p = params as { path: string; offset?: number; limit?: number };
     if (!p.path) {

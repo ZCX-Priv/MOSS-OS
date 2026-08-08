@@ -38,6 +38,7 @@ export const editTool: Tool = {
   annotations: {
     destructiveHint: true,
   },
+  icon: 'file-pen',
   async execute(params, ctx): Promise<ToolResult> {
     const p = params as {
       path: string;

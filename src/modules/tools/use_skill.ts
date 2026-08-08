@@ -32,6 +32,7 @@ export const useSkillTool: Tool = {
     readOnlyHint: true,
     idempotentHint: true,
   },
+  icon: 'sparkles',
   async execute(params, ctx): Promise<ToolResult> {
     const p = params as { skill: string; args?: Record<string, unknown> };
     if (!p.skill) {

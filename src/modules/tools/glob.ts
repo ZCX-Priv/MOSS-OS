@@ -39,6 +39,7 @@ export const globTool: Tool = {
     readOnlyHint: true,
     idempotentHint: true,
   },
+  icon: 'folder-search',
   async execute(params, ctx): Promise<ToolResult> {
     const p = params as { pattern: string; path?: string; maxResults?: number };
 

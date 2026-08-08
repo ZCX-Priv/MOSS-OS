@@ -253,6 +253,7 @@ export function ModelSelector() {
   // ======================== 桌面端：DropdownMenu ========================
   return (
     <DropdownMenu
+      modal={false}
       open={mainOpen}
       onOpenChange={(o) => {
         setMainOpen(o);
@@ -272,6 +273,16 @@ export function ModelSelector() {
         align="start"
         sideOffset={6}
         collisionPadding={8}
+        onInteractOutside={(e) => {
+          // 二级调参面板（独立 Portal）上的交互不应关闭主菜单
+          const target = e.target as Node | null;
+          if (
+            target &&
+            (target as HTMLElement).closest?.('[data-slot="popover-content"]')
+          ) {
+            e.preventDefault();
+          }
+        }}
         className="w-64 max-h-[min(14.625rem,var(--radix-dropdown-menu-content-available-height))] p-1"
       >
         {models.length === 0 && (
@@ -330,6 +341,23 @@ export function ModelSelector() {
                   className="w-64 p-3"
                   // 阻止点击面板内容时冒泡到 DropdownMenu 导致关闭
                   onMouseDown={(e) => e.preventDefault()}
+                  // 鼠标在主菜单 item 间移动触发 item 聚焦 / pointerdown 时，
+                  // 对 PopoverContent 而言是 outside，会触发子菜单自我关闭。
+                  // 这里拦截来自主菜单的交互，保持子菜单打开。
+                  onInteractOutside={(e) => {
+                    const target = e.target as Node | null;
+                    if (
+                      target &&
+                      ((target as HTMLElement).closest?.(
+                        '[data-slot="dropdown-menu-content"]'
+                      ) ||
+                        (target as HTMLElement).closest?.(
+                          '[data-slot="dropdown-menu-item"]'
+                        ))
+                    ) {
+                      e.preventDefault();
+                    }
+                  }}
                 >
                   {renderSettings(model)}
                 </PopoverContent>

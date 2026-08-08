@@ -41,6 +41,7 @@ export const shellTool: Tool = {
     destructiveHint: true,
     requireConfirmation: true,
   },
+  icon: 'terminal',
   async execute(params, ctx): Promise<ToolResult> {
     const p = params as {
       command: string;

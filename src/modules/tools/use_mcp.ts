@@ -34,6 +34,7 @@ export const useMcpTool: Tool = {
     readOnlyHint: false,
     destructiveHint: false, // 取决于具体 MCP 工具，保守起见不标记
   },
+  icon: 'plug',
   async execute(params, ctx): Promise<ToolResult> {
     const p = params as { server: string; tool: string; arguments?: unknown };
     if (!p.server || !p.tool) {

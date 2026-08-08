@@ -25,6 +25,7 @@ export const listMcpTool: Tool = {
     readOnlyHint: true,
     idempotentHint: true,
   },
+  icon: 'list',
   async execute(params, ctx): Promise<ToolResult> {
     const p = params as { server?: string };
 

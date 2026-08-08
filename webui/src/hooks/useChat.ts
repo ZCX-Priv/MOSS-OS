@@ -57,8 +57,14 @@ export function useChat() {
         }
       }
 
-      setActiveSession(sessionId);
-      if (taskId) setActiveTaskId(taskId);
+      // 若该 session 正在生成，先中断当前流（打断 AI 回复再发送新消息）
+    if (state.generatingBySession[sessionId]) {
+      wsClient.send({ type: 'chat.abort', sessionId });
+      setGenerating(sessionId, false);
+    }
+
+    setActiveSession(sessionId);
+    if (taskId) setActiveTaskId(taskId);
 
       // 3. 写入用户消息
       const userMsg: ChatMessage = {

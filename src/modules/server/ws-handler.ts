@@ -151,22 +151,33 @@ export class WsHandler {
         signal: abortController.signal,
       });
 
-      state.conn.send({
-        type: 'chat.done',
-        sessionId: result.sessionId,
-        payload: {
-          finishReason: result.finishReason,
-          finalText: result.finalText,
-        },
-      });
+      if (abortController.signal.aborted) {
+        state.conn.send({ type: 'chat.aborted', sessionId: result.sessionId });
+      } else {
+        state.conn.send({
+          type: 'chat.done',
+          sessionId: result.sessionId,
+          payload: {
+            finishReason: result.finishReason,
+            finalText: result.finalText,
+          },
+        });
+      }
     } catch (err) {
-      state.conn.send({
-        type: 'error',
-        sessionId,
-        payload: { message: err instanceof Error ? err.message : String(err) },
-      });
+      if (abortController.signal.aborted) {
+        state.conn.send({ type: 'chat.aborted', sessionId });
+      } else {
+        state.conn.send({
+          type: 'error',
+          sessionId,
+          payload: { message: err instanceof Error ? err.message : String(err) },
+        });
+      }
     } finally {
-      state.abortController = undefined;
+      // 仅当当前 controller 仍是自己时才清除，避免打断发送时误清新流的 controller
+      if (state.abortController === abortController) {
+        state.abortController = undefined;
+      }
     }
   }
 
@@ -181,6 +192,29 @@ export class WsHandler {
     if (msg.sessionId) {
       state.sessionId = msg.sessionId;
       state.conn.send({ type: 'session.subscribed', sessionId: msg.sessionId });
+
+      // WS 重连恢复 pending asks：查询该 session 的待答列表，逐条发送 ask 事件，
+      // 前端 useWebSocket 的 ask 处理器会将其加入 store.pendingAsks。
+      const agent = this.services.tryResolve<AgentEngine & {
+        getPendingAsks?: (sessionId: string) => Array<{
+          toolCallId: string;
+          sessionId: string;
+          question: string;
+        }>;
+      }>('agent.engine');
+      const asks = agent?.getPendingAsks?.(msg.sessionId) ?? [];
+      for (const ask of asks) {
+        state.conn.send({
+          type: 'ask',
+          sessionId: ask.sessionId,
+          payload: {
+            type: 'ask',
+            sessionId: ask.sessionId,
+            toolCallId: ask.toolCallId,
+            question: ask.question,
+          },
+        });
+      }
     }
   }
 

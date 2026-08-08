@@ -34,6 +34,7 @@ export const writeTool: Tool = {
     destructiveHint: true,
     requireConfirmation: true,
   },
+  icon: 'file-plus',
   async execute(params, ctx): Promise<ToolResult> {
     const p = params as { path: string; content: string; createDirs?: boolean };
     if (!p.path) {

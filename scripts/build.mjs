@@ -80,6 +80,9 @@ function buildBackend() {
     process.exit(1);
   }
   // bun build src/main.ts --outfile dist/server.js --target bun
+  // --external nativefiledialog-for-bun：该库通过 Bun.dlopen 加载 FFI 二进制（nfd.dll 等），
+  // 二进制路径基于 import.meta.dir 解析，若打包进 server.js 会指向 dist/ 找不到二进制，
+  // 故标记为 external，运行时从 node_modules 加载，由库自行解析同目录的 .dll/.dylib/.so。
   run(bun.cmd, [
     ...bun.args,
     'build',
@@ -87,6 +90,7 @@ function buildBackend() {
     '--outfile', BACKEND_OUT,
     '--target', 'bun',
     '--format', 'esm',
+    '--external', 'nativefiledialog-for-bun',
   ]);
   if (!existsSync(BACKEND_OUT)) {
     error(`Backend build output not found: ${BACKEND_OUT}`);

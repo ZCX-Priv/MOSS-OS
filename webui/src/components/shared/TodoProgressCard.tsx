@@ -1,0 +1,122 @@
+// webui/src/components/shared/TodoProgressCard.tsx
+// Todo 进度卡片：依据参考图片设计，展示进度头部 + 三态动画图标。
+// 两种变体：sidebar（侧边栏，无关闭按钮）和 inline（对话流内，带关闭按钮）。
+// 两侧共享同一 store 数据源，WS 推送时天然同步。
+
+import { useTranslation } from 'react-i18next';
+import { CircleCheck, Circle, Loader2, X, ListTodo } from 'lucide-react';
+import type { TodoItem } from '../../types/api';
+import { cn } from '@/lib/utils';
+
+interface TodoProgressCardProps {
+  todos: TodoItem[];
+  /** inline 变体显示关闭按钮，sidebar 变体不显示 */
+  variant?: 'sidebar' | 'inline';
+  onClose?: () => void;
+  className?: string;
+}
+
+export function TodoProgressCard({
+  todos,
+  variant = 'sidebar',
+  onClose,
+  className,
+}: TodoProgressCardProps) {
+  const { t } = useTranslation();
+
+  const total = todos.length;
+  const completed = todos.filter((item) => item.status === 'completed').length;
+  const progressPercent = total > 0 ? Math.round((completed / total) * 100) : 0;
+
+  // sidebar 空状态
+  if (total === 0 && variant === 'sidebar') {
+    return (
+      <div className={cn('flex flex-col gap-2 p-4', className)}>
+        <div className="flex items-center gap-1.5 text-xs font-medium text-foreground">
+          <ListTodo className="size-3.5 text-muted-foreground" />
+          <span>{t('task.todo')}</span>
+        </div>
+        <span className="text-xs text-muted-foreground">{t('task.noTodos')}</span>
+      </div>
+    );
+  }
+
+  // inline 空状态：不渲染
+  if (total === 0 && variant === 'inline') return null;
+
+  const isInline = variant === 'inline';
+
+  return (
+    <div
+      className={cn(
+        'flex flex-col gap-2.5',
+        isInline &&
+          'rounded-lg border border-border bg-card p-3 shadow-sm',
+        !isInline && 'p-4',
+        className,
+      )}
+    >
+      {/* 头部：进度计数 + 关闭按钮 */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-1.5">
+          <ListTodo className="size-3.5 text-muted-foreground" />
+          <span className="text-xs font-medium text-foreground">
+            {completed}/{total} {t('task.todoCompleted')}
+          </span>
+        </div>
+        {isInline && onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex size-5 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            title={t('task.todoClose')}
+          >
+            <X className="size-3.5" />
+          </button>
+        )}
+      </div>
+
+      {/* 迷你进度条 */}
+      <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
+        <div
+          className="h-full rounded-full bg-primary transition-all duration-300 ease-out"
+          style={{ width: `${progressPercent}%` }}
+        />
+      </div>
+
+      {/* 任务列表 */}
+      <div className="flex flex-col gap-2">
+        {todos.map((item) => (
+          <TodoRow key={item.id} item={item} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** 单个任务行 */
+function TodoRow({ item }: { item: TodoItem }) {
+  return (
+    <div className="flex items-start gap-2">
+      {item.status === 'completed' && (
+        <CircleCheck className="size-4 shrink-0 text-emerald-500" />
+      )}
+      {item.status === 'in_progress' && (
+        <Loader2 className="size-4 shrink-0 animate-spin text-primary" />
+      )}
+      {item.status === 'pending' && (
+        <Circle className="size-4 shrink-0 text-muted-foreground" />
+      )}
+      <span
+        className={cn(
+          'text-xs',
+          item.status === 'completed' && 'text-muted-foreground line-through',
+          item.status === 'in_progress' && 'font-medium text-foreground',
+          item.status === 'pending' && 'text-muted-foreground',
+        )}
+      >
+        {item.text}
+      </span>
+    </div>
+  );
+}

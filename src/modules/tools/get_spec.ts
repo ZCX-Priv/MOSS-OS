@@ -30,6 +30,7 @@ export const getSpecTool: Tool = {
     readOnlyHint: true,
     idempotentHint: true,
   },
+  icon: 'file-code',
   async execute(params, ctx): Promise<ToolResult> {
     const p = params as { spec: string };
     if (!p.spec) {

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Paperclip, Mic, ArrowUp, ChevronDown, FolderOpen, FolderInput, Loader2 } from 'lucide-react';
+import { Paperclip, Mic, ArrowUp, ChevronDown, FolderOpen, FolderInput, Loader2, Square } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
@@ -24,6 +24,8 @@ interface ChatInputProps {
   onOpenOverlay?: (overlay: OverlayType) => void;
   variant?: 'home' | 'task';
   onSend?: (text: string) => void;
+  isGenerating?: boolean;
+  onAbort?: () => void;
 }
 
 export function ChatInput({
@@ -31,6 +33,8 @@ export function ChatInput({
   onOpenOverlay,
   variant = 'home',
   onSend,
+  isGenerating = false,
+  onAbort,
 }: ChatInputProps) {
   const { t } = useTranslation();
   const [input, setInput] = useState('');
@@ -155,15 +159,27 @@ export function ChatInput({
           <Button variant="ghost" size="icon-sm" title={t('common.voiceInput')}>
             <Mic />
           </Button>
-          <Button
-            size="icon-sm"
-            variant={input.trim() ? 'default' : 'secondary'}
-            onClick={handleSend}
-            title={t('common.send')}
-            disabled={!input.trim()}
-          >
-            <ArrowUp />
-          </Button>
+          {isGenerating && !input.trim() ? (
+            <Button
+              size="icon-sm"
+              variant="destructive"
+              onClick={onAbort}
+              title={t('common.stop')}
+              disabled={!onAbort}
+            >
+              <Square className="size-3.5 fill-current" />
+            </Button>
+          ) : (
+            <Button
+              size="icon-sm"
+              variant={input.trim() ? 'default' : 'secondary'}
+              onClick={handleSend}
+              title={t('common.send')}
+              disabled={!input.trim()}
+            >
+              <ArrowUp />
+            </Button>
+          )}
         </div>
       </div>
     </Card>

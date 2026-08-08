@@ -22,6 +22,7 @@ export const listSpecTool: Tool = {
     readOnlyHint: true,
     idempotentHint: true,
   },
+  icon: 'book-open',
   async execute(_params, ctx): Promise<ToolResult> {
     const reg = ctx.services.tryResolve<SpecRegistry>(ServiceNames.SPEC_REGISTRY);
     if (!reg) {

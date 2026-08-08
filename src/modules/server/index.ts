@@ -30,6 +30,7 @@ import {
 } from './routes/mcp';
 import { createListSkillsHandler, createGetSkillHandler } from './routes/skills';
 import { createSpecsHandler } from './routes/specs';
+import { createListToolsHandler } from './routes/tools';
 import { createVersionHandler } from './routes/version';
 import {
   createListModelsHandler,
@@ -192,6 +193,9 @@ class ServerModule implements Module {
     this.router.addRoute({ method: 'GET', pattern: '/api/skills', handler: createListSkillsHandler(services), auth: true });
     this.router.addRoute({ method: 'GET', pattern: '/api/skills/:name', handler: createGetSkillHandler(services), auth: true });
     this.router.addRoute({ method: 'GET', pattern: '/api/specs', handler: createSpecsHandler(services), auth: true });
+
+    // tools（工具元信息：name + icon，供前端渲染工具调用卡片图标）
+    this.router.addRoute({ method: 'GET', pattern: '/api/tools', handler: createListToolsHandler(services), auth: true });
 
     // models
     this.router.addRoute({ method: 'GET', pattern: '/api/models', handler: createListModelsHandler(config), auth: true });

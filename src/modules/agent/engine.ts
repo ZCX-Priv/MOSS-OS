@@ -20,11 +20,13 @@ export class AgentEngineImpl implements AgentEngine {
   private readonly eventBus: EventBus;
   private readonly logger: Logger;
   private readonly env: Environment;
-  /** pending ask 调用：toolCallId -> { resolve, reject, timer } */
+  /** pending ask 调用：toolCallId -> { resolve, reject, timer, sessionId, question } */
   private readonly pendingAsks = new Map<string, {
     resolve: (answer: string) => void;
     reject: (err: Error) => void;
     timer: ReturnType<typeof setTimeout>;
+    sessionId: string;
+    question: string;
   }>();
 
   constructor(deps: {
@@ -39,7 +41,7 @@ export class AgentEngineImpl implements AgentEngine {
     this.eventBus = deps.eventBus;
     this.logger = deps.logger;
     this.env = deps.env;
-    this.sessions = new SessionStore(deps.logger);
+    this.sessions = new SessionStore(deps.env, deps.logger);
     this.tasks = new TaskStore(deps.env, deps.logger);
   }
 
@@ -129,6 +131,7 @@ export class AgentEngineImpl implements AgentEngine {
               onEvent({ type: 'assistant-thinking', sessionId, text: delta.text });
               break;
             case 'tool_call': {
+              const wasNew = !toolCallAccumulators.has(delta.index);
               const existing = toolCallAccumulators.get(delta.index) ?? {
                 id: delta.toolCallId,
                 name: delta.name,
@@ -138,6 +141,26 @@ export class AgentEngineImpl implements AgentEngine {
               if (delta.name) existing.name = delta.name;
               existing.args += delta.argumentsDelta;
               toolCallAccumulators.set(delta.index, existing);
+
+              // 首次收到该 index：推送 tool-call-start（LLM 开始生成工具调用）
+              if (wasNew) {
+                onEvent({
+                  type: 'tool-call-start',
+                  sessionId,
+                  toolName: existing.name,
+                  toolCallId: existing.id,
+                  args: '',
+                });
+              }
+              // 参数增量推送（toolCallId 已确定后才有意义）
+              if (delta.argumentsDelta && existing.id) {
+                onEvent({
+                  type: 'tool-call-delta',
+                  sessionId,
+                  toolCallId: existing.id,
+                  argumentsDelta: delta.argumentsDelta,
+                });
+              }
               break;
             }
             case 'finish':
@@ -213,13 +236,29 @@ export class AgentEngineImpl implements AgentEngine {
           finishReason = 'aborted';
           continue;
         }
-        await this.executeToolCall(tc, {
-          sessionId,
-          cwd,
-          toolCallId: tc.id,
-          onEvent,
-          signal,
-        });
+        // 单工具失败隔离：executeToolCall 抛错时兜底补错误 tool_result，
+        // 避免中断后续 tc 导致多个 tool_use 失去 tool_result（触发 HTTP 400）。
+        try {
+          await this.executeToolCall(tc, {
+            sessionId,
+            cwd,
+            toolCallId: tc.id,
+            onEvent,
+            signal,
+          });
+        } catch (err) {
+          this.logger.error('executeToolCall threw unexpectedly', {
+            toolCallId: tc.id,
+            toolName: tc.name,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          this.sessions.addToolMessage(
+            this.sessions.get(sessionId)!,
+            tc.id,
+            `Error: ${err instanceof Error ? err.message : String(err)}`,
+            tc.name,
+          );
+        }
       }
 
       if (finishReason === 'aborted') break;
@@ -359,11 +398,10 @@ export class AgentEngineImpl implements AgentEngine {
     const { sessionId, cwd, toolCallId, onEvent, signal } = ctx;
 
     onEvent({
-      type: 'tool-call-start',
+      type: 'tool-call-executing',
       sessionId,
       toolName: tc.name,
       toolCallId,
-      args: tc.arguments,
     });
 
     // 解析参数
@@ -393,9 +431,17 @@ export class AgentEngineImpl implements AgentEngine {
     }
 
     // 记录工具结果到会话
-    const resultText = result.content
-      .map(c => (c.type === 'text' ? c.text : `[image: ${c.source.mimeType}]`))
-      .join('\n');
+    // resultText 计算包进 try/catch：运行时 content 数据异常（如 source 缺失）不应
+    // 阻止 addToolMessage 执行，否则 assistant 的 tool_use 会缺少对应 tool_result，
+    // session 复用时触发 Anthropic HTTP 400。
+    let resultText: string;
+    try {
+      resultText = result.content
+        .map(c => (c.type === 'text' ? c.text : `[image: ${c.source?.mimeType ?? 'unknown'}]`))
+        .join('\n');
+    } catch (err) {
+      resultText = `Error: failed to serialize tool result: ${err instanceof Error ? err.message : String(err)}`;
+    }
     this.sessions.addToolMessage(
       this.sessions.get(sessionId)!,
       toolCallId,
@@ -532,7 +578,13 @@ export class AgentEngineImpl implements AgentEngine {
             this.pendingAsks.delete(ctx.toolCallId);
             reject(new Error('ask timeout (5min)'));
           }, 5 * 60 * 1000);
-          this.pendingAsks.set(ctx.toolCallId, { resolve, reject, timer });
+          this.pendingAsks.set(ctx.toolCallId, {
+            resolve,
+            reject,
+            timer,
+            sessionId: ctx.sessionId,
+            question,
+          });
           // 中断时立即 reject
           if (ctx.signal) {
             ctx.signal.addEventListener(
@@ -576,6 +628,17 @@ export class AgentEngineImpl implements AgentEngine {
     this.pendingAsks.delete(toolCallId);
     pending.resolve(answer);
     return true;
+  }
+
+  /** 列出某 session 的待答 ask（供 WS 重连恢复 pending asks）。 */
+  getPendingAsks(sessionId: string): Array<{ toolCallId: string; sessionId: string; question: string }> {
+    const out: Array<{ toolCallId: string; sessionId: string; question: string }> = [];
+    for (const [toolCallId, pending] of this.pendingAsks) {
+      if (pending.sessionId === sessionId) {
+        out.push({ toolCallId, sessionId: pending.sessionId, question: pending.question });
+      }
+    }
+    return out;
   }
 
   /** 清理所有未完成的 pending ask（run 结束时兜底）。 */

@@ -174,6 +174,11 @@ export const api = {
   disconnectMcpServer: (server: string) => request<unknown>('POST', '/api/mcp/disconnect', { server }),
 
   // ==========================================================================
+  // 工具（name + icon，供前端渲染工具调用卡片图标）
+  // ==========================================================================
+  listTools: () => request<{ tools: Array<{ name: string; icon?: string }> }>('GET', '/api/tools'),
+
+  // ==========================================================================
   // 任务 + 分组（见文档 3.2.1）
   // ==========================================================================
   listTasks: () => request<{ groups: TaskGroup[]; tasks: TaskItem[] }>('GET', '/api/tasks'),

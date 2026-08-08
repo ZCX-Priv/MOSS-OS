@@ -28,6 +28,8 @@ export interface Tool {
   description: string;
   inputSchema: JSONSchema;
   annotations?: ToolAnnotations;
+  /** 显示图标（lucide 图标 kebab-case 名，如 'file-text'；前端白名单映射，缺失回退扳手） */
+  icon?: string;
   execute(params: unknown, ctx: ToolContext): Promise<ToolResult>;
 }
 

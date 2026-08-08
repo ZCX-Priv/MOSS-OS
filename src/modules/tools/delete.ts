@@ -30,6 +30,7 @@ export const deleteTool: Tool = {
     destructiveHint: true,
     requireConfirmation: true,
   },
+  icon: 'trash-2',
   async execute(params, ctx): Promise<ToolResult> {
     const p = params as { path: string; recursive?: boolean };
 

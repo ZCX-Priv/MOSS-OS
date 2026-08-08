@@ -12,6 +12,7 @@ export interface ToolCall {
   id: string;
   name: string;
   arguments: string;
+  status?: 'generating' | 'executing' | 'done';
 }
 
 export interface ToolResult {
@@ -293,6 +294,8 @@ export type AgentEvent =
   | { type: 'assistant-text'; sessionId: string; text: string }
   | { type: 'assistant-thinking'; sessionId: string; text: string }
   | { type: 'tool-call-start'; sessionId: string; toolName: string; toolCallId: string; args: unknown }
+  | { type: 'tool-call-delta'; sessionId: string; toolCallId: string; argumentsDelta: string }
+  | { type: 'tool-call-executing'; sessionId: string; toolName: string; toolCallId: string }
   | { type: 'tool-call-end'; sessionId: string; toolName: string; toolCallId: string; result: ToolResult }
   | { type: 'ask'; sessionId: string; toolCallId: string; question: string }
   | { type: 'error'; sessionId: string; message: string }

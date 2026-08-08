@@ -2,6 +2,7 @@
 export const zh = {
   common: {
     send: '发送',
+    stop: '停止',
     attachment: '附件',
     image: '图片',
     plugin: '插件',
@@ -174,6 +175,14 @@ export const zh = {
     thinking: '思考中...',
     noTodos: '暂无待办',
     noContextFiles: '暂无上下文文件',
+    todoCompleted: '已完成',
+    todoClose: '关闭',
+    askTitle: '向你提问',
+    askPlaceholder: '输入你的回复…',
+    askSend: '发送',
+    askSending: '发送中…',
+    askQuestion: '问题',
+    askReply: '回复',
   },
   plugins: {
     title: '插件库',

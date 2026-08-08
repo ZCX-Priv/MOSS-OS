@@ -2,6 +2,7 @@
 export const en = {
   common: {
     send: 'Send',
+    stop: 'Stop',
     attachment: 'Attachment',
     image: 'Image',
     plugin: 'Plugin',
@@ -174,6 +175,14 @@ export const en = {
     thinking: 'Thinking...',
     noTodos: 'No todos',
     noContextFiles: 'No context files',
+    todoCompleted: 'completed',
+    todoClose: 'Close',
+    askTitle: 'Asking you',
+    askPlaceholder: 'Type your reply…',
+    askSend: 'Send',
+    askSending: 'Sending…',
+    askQuestion: 'Question',
+    askReply: 'Reply',
   },
   plugins: {
     title: 'Plugins',

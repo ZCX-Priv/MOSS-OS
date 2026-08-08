@@ -1,9 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  ChevronDown,
-  CircleCheck,
-  Circle,
   Sparkles,
   ChevronRight,
   FileText,
@@ -13,8 +10,9 @@ import {
   PanelRightOpen,
   Plus,
   Loader2,
-  Wrench,
+  HelpCircle,
 } from 'lucide-react';
+import { resolveToolIcon } from '@/lib/tool-icons';
 import type { PageType, OverlayType } from '../../types';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -23,6 +21,8 @@ import { Progress } from '@/components/ui/progress';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ChatInput } from '../shared/ChatInput';
+import { TodoProgressCard } from '../shared/TodoProgressCard';
+import { AskPromptCard } from '../shared/AskPromptCard';
 import { useStore } from '../../store';
 import { useChat } from '../../hooks/useChat';
 import { api } from '../../api/http';
@@ -47,10 +47,11 @@ export function TaskRunningPage({ onNavigate: _onNavigate, onOpenOverlay, taskId
   const isGenerating = useStore((s) => s.generatingBySession[taskId] ?? false);
   const task = useStore((s) => s.tasks.find((tk) => tk.id === taskId));
   const todos = useStore((s) => s.todosBySession[taskId] ?? EMPTY_TODOS);
+  const pendingAsks = useStore((s) => s.pendingAsks);
   const context = useStore((s) => s.contextBySession[taskId]);
-  const { sendMessage } = useChat();
+  const { sendMessage, abort } = useChat();
 
-  // 挂载时加载会话历史（若 store 中无消息）
+  // 挂载时加载会话历史（若 store 中无消息）+ todos + context
   useEffect(() => {
     if (!taskId) return; // 空 taskId 守卫：避免污染 store 的 activeSessionId/activeTaskId
     if (messages.length === 0) {
@@ -65,6 +66,26 @@ export function TaskRunningPage({ onNavigate: _onNavigate, onOpenOverlay, taskId
           // 后端未就绪或会话不存在，静默
         });
     }
+    // 加载 todos（刷新后侧边栏 todo 卡片恢复）
+    void api
+      .listTodos(taskId)
+      .then((resp) => {
+        if (resp.todos) {
+          useStore.getState().setTodos(taskId, resp.todos);
+        }
+      })
+      .catch(() => {});
+    // 加载上下文文件轨迹（刷新后右侧面板恢复）
+    void api
+      .getSessionContext(taskId)
+      .then((ctx) => {
+        useStore.getState().setContext(taskId, {
+          files: ctx.files,
+          totalTokens: ctx.totalTokens,
+          maxTokens: ctx.maxTokens,
+        });
+      })
+      .catch(() => {});
     // 设置当前活跃 session
     useStore.getState().setActiveSession(taskId);
     useStore.getState().setActiveTaskId(taskId);
@@ -117,6 +138,9 @@ export function TaskRunningPage({ onNavigate: _onNavigate, onOpenOverlay, taskId
                 <span className="text-sm">{t('task.thinking')}</span>
               </div>
             )}
+            {pendingAsks.filter((a) => a.sessionId === taskId).map((ask) => (
+              <AskPromptCard key={ask.toolCallId} ask={ask} />
+            ))}
           </div>
         </ScrollArea>
 
@@ -124,6 +148,8 @@ export function TaskRunningPage({ onNavigate: _onNavigate, onOpenOverlay, taskId
         <div className="shrink-0 border-t border-border p-3">
           <ChatInput
             variant="task"
+            isGenerating={isGenerating}
+            onAbort={abort}
             onOpenOverlay={onOpenOverlay}
             onSend={(text) => sendMessage(text, { taskId })}
           />
@@ -147,44 +173,11 @@ export function TaskRunningPage({ onNavigate: _onNavigate, onOpenOverlay, taskId
           </div>
 
           {/* Todo Section */}
-          <div className="flex flex-col gap-2 border-b border-border p-4">
-            <div className="flex items-center gap-1.5 text-xs font-medium text-foreground">
-              <span>{t('task.todo')}</span>
-              <ChevronDown className="size-3.5 text-muted-foreground" />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              {todos.length === 0 ? (
-                <span className="text-xs text-muted-foreground">{t('task.noTodos')}</span>
-              ) : (
-                todos.map((item) => (
-                  <div key={item.id} className="flex items-start gap-2">
-                    {item.status === 'completed' ? (
-                      <CircleCheck className="size-4 shrink-0 text-primary" />
-                    ) : (
-                      <Circle
-                        className={cn(
-                          'size-4 shrink-0',
-                          item.status === 'in_progress'
-                            ? 'text-primary'
-                            : 'text-muted-foreground',
-                        )}
-                      />
-                    )}
-                    <span
-                      className={cn(
-                        'text-xs',
-                        item.status === 'completed'
-                          ? 'text-muted-foreground line-through'
-                          : 'text-foreground',
-                      )}
-                    >
-                      {item.text}
-                    </span>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
+          <TodoProgressCard
+            todos={todos}
+            variant="sidebar"
+            className="border-b border-border"
+          />
 
           {/* Context Section */}
           <div className="flex flex-1 flex-col gap-2 overflow-hidden p-4">
@@ -237,6 +230,11 @@ export function TaskRunningPage({ onNavigate: _onNavigate, onOpenOverlay, taskId
 
 /** 渲染单条消息 */
 function MessageBubble({ message }: { message: ChatMessage }) {
+  const { t } = useTranslation();
+  // 获取当前 session 的 todos，用于在对话流中渲染 TodoProgressCard
+  const todos = useStore((s) => s.todosBySession[s.activeSessionId ?? ''] ?? EMPTY_TODOS);
+  const toolIconMap = useStore((s) => s.toolIconMap);
+
   // 防御：system 已被后端物理隔离、tool 已被适配层合并进 assistant；此处不应出现
   if (message.role === 'system' || message.role === 'tool') return null;
   if (message.role === 'user') {
@@ -265,7 +263,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         </details>
       )}
       {/* 正文 */}
-      {message.content && (
+      {message.content && !message.content.startsWith('Error:') && (
         <div className="whitespace-pre-wrap text-sm text-foreground">
           {message.content}
           {message.streaming && (
@@ -273,10 +271,50 @@ function MessageBubble({ message }: { message: ChatMessage }) {
           )}
         </div>
       )}
-      {/* 工具调用（可折叠：展开显示参数与结果） */}
-      {message.toolCalls && message.toolCalls.length > 0 && (
+      {/* todo 工具调用 → 在对话流中渲染 TodoProgressCard（像其他工具一样在调用位置显示） */}
+      {message.toolCalls?.some((tc) => tc.name === 'todo') && todos.length > 0 && (
+        <TodoProgressCard todos={todos} variant="inline" />
+      )}
+      {/* ask 工具调用 → 渲染为问答卡片（仅已完成、有结果时渲染；进行中的由底部 AskPromptCard 处理） */}
+      {message.toolCalls?.filter((tc) => tc.name === 'ask').map((tc) => {
+        const matchedResult = message.toolResults?.find((tr) => tr.toolCallId === tc.id);
+        if (!matchedResult) return null; // 只渲染已完成的 ask
+        const replyText = matchedResult.result.content
+          .filter((c) => c.type === 'text')
+          .map((c) => (c.type === 'text' ? c.text : ''))
+          .join('\n');
+        let questionText = '';
+        try {
+          questionText = (JSON.parse(tc.arguments || '{}') as { question?: string }).question ?? '';
+        } catch {
+          questionText = '';
+        }
+        return (
+          <div
+            key={tc.id}
+            className="flex flex-col gap-2.5 rounded-lg border border-border bg-card p-3 shadow-sm"
+          >
+            <div className="flex items-center gap-1.5">
+              <HelpCircle className="size-3.5 text-primary" />
+              <span className="text-xs font-medium text-foreground">{t('task.askTitle')}</span>
+            </div>
+            <div>
+              <div className="text-xs text-muted-foreground/70">{t('task.askQuestion')}</div>
+              <p className="whitespace-pre-wrap text-sm text-foreground">{questionText}</p>
+            </div>
+            {replyText && (
+              <div>
+                <div className="text-xs text-muted-foreground/70">{t('task.askReply')}</div>
+                <p className="whitespace-pre-wrap text-sm text-foreground">{replyText}</p>
+              </div>
+            )}
+          </div>
+        );
+      })}
+      {/* 非 todo/ask 工具调用（可折叠：展开显示参数与结果） */}
+      {message.toolCalls && message.toolCalls.filter((tc) => tc.name !== 'todo' && tc.name !== 'ask').length > 0 && (
         <div className="flex flex-col gap-1">
-          {message.toolCalls.map((tc) => {
+          {message.toolCalls.filter((tc) => tc.name !== 'todo' && tc.name !== 'ask').map((tc) => {
             const matchedResult = message.toolResults?.find((tr) => tr.toolCallId === tc.id);
             const resultText = matchedResult?.result.content
               .filter((c) => c.type === 'text')
@@ -293,8 +331,21 @@ function MessageBubble({ message }: { message: ChatMessage }) {
               <details key={tc.id} className="group px-2 py-1">
                 <summary className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
                   <ChevronRight className="size-3.5 transition-transform group-open:rotate-90" />
-                  <Wrench className="size-3.5" />
+                  {tc.status === 'generating' || tc.status === 'executing' ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    (() => {
+                      const ToolIcon = resolveToolIcon(tc.name, toolIconMap);
+                      return <ToolIcon className="size-3.5" />;
+                    })()
+                  )}
                   <span>{tc.name}</span>
+                  {tc.status === 'generating' && (
+                    <span className="text-muted-foreground/60">生成参数中…</span>
+                  )}
+                  {tc.status === 'executing' && (
+                    <span className="text-muted-foreground/60">执行中…</span>
+                  )}
                 </summary>
                 <div className="mt-1 flex flex-col gap-2 rounded-md border border-border p-2 text-xs max-h-[300px] overflow-auto no-scrollbar">
                   {tc.arguments && (

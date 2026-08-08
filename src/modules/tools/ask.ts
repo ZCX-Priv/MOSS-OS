@@ -24,6 +24,7 @@ export const askTool: Tool = {
     readOnlyHint: true,
     idempotentHint: true,
   },
+  icon: 'help-circle',
   async execute(params, ctx): Promise<ToolResult> {
     const p = params as { question: string };
 

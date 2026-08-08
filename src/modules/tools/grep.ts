@@ -53,6 +53,7 @@ export const grepTool: Tool = {
     readOnlyHint: true,
     idempotentHint: true,
   },
+  icon: 'search',
   async execute(params, ctx): Promise<ToolResult> {
     const p = params as {
       pattern: string;

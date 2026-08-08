@@ -18,12 +18,15 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/sonner';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useConfig } from './hooks/useConfig';
+import { useTools } from './hooks/useTools';
 
 export default function App() {
   // 阶段1.6：WS 连接初始化 + 事件分发（单例，全应用只调用一次）
   useWebSocket();
   // 阶段2.1：全局加载 appConfig + apiConfig
   useConfig();
+  // 拉取工具图标映射（toolName → icon 字符串），供工具调用卡片渲染
+  useTools();
 
   const [currentPage, setCurrentPage] = useState<PageType>('home');
   const [overlay, setOverlay] = useState<OverlayType>(null);
