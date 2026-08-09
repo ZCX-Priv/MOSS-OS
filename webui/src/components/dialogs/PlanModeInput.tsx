@@ -110,7 +110,7 @@ export function PlanModeInput({ open, onClose }: PlanModeInputProps) {
           </Badge>
           <Badge variant="secondary" className="gap-1 rounded-full px-2 py-1 font-normal">
             <FolderOpen className="size-3" />
-            <span>MOSS-OS</span>
+            <span>MOSS</span>
             <ChevronDown className="size-3 opacity-70" />
           </Badge>
         </div>

@@ -2,7 +2,7 @@
 // 浏览器端文件夹选择 hook。
 //
 // 浏览器安全模型硬性禁止 JS 获取文件夹绝对路径（File System Access API 的 handle.name
-// 只返回文件夹名）。由于 MOSS-OS 后端在本机运行（127.0.0.1），主路径直接调后端
+// 只返回文件夹名）。由于 MOSS 后端在本机运行（127.0.0.1），主路径直接调后端
 // POST /api/filesystem/pick-directory，后端调用系统原生文件夹选择对话框（Windows
 // Shell.Application.BrowseForFolder / macOS osascript / Linux zenity），拿到用户真实
 // 选择的绝对路径返回。跨盘符精准无误，不依赖搜索猜测。

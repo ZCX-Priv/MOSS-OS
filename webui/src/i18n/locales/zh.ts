@@ -175,6 +175,7 @@ export const zh = {
     thinking: '思考中...',
     noTodos: '暂无待办',
     noContextFiles: '暂无上下文文件',
+    noOthers: '暂无其他上下文',
     todoCompleted: '已完成',
     todoClose: '关闭',
     askTitle: '向你提问',
@@ -194,7 +195,7 @@ export const zh = {
   },
   automation: {
     title: '自动化',
-    subtitle: '配置自动化任务，让 MOSS Work 按计划执行工作流，任务运行时将按实际用量消耗积分。',
+    subtitle: '配置自动化任务，让 MOSS 按计划执行工作流，任务运行时将按实际用量消耗积分。',
     manualCreate: '手动新建',
     createInChat: '在对话中创建',
     configured: '已配置',

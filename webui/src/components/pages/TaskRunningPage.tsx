@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useParams } from 'react-router-dom';
 import {
   Sparkles,
   ChevronRight,
@@ -13,13 +14,13 @@ import {
   HelpCircle,
 } from 'lucide-react';
 import { resolveToolIcon } from '@/lib/tool-icons';
-import type { PageType, OverlayType } from '../../types';
+import type { OverlayType } from '../../types';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { ChatInput } from '../shared/ChatInput';
 import { TodoProgressCard } from '../shared/TodoProgressCard';
 import { AskPromptCard } from '../shared/AskPromptCard';
@@ -34,13 +35,12 @@ const EMPTY_MESSAGES: ChatMessage[] = [];
 const EMPTY_TODOS: TodoItem[] = [];
 
 interface TaskRunningPageProps {
-  onNavigate: (page: PageType) => void;
   onOpenOverlay: (overlay: OverlayType) => void;
-  taskId: string;
 }
 
-export function TaskRunningPage({ onNavigate: _onNavigate, onOpenOverlay, taskId }: TaskRunningPageProps) {
+export function TaskRunningPage({ onOpenOverlay }: TaskRunningPageProps) {
   const { t } = useTranslation();
+  const { taskId = '' } = useParams<{ taskId: string }>();
   const [rightPanelOpen, setRightPanelOpen] = useState(true);
 
   const messages = useStore((s) => s.messagesBySession[taskId] ?? EMPTY_MESSAGES);
@@ -194,33 +194,40 @@ export function TaskRunningPage({ onNavigate: _onNavigate, onOpenOverlay, taskId
               <Progress value={contextPercent} className="flex-1" />
               <span className="text-xs text-muted-foreground">{contextPercent}%</span>
             </div>
-            <Tabs defaultValue="files" className="gap-2">
+            <Tabs defaultValue="files" className="flex flex-1 flex-col gap-2 overflow-hidden">
               <TabsList>
                 <TabsTrigger value="files">{t('task.files')}</TabsTrigger>
                 <TabsTrigger value="others">{t('task.others')}</TabsTrigger>
               </TabsList>
+              <TabsContent value="files" className="flex-1 min-h-0 overflow-hidden">
+                <ScrollArea className="h-full">
+                  <div className="flex flex-col gap-0.5">
+                    {contextFiles.length === 0 ? (
+                      <span className="px-2 py-4 text-xs text-muted-foreground">
+                        {t('task.noContextFiles')}
+                      </span>
+                    ) : (
+                      contextFiles.map((file) => (
+                        <Button
+                          key={file.path}
+                          variant="ghost"
+                          size="xs"
+                          className="justify-start gap-1.5 font-normal"
+                        >
+                          <FileText className="size-3.5 text-primary" />
+                          <span className="truncate">{file.path}</span>
+                        </Button>
+                      ))
+                    )}
+                  </div>
+                </ScrollArea>
+              </TabsContent>
+              <TabsContent value="others" className="flex-1 min-h-0">
+                <div className="px-2 py-4 text-xs text-muted-foreground">
+                  {t('task.noOthers')}
+                </div>
+              </TabsContent>
             </Tabs>
-            <ScrollArea className="min-h-0 flex-1">
-              <div className="flex flex-col gap-0.5">
-                {contextFiles.length === 0 ? (
-                  <span className="px-2 py-4 text-xs text-muted-foreground">
-                    {t('task.noContextFiles')}
-                  </span>
-                ) : (
-                  contextFiles.map((file) => (
-                    <Button
-                      key={file.path}
-                      variant="ghost"
-                      size="xs"
-                      className="justify-start gap-1.5 font-normal"
-                    >
-                      <FileText className="size-3.5 text-primary" />
-                      <span className="truncate">{file.path}</span>
-                    </Button>
-                  ))
-                )}
-              </div>
-            </ScrollArea>
           </div>
         </aside>
       )}

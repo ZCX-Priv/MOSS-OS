@@ -254,7 +254,7 @@ export const useStore = create<Store>((set) => ({
 
   // --- 发送快捷键 ---
   sendShortcut:
-    (localStorage.getItem('moss-os-send-shortcut') as 'enter' | 'ctrl-enter') ||
+    (localStorage.getItem('moss-send-shortcut') as 'enter' | 'ctrl-enter') ||
     'ctrl-enter',
 
   // --- 面板 ---
@@ -437,7 +437,7 @@ export const useStore = create<Store>((set) => ({
 
   // --- Actions: 发送快捷键 ---
   setSendShortcut: (sendShortcut) => {
-    localStorage.setItem('moss-os-send-shortcut', sendShortcut);
+    localStorage.setItem('moss-send-shortcut', sendShortcut);
     set({ sendShortcut });
   },
 

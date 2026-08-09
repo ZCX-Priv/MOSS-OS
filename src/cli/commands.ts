@@ -101,7 +101,7 @@ async function cmdStart(parsed: ParsedArgs): Promise<number> {
   // 单例检测：若已有进程运行，提示
   const existing = readPidFile(env.pidFile);
   if (existing && isProcessAlive(existing.pid)) {
-    console.error(`MOSS-OS is already running (PID ${existing.pid})`);
+    console.error(`MOSS is already running (PID ${existing.pid})`);
     console.error(`Use "moss status" to inspect, or "moss restart" to restart.`);
     return 1;
   }
@@ -134,7 +134,7 @@ async function startForeground(parsed: ParsedArgs): Promise<number> {
       startedAt: new Date().toISOString(),
     });
 
-    console.log(`MOSS-OS started (PID ${process.pid})`);
+    console.log(`MOSS started (PID ${process.pid})`);
 
     // 注册退出钩子
     const cleanup = async () => {
@@ -151,7 +151,7 @@ async function startForeground(parsed: ParsedArgs): Promise<number> {
       // 永不 resolve，由信号处理退出
     });
   } catch (err) {
-    console.error('Failed to start MOSS-OS:', err instanceof Error ? err.message : err);
+    console.error('Failed to start MOSS:', err instanceof Error ? err.message : err);
     await kernel.stop().catch(() => {});
     return 1;
   }
@@ -183,7 +183,7 @@ async function startDaemon(): Promise<number> {
   while (Date.now() < deadline) {
     const info = readPidFile(env.pidFile);
     if (info && isProcessAlive(info.pid)) {
-      console.log(`MOSS-OS daemon started (PID ${info.pid})`);
+      console.log(`MOSS daemon started (PID ${info.pid})`);
       return 0;
     }
     await sleep(200);
@@ -196,22 +196,22 @@ async function cmdStop(): Promise<number> {
   const env = detectEnvironment();
   const info = readPidFile(env.pidFile);
   if (!info) {
-    console.log('MOSS-OS is not running (no PID file)');
+    console.log('MOSS is not running (no PID file)');
     return 0;
   }
   if (!isProcessAlive(info.pid)) {
-    console.log(`MOSS-OS process (PID ${info.pid}) is not alive, cleaning PID file`);
+    console.log(`MOSS process (PID ${info.pid}) is not alive, cleaning PID file`);
     removePidFile(env.pidFile);
     return 0;
   }
-  console.log(`Stopping MOSS-OS (PID ${info.pid})...`);
+  console.log(`Stopping MOSS (PID ${info.pid})...`);
   const ok = await killProcess(info.pid, 5000);
   if (ok) {
     removePidFile(env.pidFile);
-    console.log('MOSS-OS stopped');
+    console.log('MOSS stopped');
     return 0;
   }
-  console.error('Failed to stop MOSS-OS process');
+  console.error('Failed to stop MOSS process');
   return 1;
 }
 
@@ -219,15 +219,15 @@ async function cmdStatus(): Promise<number> {
   const env = detectEnvironment();
   const info = readPidFile(env.pidFile);
   if (!info) {
-    console.log('MOSS-OS: not running (no PID file)');
+    console.log('MOSS: not running (no PID file)');
     return 0;
   }
   const alive = isProcessAlive(info.pid);
   if (!alive) {
-    console.log(`MOSS-OS: not running (stale PID file, PID ${info.pid})`);
+    console.log(`MOSS: not running (stale PID file, PID ${info.pid})`);
     return 0;
   }
-  console.log(`MOSS-OS: running`);
+  console.log(`MOSS: running`);
   console.log(`  PID:        ${info.pid}`);
   console.log(`  Started at: ${info.startedAt}`);
   if (info.port) console.log(`  Port:       ${info.port}`);
@@ -277,7 +277,7 @@ async function cmdRestart(): Promise<number> {
 }
 
 async function cmdUpdate(): Promise<number> {
-  console.log('Update check: please use "npm update -g moss-os" to update MOSS-OS');
+  console.log('Update check: please use "npm update -g moss" to update MOSS');
   return 0;
 }
 
@@ -291,7 +291,7 @@ async function cmdVersion(): Promise<number> {
     const fs = require('node:fs');
     const pkgPath = path.join(env.packageRoot, 'package.json');
     const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
-    console.log(`MOSS-OS v${pkg.version}`);
+    console.log(`MOSS v${pkg.version}`);
     console.log(`Bun ${env.runtimeVersion}`);
     console.log(`Platform: ${env.platform}/${env.arch}`);
     return 0;
@@ -302,12 +302,12 @@ async function cmdVersion(): Promise<number> {
 }
 
 function printHelp(): void {
-  console.log(`MOSS-OS - AI Agent Application
+  console.log(`MOSS - AI Agent Application
 
 Usage: moss <command> [options]
 
 Commands:
-  start       Start MOSS-OS as a daemon (default)
+  start       Start MOSS as a daemon (default)
   stop        Stop the running daemon
   status      Show running status
   restart     Restart the daemon

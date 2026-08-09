@@ -1,5 +1,6 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
+import { HashRouter } from 'react-router-dom'
 import App from './App.tsx'
 import { ThemeProvider } from './contexts/ThemeContext'
 import { I18nProvider } from './contexts/I18nContext'
@@ -38,7 +39,9 @@ Promise.all([initTheme(), initLocale()]).then(() => {
     <StrictMode>
       <ThemeProvider>
         <I18nProvider>
-          <App />
+          <HashRouter>
+            <App />
+          </HashRouter>
         </I18nProvider>
       </ThemeProvider>
     </StrictMode>,

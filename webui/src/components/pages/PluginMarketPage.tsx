@@ -1,44 +1,36 @@
 // UI/src/components/pages/PluginMarketPage.tsx
 // 插件市场：阶段4.3 对接 usePlugins + useSkills，移除硬编码。
+// 双 tab 路由化：/plugins（插件）| /plugins/skills（技能）
 
 import { useState } from 'react';
 import { Search } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import type { PageType } from '../../types';
+import { useNavigate, useLocation, Outlet, useOutletContext } from 'react-router-dom';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { usePlugins, getPluginIconGradient } from '../../hooks/usePlugins';
 import { useSkills } from '../../hooks/useSkills';
 
-interface PluginMarketPageProps {
-  onNavigate: (page: PageType) => void;
+// Outlet context 类型：搜索框 query 与 setQuery 共享给子组件
+interface PluginOutletContext {
+  query: string;
+  setQuery: (v: string) => void;
 }
 
-type ManageSubTab = 'plugins' | 'skills';
-
-export function PluginMarketPage({ onNavigate: _onNavigate }: PluginMarketPageProps) {
+export function PluginMarketPage() {
   const { t } = useTranslation();
-  const [manageTab, setManageTab] = useState<ManageSubTab>('plugins');
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
   const [query, setQuery] = useState('');
-  const { plugins, togglePlugin } = usePlugins();
-  const { skills } = useSkills();
 
-  const q = query.trim().toLowerCase();
-  const filteredPlugins = q
-    ? plugins.filter(
-        (p) =>
-          p.name.toLowerCase().includes(q) || p.description.toLowerCase().includes(q),
-      )
-    : plugins;
-  const filteredSkills = q
-    ? skills.filter(
-        (s) =>
-          s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q),
-      )
-    : skills;
+  // 当前 tab：/plugins → plugins，/plugins/skills → skills
+  const tab = pathname === '/plugins/skills' ? 'skills' : 'plugins';
+  // Badge 计数在布局层拉取
+  const { plugins } = usePlugins();
+  const { skills } = useSkills();
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
@@ -48,11 +40,10 @@ export function PluginMarketPage({ onNavigate: _onNavigate }: PluginMarketPagePr
         <p className="text-sm text-muted-foreground">{t('plugins.subtitle')}</p>
       </div>
 
-      {/* Tabs */}
+      {/* Tabs（路由驱动） */}
       <Tabs
-        value={manageTab}
-        onValueChange={(v) => setManageTab(v as ManageSubTab)}
-        className="flex flex-1 flex-col overflow-hidden"
+        value={tab}
+        onValueChange={(v) => navigate(v === 'plugins' ? '/plugins' : '/plugins/skills')}
       >
         <div className="flex items-center justify-between gap-4 border-b border-border px-6 py-3">
           <TabsList>
@@ -76,79 +67,118 @@ export function PluginMarketPage({ onNavigate: _onNavigate }: PluginMarketPagePr
             />
           </div>
         </div>
-
-        <TabsContent value="plugins" className="flex-1 overflow-auto p-6">
-          <div className="flex flex-col gap-2">
-            {filteredPlugins.length === 0 && (
-              <div className="py-12 text-center text-sm text-muted-foreground">
-                {t('plugins.noSkills', { defaultValue: '暂无插件' })}
-              </div>
-            )}
-            {filteredPlugins.map((plugin) => {
-              const gradient = plugin.iconGradient ?? getPluginIconGradient(plugin.name);
-              return (
-                <Card key={plugin.id} className="flex flex-row items-center gap-3 p-3">
-                  <div
-                    className="flex size-10 shrink-0 items-center justify-center rounded-lg text-xs font-bold text-white"
-                    style={{ backgroundImage: gradient }}
-                  >
-                    {plugin.name.slice(0, 1).toUpperCase()}
-                  </div>
-                  <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-sm font-medium text-foreground">{plugin.name}</h3>
-                      {plugin.version && (
-                        <Badge variant="secondary" className="font-normal">
-                          v{plugin.version}
-                        </Badge>
-                      )}
-                      {plugin.type === 'module' && (
-                        <Badge variant="outline" className="font-normal">
-                          module
-                        </Badge>
-                      )}
-                    </div>
-                    <p className="truncate text-xs text-muted-foreground">
-                      {plugin.description || t('plugins.noSkills', { defaultValue: '无描述' })}
-                    </p>
-                  </div>
-                  <Switch
-                    checked={plugin.enabled}
-                    onCheckedChange={(checked) => void togglePlugin(plugin.id, checked)}
-                    aria-label={plugin.enabled ? t('common.close') : t('common.open')}
-                  />
-                </Card>
-              );
-            })}
-          </div>
-        </TabsContent>
-
-        <TabsContent value="skills" className="flex-1 overflow-auto p-6">
-          <div className="flex flex-col gap-2">
-            {filteredSkills.length === 0 && (
-              <div className="py-12 text-center text-sm text-muted-foreground">
-                {t('plugins.noSkills')}
-              </div>
-            )}
-            {filteredSkills.map((skill) => (
-              <Card key={skill.name} className="flex flex-row items-center gap-3 p-3">
-                <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-primary/80 to-primary text-xs font-bold text-primary-foreground">
-                  {skill.name.slice(0, 1).toUpperCase()}
-                </div>
-                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-sm font-medium text-foreground">{skill.name}</h3>
-                    <Badge variant="outline" className="font-normal">
-                      {skill.source}
-                    </Badge>
-                  </div>
-                  <p className="truncate text-xs text-muted-foreground">{skill.description}</p>
-                </div>
-              </Card>
-            ))}
-          </div>
-        </TabsContent>
       </Tabs>
+
+      {/* 子路由内容 */}
+      <div className="flex-1 overflow-auto">
+        <Outlet context={{ query, setQuery } satisfies PluginOutletContext} />
+      </div>
+    </div>
+  );
+}
+
+/* ===== 插件 tab ===== */
+export function PluginsTab() {
+  const { t } = useTranslation();
+  const { query } = useOutletContext<PluginOutletContext>();
+  const { plugins, togglePlugin } = usePlugins();
+
+  const q = query.trim().toLowerCase();
+  const filteredPlugins = q
+    ? plugins.filter(
+        (p) =>
+          p.name.toLowerCase().includes(q) || p.description.toLowerCase().includes(q),
+      )
+    : plugins;
+
+  return (
+    <div className="p-6">
+      <div className="flex flex-col gap-2">
+        {filteredPlugins.length === 0 && (
+          <div className="py-12 text-center text-sm text-muted-foreground">
+            {t('plugins.noSkills', { defaultValue: '暂无插件' })}
+          </div>
+        )}
+        {filteredPlugins.map((plugin) => {
+          const gradient = plugin.iconGradient ?? getPluginIconGradient(plugin.name);
+          return (
+            <Card key={plugin.id} className="flex flex-row items-center gap-3 p-3">
+              <div
+                className="flex size-10 shrink-0 items-center justify-center rounded-lg text-xs font-bold text-white"
+                style={{ backgroundImage: gradient }}
+              >
+                {plugin.name.slice(0, 1).toUpperCase()}
+              </div>
+              <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-medium text-foreground">{plugin.name}</h3>
+                  {plugin.version && (
+                    <Badge variant="secondary" className="font-normal">
+                      v{plugin.version}
+                    </Badge>
+                  )}
+                  {plugin.type === 'module' && (
+                    <Badge variant="outline" className="font-normal">
+                      module
+                    </Badge>
+                  )}
+                </div>
+                <p className="truncate text-xs text-muted-foreground">
+                  {plugin.description || t('plugins.noSkills', { defaultValue: '无描述' })}
+                </p>
+              </div>
+              <Switch
+                checked={plugin.enabled}
+                onCheckedChange={(checked) => void togglePlugin(plugin.id, checked)}
+                aria-label={plugin.enabled ? t('common.close') : t('common.open')}
+              />
+            </Card>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ===== 技能 tab ===== */
+export function SkillsTab() {
+  const { t } = useTranslation();
+  const { query } = useOutletContext<PluginOutletContext>();
+  const { skills } = useSkills();
+
+  const q = query.trim().toLowerCase();
+  const filteredSkills = q
+    ? skills.filter(
+        (s) =>
+          s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q),
+      )
+    : skills;
+
+  return (
+    <div className="p-6">
+      <div className="flex flex-col gap-2">
+        {filteredSkills.length === 0 && (
+          <div className="py-12 text-center text-sm text-muted-foreground">
+            {t('plugins.noSkills')}
+          </div>
+        )}
+        {filteredSkills.map((skill) => (
+          <Card key={skill.name} className="flex flex-row items-center gap-3 p-3">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-primary/80 to-primary text-xs font-bold text-primary-foreground">
+              {skill.name.slice(0, 1).toUpperCase()}
+            </div>
+            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-medium text-foreground">{skill.name}</h3>
+                <Badge variant="outline" className="font-normal">
+                  {skill.source}
+                </Badge>
+              </div>
+              <p className="truncate text-xs text-muted-foreground">{skill.description}</p>
+            </div>
+          </Card>
+        ))}
+      </div>
     </div>
   );
 }

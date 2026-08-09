@@ -34,7 +34,7 @@ import type {
 const BASE_URL = '';
 
 function getAuthToken(): string {
-  return localStorage.getItem('moss-os-token') ?? '';
+  return localStorage.getItem('moss-token') ?? '';
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {

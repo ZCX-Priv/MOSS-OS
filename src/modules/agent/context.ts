@@ -14,7 +14,7 @@ import type { ToolRegistry } from '../contracts';
 import type { Environment, Platform } from '../../core/types';
 
 /** 兜底系统提示词：当 agent/prompts/main/ 下无任何基本设定文件时使用 */
-const FALLBACK_SYSTEM_PROMPT = `你是 MOSS-OS，一个运行在真实环境中的交互式 AI 智能体。
+const FALLBACK_SYSTEM_PROMPT = `你是 MOSS，一个运行在真实环境中的交互式 AI 智能体。
 
 你可以使用工具读写文件、执行命令、调用 skill、调用 MCP 服务器，并按需读取规范文档。
 

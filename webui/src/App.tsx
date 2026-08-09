@@ -1,12 +1,28 @@
-import { useState, useCallback } from 'react';
-import { useStore } from './store';
-import type { PageType, OverlayType } from './types';
+import { useState, useCallback, useEffect } from 'react';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import type { OverlayType } from './types';
 import { Sidebar } from './components/layout/Sidebar';
 import { HomePage } from './components/pages/HomePage';
 import { TaskRunningPage } from './components/pages/TaskRunningPage';
-import { PluginMarketPage } from './components/pages/PluginMarketPage';
-import { AutomationPage } from './components/pages/AutomationPage';
-import { SettingsPage } from './components/pages/SettingsPage';
+import {
+  PluginMarketPage,
+  PluginsTab,
+  SkillsTab,
+} from './components/pages/PluginMarketPage';
+import {
+  AutomationPage,
+  TemplatesTab,
+  ConfiguredTab,
+  HistoryTab,
+} from './components/pages/AutomationPage';
+import {
+  SettingsPage,
+  GeneralSettings,
+  AgentSettings,
+  ModelSettings,
+  AboutSettings,
+  PlaceholderSection,
+} from './components/pages/SettingsPage';
 import { SearchModal } from './components/overlays/SearchModal';
 import { AgentSwitchMenu } from './components/overlays/AgentSwitchMenu';
 import { FileReferenceMenu } from './components/overlays/FileReferenceMenu';
@@ -28,15 +44,8 @@ export default function App() {
   // 拉取工具图标映射（toolName → icon 字符串），供工具调用卡片渲染
   useTools();
 
-  const [currentPage, setCurrentPage] = useState<PageType>('home');
   const [overlay, setOverlay] = useState<OverlayType>(null);
-  // 统一消费 store 的 activeTaskId，避免双状态源不同步（HomePage 经 useChat 只更新 store）
-  const activeTaskId = useStore((s) => s.activeTaskId ?? '');
-
-  const navigate = useCallback((page: PageType) => {
-    setCurrentPage(page);
-    setOverlay(null);
-  }, []);
+  const { pathname } = useLocation();
 
   const openOverlay = useCallback((o: OverlayType) => {
     setOverlay(o);
@@ -46,58 +55,57 @@ export default function App() {
     setOverlay(null);
   }, []);
 
-  const openTask = useCallback((taskId: string) => {
-    useStore.getState().setActiveTaskId(taskId);
-    setCurrentPage('task');
-  }, []);
-
-  const renderPage = () => {
-    switch (currentPage) {
-      case 'home':
-        return <HomePage onNavigate={navigate} onOpenOverlay={openOverlay} />;
-      case 'task':
-        return (
-          <TaskRunningPage
-            onNavigate={navigate}
-            onOpenOverlay={openOverlay}
-            taskId={activeTaskId}
-          />
-        );
-      case 'plugins':
-        return <PluginMarketPage onNavigate={navigate} />;
-      case 'automation':
-        return <AutomationPage onNavigate={navigate} />;
-      case 'settings':
-        return <SettingsPage onNavigate={navigate} />;
-      default:
-        return <HomePage onNavigate={navigate} onOpenOverlay={openOverlay} />;
-    }
-  };
+  // 路由切换时关闭 overlay（替代原 navigate() 内的 setOverlay(null) 副作用）
+  useEffect(() => {
+    setOverlay(null);
+  }, [pathname]);
 
   return (
     <TooltipProvider>
       <SidebarProvider className="h-svh min-h-0 overflow-hidden">
-        <Sidebar
-          currentPage={currentPage}
-          onNavigate={navigate}
-          onOpenTask={openTask}
-          activeTaskId={activeTaskId}
-          onOpenOverlay={openOverlay}
-        />
+        <Sidebar onOpenOverlay={openOverlay} />
         <SidebarInset className="min-h-0 overflow-hidden">
           {/* 移动端顶部 trigger 入口（Sheet 关闭时可见） */}
           <header className="flex h-12 items-center gap-2 border-b px-3 md:hidden">
             <SidebarTrigger />
           </header>
-          {renderPage()}
+          <Routes>
+            <Route path="/" element={<HomePage onOpenOverlay={openOverlay} />} />
+            <Route path="/task/:taskId" element={<TaskRunningPage onOpenOverlay={openOverlay} />} />
+            <Route path="/plugins" element={<PluginMarketPage />}>
+              <Route index element={<PluginsTab />} />
+              <Route path="skills" element={<SkillsTab />} />
+              <Route path="*" element={<Navigate to="." replace />} />
+            </Route>
+            <Route path="/automation" element={<AutomationPage />}>
+              <Route index element={<Navigate to="templates" replace />} />
+              <Route path="templates" element={<TemplatesTab />} />
+              <Route path="configured" element={<ConfiguredTab />} />
+              <Route path="history" element={<HistoryTab />} />
+              <Route path="*" element={<Navigate to="templates" replace />} />
+            </Route>
+            <Route path="/settings" element={<SettingsPage />}>
+              <Route index element={<Navigate to="general" replace />} />
+              <Route path="general" element={<GeneralSettings />} />
+              <Route path="agent" element={<AgentSettings />} />
+              <Route path="model" element={<ModelSettings />} />
+              <Route path="about" element={<AboutSettings />} />
+              <Route path="chat" element={<PlaceholderSection section="chat" />} />
+              <Route path="index" element={<PlaceholderSection section="index" />} />
+              <Route path="docs" element={<PlaceholderSection section="docs" />} />
+              <Route path="skills" element={<PlaceholderSection section="skills" />} />
+              <Route path="commands" element={<PlaceholderSection section="commands" />} />
+              <Route path="rules" element={<PlaceholderSection section="rules" />} />
+              <Route path="memory" element={<PlaceholderSection section="memory" />} />
+              <Route path="hooks" element={<PlaceholderSection section="hooks" />} />
+              <Route path="*" element={<Navigate to="general" replace />} />
+            </Route>
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
         </SidebarInset>
 
         {/* 受控 overlay：各组件自带 Dialog/Sheet，由 overlay state 驱动开关 */}
-        <SearchModal
-          open={overlay === 'search'}
-          onClose={closeOverlay}
-          onOpenTask={openTask}
-        />
+        <SearchModal open={overlay === 'search'} onClose={closeOverlay} />
         <AgentSwitchMenu open={overlay === 'agent-switch'} onClose={closeOverlay} />
         <FileReferenceMenu open={overlay === 'file-reference'} onClose={closeOverlay} />
         <PluginDropdown open={overlay === 'plugin-dropdown'} onClose={closeOverlay} />

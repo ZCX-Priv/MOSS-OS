@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const NPM_REGISTRY_URL = 'https://registry.npmjs.org';
-const PACKAGE_NAME = 'moss-os';
+const PACKAGE_NAME = 'moss';
 
 class UpdateModule implements Module {
   manifest!: ModuleManifest; // 由管理器注入

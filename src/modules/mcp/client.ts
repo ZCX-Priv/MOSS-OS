@@ -143,7 +143,7 @@ export class McpClient {
 
     // 创建 client 实例
     this.sdkClient = new Client(
-      { name: 'moss-os', version: '1.0.0' },
+      { name: 'moss', version: '1.0.0' },
       { capabilities: {} },
     );
 
@@ -161,7 +161,7 @@ export class McpClient {
         transport = await this.createSseTransport();
         this.effectiveTransport = 'sse';
         this.sdkClient = new Client(
-          { name: 'moss-os', version: '1.0.0' },
+          { name: 'moss', version: '1.0.0' },
           { capabilities: {} },
         );
         await this.sdkClient.connect(transport);

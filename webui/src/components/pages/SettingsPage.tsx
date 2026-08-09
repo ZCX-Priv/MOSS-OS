@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import type { LucideIcon } from 'lucide-react';
 import {
   Settings,
@@ -18,7 +19,6 @@ import {
   Moon,
   Monitor,
   Plus,
-  GitBranch,
   Book,
   ExternalLink,
   Database,
@@ -47,7 +47,7 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import type { PageType, SettingsSection } from '../../types';
+import type { SettingsSection } from '../../types';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useLocale } from '../../hooks/useLocale';
 import { cn } from '@/lib/utils';
@@ -71,10 +71,6 @@ import { useAgents } from '../../hooks/useAgents';
 import { useStore } from '../../store';
 import type { ModelItem, ThinkingEffort } from '../../types/api';
 
-interface SettingsPageProps {
-  onNavigate: (page: PageType) => void;
-}
-
 interface NavItem {
   id: SettingsSection;
   labelKey: string;
@@ -96,81 +92,11 @@ const navItems: NavItem[] = [
   { id: 'about', labelKey: 'settings.nav.about', Icon: Info },
 ];
 
-export function SettingsPage({ onNavigate: _onNavigate }: SettingsPageProps) {
+export function SettingsPage() {
   const { t } = useTranslation();
-  const [activeSection, setActiveSection] = useState<SettingsSection>('general');
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
   const [searchQuery, setSearchQuery] = useState('');
-
-  const renderContent = () => {
-    switch (activeSection) {
-      case 'general':
-        return <GeneralSettings />;
-      case 'agent':
-        return <AgentSettings />;
-      case 'model':
-        return <ModelSettings />;
-      case 'about':
-        return <AboutSettings />;
-      case 'chat':
-        return (
-          <PlaceholderSettings
-            title={t('settings.placeholder.chatTitle')}
-            description={t('settings.placeholder.chatDesc')}
-          />
-        );
-      case 'index':
-        return (
-          <PlaceholderSettings
-            title={t('settings.placeholder.indexTitle')}
-            description={t('settings.placeholder.indexDesc')}
-          />
-        );
-      case 'docs':
-        return (
-          <PlaceholderSettings
-            title={t('settings.placeholder.docsTitle')}
-            description={t('settings.placeholder.docsDesc')}
-          />
-        );
-      case 'skills':
-        return (
-          <PlaceholderSettings
-            title={t('settings.placeholder.skillsTitle')}
-            description={t('settings.placeholder.skillsDesc')}
-          />
-        );
-      case 'commands':
-        return (
-          <PlaceholderSettings
-            title={t('settings.placeholder.commandsTitle')}
-            description={t('settings.placeholder.commandsDesc')}
-          />
-        );
-      case 'rules':
-        return (
-          <PlaceholderSettings
-            title={t('settings.placeholder.rulesTitle')}
-            description={t('settings.placeholder.rulesDesc')}
-          />
-        );
-      case 'memory':
-        return (
-          <PlaceholderSettings
-            title={t('settings.placeholder.memoryTitle')}
-            description={t('settings.placeholder.memoryDesc')}
-          />
-        );
-      case 'hooks':
-        return (
-          <PlaceholderSettings
-            title={t('settings.placeholder.hooksTitle')}
-            description={t('settings.placeholder.hooksDesc')}
-          />
-        );
-      default:
-        return <GeneralSettings />;
-    }
-  };
 
   return (
     <div className="flex flex-1 overflow-hidden">
@@ -192,9 +118,9 @@ export function SettingsPage({ onNavigate: _onNavigate }: SettingsPageProps) {
           {navItems.map((item) => (
             <Button
               key={item.id}
-              variant={activeSection === item.id ? 'secondary' : 'ghost'}
+              variant={pathname === `/settings/${item.id}` ? 'secondary' : 'ghost'}
               className="justify-start gap-2"
-              onClick={() => setActiveSection(item.id)}
+              onClick={() => navigate(`/settings/${item.id}`)}
             >
               <item.Icon className="size-4" />
               <span>{t(item.labelKey)}</span>
@@ -204,13 +130,13 @@ export function SettingsPage({ onNavigate: _onNavigate }: SettingsPageProps) {
       </aside>
 
       {/* 右侧内容区域 */}
-      <section className="flex-1 overflow-auto">{renderContent()}</section>
+      <section className="flex-1 overflow-auto"><Outlet /></section>
     </div>
   );
 }
 
 /* ===== 通用设置 ===== */
-function GeneralSettings() {
+export function GeneralSettings() {
   const { t } = useTranslation();
   const { mode, setMode } = useTheme();
   const { locale, setLocale } = useLocale();
@@ -352,7 +278,7 @@ function GeneralSettings() {
 }
 
 /* ===== 智能体设置 ===== */
-function AgentSettings() {
+export function AgentSettings() {
   const { t } = useTranslation();
   const { agents, setDefaultAgent } = useAgents();
   const builtInAgents = agents.filter((a) => a.builtIn);
@@ -432,7 +358,7 @@ function AgentSettings() {
 }
 
 /* ===== 模型设置 ===== */
-function ModelSettings() {
+export function ModelSettings() {
   const { t } = useTranslation();
   const { models, currentModel, setCurrent, createModel, updateModel, deleteModel, testModel, reorderModels } = useModels();
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -886,7 +812,7 @@ function AddModelDialog({
 }
 
 /* ===== 关于页面 ===== */
-function AboutSettings() {
+export function AboutSettings() {
   const { t } = useTranslation();
   return (
     <div className="flex flex-col gap-6 p-6">
@@ -896,25 +822,25 @@ function AboutSettings() {
         <div className="size-16 overflow-hidden rounded-2xl">
           <img src="/MOSS.png" alt="MOSS" className="size-full object-cover" />
         </div>
-        <div className="text-sm text-muted-foreground">{t('settings.about.version')}</div>
       </div>
 
       <div className="flex flex-col gap-3">
         <div className="text-sm font-medium text-foreground">{t('settings.about.relatedLinks')}</div>
         <div className="flex flex-col gap-1">
-          <Button variant="outline" className="justify-start gap-2">
-            <Globe className="size-4" />
-            <span className="flex-1 text-left">{t('settings.about.officialWebsite')}</span>
+          <Button
+            variant="outline"
+            className="justify-start gap-2"
+            onClick={() => window.open('https://github.com/ZCX-Priv/MOSS-OS', '_blank')}
+          >
+            <svg viewBox="0 0 16 16" className="size-4" fill="currentColor" aria-hidden="true">
+              <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.012 8.012 0 0 0 16 8c0-4.42-3.58-8-8-8z" />
+            </svg>
+            <span className="flex-1 text-left">GitHub</span>
             <ExternalLink className="size-3.5 text-muted-foreground" />
           </Button>
           <Button variant="outline" className="justify-start gap-2">
             <Book className="size-4" />
             <span className="flex-1 text-left">{t('settings.about.docs')}</span>
-            <ExternalLink className="size-3.5 text-muted-foreground" />
-          </Button>
-          <Button variant="outline" className="justify-start gap-2">
-            <GitBranch className="size-4" />
-            <span className="flex-1 text-left">GitHub</span>
             <ExternalLink className="size-3.5 text-muted-foreground" />
           </Button>
         </div>
@@ -923,6 +849,24 @@ function AboutSettings() {
       <div className="text-xs text-muted-foreground">{t('settings.about.copyright')}</div>
     </div>
   );
+}
+
+/* ===== 占位 section 路由组件（按 section 查表渲染 PlaceholderSettings） ===== */
+const PLACEHOLDER_SECTION_KEYS: Record<string, { titleKey: string; descKey: string }> = {
+  chat: { titleKey: 'settings.placeholder.chatTitle', descKey: 'settings.placeholder.chatDesc' },
+  index: { titleKey: 'settings.placeholder.indexTitle', descKey: 'settings.placeholder.indexDesc' },
+  docs: { titleKey: 'settings.placeholder.docsTitle', descKey: 'settings.placeholder.docsDesc' },
+  skills: { titleKey: 'settings.placeholder.skillsTitle', descKey: 'settings.placeholder.skillsDesc' },
+  commands: { titleKey: 'settings.placeholder.commandsTitle', descKey: 'settings.placeholder.commandsDesc' },
+  rules: { titleKey: 'settings.placeholder.rulesTitle', descKey: 'settings.placeholder.rulesDesc' },
+  memory: { titleKey: 'settings.placeholder.memoryTitle', descKey: 'settings.placeholder.memoryDesc' },
+  hooks: { titleKey: 'settings.placeholder.hooksTitle', descKey: 'settings.placeholder.hooksDesc' },
+};
+
+export function PlaceholderSection({ section }: { section: string }) {
+  const { t } = useTranslation();
+  const keys = PLACEHOLDER_SECTION_KEYS[section] ?? PLACEHOLDER_SECTION_KEYS.chat;
+  return <PlaceholderSettings title={t(keys.titleKey)} description={t(keys.descKey)} />;
 }
 
 /* ===== 占位页面（用于未详细设计的设置子页面） ===== */

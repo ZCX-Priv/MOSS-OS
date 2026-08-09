@@ -1,7 +1,7 @@
 {
-  "name": "moss-os",
+  "name": "moss",
   "version": "1.0.0",
-  "description": "MOSS-OS - 微内核 + 插件化架构的 AI Agent 应用",
+  "description": "MOSS - 微内核 + 插件化架构的 AI Agent 应用",
   "type": "module",
   "bin": {
     "moss": "bin/moss.js"

@@ -76,7 +76,7 @@ class AgentRegistryImpl implements AgentRegistry {
         {
           id: 'agent',
           name: 'Agent',
-          description: 'Default MOSS-OS agent',
+          description: 'Default MOSS agent',
           icon: 'Bot',
           builtIn: true,
           default: true,

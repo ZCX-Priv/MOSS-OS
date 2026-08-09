@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useNavigate } from 'react-router-dom';
 import { Code, FolderOpen, MessageSquare } from 'lucide-react';
 import {
   Dialog,
@@ -22,7 +23,6 @@ import type { TaskItem } from '@/types/api';
 interface SearchModalProps {
   open: boolean;
   onClose: () => void;
-  onOpenTask: (taskId: string) => void;
 }
 
 interface MessageHit {
@@ -31,8 +31,9 @@ interface MessageHit {
   text: string;
 }
 
-export function SearchModal({ open, onClose, onOpenTask }: SearchModalProps) {
+export function SearchModal({ open, onClose }: SearchModalProps) {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const [query, setQuery] = useState('');
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [messages, setMessages] = useState<MessageHit[]>([]);
@@ -106,7 +107,7 @@ export function SearchModal({ open, onClose, onOpenTask }: SearchModalProps) {
                     key={task.id}
                     value={`${task.title} ${task.groupId ?? ''}`}
                     onSelect={() => {
-                      onOpenTask(task.id);
+                      navigate(`/task/${task.id}`);
                       onClose();
                     }}
                   >
@@ -137,7 +138,7 @@ export function SearchModal({ open, onClose, onOpenTask }: SearchModalProps) {
                     key={task.id}
                     value={`${task.title} ${task.groupId ?? ''}`}
                     onSelect={() => {
-                      onOpenTask(task.id);
+                      navigate(`/task/${task.id}`);
                       onClose();
                     }}
                   >
@@ -160,7 +161,7 @@ export function SearchModal({ open, onClose, onOpenTask }: SearchModalProps) {
                     key={msg.messageId}
                     value={msg.text}
                     onSelect={() => {
-                      onOpenTask(msg.sessionId);
+                      navigate(`/task/${msg.sessionId}`);
                       onClose();
                     }}
                   >

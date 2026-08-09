@@ -1,24 +1,25 @@
 import { useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useNavigate } from 'react-router-dom';
 import { ChatInput } from '../shared/ChatInput';
 import { useChat } from '../../hooks/useChat';
-import type { PageType, OverlayType } from '../../types';
+import type { OverlayType } from '../../types';
 
 interface HomePageProps {
-  onNavigate: (page: PageType) => void;
   onOpenOverlay: (overlay: OverlayType) => void;
 }
 
-export function HomePage({ onNavigate, onOpenOverlay }: HomePageProps) {
+export function HomePage({ onOpenOverlay }: HomePageProps) {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const { sendMessage } = useChat();
 
   const handleSend = useCallback(
     async (text: string) => {
-      await sendMessage(text);
-      onNavigate('task');
+      const taskId = await sendMessage(text);
+      if (taskId) navigate(`/task/${taskId}`);
     },
-    [sendMessage, onNavigate],
+    [sendMessage, navigate],
   );
 
   return (

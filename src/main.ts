@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 // src/main.ts
-// MOSS-OS CLI 入口。
+// MOSS CLI 入口。
 
 import { parseArgs, runCommand } from './cli/commands';
 

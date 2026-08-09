@@ -175,6 +175,7 @@ export const en = {
     thinking: 'Thinking...',
     noTodos: 'No todos',
     noContextFiles: 'No context files',
+    noOthers: 'No other context',
     todoCompleted: 'completed',
     todoClose: 'Close',
     askTitle: 'Asking you',
@@ -194,7 +195,7 @@ export const en = {
   },
   automation: {
     title: 'Automation',
-    subtitle: 'Configure automated tasks to let MOSS Work run workflows on schedule. Credits are consumed based on actual usage during task execution.',
+    subtitle: 'Configure automated tasks to let MOSS run workflows on schedule. Credits are consumed based on actual usage during task execution.',
     manualCreate: 'Manual Create',
     createInChat: 'Create in Chat',
     configured: 'Configured',

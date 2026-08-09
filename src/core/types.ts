@@ -35,11 +35,11 @@ export interface Environment {
   readonly isLinux: boolean;
   /** 用户主目录 */
   readonly homeDir: string;
-  /** MOSS-OS 用户数据目录：~/.moss */
+  /** MOSS 用户数据目录：~/.moss */
   readonly dataDir: string;
-  /** MOSS-OS 配置目录：~/.moss/config */
+  /** MOSS 配置目录：~/.moss/config */
   readonly configDir: string;
-  /** MOSS-OS 日志目录：~/.moss/logs */
+  /** MOSS 日志目录：~/.moss/logs */
   readonly logsDir: string;
   /** PID 文件路径：~/.moss/moss.pid */
   readonly pidFile: string;

@@ -1,5 +1,5 @@
 // scripts/dev.mjs
-// MOSS-OS 开发脚本：并行启动后端 (Bun watch) + 前端 (Vite dev)
+// MOSS 开发脚本：并行启动后端 (Bun watch) + 前端 (Vite dev)
 // 使用：node scripts/dev.mjs
 //
 // - 后端：bun run --watch src/main.ts start --foreground --log-level debug
@@ -122,7 +122,7 @@ process.on('SIGTERM', killAll);
 
 function main() {
   console.log('=========================================');
-  console.log(' MOSS-OS Dev');
+  console.log(' MOSS Dev');
   console.log('  Backend: http://127.0.0.1:7766');
   console.log('  UI: http://127.0.0.1:3000');
   console.log('=========================================');

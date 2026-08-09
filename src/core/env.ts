@@ -20,8 +20,8 @@ export function detectEnvironment(): Environment {
 
   const home = homedir();
   const dataDir = join(home, '.moss');
-  // 一次性迁移：旧目录 .moss-os → .moss（仅当新目录不存在且旧目录存在时）
-  migrateLegacyDataDir(join(home, '.moss-os'), dataDir);
+  // 一次性迁移：旧目录 .moss → .moss（仅当新目录不存在且旧目录存在时）
+  migrateLegacyDataDir(join(home, '.moss'), dataDir);
   const configDir = join(dataDir, 'config');
   const logsDir = join(dataDir, 'logs');
   const pidFile = join(dataDir, 'moss.pid');
@@ -75,9 +75,9 @@ function findUpPackageJson(start: string): string | null {
       const path = require('node:path');
       const pkgPath = path.join(current, 'package.json');
       if (fs.existsSync(pkgPath)) {
-        // 校验 package name = moss-os，避免误判上级目录
+        // 校验 package name = moss，避免误判上级目录
         const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
-        if (pkg.name === 'moss-os') return current;
+        if (pkg.name === 'moss') return current;
       }
     } catch {
       // 继续
@@ -90,7 +90,7 @@ function findUpPackageJson(start: string): string | null {
 }
 
 /**
- * 一次性迁移：将旧的 ~/.moss-os 目录重命名为 ~/.moss。
+ * 一次性迁移：将旧的 ~/.moss 目录重命名为 ~/.moss。
  * 仅当新目录不存在且旧目录存在时执行，避免覆盖已有数据或重复迁移。
  */
 function migrateLegacyDataDir(oldDir: string, newDir: string): void {

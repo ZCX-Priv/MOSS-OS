@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useNavigate, useLocation } from 'react-router-dom';
 import {
   CirclePlus,
   Plug,
@@ -11,7 +12,7 @@ import {
   Pencil,
   Trash2,
 } from 'lucide-react';
-import type { PageType, OverlayType } from '../../types';
+import type { OverlayType } from '../../types';
 import type { TaskItem } from '../../types/api';
 import { useStore } from '../../store';
 import {
@@ -55,21 +56,13 @@ import { ConfirmDialog } from '../overlays/ConfirmDialog';
 import { useTasks } from '../../hooks/useTasks';
 
 interface SidebarProps {
-  currentPage: PageType;
-  onNavigate: (page: PageType) => void;
-  onOpenTask: (taskId: string) => void;
-  activeTaskId: string;
   onOpenOverlay: (overlay: OverlayType) => void;
 }
 
-export function Sidebar({
-  currentPage,
-  onNavigate,
-  onOpenTask,
-  activeTaskId,
-  onOpenOverlay,
-}: SidebarProps) {
+export function Sidebar({ onOpenOverlay }: SidebarProps) {
   const { t } = useTranslation();
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
   const { tasks, taskGroups, updateTask, deleteTask } = useTasks();
 
   // 任务项操作状态
@@ -87,7 +80,7 @@ export function Sidebar({
   const navItems: {
     icon: typeof CirclePlus;
     labelKey: string;
-    page: PageType;
+    page: string;
     action?: 'new-task';
   }[] = [
     { icon: CirclePlus, labelKey: 'sidebar.newTask', page: 'home', action: 'new-task' },
@@ -119,8 +112,8 @@ export function Sidebar({
               const Icon = item.icon;
               const label = t(item.labelKey);
               const isActive =
-                (item.action === 'new-task' && currentPage === 'home') ||
-                (item.page === currentPage && !item.action);
+                (item.action === 'new-task' && pathname === '/') ||
+                (`/${item.page}` === pathname && !item.action);
               return (
                 <SidebarMenuItem key={item.labelKey}>
                   <SidebarMenuButton
@@ -130,8 +123,10 @@ export function Sidebar({
                       if (item.action === 'new-task') {
                         useStore.getState().setActiveTaskId(null);
                         useStore.getState().setActiveSession(null);
+                        navigate('/');
+                      } else {
+                        navigate(`/${item.page}`);
                       }
-                      onNavigate(item.page);
                     }}
                   >
                     <Icon className="size-4" />
@@ -179,9 +174,9 @@ export function Sidebar({
                         {tasks.filter((task) => task.groupId === group.id).map((task) => (
                           <SidebarMenuItem key={task.id} className="group/item">
                             <SidebarMenuButton
-                              isActive={activeTaskId === task.id}
+                              isActive={pathname === `/task/${task.id}`}
                               size="sm"
-                              onClick={() => onOpenTask(task.id)}
+                              onClick={() => navigate(`/task/${task.id}`)}
                             >
                               <span className="truncate pr-5">{task.title}</span>
                             </SidebarMenuButton>
@@ -229,7 +224,7 @@ export function Sidebar({
 
       {/* Footer: 用户菜单 */}
       <SidebarFooter>
-        <UserMenu onNavigate={onNavigate} />
+        <UserMenu />
       </SidebarFooter>
     </UISidebar>
 

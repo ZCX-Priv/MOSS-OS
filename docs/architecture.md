@@ -1,8 +1,8 @@
-# MOSS-OS 系统架构
+# MOSS 系统架构
 
 ## 一、总体架构
 
-MOSS-OS 是一个基于 **微内核 + 模组化插件架构** 的 AI Agent 应用，运行在 Bun 运行时上。
+MOSS 是一个基于 **微内核 + 模组化插件架构** 的 AI Agent 应用，运行在 Bun 运行时上。
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -40,7 +40,7 @@ MOSS-OS 是一个基于 **微内核 + 模组化插件架构** 的 AI Agent 应�
 ## 二、目录结构
 
 ```
-MOSS-OS/
+MOSS/
 ├── webui/                       # 前端（React 19 + shadcn/ui）
 │   ├── src/
 │   │   ├── api/                 # HTTP + WS 客户端封装
@@ -167,7 +167,7 @@ MOSS-OS/
 - 配置项：`config.security.authToken`（空字符串表示无需鉴权）
 - 客户端：HTTP 头 `Authorization: Bearer <token>`，WS 不强制（同源信任）
 - 服务端：`HttpRouter.checkAuth()` 校验，空 token 放行所有请求
-- 前端：`localStorage['moss-os-token']` 存储，`api/http.ts` 自动注入
+- 前端：`localStorage['moss-token']` 存储，`api/http.ts` 自动注入
 
 ### 4.3 静态资源服务
 

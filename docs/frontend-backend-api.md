@@ -1,4 +1,4 @@
-# MOSS-OS 前后端对接文档
+# MOSS 前后端对接文档
 
 > 本文档基于新前端 `webui/`（React 19 + shadcn/ui）与现有后端 `src/modules/server/` 的现状，梳理**需要迁移的接口**、**需要新增的接口**、**前端需新增的模块**与**后端需新增的模组**，作为后续实施的契约依据。
 >
@@ -71,7 +71,7 @@
 - 配置项：`config.security.authToken`（空字符串表示无需鉴权）
 - 客户端：HTTP 头 `Authorization: Bearer <token>`，WS 同源信任不强制
 - 服务端：`HttpRouter.checkAuth()` 校验，空 token 放行
-- 前端：`localStorage['moss-os-token']` 存储，`api/http.ts` 自动注入
+- 前端：`localStorage['moss-token']` 存储，`api/http.ts` 自动注入
 
 ### 2.3 统一响应格式
 

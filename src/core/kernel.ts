@@ -46,7 +46,7 @@ export class Microkernel {
     // 1. 初始化内核服务
     this.env = detectEnvironment();
     this.logger = createRootLogger(this.env, options.logLevel ?? 'info');
-    this.logger.info('MOSS-OS kernel starting', {
+    this.logger.info('MOSS kernel starting', {
       platform: this.env.platform,
       arch: this.env.arch,
       bunVersion: this.env.runtimeVersion,
@@ -116,7 +116,7 @@ export class Microkernel {
     await this.eventBus.broadcast('kernel:ready', { pid: this.env.pid });
 
     const activeCount = this.extensionManager.getActiveExtensionCount();
-    this.logger.info('MOSS-OS kernel ready', {
+    this.logger.info('MOSS kernel ready', {
       activeExtensions: activeCount,
       services: this.services.list(),
     });
@@ -128,14 +128,14 @@ export class Microkernel {
     if (!this.started) {
       return;
     }
-    this.logger?.info('MOSS-OS kernel stopping');
+    this.logger?.info('MOSS kernel stopping');
     await this.eventBus?.broadcast('kernel:shutdown', {});
 
     if (this.extensionManager) {
       await this.extensionManager.destroyAll();
     }
     this.started = false;
-    this.logger?.info('MOSS-OS kernel stopped');
+    this.logger?.info('MOSS kernel stopped');
   }
 
   isStarted(): boolean {

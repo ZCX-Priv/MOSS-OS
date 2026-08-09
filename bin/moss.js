@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 // bin/moss.js
-// MOSS-OS npm 包入口（npm bin "moss"）。
+// MOSS npm 包入口（npm bin "moss"）。
 //
 // 行为：
 // - 优先使用构建产物 dist/server.js（生产发布）

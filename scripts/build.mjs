@@ -1,5 +1,5 @@
 // scripts/build.mjs
-// MOSS-OS 构建脚本：构建后端 (Bun) + 前端 (Vite)
+// MOSS 构建脚本：构建后端 (Bun) + 前端 (Vite)
 // 使用：node scripts/build.mjs
 
 import { spawnSync } from 'node:child_process';
@@ -146,7 +146,7 @@ function verifyArtifacts() {
 function main() {
   const startedAt = Date.now();
   console.log('=========================================');
-  console.log(' MOSS-OS Build');
+  console.log(' MOSS Build');
   console.log('=========================================');
   cleanDist();
   buildBackend();

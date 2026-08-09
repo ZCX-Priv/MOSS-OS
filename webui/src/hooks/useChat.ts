@@ -27,9 +27,9 @@ export function useChat() {
   const removePendingAsk = useStore((s) => s.removePendingAsk);
 
   const sendMessage = useCallback(
-    async (text: string, opts?: { taskId?: string; sessionId?: string }) => {
+    async (text: string, opts?: { taskId?: string; sessionId?: string }): Promise<string | undefined> => {
       const content = text.trim();
-      if (!content) return;
+      if (!content) return undefined;
 
       const state = useStore.getState();
 
@@ -86,6 +86,8 @@ export function useChat() {
           cwd: state.workingDirectory || undefined,
         },
       });
+
+      return taskId;
     },
     [addMessage, setActiveSession, setActiveTaskId, setGenerating, addTask],
   );
