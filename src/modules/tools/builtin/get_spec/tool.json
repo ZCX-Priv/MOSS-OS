@@ -1,0 +1,24 @@
+{
+  "name": "get_spec",
+  "description": "Read the full content of a specification document by its id. The spec id is the relative path under agent/prompts/main/spec/ without the .md extension (e.g. \"coding/typescript\", \"safety\"). Use list_spec first to discover available spec ids. Returns the Markdown body of the spec (front-matter stripped).",
+  "icon": "file-code",
+  "annotations": {
+    "readOnlyHint": true,
+    "idempotentHint": true
+  },
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "spec": {
+        "type": "string",
+        "description": "Spec id to read (relative path without .md, e.g. \"coding/typescript\")."
+      }
+    },
+    "required": ["spec"],
+    "additionalProperties": false
+  },
+  "config": {
+    "defaults": { "enabled": true },
+    "schema": {}
+  }
+}

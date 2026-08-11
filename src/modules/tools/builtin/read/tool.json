@@ -1,0 +1,35 @@
+{
+  "name": "read",
+  "description": "Read the contents of a text file. Returns lines with line numbers. Supports offset and limit for partial reads. Binary files are detected and rejected.",
+  "icon": "file-text",
+  "annotations": {
+    "readOnlyHint": true,
+    "idempotentHint": true
+  },
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "Absolute or relative path to the file to read."
+      },
+      "offset": {
+        "type": "integer",
+        "description": "Line number to start reading from (1-based, default 1).",
+        "minimum": 1
+      },
+      "limit": {
+        "type": "integer",
+        "description": "Maximum number of lines to read (default 2000).",
+        "minimum": 1,
+        "maximum": 10000
+      }
+    },
+    "required": ["path"],
+    "additionalProperties": false
+  },
+  "config": {
+    "defaults": { "enabled": true },
+    "schema": {}
+  }
+}

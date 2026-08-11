@@ -23,6 +23,7 @@ import type {
   PluginItem,
   SkillItem,
   SpecItem,
+  ToolItem,
 } from '../types/api';
 
 // ============================================================================
@@ -73,6 +74,9 @@ interface UIState {
   plugins: PluginItem[];
   skills: SkillItem[];
   specs: SpecItem[];
+
+  // --- 工具（完整列表，含 enabled/source，供工具管理 UI） ---
+  tools: ToolItem[];
 
   // --- 配置 ---
   appConfig: AppConfig | null;
@@ -167,6 +171,10 @@ interface UIActions {
   setSkills: (s: SkillItem[]) => void;
   setSpecs: (s: SpecItem[]) => void;
 
+  // 工具
+  setTools: (t: ToolItem[]) => void;
+  updateTool: (name: string, patch: Partial<ToolItem>) => void;
+
   // 配置
   setAppConfig: (c: AppConfig | null) => void;
   setApiConfig: (c: ApiConfig | null) => void;
@@ -237,6 +245,9 @@ export const useStore = create<Store>((set) => ({
   plugins: [],
   skills: [],
   specs: [],
+
+  // --- 工具 ---
+  tools: [],
 
   // --- 配置 ---
   appConfig: null,
@@ -406,6 +417,13 @@ export const useStore = create<Store>((set) => ({
     })),
   setSkills: (skills) => set({ skills }),
   setSpecs: (specs) => set({ specs }),
+
+  // --- Actions: 工具 ---
+  setTools: (tools) => set({ tools }),
+  updateTool: (name, patch) =>
+    set((state) => ({
+      tools: state.tools.map((t) => (t.name === name ? { ...t, ...patch } : t)),
+    })),
 
   // --- Actions: 配置 ---
   setAppConfig: (appConfig) => set({ appConfig }),

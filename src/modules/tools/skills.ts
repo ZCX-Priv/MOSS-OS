@@ -1,6 +1,6 @@
 // src/modules/tools/skills.ts
-// Skill 注册表：从 skills/ 目录动态加载 .md 文件（YAML front-matter + Markdown body）。
-// 加载顺序：包内模板 skills/ → 用户目录 ~/.moss/skills/（同名覆盖）。
+// Skill 注册表：仅从 ~/.moss/skills/ 动态加载 .md 文件（YAML front-matter + Markdown body）。
+// 首次启动时从包内 skills/ 播种内置模板到 ~/.moss/skills/（仅当目标目录不存在时）。
 // 支持热重载：监听用户 skills 目录变更，自动增删 skill。
 
 import { stat } from 'node:fs/promises';
@@ -94,18 +94,57 @@ class SkillRegistryImpl implements SkillRegistry {
 }
 
 /**
- * 创建 Skill 注册表：从包内 skills/ 与用户 ~/.moss/skills/ 加载 .md 文件。
- * 用户目录同名 skill 覆盖包内模板。监听用户目录变更实现热重载。
+ * 首次启动播种：若 ~/.moss/skills 不存在，从内置目录复制所有 .md 文件。
+ * 仅当目标目录不存在时执行，用户删除的 skill 不会被重新添加。
+ * 播种失败不阻断启动，仅记录日志。
+ */
+function seedBuiltinSkills(builtinDir: string, userDir: string, logger: Logger): void {
+  try {
+    // 目录已存在则跳过（用户已初始化过，不覆盖其修改/删除）
+    try {
+      nodeFs.statSync(userDir);
+      return;
+    } catch {
+      // 目录不存在，继续播种
+    }
+    const entries = readdirSync(builtinDir); // 内置目录不存在会抛错被外层 catch
+    nodeFs.mkdirSync(userDir, { recursive: true });
+    let count = 0;
+    for (const file of entries) {
+      if (!file.endsWith('.md')) continue;
+      try {
+        const content = readFileSync(join(builtinDir, file), 'utf8');
+        nodeFs.writeFileSync(join(userDir, file), content, 'utf8');
+        count++;
+      } catch (err) {
+        logger.warn(`Failed to seed skill file ${file}`, {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    logger.info(`Seeded builtin skills to ${userDir}`, { count });
+  } catch (err) {
+    // 内置目录不存在（开发模式异常）或 mkdir 失败
+    logger.warn('Failed to seed builtin skills', {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/**
+ * 创建 Skill 注册表：仅从用户 ~/.moss/skills/ 加载 .md 文件。
+ * 首次启动时从包内 skills/ 播种内置模板到 ~/.moss/skills/。
+ * 监听用户目录变更实现热重载。
  */
 export function createSkillRegistry(env: Environment, logger: Logger): SkillRegistry {
   const reg = new SkillRegistryImpl();
-  const builtinDir = join(env.packageRoot, 'skills');
-  const userDir = join(env.dataDir, 'skills');
+  const builtinDir = join(env.packageRoot, 'skills');  // 仅作种子源
+  const userDir = join(env.dataDir, 'skills');         // 唯一加载源
 
-  // 同步加载（注册表在 tools 模组 initialize 时立即需要）
-  // 包内模板先加载
-  loadSkillsFromDirSync(reg, builtinDir, logger);
-  // 用户目录后加载（覆盖同名）
+  // 首次启动播种：若 ~/.moss/skills 不存在，从内置目录复制 .md 文件
+  seedBuiltinSkills(builtinDir, userDir, logger);
+
+  // 同步加载（仅从用户目录）
   loadSkillsFromDirSync(reg, userDir, logger);
 
   // 启动热重载监听（异步，不阻塞初始化）

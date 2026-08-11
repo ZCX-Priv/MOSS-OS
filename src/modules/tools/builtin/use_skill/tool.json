@@ -1,0 +1,29 @@
+{
+  "name": "use_skill",
+  "description": "Invoke a registered skill. Skills are prompt templates loaded from the skills/ directory. Returns the skill prompt text (with {{placeholder}} substitution from args). Available built-in skills: brainstorming, code-review, tdd, explain.",
+  "icon": "sparkles",
+  "annotations": {
+    "readOnlyHint": true,
+    "idempotentHint": true
+  },
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "skill": {
+        "type": "string",
+        "description": "Name of the skill to invoke."
+      },
+      "args": {
+        "type": "object",
+        "description": "Arguments to substitute into skill prompt placeholders (e.g. {topic: \"react hooks\"} for {{topic}}).",
+        "additionalProperties": true
+      }
+    },
+    "required": ["skill"],
+    "additionalProperties": false
+  },
+  "config": {
+    "defaults": { "enabled": true },
+    "schema": {}
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "name": "edit",
+  "description": "Edit a file by replacing a specific string with a new string. The oldString must be unique in the file unless replaceAll is true. Use replaceAll to replace all occurrences.",
+  "icon": "file-pen",
+  "annotations": {
+    "destructiveHint": true
+  },
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "Absolute or relative path to the file to edit."
+      },
+      "oldString": {
+        "type": "string",
+        "description": "The exact string to find in the file."
+      },
+      "newString": {
+        "type": "string",
+        "description": "The string to replace oldString with."
+      },
+      "replaceAll": {
+        "type": "boolean",
+        "description": "If true, replace all occurrences of oldString (default false)."
+      }
+    },
+    "required": ["path", "oldString", "newString"],
+    "additionalProperties": false
+  },
+  "config": {
+    "defaults": { "enabled": true, "requireConfirmation": false },
+    "schema": {}
+  }
+}

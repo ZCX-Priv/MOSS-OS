@@ -7,6 +7,8 @@ import type { ToolRegistry } from '../contracts';
 
 export class ToolRegistryImpl implements ToolRegistry {
   private readonly tools = new Map<string, Tool>();
+  /** sourceDir → toolName 索引（热重载增量定位用） */
+  private readonly sourceDirIndex = new Map<string, string>();
   private readonly logger: Logger;
   private readonly config: ConfigService | null;
 
@@ -19,14 +21,59 @@ export class ToolRegistryImpl implements ToolRegistry {
     if (this.tools.has(tool.name)) {
       this.logger.warn(`Tool "${tool.name}" already registered, overriding`);
     }
+    // 同步 sourceDir 索引
+    if (tool.sourceDir) {
+      // 清理可能指向旧 name 的索引
+      this.sourceDirIndex.set(tool.sourceDir, tool.name);
+    }
     this.tools.set(tool.name, tool);
     this.logger.debug(`Tool registered: ${tool.name}`);
   }
 
   unregister(name: string): void {
+    const existing = this.tools.get(name);
+    if (existing?.sourceDir) {
+      this.sourceDirIndex.delete(existing.sourceDir);
+    }
     if (!this.tools.delete(name)) {
       this.logger.warn(`Tool "${name}" not registered, cannot unregister`);
     }
+  }
+
+  /**
+   * 增量热重载：按来源目录替换工具。
+   * 若新工具 name 与旧的不同，先移除旧的；同名冲突（不同 sourceDir）保留先注册者。
+   */
+  reloadBySourceDir(sourceDir: string, tool: Tool): void {
+    const oldName = this.sourceDirIndex.get(sourceDir);
+    // 文件曾注册过且 name 变了，先移除旧 name
+    if (oldName && oldName !== tool.name) {
+      this.tools.delete(oldName);
+    }
+    // 同名工具若已被其他 sourceDir 占用，保留先注册者
+    const existing = this.tools.get(tool.name);
+    if (existing && existing.sourceDir && existing.sourceDir !== sourceDir) {
+      this.logger.warn(`Tool "${tool.name}" conflict (owned by ${existing.sourceDir}), skip reload from ${sourceDir}`);
+      return;
+    }
+    this.tools.set(tool.name, tool);
+    this.sourceDirIndex.set(sourceDir, tool.name);
+    this.logger.debug(`Tool reloaded by sourceDir: ${tool.name} (${sourceDir})`);
+  }
+
+  /** 按来源目录移除工具（文件删除时调用） */
+  removeBySourceDir(sourceDir: string): void {
+    const name = this.sourceDirIndex.get(sourceDir);
+    if (name) {
+      this.tools.delete(name);
+      this.sourceDirIndex.delete(sourceDir);
+      this.logger.debug(`Tool removed by sourceDir: ${name} (${sourceDir})`);
+    }
+  }
+
+  /** 判断指定 sourceDir 是否已注册（热重载判断用） */
+  hasSourceDir(sourceDir: string): boolean {
+    return this.sourceDirIndex.has(sourceDir);
   }
 
   get(name: string): Tool | null {
@@ -43,12 +90,29 @@ export class ToolRegistryImpl implements ToolRegistry {
     inputSchema: unknown;
     annotations?: Record<string, unknown>;
   }> {
-    return this.list().map(t => ({
-      name: t.name,
-      description: t.description,
-      inputSchema: t.inputSchema,
-      annotations: t.annotations as Record<string, unknown> | undefined,
-    }));
+    // 仅暴露启用的工具给 LLM（enabled 从 config 实时读取）
+    return this.list()
+      .filter(t => this.isEnabled(t.name))
+      .map(t => ({
+        name: t.name,
+        description: t.description,
+        inputSchema: t.inputSchema,
+        annotations: t.annotations as Record<string, unknown> | undefined,
+      }));
+  }
+
+  /**
+   * 判断工具是否启用：从 config.tools[name].enabled 实时读取，缺失默认 true。
+   * config 不可用时默认启用（不阻断工具调用）。
+   */
+  isEnabled(name: string): boolean {
+    if (!this.config) return true;
+    try {
+      const allTools = this.config.getAppConfig().tools as Record<string, { enabled?: boolean }>;
+      return allTools[name]?.enabled ?? true;
+    } catch {
+      return true;
+    }
   }
 
   async execute(name: string, params: unknown, ctx: ToolContext): Promise<ToolResult> {
@@ -56,6 +120,14 @@ export class ToolRegistryImpl implements ToolRegistry {
     if (!tool) {
       return {
         content: [{ type: 'text', text: `Error: Tool "${name}" not found` }],
+        isError: true,
+      };
+    }
+
+    // 启用状态实时校验（防止 LLM 调用已禁用的工具）
+    if (!this.isEnabled(name)) {
+      return {
+        content: [{ type: 'text', text: `Error: Tool "${name}" is disabled` }],
         isError: true,
       };
     }

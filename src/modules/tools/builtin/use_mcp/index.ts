@@ -1,41 +1,13 @@
-// src/plugins/tools/use_mcp.ts
-// use_mcp 工具：转发到指定 MCP 服务器的指定工具。
+// builtin/use_mcp/index.ts
+// use_mcp 工具 execute 逻辑：转发到指定 MCP 服务器的指定工具。
+// 元数据见同目录 tool.json。
 
-import type { Tool, ToolResult } from './types';
-import type { MCPManager } from '../contracts';
-import { ServiceNames } from '../../core/types';
+import type { ToolContext, ToolResult } from '../../types';
+import type { MCPManager } from '../../../contracts';
+import { ServiceNames } from '../../../../core/types';
 
-export const useMcpTool: Tool = {
-  name: 'use_mcp',
-  description:
-    'Call a tool on a specified MCP server. ' +
-    'Use list_mcp first to discover available servers and tools.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      server: {
-        type: 'string',
-        description: 'Name of the MCP server to call.',
-      },
-      tool: {
-        type: 'string',
-        description: 'Name of the tool to call on the server.',
-      },
-      arguments: {
-        type: 'object',
-        description: 'Arguments to pass to the tool.',
-        additionalProperties: true,
-      },
-    },
-    required: ['server', 'tool'],
-    additionalProperties: false,
-  },
-  annotations: {
-    readOnlyHint: false,
-    destructiveHint: false, // 取决于具体 MCP 工具，保守起见不标记
-  },
-  icon: 'plug',
-  async execute(params, ctx): Promise<ToolResult> {
+export default {
+  async execute(params: unknown, ctx: ToolContext): Promise<ToolResult> {
     const p = params as { server: string; tool: string; arguments?: unknown };
     if (!p.server || !p.tool) {
       return {
@@ -54,7 +26,6 @@ export const useMcpTool: Tool = {
 
     try {
       const result = await mgr.callTool(p.server, p.tool, p.arguments ?? {});
-      // 转换 MCP 结果到 ToolResult 格式
       // resource 类型无法映射为 image source 结构，统一转为 text 块
       const content = result.content.map(c => {
         if (c.type === 'text') {

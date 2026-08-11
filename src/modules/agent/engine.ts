@@ -458,7 +458,7 @@ export class AgentEngineImpl implements AgentEngine {
     });
 
     // 阶段5.1：工具执行副作用 WS 推送（todo-updated / context-updated / file-*）
-    this.notifyToolSideEffects(tc.name, args, sessionId);
+    this.notifyToolSideEffects(tc.name, args, sessionId, toolCallId);
   }
 
   /**
@@ -469,7 +469,7 @@ export class AgentEngineImpl implements AgentEngine {
    * - edit：额外推送 file-edited
    * server 模组未加载时静默跳过，不阻断工具执行。
    */
-  private notifyToolSideEffects(toolName: string, args: unknown, sessionId: string): void {
+  private notifyToolSideEffects(toolName: string, args: unknown, sessionId: string, toolCallId: string): void {
     const server = this.services.tryResolve<{
       sendToSession: (sid: string, msg: unknown) => void;
     }>(ServiceNames.SERVER_INSTANCE);
@@ -483,7 +483,7 @@ export class AgentEngineImpl implements AgentEngine {
           server.sendToSession(sessionId, {
             type: 'todo-updated',
             sessionId,
-            payload: { todos },
+            payload: { todos, toolCallId },
           });
           break;
         }

@@ -1,45 +1,14 @@
-// src/plugins/tools/read.ts
-// read 工具：按行读取文件，带行号，二进制检测，路径防越权。
+// builtin/read/index.ts
+// read 工具 execute 逻辑：按行读取文件，带行号，二进制检测。
+// 元数据（name/description/icon/annotations/inputSchema/config）见同目录 tool.json。
 
 import { existsSync, statSync } from 'node:fs';
-import { isAbsolute, normalize } from 'node:path';
-import { isBinaryFile, readLinesWithNumbers } from '../../utils/fs';
-import type { Tool, ToolResult } from './types';
+import { isAbsolute, normalize, resolve } from 'node:path';
+import { isBinaryFile, readLinesWithNumbers } from '../../../../utils/fs';
+import type { ToolContext, ToolResult } from '../../types';
 
-export const readTool: Tool = {
-  name: 'read',
-  description:
-    'Read the contents of a text file. Returns lines with line numbers. ' +
-    'Supports offset and limit for partial reads. ' +
-    'Binary files are detected and rejected.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      path: {
-        type: 'string',
-        description: 'Absolute or relative path to the file to read.',
-      },
-      offset: {
-        type: 'integer',
-        description: 'Line number to start reading from (1-based, default 1).',
-        minimum: 1,
-      },
-      limit: {
-        type: 'integer',
-        description: 'Maximum number of lines to read (default 2000).',
-        minimum: 1,
-        maximum: 10000,
-      },
-    },
-    required: ['path'],
-    additionalProperties: false,
-  },
-  annotations: {
-    readOnlyHint: true,
-    idempotentHint: true,
-  },
-  icon: 'file-text',
-  async execute(params, ctx): Promise<ToolResult> {
+export default {
+  async execute(params: unknown, ctx: ToolContext): Promise<ToolResult> {
     const p = params as { path: string; offset?: number; limit?: number };
     if (!p.path) {
       return { content: [{ type: 'text', text: 'Error: path is required' }], isError: true };
@@ -75,7 +44,6 @@ export const readTool: Tool = {
       };
     }
 
-    // 二进制检测
     if (isBinaryFile(absPath)) {
       return {
         content: [{ type: 'text', text: `Error: binary file detected, cannot read as text: ${absPath}` }],
@@ -113,15 +81,5 @@ export const readTool: Tool = {
 function resolveSafe(path: string, cwd: string): string | null {
   const base = cwd || process.cwd();
   const abs = isAbsolute(path) ? normalize(path) : normalize(resolve(base, path));
-  // 简单越权检测：允许访问 cwd 及其子路径
-  // 但允许通过绝对路径访问其他目录（Agent 需要这个能力）
-  // 仅做 normalize 防止 ../ 注入
   return abs;
-}
-
-function resolve(...paths: string[]): string {
-  // 简易 path.resolve 实现，避免循环依赖 node:path
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const path = require('node:path');
-  return path.resolve(...paths);
 }

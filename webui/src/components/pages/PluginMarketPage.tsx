@@ -13,6 +13,9 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { usePlugins, getPluginIconGradient } from '../../hooks/usePlugins';
 import { useSkills } from '../../hooks/useSkills';
+import { useTools } from '../../hooks/useTools';
+import { TOOL_ICON_MAP } from '../../lib/tool-icons';
+import { Wrench } from 'lucide-react';
 
 // Outlet context 类型：搜索框 query 与 setQuery 共享给子组件
 interface PluginOutletContext {
@@ -26,11 +29,19 @@ export function PluginMarketPage() {
   const { pathname } = useLocation();
   const [query, setQuery] = useState('');
 
-  // 当前 tab：/plugins → plugins，/plugins/skills → skills
-  const tab = pathname === '/plugins/skills' ? 'skills' : 'plugins';
+  // 当前 tab：/plugins → plugins，/plugins/skills → skills，/plugins/tools → tools
+  const tab = pathname === '/plugins/skills'
+    ? 'skills'
+    : pathname === '/plugins/tools'
+      ? 'tools'
+      : 'plugins';
   // Badge 计数在布局层拉取
   const { plugins } = usePlugins();
   const { skills } = useSkills();
+  const { tools } = useTools();
+
+  const tabPath = (v: string) =>
+    v === 'plugins' ? '/plugins' : v === 'skills' ? '/plugins/skills' : '/plugins/tools';
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
@@ -43,7 +54,7 @@ export function PluginMarketPage() {
       {/* Tabs（路由驱动） */}
       <Tabs
         value={tab}
-        onValueChange={(v) => navigate(v === 'plugins' ? '/plugins' : '/plugins/skills')}
+        onValueChange={(v) => navigate(tabPath(v))}
       >
         <div className="flex items-center justify-between gap-4 border-b border-border px-6 py-3">
           <TabsList>
@@ -54,6 +65,10 @@ export function PluginMarketPage() {
             <TabsTrigger value="skills" className="gap-1.5">
               {t('plugins.skillsTab')}
               <Badge variant="secondary">{skills.length}</Badge>
+            </TabsTrigger>
+            <TabsTrigger value="tools" className="gap-1.5">
+              {t('plugins.toolsTab')}
+              <Badge variant="secondary">{tools.length}</Badge>
             </TabsTrigger>
           </TabsList>
           <div className="relative w-64">
@@ -170,14 +185,67 @@ export function SkillsTab() {
             <div className="flex min-w-0 flex-1 flex-col gap-0.5">
               <div className="flex items-center gap-2">
                 <h3 className="text-sm font-medium text-foreground">{skill.name}</h3>
-                <Badge variant="outline" className="font-normal">
-                  {skill.source}
-                </Badge>
               </div>
               <p className="truncate text-xs text-muted-foreground">{skill.description}</p>
             </div>
           </Card>
         ))}
+      </div>
+    </div>
+  );
+}
+
+/* ===== 工具 tab ===== */
+export function ToolsTab() {
+  const { t } = useTranslation();
+  const { query } = useOutletContext<PluginOutletContext>();
+  const { tools, toggleTool } = useTools();
+
+  const q = query.trim().toLowerCase();
+  const filteredTools = q
+    ? tools.filter(
+        (tool) =>
+          tool.name.toLowerCase().includes(q) || tool.description.toLowerCase().includes(q),
+      )
+    : tools;
+
+  return (
+    <div className="p-6">
+      <div className="flex flex-col gap-2">
+        {filteredTools.length === 0 && (
+          <div className="py-12 text-center text-sm text-muted-foreground">
+            {t('plugins.noTools')}
+          </div>
+        )}
+        {filteredTools.map((tool) => {
+          const Icon = TOOL_ICON_MAP[tool.icon ?? ''] ?? Wrench;
+          return (
+            <Card key={tool.name} className="flex flex-row items-center gap-3 p-3">
+              <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                <Icon className="size-5" />
+              </div>
+              <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-medium text-foreground">{tool.name}</h3>
+                  <Badge variant="outline" className="font-normal">
+                    {tool.source === 'builtin' ? t('plugins.builtin') : t('plugins.custom')}
+                  </Badge>
+                  {tool.annotations?.destructiveHint && (
+                    <Badge variant="secondary" className="font-normal text-amber-600">
+                      destructive
+                    </Badge>
+                  )}
+                </div>
+                <p className="truncate text-xs text-muted-foreground">{tool.description}</p>
+              </div>
+              <Switch
+                checked={tool.enabled}
+                onCheckedChange={(checked) => void toggleTool(tool.name, checked)}
+                aria-label={tool.enabled ? t('common.close') : t('common.open')}
+              />
+            </Card>
+          );
+        })}
       </div>
     </div>
   );

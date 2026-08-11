@@ -1,0 +1,23 @@
+{
+  "name": "list_mcp",
+  "description": "List all connected MCP servers and their tools. If server is specified, only list tools from that server. Use this to discover what MCP tools are available before calling use_mcp.",
+  "icon": "list",
+  "annotations": {
+    "readOnlyHint": true,
+    "idempotentHint": true
+  },
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "server": {
+        "type": "string",
+        "description": "Optional: only list tools from this specific server."
+      }
+    },
+    "additionalProperties": false
+  },
+  "config": {
+    "defaults": { "enabled": true },
+    "schema": {}
+  }
+}

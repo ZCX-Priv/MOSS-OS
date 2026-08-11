@@ -1,48 +1,13 @@
-// src/plugins/tools/shell.ts
-// shell 工具：执行 shell 命令，捕获 stdout/stderr/exitCode。
+// builtin/shell/index.ts
+// shell 工具 execute 逻辑：执行 shell 命令，捕获 stdout/stderr/exitCode。
+// 元数据见同目录 tool.json。
 
-import { isAbsolute, normalize } from 'node:path';
-import { decodeShellOutput } from '../../utils/encoding';
-import type { Tool, ToolResult } from './types';
+import { isAbsolute, normalize, resolve } from 'node:path';
+import { decodeShellOutput } from '../../../../utils/encoding';
+import type { ToolContext, ToolResult } from '../../types';
 
-export const shellTool: Tool = {
-  name: 'shell',
-  description:
-    'Execute a shell command and return stdout, stderr, and exit code. ' +
-    'Default timeout is 30 seconds. Use cwd to set the working directory. ' +
-    'WARNING: This tool executes arbitrary commands with the user\'s permissions.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      command: {
-        type: 'string',
-        description: 'The shell command to execute.',
-      },
-      cwd: {
-        type: 'string',
-        description: 'Working directory for the command (default: agent working directory).',
-      },
-      timeout: {
-        type: 'integer',
-        description: 'Timeout in milliseconds (default 30000).',
-        minimum: 1000,
-        maximum: 600000,
-      },
-      env: {
-        type: 'object',
-        description: 'Additional environment variables (merged with process.env).',
-        additionalProperties: { type: 'string' },
-      },
-    },
-    required: ['command'],
-    additionalProperties: false,
-  },
-  annotations: {
-    destructiveHint: true,
-    requireConfirmation: true,
-  },
-  icon: 'terminal',
-  async execute(params, ctx): Promise<ToolResult> {
+export default {
+  async execute(params: unknown, ctx: ToolContext): Promise<ToolResult> {
     const p = params as {
       command: string;
       cwd?: string;
@@ -97,10 +62,8 @@ export const shellTool: Tool = {
         windowsHide: true,
       });
 
-      // 等待完成，带超时
       const exitCode = await waitForProcWithTimeout(proc, timeoutMs, ctx);
 
-      // 读取输出（字节级读取 + 智能解码，避免 GBK 输出被强制 UTF-8 解码导致乱码）
       const stdoutBuf = Buffer.from(await new Response(proc.stdout).arrayBuffer());
       const stderrBuf = Buffer.from(await new Response(proc.stderr).arrayBuffer());
       const stdout = decodeShellOutput(stdoutBuf);
@@ -161,7 +124,6 @@ async function waitForProcWithTimeout(
       }
       resolve(-1);
     }, timeoutMs);
-    // 若有 abort signal，提前清理
     if (ctx.signal) {
       ctx.signal.addEventListener(
         'abort',
@@ -181,10 +143,4 @@ async function waitForProcWithTimeout(
 
   const exitPromise = proc.exited ?? new Promise<number>(resolve => resolve(0));
   return Promise.race([exitPromise, timeoutPromise]);
-}
-
-function resolve(...paths: string[]): string {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const path = require('node:path');
-  return path.resolve(...paths);
 }

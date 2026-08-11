@@ -1,17 +1,17 @@
 // src/modules/tools/index.ts
 // Tools 模组入口：注册 ToolRegistry + 内置工具 + SkillRegistry。
-// 工具清单从 manifest.ts / builtin.ts 自动派生，新增工具无需修改注册逻辑。
-// 支持配置热重载（enabled 变更即时生效）和自定义工具动态加载（~/.moss/tools/）。
+// 工具从 builtin 目录的「tool.json + index.ts」结构加载，新增工具只需加目录。
+// 支持配置热重载（enabled 变更即时生效）和文件级增量热重载（tool.json/index.ts 变更即时生效）。
 
 import type { Module, ModuleContext, ModuleManifest } from '../../core/types';
 import { ServiceNames } from '../../core/types';
 import { join } from 'node:path';
-import { existsSync, readdirSync, watch } from 'node:fs';
+import { existsSync, statSync, watch, type FSWatcher } from 'node:fs';
 import { ToolRegistryImpl } from './registry';
 import { createSkillRegistry } from './skills';
 import { createSpecRegistry } from './specs';
-import { BUILTIN_TOOLS } from './builtin';
 import { BUILTIN_TOOL_NAMES } from './manifest';
+import { loadToolsFromDir, loadToolFromDir, resolveBuiltinDir } from './loader';
 import type { Tool } from './types';
 
 class ToolsModule implements Module {
@@ -19,7 +19,10 @@ class ToolsModule implements Module {
 
   private registry: ToolRegistryImpl | null = null;
   private ctx: ModuleContext | null = null;
-  private customToolWatcher?: ReturnType<typeof watch>;
+  /** 已加载的内置工具（含 disabled 的，供 config 热重载启用时直接注册） */
+  private loadedBuiltinTools: Tool[] = [];
+  private builtinWatcher?: FSWatcher;
+  private customWatcher?: FSWatcher;
 
   async initialize(ctx: ModuleContext): Promise<void> {
     this.ctx = ctx;
@@ -27,8 +30,8 @@ class ToolsModule implements Module {
     const skillRegistry = createSkillRegistry(ctx.env, ctx.logger);
     const specRegistry = createSpecRegistry(ctx.env, ctx.logger);
 
-    // 1. 注册内置工具（从 manifest 驱动）
-    this.registerBuiltinTools(ctx);
+    // 1. 加载并注册内置工具（从 builtin 目录，按 config 过滤）
+    await this.loadAndRegisterBuiltinTools(ctx);
 
     // 2. 加载自定义工具（~/.moss/tools/）
     await this.loadCustomTools(ctx);
@@ -47,49 +50,39 @@ class ToolsModule implements Module {
       registrantType: 'module',
     });
 
-    // 4. 热重载：配置变更时增删工具
-    ctx.config.onChange((which) => {
-      if (which !== 'app') return;
-      this.syncToolsWithConfig().catch(err => {
-        ctx.logger.error('Tools hot reload failed', {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      });
-    });
+    // 4. 热重载：工具启用/禁用由 registry.isEnabled 实时读取 config，
+    //    listSchemas()/execute() 据此过滤，无需在此监听 config 变更做增删注册。
+    //    文件级热重载（tool.json/index.ts 变更）由下方 startBuiltinWatch/startCustomWatch 处理。
 
     ctx.logger.info('Tools module initialized', {
       tools: this.registry.list().length,
     });
   }
 
-  /** 从 manifest 驱动注册内置工具（根据 config 过滤） */
-  private registerBuiltinTools(ctx: ModuleContext): void {
-    const cfg = ctx.config.getAppConfig().tools as Record<string, { enabled?: boolean }>;
-    for (const entry of BUILTIN_TOOLS) {
-      const enabled = cfg[entry.name]?.enabled ?? true;
-      if (enabled) {
-        this.registry!.register(entry.factory(ctx.env));
-      } else {
-        ctx.logger.debug(`Tool "${entry.name}" disabled by config`);
-      }
+  /** 从 builtin 目录加载所有内置工具并注册（含 disabled，启用状态由 registry 实时过滤） */
+  private async loadAndRegisterBuiltinTools(ctx: ModuleContext): Promise<void> {
+    const builtinDir = resolveBuiltinDir(ctx.env);
+    if (!builtinDir) {
+      ctx.logger.warn('Builtin tools directory not found', {
+        checked: [
+          join(ctx.env.packageRoot, 'src', 'modules', 'tools', 'builtin'),
+          join(ctx.env.packageRoot, 'dist', 'modules', 'tools', 'builtin'),
+        ],
+      });
+      return;
     }
-  }
 
-  /** 热重载：diff 已注册工具与新配置，动态增删 */
-  private async syncToolsWithConfig(): Promise<void> {
-    if (!this.registry || !this.ctx) return;
-    const cfg = this.ctx.config.getAppConfig().tools as Record<string, { enabled?: boolean }>;
-    for (const entry of BUILTIN_TOOLS) {
-      const enabled = cfg[entry.name]?.enabled ?? true;
-      const registered = this.registry.get(entry.name) !== null;
-      if (enabled && !registered) {
-        this.registry.register(entry.factory(this.ctx.env));
-        this.ctx.logger.info(`Tool "${entry.name}" hot-enabled`);
-      } else if (!enabled && registered) {
-        this.registry.unregister(entry.name);
-        this.ctx.logger.info(`Tool "${entry.name}" hot-disabled`);
-      }
+    ctx.logger.info('Loading builtin tools', { dir: builtinDir });
+    this.loadedBuiltinTools = await loadToolsFromDir(builtinDir, ctx.env, ctx.logger, 'builtin');
+
+    // 注册全部内置工具（含 disabled 的）：启用状态由 registry.isEnabled 实时读取 config，
+    // listSchemas() 据此过滤给 LLM。这样 config 变更无需增删注册，且前端可见全部工具。
+    for (const tool of this.loadedBuiltinTools) {
+      this.registry!.register(tool);
     }
+
+    // 启动内置工具目录热重载监听
+    this.startBuiltinWatch(builtinDir, ctx);
   }
 
   /** 从 ~/.moss/tools/ 加载自定义工具（错误隔离，单个失败不影响其他） */
@@ -100,18 +93,58 @@ class ToolsModule implements Module {
     ctx.logger.info('Loading custom tools', { dir });
     await this.loadCustomToolsFromDir(dir, ctx);
 
-    // 监听目录变化（防抖 500ms）
+    // 启动自定义工具目录热重载监听
+    this.startCustomWatch(dir, ctx);
+  }
+
+  /** 扫描目录并加载所有自定义工具子目录 */
+  private async loadCustomToolsFromDir(dir: string, ctx: ModuleContext): Promise<void> {
+    const tools = await loadToolsFromDir(dir, ctx.env, ctx.logger, 'custom');
+    for (const tool of tools) {
+      // 不允许覆盖内置工具
+      if (BUILTIN_TOOL_NAMES.has(tool.name)) {
+        ctx.logger.warn(`Custom tool "${tool.name}" conflicts with builtin, skipped: ${tool.sourceDir}`);
+        continue;
+      }
+      this.registry!.register(tool);
+      ctx.logger.info(`Custom tool loaded: ${tool.name}`, { dir: tool.sourceDir });
+    }
+  }
+
+  /** 启动内置工具目录热重载监听（增量，防抖 300ms） */
+  private startBuiltinWatch(builtinDir: string, ctx: ModuleContext): void {
     let debounce: ReturnType<typeof setTimeout> | null = null;
     try {
-      this.customToolWatcher = watch(dir, { recursive: false }, () => {
+      this.builtinWatcher = watch(builtinDir, { recursive: true }, (_eventType, filename) => {
         if (debounce) clearTimeout(debounce);
         debounce = setTimeout(() => {
-          this.reloadCustomTools(ctx).catch(err => {
+          this.reloadToolByFilename(builtinDir, filename, ctx, 'builtin').catch(err => {
+            ctx.logger.error('Builtin tools reload failed', {
+              error: err instanceof Error ? err.message : String(err),
+            });
+          });
+        }, 300);
+      });
+    } catch (err) {
+      ctx.logger.warn('Failed to watch builtin tools directory', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /** 启动自定义工具目录热重载监听（增量，防抖 300ms） */
+  private startCustomWatch(customDir: string, ctx: ModuleContext): void {
+    let debounce: ReturnType<typeof setTimeout> | null = null;
+    try {
+      this.customWatcher = watch(customDir, { recursive: true }, (_eventType, filename) => {
+        if (debounce) clearTimeout(debounce);
+        debounce = setTimeout(() => {
+          this.reloadToolByFilename(customDir, filename, ctx, 'custom').catch(err => {
             ctx.logger.error('Custom tools reload failed', {
               error: err instanceof Error ? err.message : String(err),
             });
           });
-        }, 500);
+        }, 300);
       });
     } catch (err) {
       ctx.logger.warn('Failed to watch custom tools directory', {
@@ -120,80 +153,113 @@ class ToolsModule implements Module {
     }
   }
 
-  /** 扫描目录并加载所有 .ts/.js 工具文件 */
-  private async loadCustomToolsFromDir(dir: string, ctx: ModuleContext): Promise<void> {
-    let files: string[];
-    try {
-      files = readdirSync(dir).filter(f => f.endsWith('.ts') || f.endsWith('.js'));
-    } catch {
+  /**
+   * 按 watch 的 filename 增量重载单个工具。
+   * filename 形如 'read/tool.json' 或 'read/index.ts'，取首段为工具子目录名。
+   * 若无法提取 filename，回退到全量重载该来源的所有工具。
+   */
+  private async reloadToolByFilename(
+    rootDir: string,
+    filename: string | Buffer | null,
+    ctx: ModuleContext,
+    source: 'builtin' | 'custom',
+  ): Promise<void> {
+    if (!this.registry) return;
+
+    if (filename === null || Buffer.isBuffer(filename)) {
+      // 无法定位具体文件，全量重载
+      await this.fullReload(rootDir, ctx, source);
       return;
     }
 
-    for (const file of files) {
-      const fullPath = join(dir, file);
-      try {
-        // 动态 import（Bun 支持直接 import .ts）
-        const mod = await import(fullPath);
-        const exported = mod.default ?? mod.tool;
-        let tool: Tool | null = null;
+    // 提取工具子目录名（filename 首段，兼容 / 和 \）
+    const parts = filename.replace(/\\/g, '/').split('/').filter(Boolean);
+    if (parts.length === 0) {
+      await this.fullReload(rootDir, ctx, source);
+      return;
+    }
 
-        if (typeof exported === 'function') {
-          tool = exported(ctx.env);
-        } else if (exported && typeof exported === 'object') {
-          tool = exported as Tool;
-        }
+    const toolDir = join(rootDir, parts[0]);
+    const toolName = parts[0];
 
-        if (!tool || !this.isValidTool(tool)) {
-          ctx.logger.warn(`Custom tool file skipped (invalid export): ${file}`);
-          continue;
-        }
+    // 检查目录是否还存在（可能被删除）
+    let dirExists = false;
+    try {
+      dirExists = statSync(toolDir).isDirectory();
+    } catch {
+      dirExists = false;
+    }
 
-        // 不允许覆盖内置工具
-        if (BUILTIN_TOOL_NAMES.has(tool.name)) {
-          ctx.logger.warn(`Custom tool "${tool.name}" conflicts with builtin, skipped: ${file}`);
-          continue;
-        }
+    if (!dirExists) {
+      // 工具目录被删除，移除
+      this.registry.removeBySourceDir(toolDir);
+      ctx.logger.info(`Tool removed (dir deleted): ${toolName}`, { dir: toolDir });
+      return;
+    }
 
-        this.registry!.register(tool);
-        ctx.logger.info(`Custom tool loaded: ${tool.name}`, { file });
-      } catch (err) {
-        // 单个工具加载失败不影响其他工具和系统启动
-        ctx.logger.error(`Failed to load custom tool: ${file}`, {
-          error: err instanceof Error ? err.message : String(err),
-        });
+    // 重新加载该工具目录
+    const tool = await loadToolFromDir(toolDir, ctx.env, ctx.logger, source);
+    if (!tool) {
+      // 加载失败（如 tool.json 无效），移除旧的
+      this.registry.removeBySourceDir(toolDir);
+      ctx.logger.warn(`Tool reload failed (removed): ${toolName}`, { dir: toolDir });
+      return;
+    }
+
+    // 自定义工具不允许覆盖内置工具
+    if (source === 'custom' && BUILTIN_TOOL_NAMES.has(tool.name)) {
+      this.registry.removeBySourceDir(toolDir);
+      ctx.logger.warn(`Custom tool "${tool.name}" conflicts with builtin, removed`, { dir: toolDir });
+      return;
+    }
+
+    // 注册（含 disabled 工具）：启用状态由 registry.isEnabled 实时读取 config
+    this.registry.reloadBySourceDir(toolDir, tool);
+    ctx.logger.info(`Tool reloaded: ${tool.name}`, { dir: toolDir });
+
+    // 如果是内置工具热重载，同步更新 loadedBuiltinTools 缓存
+    if (source === 'builtin') {
+      const idx = this.loadedBuiltinTools.findIndex(t => t.sourceDir === toolDir);
+      if (idx >= 0) {
+        this.loadedBuiltinTools[idx] = tool;
+      } else {
+        this.loadedBuiltinTools.push(tool);
       }
     }
   }
 
-  /** 重新加载所有自定义工具（先注销旧的，再加载新的） */
-  private async reloadCustomTools(ctx: ModuleContext): Promise<void> {
+  /** 全量重载某个来源的所有工具（回退方案） */
+  private async fullReload(rootDir: string, ctx: ModuleContext, source: 'builtin' | 'custom'): Promise<void> {
     if (!this.registry) return;
-    // 注销所有非内置工具
-    for (const tool of this.registry.list()) {
-      if (!BUILTIN_TOOL_NAMES.has(tool.name)) {
-        this.registry.unregister(tool.name);
-      }
-    }
-    // 重新加载
-    const dir = join(ctx.env.dataDir, 'tools');
-    await this.loadCustomToolsFromDir(dir, ctx);
-    ctx.logger.info('Custom tools reloaded');
-  }
 
-  /** 校验导出是否符合 Tool 接口 */
-  private isValidTool(obj: unknown): obj is Tool {
-    if (!obj || typeof obj !== 'object') return false;
-    const t = obj as Record<string, unknown>;
-    return (
-      typeof t.name === 'string' &&
-      typeof t.description === 'string' &&
-      typeof t.inputSchema === 'object' &&
-      typeof t.execute === 'function'
-    );
+    if (source === 'builtin') {
+      // 移除所有内置工具
+      for (const tool of this.registry.list()) {
+        if (tool.source === 'builtin') {
+          this.registry.removeBySourceDir(tool.sourceDir!);
+        }
+      }
+      // 重新加载
+      this.loadedBuiltinTools = await loadToolsFromDir(rootDir, ctx.env, ctx.logger, 'builtin');
+      for (const tool of this.loadedBuiltinTools) {
+        this.registry.register(tool);
+      }
+      ctx.logger.info('Builtin tools full reloaded');
+    } else {
+      // 移除所有自定义工具
+      for (const tool of this.registry.list()) {
+        if (tool.source === 'custom') {
+          this.registry.removeBySourceDir(tool.sourceDir!);
+        }
+      }
+      await this.loadCustomToolsFromDir(rootDir, ctx);
+      ctx.logger.info('Custom tools full reloaded');
+    }
   }
 
   async destroy(): Promise<void> {
-    this.customToolWatcher?.close();
+    this.builtinWatcher?.close();
+    this.customWatcher?.close();
   }
 }
 

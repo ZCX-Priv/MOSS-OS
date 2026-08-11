@@ -190,8 +190,12 @@ export const en = {
     subtitle: 'Manage added MOSS plugins, skills, and app authorizations.',
     pluginsTab: 'Plugins',
     skillsTab: 'Skills',
+    toolsTab: 'Tools',
     searchPlaceholder: 'Search',
     noSkills: 'No skills to manage',
+    noTools: 'No tools',
+    builtin: 'Built-in',
+    custom: 'Custom',
   },
   automation: {
     title: 'Automation',

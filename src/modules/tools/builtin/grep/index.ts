@@ -1,60 +1,20 @@
-// src/modules/tools/grep.ts
-// grep 工具：按正则表达式搜索文件内容，返回匹配的行（带文件路径和行号）。
-// 支持限定目录、文件名 glob 过滤、大小写不敏感。跳过二进制文件和忽略目录。
+// builtin/grep/index.ts
+// grep 工具 execute 逻辑：按正则表达式搜索文件内容，返回匹配的行。
+// 复用 glob 工具的 globToRegex 和 IGNORED_DIRS。
+// 元数据见同目录 tool.json。
 
 import { readdirSync, readFileSync, statSync, type Dirent } from 'node:fs';
 import { isAbsolute, normalize, join } from 'node:path';
-import { isBinaryFile } from '../../utils/fs';
-import { stripBom } from '../../utils/encoding';
-import { globToRegex, IGNORED_DIRS } from './glob';
-import type { Tool, ToolResult } from './types';
+import { isBinaryFile } from '../../../../utils/fs';
+import { stripBom } from '../../../../utils/encoding';
+import { globToRegex, IGNORED_DIRS } from '../glob';
+import type { ToolContext, ToolResult } from '../../types';
 
-/** 单个文件大小上限 10MB，超出跳过 */
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
-/** 单行最大显示长度，超出截断 */
 const MAX_LINE_DISPLAY = 500;
 
-export const grepTool: Tool = {
-  name: 'grep',
-  description:
-    'Search file contents by regular expression. Returns matching lines with file path and line number. ' +
-    'Supports searching a file or directory, optional glob filename filter, and case-insensitive mode. ' +
-    'Binary files and node_modules/.git/dist/build are skipped.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      pattern: {
-        type: 'string',
-        description: 'Regular expression pattern to search for (e.g. "function\\s+\\w+", "TODO|FIXME").',
-      },
-      path: {
-        type: 'string',
-        description: 'File or directory to search in (default: agent working directory). Absolute or relative to cwd.',
-      },
-      glob: {
-        type: 'string',
-        description: 'Optional glob filter for filenames, e.g. "*.ts", "**/*.json". Only matching files are searched.',
-      },
-      caseInsensitive: {
-        type: 'boolean',
-        description: 'Case-insensitive matching (default false).',
-      },
-      maxResults: {
-        type: 'integer',
-        description: 'Maximum number of matching lines to return (default 100, max 500).',
-        minimum: 1,
-        maximum: 500,
-      },
-    },
-    required: ['pattern'],
-    additionalProperties: false,
-  },
-  annotations: {
-    readOnlyHint: true,
-    idempotentHint: true,
-  },
-  icon: 'search',
-  async execute(params, ctx): Promise<ToolResult> {
+export default {
+  async execute(params: unknown, ctx: ToolContext): Promise<ToolResult> {
     const p = params as {
       pattern: string;
       path?: string;
@@ -67,7 +27,6 @@ export const grepTool: Tool = {
       return { content: [{ type: 'text', text: 'Error: pattern is required' }], isError: true };
     }
 
-    // 编译正则
     let regex: RegExp;
     try {
       regex = new RegExp(p.pattern, p.caseInsensitive ? 'gi' : 'g');
@@ -89,7 +48,6 @@ export const grepTool: Tool = {
       };
     }
 
-    // 编译文件名 glob 过滤
     let globRegex: RegExp | null = null;
     if (p.glob) {
       try {
@@ -101,7 +59,6 @@ export const grepTool: Tool = {
 
     const maxResults = Math.min(Math.max(p.maxResults ?? 100, 1), 500);
 
-    // 收集待搜索文件
     let filesToSearch: string[];
     const pathStat = statSync(searchPath);
     if (pathStat.isFile()) {
@@ -117,7 +74,6 @@ export const grepTool: Tool = {
       };
     }
 
-    // 逐文件搜索
     const matches: string[] = [];
     let filesScanned = 0;
     let filesWithMatches = 0;

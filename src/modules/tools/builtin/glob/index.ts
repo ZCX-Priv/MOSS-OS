@@ -1,46 +1,17 @@
-// src/modules/tools/glob.ts
-// glob 工具：按文件名模式（glob pattern）匹配文件，返回匹配的文件路径列表。
-// 支持 * / ** / ? / [abc] 通配符。递归遍历时跳过常见忽略目录。
+// builtin/glob/index.ts
+// glob 工具 execute 逻辑：按文件名模式匹配文件，返回匹配的文件路径列表。
+// 注意：globToRegex 和 IGNORED_DIRS 作为 named export，供 grep 工具复用。
+// 元数据见同目录 tool.json。
 
 import { readdirSync, statSync, type Dirent } from 'node:fs';
 import { isAbsolute, normalize, join, sep } from 'node:path';
-import type { Tool, ToolResult } from './types';
+import type { ToolContext, ToolResult } from '../../types';
 
 /** 递归遍历时跳过的目录名 */
 export const IGNORED_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.next', '.cache']);
 
-export const globTool: Tool = {
-  name: 'glob',
-  description:
-    'Find files by glob pattern. Supports * (non-separator), ** (any depth), ? (single char), [abc] (char class). ' +
-    'Returns a sorted list of matching file paths. Skips node_modules/.git/dist/build by default.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      pattern: {
-        type: 'string',
-        description: 'Glob pattern, e.g. "**/*.ts", "src/**/*.json", "*.md". Use "/" as path separator.',
-      },
-      path: {
-        type: 'string',
-        description: 'Root directory to search in (default: agent working directory). Absolute or relative to cwd.',
-      },
-      maxResults: {
-        type: 'integer',
-        description: 'Maximum number of results to return (default 200, max 1000).',
-        minimum: 1,
-        maximum: 1000,
-      },
-    },
-    required: ['pattern'],
-    additionalProperties: false,
-  },
-  annotations: {
-    readOnlyHint: true,
-    idempotentHint: true,
-  },
-  icon: 'folder-search',
-  async execute(params, ctx): Promise<ToolResult> {
+export default {
+  async execute(params: unknown, ctx: ToolContext): Promise<ToolResult> {
     const p = params as { pattern: string; path?: string; maxResults?: number };
 
     if (!p.pattern || typeof p.pattern !== 'string') {
@@ -69,10 +40,8 @@ export const globTool: Tool = {
 
     const maxResults = Math.min(Math.max(p.maxResults ?? 200, 1), 1000);
 
-    // 收集所有文件相对路径（用 / 分隔，便于跨平台匹配）
     const files = collectFiles(base);
 
-    // 编译 glob 为正则
     let regex: RegExp;
     try {
       regex = globToRegex(p.pattern);
@@ -83,7 +52,6 @@ export const globTool: Tool = {
       };
     }
 
-    // 匹配
     const matched: string[] = [];
     for (const rel of files) {
       if (regex.test(rel)) {
@@ -141,7 +109,6 @@ function collectFiles(root: string): string[] {
 /**
  * 将 glob pattern 转为正则表达式（锚定首尾）。
  * 支持：** (跨目录)、* (非分隔符)、? (单个非分隔符)、[abc] / [a-z] (字符类)。
- * 路径分隔符统一为 /。
  */
 export function globToRegex(pattern: string): RegExp {
   let regex = '^';
@@ -150,19 +117,15 @@ export function globToRegex(pattern: string): RegExp {
     const c = pattern[i];
 
     if (c === '*') {
-      // 处理 ** 和 **/
       if (pattern[i + 1] === '*') {
         i += 2;
-        // ** 后跟 / → 匹配任意层级目录（含 0 层）
         if (pattern[i] === '/') {
           i++;
           regex += '(?:.*/)?';
         } else {
-          // ** 在末尾或后接其他 → 匹配任意字符（含 /）
           regex += '.*';
         }
       } else {
-        // 单 * → 匹配非分隔符
         regex += '[^/]*';
         i++;
       }
@@ -176,7 +139,6 @@ export function globToRegex(pattern: string): RegExp {
     }
 
     if (c === '[') {
-      // 字符类：找到闭合 ]
       let cls = '';
       i++;
       if (pattern[i] === '!') {
@@ -185,7 +147,6 @@ export function globToRegex(pattern: string): RegExp {
       }
       while (i < pattern.length && pattern[i] !== ']') {
         const ch = pattern[i];
-        // 转义正则特殊字符（在字符类内大部分无需转义，但 ] ^ - 需注意位置）
         if (ch === '\\') {
           cls += '\\\\';
           i++;
@@ -202,13 +163,11 @@ export function globToRegex(pattern: string): RegExp {
         regex += `[${cls}]`;
         i++;
       } else {
-        // 未闭合，按字面量处理
         regex += '\\[';
       }
       continue;
     }
 
-    // 其他字符：转义正则特殊字符，/ 保留
     if (c === '/') {
       regex += '/';
     } else {

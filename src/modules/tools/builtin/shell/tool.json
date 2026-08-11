@@ -1,0 +1,41 @@
+{
+  "name": "shell",
+  "description": "Execute a shell command and return stdout, stderr, and exit code. Default timeout is 30 seconds. Use cwd to set the working directory. WARNING: This tool executes arbitrary commands with the user's permissions.",
+  "icon": "terminal",
+  "annotations": {
+    "destructiveHint": true,
+    "requireConfirmation": true
+  },
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "command": {
+        "type": "string",
+        "description": "The shell command to execute."
+      },
+      "cwd": {
+        "type": "string",
+        "description": "Working directory for the command (default: agent working directory)."
+      },
+      "timeout": {
+        "type": "integer",
+        "description": "Timeout in milliseconds (default 30000).",
+        "minimum": 1000,
+        "maximum": 600000
+      },
+      "env": {
+        "type": "object",
+        "description": "Additional environment variables (merged with process.env).",
+        "additionalProperties": { "type": "string" }
+      }
+    },
+    "required": ["command"],
+    "additionalProperties": false
+  },
+  "config": {
+    "defaults": { "enabled": true, "timeout": 30000, "requireConfirmation": true },
+    "schema": {
+      "timeout": { "type": "integer", "min": 1000, "max": 600000 }
+    }
+  }
+}

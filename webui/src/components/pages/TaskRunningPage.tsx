@@ -12,6 +12,7 @@ import {
   Plus,
   Loader2,
   HelpCircle,
+  Atom,
 } from 'lucide-react';
 import { resolveToolIcon } from '@/lib/tool-icons';
 import type { OverlayType } from '../../types';
@@ -121,7 +122,7 @@ export function TaskRunningPage({ onOpenOverlay }: TaskRunningPageProps) {
         </div>
 
         {/* Chat Messages */}
-        <ScrollArea className="min-h-0 flex-1">
+        <div className="min-h-0 flex-1 overflow-y-auto chat-scroll-area">
           <div className="flex flex-col gap-4 p-4">
             {messages.length === 0 && !isGenerating && (
               <div className="flex flex-col items-center justify-center gap-2 py-12 text-muted-foreground">
@@ -142,7 +143,7 @@ export function TaskRunningPage({ onOpenOverlay }: TaskRunningPageProps) {
               <AskPromptCard key={ask.toolCallId} ask={ask} />
             ))}
           </div>
-        </ScrollArea>
+        </div>
 
         {/* Chat Input */}
         <div className="shrink-0 border-t border-border p-3">
@@ -262,7 +263,8 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         <details className="group">
           <summary className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
             <ChevronRight className="size-3.5 transition-transform group-open:rotate-90" />
-            <span>{message.thinking.slice(0, 60)}...</span>
+            <Atom className={cn('size-3.5', message.streaming && 'animate-spin')} />
+            <span>{message.streaming ? '思考中' : '已完成思考'}</span>
           </summary>
           <div className="mt-1 text-xs text-muted-foreground">
             {message.thinking}
@@ -280,7 +282,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
       )}
       {/* todo 工具调用 → 在对话流中渲染 TodoProgressCard（像其他工具一样在调用位置显示） */}
       {message.toolCalls?.some((tc) => tc.name === 'todo') && todos.length > 0 && (
-        <TodoProgressCard todos={todos} variant="inline" />
+        <TodoProgressCard todos={message.todoSnapshot ?? todos} variant="inline" />
       )}
       {/* ask 工具调用 → 渲染为问答卡片（仅已完成、有结果时渲染；进行中的由底部 AskPromptCard 处理） */}
       {message.toolCalls?.filter((tc) => tc.name === 'ask').map((tc) => {

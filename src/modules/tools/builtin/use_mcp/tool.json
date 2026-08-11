@@ -1,0 +1,33 @@
+{
+  "name": "use_mcp",
+  "description": "Call a tool on a specified MCP server. Use list_mcp first to discover available servers and tools.",
+  "icon": "plug",
+  "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false
+  },
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "server": {
+        "type": "string",
+        "description": "Name of the MCP server to call."
+      },
+      "tool": {
+        "type": "string",
+        "description": "Name of the tool to call on the server."
+      },
+      "arguments": {
+        "type": "object",
+        "description": "Arguments to pass to the tool.",
+        "additionalProperties": true
+      }
+    },
+    "required": ["server", "tool"],
+    "additionalProperties": false
+  },
+  "config": {
+    "defaults": { "enabled": true },
+    "schema": {}
+  }
+}

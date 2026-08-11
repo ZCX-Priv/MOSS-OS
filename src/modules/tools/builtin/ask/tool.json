@@ -1,0 +1,24 @@
+{
+  "name": "ask",
+  "description": "Ask the user a question and wait for their text reply. Use this when you need clarification, a decision, or information only the user can provide. Returns the user's reply text. The call blocks until the user responds or times out (5 minutes).",
+  "icon": "help-circle",
+  "annotations": {
+    "readOnlyHint": true,
+    "idempotentHint": true
+  },
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "question": {
+        "type": "string",
+        "description": "The question to ask the user. Be specific and concise."
+      }
+    },
+    "required": ["question"],
+    "additionalProperties": false
+  },
+  "config": {
+    "defaults": { "enabled": true },
+    "schema": {}
+  }
+}

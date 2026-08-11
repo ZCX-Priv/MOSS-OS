@@ -1,29 +1,13 @@
-// src/modules/tools/list_spec.ts
-// list_spec 工具：列出所有可用的 spec 规范文件，以文件树形式展示。
-// Spec 来自 agent/prompts/main/spec/ 目录（支持子文件夹）。
+// builtin/list_spec/index.ts
+// list_spec 工具 execute 逻辑：列出所有可用的 spec 规范文件，以文件树形式展示。
+// 元数据见同目录 tool.json。
 
-import type { Tool, ToolResult } from './types';
-import { ServiceNames } from '../../core/types';
-import type { Spec, SpecRegistry } from './specs';
+import type { ToolContext, ToolResult } from '../../types';
+import { ServiceNames } from '../../../../core/types';
+import type { Spec, SpecRegistry } from '../../specs';
 
-export const listSpecTool: Tool = {
-  name: 'list_spec',
-  description:
-    'List all available specification files as a tree. ' +
-    'Specs live in agent/prompts/main/spec/ and may be organized in subfolders. ' +
-    'Each spec id is its relative path without the .md extension (e.g. "coding/typescript"). ' +
-    'Use this to discover what specs are available before reading one with get_spec.',
-  inputSchema: {
-    type: 'object',
-    properties: {},
-    additionalProperties: false,
-  },
-  annotations: {
-    readOnlyHint: true,
-    idempotentHint: true,
-  },
-  icon: 'book-open',
-  async execute(_params, ctx): Promise<ToolResult> {
+export default {
+  async execute(_params: unknown, ctx: ToolContext): Promise<ToolResult> {
     const reg = ctx.services.tryResolve<SpecRegistry>(ServiceNames.SPEC_REGISTRY);
     if (!reg) {
       return {
@@ -56,16 +40,13 @@ export const listSpecTool: Tool = {
 
 interface TreeNode {
   name: string;
-  /** 叶子节点对应的 spec（该路径是一个 .md 文件） */
   spec?: Spec;
   children: Map<string, TreeNode>;
 }
 
-/** 将扁平 spec 列表构建为嵌套树，并渲染为带缩进的文本 */
 function renderSpecTree(specs: Spec[]): string {
   const root: TreeNode = { name: '', children: new Map() };
 
-  // 构建树
   for (const spec of specs) {
     const parts = spec.id.split('/');
     let cur = root;
@@ -90,7 +71,6 @@ function renderSpecTree(specs: Spec[]): string {
 
 function renderNode(node: TreeNode, prefix: string, lines: string[]): void {
   const entries = Array.from(node.children.values()).sort((a, b) => {
-    // 目录在前，文件在后；同类按字母序
     const aIsDir = a.children.size > 0;
     const bIsDir = b.children.size > 0;
     if (aIsDir !== bIsDir) return aIsDir ? -1 : 1;
@@ -105,14 +85,12 @@ function renderNode(node: TreeNode, prefix: string, lines: string[]): void {
 
     const hasChildren = child.children.size > 0;
     if (child.spec) {
-      // 叶子文件（或同时是文件和目录的罕见情况）
       const desc = child.spec.description || '(no description)';
       lines.push(`${prefix}${connector}${child.name}.md — ${desc}`);
       if (hasChildren) {
         renderNode(child, childPrefix, lines);
       }
     } else {
-      // 纯目录
       lines.push(`${prefix}${connector}${child.name}/`);
       renderNode(child, childPrefix, lines);
     }

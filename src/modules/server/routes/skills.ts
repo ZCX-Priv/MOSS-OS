@@ -14,9 +14,7 @@ export function createListSkillsHandler(services: ServiceRegistry): RouteHandler
     const skills = registry.list().map((s) => ({
       name: s.name,
       description: s.description,
-      source: s.sourceFile?.includes('node_modules') || s.sourceFile?.includes('.moss')
-        ? ('user' as const)
-        : ('builtin' as const),
+      source: 'user' as const,
     }));
     return { status: 200, body: { skills } };
   };
@@ -44,7 +42,7 @@ export function createGetSkillHandler(services: ServiceRegistry): RouteHandler {
           description: skill.description,
           prompt: skill.prompt,
           sourceFile: skill.sourceFile,
-          source: skill.sourceFile?.includes('.moss') ? 'user' : 'builtin',
+          source: 'user' as const,
         },
       },
     };

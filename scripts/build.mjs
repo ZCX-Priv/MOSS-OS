@@ -3,7 +3,7 @@
 // 使用：node scripts/build.mjs
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, rmSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -100,7 +100,25 @@ function buildBackend() {
 }
 
 // ============================================================================
-// 步骤 3: 构建前端 (Vite build -> dist/webui/)
+// 步骤 3: 复制内置工具目录到 dist（供生产模式动态 import + tool.json 读取）
+// ============================================================================
+function copyBuiltinTools() {
+  log('Copying builtin tools...');
+  const src = resolve(ROOT, 'src', 'modules', 'tools', 'builtin');
+  const dest = resolve(DIST, 'modules', 'tools', 'builtin');
+  if (!existsSync(src)) {
+    error(`Builtin tools source not found: ${src}`);
+    process.exit(1);
+  }
+  // dist 已在 cleanDist 创建；递归复制保留目录结构（含 tool.json + index.ts）
+  // Bun 运行时可直接 import .ts，故复制源码即可
+  mkdirSync(resolve(DIST, 'modules', 'tools'), { recursive: true });
+  cpSync(src, dest, { recursive: true });
+  log(`Builtin tools copied: ${dest}`);
+}
+
+// ============================================================================
+// 步骤 4: 构建前端 (Vite build -> dist/webui/)
 // ============================================================================
 function buildFrontend() {
   log('Building webui (Vite)...');
@@ -150,6 +168,7 @@ function main() {
   console.log('=========================================');
   cleanDist();
   buildBackend();
+  copyBuiltinTools();
   buildFrontend();
   verifyArtifacts();
   const elapsed = ((Date.now() - startedAt) / 1000).toFixed(2);

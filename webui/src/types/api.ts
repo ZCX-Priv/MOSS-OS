@@ -33,6 +33,8 @@ export interface ChatMessage {
   timestamp: string;
   /** 是否正在流式生成 */
   streaming?: boolean;
+  /** 该消息内 todo 工具调用完成时的 todos 快照（对话流内卡片按此渲染，避免共享实时状态） */
+  todoSnapshot?: TodoItem[];
 }
 
 export interface Session {
@@ -194,13 +196,35 @@ export interface PluginItem {
 }
 
 // ============================================================================
+// 工具（GET /api/tools，PATCH /api/tools/:name）
+// ============================================================================
+
+export interface ToolItem {
+  name: string;
+  description: string;
+  icon?: string;
+  /** 来源：内置或用户自定义 */
+  source: 'builtin' | 'custom';
+  /** 是否启用（从 config.tools[name].enabled 读取） */
+  enabled: boolean;
+  annotations?: {
+    readOnlyHint?: boolean;
+    destructiveHint?: boolean;
+    idempotentHint?: boolean;
+    requireConfirmation?: boolean;
+  };
+  /** 工具来源目录绝对路径（热重载定位用） */
+  sourceDir?: string;
+}
+
+// ============================================================================
 // Skills / Specs 查询（见文档 3.2.5 / 3.2.6）
 // ============================================================================
 
 export interface SkillItem {
   name: string;
   description: string;
-  source: 'builtin' | 'user';
+  source: 'user';
 }
 
 export interface SkillDetail extends SkillItem {

@@ -20,6 +20,7 @@ import type {
   SkillDetail,
   SpecItem,
   SpecDetail,
+  ToolItem,
   AutomationItem,
   AutomationDetail,
   AutomationRun,
@@ -174,9 +175,11 @@ export const api = {
   disconnectMcpServer: (server: string) => request<unknown>('POST', '/api/mcp/disconnect', { server }),
 
   // ==========================================================================
-  // 工具（name + icon，供前端渲染工具调用卡片图标）
+  // 工具（完整信息 + 启停）
   // ==========================================================================
-  listTools: () => request<{ tools: Array<{ name: string; icon?: string }> }>('GET', '/api/tools'),
+  listTools: () => request<{ tools: ToolItem[] }>('GET', '/api/tools'),
+  updateTool: (name: string, patch: { enabled?: boolean }) =>
+    request<{ name: string; enabled: boolean }>('PATCH', `/api/tools/${encodeURIComponent(name)}`, patch),
 
   // ==========================================================================
   // 任务 + 分组（见文档 3.2.1）

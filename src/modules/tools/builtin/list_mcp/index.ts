@@ -1,32 +1,13 @@
-// src/plugins/tools/list_mcp.ts
-// list_mcp 工具：列出所有已连接 MCP 服务器及工具清单。
+// builtin/list_mcp/index.ts
+// list_mcp 工具 execute 逻辑：列出所有已连接 MCP 服务器及工具清单。
+// 元数据见同目录 tool.json。
 
-import type { Tool, ToolResult } from './types';
-import type { MCPManager } from '../contracts';
-import { ServiceNames } from '../../core/types';
+import type { ToolContext, ToolResult } from '../../types';
+import type { MCPManager } from '../../../contracts';
+import { ServiceNames } from '../../../../core/types';
 
-export const listMcpTool: Tool = {
-  name: 'list_mcp',
-  description:
-    'List all connected MCP servers and their tools. ' +
-    'If server is specified, only list tools from that server. ' +
-    'Use this to discover what MCP tools are available before calling use_mcp.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      server: {
-        type: 'string',
-        description: 'Optional: only list tools from this specific server.',
-      },
-    },
-    additionalProperties: false,
-  },
-  annotations: {
-    readOnlyHint: true,
-    idempotentHint: true,
-  },
-  icon: 'list',
-  async execute(params, ctx): Promise<ToolResult> {
+export default {
+  async execute(params: unknown, ctx: ToolContext): Promise<ToolResult> {
     const p = params as { server?: string };
 
     const mgr = ctx.services.tryResolve<MCPManager>(ServiceNames.MCP_MANAGER);
@@ -55,7 +36,6 @@ export const listMcpTool: Tool = {
       if (tools.length === 0) {
         lines.push('(no tools available)');
       } else {
-        // 按 server 分组
         const grouped = new Map<string, typeof tools>();
         for (const t of tools) {
           const arr = grouped.get(t.server) ?? [];

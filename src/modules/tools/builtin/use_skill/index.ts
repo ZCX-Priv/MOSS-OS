@@ -1,39 +1,13 @@
-// src/modules/tools/use_skill.ts
-// use_skill 工具：调用注册表中的 skill，返回 prompt 模板。
-// Skill prompt 为纯文本，可能含 {{placeholder}} 占位符，由调用方通过 args 提供。
+// builtin/use_skill/index.ts
+// use_skill 工具 execute 逻辑：调用注册表中的 skill，返回 prompt 模板。
+// 元数据见同目录 tool.json。
 
-import type { Tool, ToolResult } from './types';
-import { ServiceNames } from '../../core/types';
-import type { SkillRegistry } from './skills';
+import type { ToolContext, ToolResult } from '../../types';
+import { ServiceNames } from '../../../../core/types';
+import type { SkillRegistry } from '../../skills';
 
-export const useSkillTool: Tool = {
-  name: 'use_skill',
-  description:
-    'Invoke a registered skill. Skills are prompt templates loaded from the skills/ directory. ' +
-    'Returns the skill prompt text (with {{placeholder}} substitution from args). ' +
-    'Available built-in skills: brainstorming, code-review, tdd, explain.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      skill: {
-        type: 'string',
-        description: 'Name of the skill to invoke.',
-      },
-      args: {
-        type: 'object',
-        description: 'Arguments to substitute into skill prompt placeholders (e.g. {topic: "react hooks"} for {{topic}}).',
-        additionalProperties: true,
-      },
-    },
-    required: ['skill'],
-    additionalProperties: false,
-  },
-  annotations: {
-    readOnlyHint: true,
-    idempotentHint: true,
-  },
-  icon: 'sparkles',
-  async execute(params, ctx): Promise<ToolResult> {
+export default {
+  async execute(params: unknown, ctx: ToolContext): Promise<ToolResult> {
     const p = params as { skill: string; args?: Record<string, unknown> };
     if (!p.skill) {
       return { content: [{ type: 'text', text: 'Error: skill is required' }], isError: true };
@@ -59,7 +33,6 @@ export const useSkillTool: Tool = {
     }
 
     try {
-      // 替换 prompt 中的 {{placeholder}} 占位符
       const promptText = substitutePlaceholders(skill.prompt, p.args ?? {});
       return {
         content: [{ type: 'text', text: promptText }],

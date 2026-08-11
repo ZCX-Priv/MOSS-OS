@@ -249,8 +249,18 @@ export function useWebSocket(): void {
       // ====================================================================
       case 'todo-updated': {
         if (!sessionId) break;
-        const payload = (msg.payload ?? {}) as { todos?: TodoItem[] };
-        if (payload.todos) useStore.getState().setTodos(sessionId, payload.todos);
+        const payload = (msg.payload ?? {}) as { todos?: TodoItem[]; toolCallId?: string };
+        if (payload.todos) {
+          useStore.getState().setTodos(sessionId, payload.todos);
+          // 回填快照到发起这次 todo 调用的 message，使对话流内卡片按调用时刻渲染
+          if (payload.toolCallId) {
+            const msgs = useStore.getState().messagesBySession[sessionId] ?? [];
+            const target = msgs.find((m) => m.toolCalls?.some((tc) => tc.id === payload.toolCallId));
+            if (target) {
+              useStore.getState().updateMessage(sessionId, target.id, { todoSnapshot: payload.todos });
+            }
+          }
+        }
         break;
       }
       case 'context-updated': {

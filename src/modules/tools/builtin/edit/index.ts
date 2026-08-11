@@ -1,45 +1,14 @@
-// src/plugins/tools/edit.ts
-// edit 工具：精确字符串匹配替换，oldString 必须唯一，支持 replaceAll。
+// builtin/edit/index.ts
+// edit 工具 execute 逻辑：精确字符串匹配替换，oldString 必须唯一，支持 replaceAll。
+// 元数据见同目录 tool.json。
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { isAbsolute, normalize } from 'node:path';
-import { hasUtf8Bom, stripBom } from '../../utils/encoding';
-import type { Tool, ToolResult } from './types';
+import { isAbsolute, normalize, resolve } from 'node:path';
+import { hasUtf8Bom, stripBom } from '../../../../utils/encoding';
+import type { ToolContext, ToolResult } from '../../types';
 
-export const editTool: Tool = {
-  name: 'edit',
-  description:
-    'Edit a file by replacing a specific string with a new string. ' +
-    'The oldString must be unique in the file unless replaceAll is true. ' +
-    'Use replaceAll to replace all occurrences.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      path: {
-        type: 'string',
-        description: 'Absolute or relative path to the file to edit.',
-      },
-      oldString: {
-        type: 'string',
-        description: 'The exact string to find in the file.',
-      },
-      newString: {
-        type: 'string',
-        description: 'The string to replace oldString with.',
-      },
-      replaceAll: {
-        type: 'boolean',
-        description: 'If true, replace all occurrences of oldString (default false).',
-      },
-    },
-    required: ['path', 'oldString', 'newString'],
-    additionalProperties: false,
-  },
-  annotations: {
-    destructiveHint: true,
-  },
-  icon: 'file-pen',
-  async execute(params, ctx): Promise<ToolResult> {
+export default {
+  async execute(params: unknown, ctx: ToolContext): Promise<ToolResult> {
     const p = params as {
       path: string;
       oldString: string;
@@ -83,7 +52,6 @@ export const editTool: Tool = {
       };
     }
 
-    // 统计匹配次数
     const occurrences = countOccurrences(content, p.oldString);
     if (occurrences === 0) {
       return {
@@ -116,7 +84,6 @@ export const editTool: Tool = {
     }
 
     try {
-      // 保留原文件 BOM（若有），保持编码一致性
       writeFileSync(absPath, hadBom ? '\uFEFF' + newContent : newContent, 'utf8');
       ctx.logger.info(`File edited: ${absPath}`, { replacements });
       return {
@@ -146,10 +113,4 @@ function countOccurrences(haystack: string, needle: string): number {
     idx += needle.length;
   }
   return count;
-}
-
-function resolve(...paths: string[]): string {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const path = require('node:path');
-  return path.resolve(...paths);
 }

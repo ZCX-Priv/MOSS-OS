@@ -1,37 +1,13 @@
-// src/modules/tools/delete.ts
-// delete 工具：删除文件或目录（递归）。破坏性操作，需确认。
+// builtin/delete/index.ts
+// delete 工具 execute 逻辑：删除文件或目录（递归）。破坏性操作。
+// 元数据见同目录 tool.json。
 
 import { existsSync, statSync, unlinkSync, rmSync } from 'node:fs';
-import { isAbsolute, normalize } from 'node:path';
-import type { Tool, ToolResult } from './types';
+import { isAbsolute, normalize, resolve } from 'node:path';
+import type { ToolContext, ToolResult } from '../../types';
 
-export const deleteTool: Tool = {
-  name: 'delete',
-  description:
-    'Delete a file or directory. ' +
-    'For a directory, recursive must be true (recursive deletion). ' +
-    'This is a destructive operation and cannot be undone.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      path: {
-        type: 'string',
-        description: 'Absolute or relative path to the file or directory to delete.',
-      },
-      recursive: {
-        type: 'boolean',
-        description: 'Required when deleting a directory. If true, recursively delete the directory tree. Ignored for files.',
-      },
-    },
-    required: ['path'],
-    additionalProperties: false,
-  },
-  annotations: {
-    destructiveHint: true,
-    requireConfirmation: true,
-  },
-  icon: 'trash-2',
-  async execute(params, ctx): Promise<ToolResult> {
+export default {
+  async execute(params: unknown, ctx: ToolContext): Promise<ToolResult> {
     const p = params as { path: string; recursive?: boolean };
 
     if (!p.path) {
@@ -85,9 +61,3 @@ export const deleteTool: Tool = {
     }
   },
 };
-
-function resolve(...paths: string[]): string {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const path = require('node:path');
-  return path.resolve(...paths);
-}

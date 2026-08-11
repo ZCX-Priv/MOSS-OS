@@ -31,6 +31,10 @@ export interface Tool {
   /** 显示图标（lucide 图标 kebab-case 名，如 'file-text'；前端白名单映射，缺失回退扳手） */
   icon?: string;
   execute(params: unknown, ctx: ToolContext): Promise<ToolResult>;
+  /** 工具来源目录绝对路径（热重载增量定位用，由加载器注入） */
+  sourceDir?: string;
+  /** 工具来源类型（builtin=内置，custom=用户自定义，由加载器注入） */
+  source?: 'builtin' | 'custom';
 }
 
 export interface ToolContext {

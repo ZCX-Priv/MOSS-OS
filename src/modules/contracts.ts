@@ -48,6 +48,8 @@ export interface ToolRegistry {
     inputSchema: unknown;
     annotations?: Record<string, unknown>;
   }>;
+  /** 判断工具是否启用（从 config.tools[name].enabled 读取，缺失默认 true） */
+  isEnabled(name: string): boolean;
   /** 执行工具 */
   execute(name: string, params: unknown, ctx: ToolContext): Promise<ToolResult>;
 }

@@ -1,0 +1,28 @@
+{
+  "name": "delete",
+  "description": "Delete a file or directory. For a directory, recursive must be true (recursive deletion). This is a destructive operation and cannot be undone.",
+  "icon": "trash-2",
+  "annotations": {
+    "destructiveHint": true,
+    "requireConfirmation": true
+  },
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "Absolute or relative path to the file or directory to delete."
+      },
+      "recursive": {
+        "type": "boolean",
+        "description": "Required when deleting a directory. If true, recursively delete the directory tree. Ignored for files."
+      }
+    },
+    "required": ["path"],
+    "additionalProperties": false
+  },
+  "config": {
+    "defaults": { "enabled": true, "requireConfirmation": true },
+    "schema": {}
+  }
+}

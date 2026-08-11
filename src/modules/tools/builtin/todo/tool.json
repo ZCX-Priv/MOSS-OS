@@ -1,0 +1,42 @@
+{
+  "name": "todo",
+  "description": "Create or update a todo item. Use action=\"create\" with text (and optional priority) to add a new todo; returns the new item with its id. Use action=\"update\" with id and at least one of text/status/priority to modify an existing todo. Todos are persisted across sessions.",
+  "icon": "list-checks",
+  "annotations": {
+    "idempotentHint": false
+  },
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string",
+        "enum": ["create", "update"],
+        "description": "Operation to perform."
+      },
+      "text": {
+        "type": "string",
+        "description": "Todo text content. Required for create. Optional for update."
+      },
+      "priority": {
+        "type": "string",
+        "enum": ["low", "medium", "high"],
+        "description": "Priority (default medium)."
+      },
+      "id": {
+        "type": "string",
+        "description": "Todo id. Required for update."
+      },
+      "status": {
+        "type": "string",
+        "enum": ["pending", "in_progress", "completed"],
+        "description": "New status. Only for update."
+      }
+    },
+    "required": ["action"],
+    "additionalProperties": false
+  },
+  "config": {
+    "defaults": { "enabled": true },
+    "schema": {}
+  }
+}

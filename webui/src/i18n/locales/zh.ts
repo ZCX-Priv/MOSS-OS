@@ -190,8 +190,12 @@ export const zh = {
     subtitle: '管理已添加的 MOSS 插件、技能和应用授权。',
     pluginsTab: '插件',
     skillsTab: '技能',
+    toolsTab: '工具',
     searchPlaceholder: '搜索',
     noSkills: '暂无技能管理内容',
+    noTools: '暂无工具',
+    builtin: '内置',
+    custom: '自定义',
   },
   automation: {
     title: '自动化',
