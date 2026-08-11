@@ -1,8 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import {
-  Sparkles,
   ChevronRight,
   FileText,
   Info,
@@ -35,13 +34,25 @@ import type { ChatMessage, TodoItem } from '../../types/api';
 const EMPTY_MESSAGES: ChatMessage[] = [];
 const EMPTY_TODOS: TodoItem[] = [];
 
-interface TaskRunningPageProps {
+// 根据当前小时返回问候语 i18n key
+function getGreetingKey(): string {
+  const h = new Date().getHours();
+  if (h >= 5 && h < 9) return 'task.greeting.morning';       // 早上好
+  if (h >= 9 && h < 11) return 'task.greeting.forenoon';      // 上午好
+  if (h >= 11 && h < 14) return 'task.greeting.noon';         // 中午好
+  if (h >= 14 && h < 18) return 'task.greeting.afternoon';    // 下午好
+  if (h >= 18 && h < 23) return 'task.greeting.evening';      // 晚上好
+  return 'task.greeting.lateNight';                            // 夜深了（23-4）
+}
+
+interface TaskPageProps {
   onOpenOverlay: (overlay: OverlayType) => void;
 }
 
-export function TaskRunningPage({ onOpenOverlay }: TaskRunningPageProps) {
+export function TaskPage({ onOpenOverlay }: TaskPageProps) {
   const { t } = useTranslation();
   const { taskId = '' } = useParams<{ taskId: string }>();
+  const navigate = useNavigate();
   const [rightPanelOpen, setRightPanelOpen] = useState(true);
 
   const messages = useStore((s) => s.messagesBySession[taskId] ?? EMPTY_MESSAGES);
@@ -100,6 +111,19 @@ export function TaskRunningPage({ onOpenOverlay }: TaskRunningPageProps) {
   const maxTokens = context?.maxTokens ?? 1;
   const contextPercent = maxTokens > 0 ? Math.round((totalTokens / maxTokens) * 100) : 0;
 
+  // 空状态：发送消息后创建任务并跳转；任务态：直接发送到当前 session
+  const handleSend = useCallback(
+    async (text: string) => {
+      if (taskId) {
+        sendMessage(text, { taskId });
+      } else {
+        const newTaskId = await sendMessage(text);
+        if (newTaskId) navigate(`/task/${newTaskId}`);
+      }
+    },
+    [taskId, sendMessage, navigate],
+  );
+
   return (
     <div className="flex flex-1 min-h-0 overflow-hidden">
       {/* Chat Area */}
@@ -123,11 +147,13 @@ export function TaskRunningPage({ onOpenOverlay }: TaskRunningPageProps) {
 
         {/* Chat Messages */}
         <div className="min-h-0 flex-1 overflow-y-auto chat-scroll-area">
-          <div className="flex flex-col gap-4 p-4">
+          <div className="flex min-h-full flex-col gap-4 p-4">
             {messages.length === 0 && !isGenerating && (
-              <div className="flex flex-col items-center justify-center gap-2 py-12 text-muted-foreground">
-                <Sparkles className="size-6" />
-                <span className="text-sm">{t('task.emptyMessage')}</span>
+              <div className="flex flex-1 flex-col items-center justify-center gap-6">
+                <img src="/MOSS.png" alt="MOSS" className="size-16 rounded-2xl object-cover" />
+                <p className="text-lg text-muted-foreground">
+                  {t(getGreetingKey())}{t('task.greeting.prompt')}
+                </p>
               </div>
             )}
             {messages.map((msg) => (
@@ -152,7 +178,7 @@ export function TaskRunningPage({ onOpenOverlay }: TaskRunningPageProps) {
             isGenerating={isGenerating}
             onAbort={abort}
             onOpenOverlay={onOpenOverlay}
-            onSend={(text) => sendMessage(text, { taskId })}
+            onSend={handleSend}
           />
         </div>
       </div>
@@ -263,7 +289,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         <details className="group">
           <summary className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
             <ChevronRight className="size-3.5 transition-transform group-open:rotate-90" />
-            <Atom className={cn('size-3.5', message.streaming && 'animate-spin')} />
+            <Atom className="size-3.5" />
             <span>{message.streaming ? '思考中' : '已完成思考'}</span>
           </summary>
           <div className="mt-1 text-xs text-muted-foreground">

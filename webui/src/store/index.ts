@@ -350,7 +350,7 @@ export const useStore = create<Store>((set) => ({
   // --- Actions: 任务 + 分组 ---
   setTasks: (tasks) => set({ tasks }),
   setTaskGroups: (taskGroups) => set({ taskGroups }),
-  addTask: (task) => set((state) => ({ tasks: [...state.tasks, task] })),
+  addTask: (task) => set((state) => ({ tasks: [task, ...state.tasks] })),
   updateTask: (id, patch) =>
     set((state) => ({
       tasks: state.tasks.map((t) => (t.id === id ? { ...t, ...patch } : t)),

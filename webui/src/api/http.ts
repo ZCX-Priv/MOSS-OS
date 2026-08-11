@@ -83,6 +83,7 @@ function adaptAgentMessages(raw: unknown[]): ChatMessage[] {
       toolCallId?: string;
       name?: string;
       thinking?: string;
+      todoSnapshot?: ChatMessage['todoSnapshot'];
     } | null;
     if (!m) continue;
     if (m.role === 'system') continue;
@@ -107,6 +108,7 @@ function adaptAgentMessages(raw: unknown[]): ChatMessage[] {
       content: m.content ?? '',
       thinking: m.thinking,
       toolCalls: m.toolCalls,
+      todoSnapshot: m.todoSnapshot,
       timestamp: new Date().toISOString(),
     });
   }

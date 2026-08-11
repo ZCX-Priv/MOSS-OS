@@ -480,6 +480,9 @@ export class AgentEngineImpl implements AgentEngine {
         case 'todo': {
           const store = readTodoStore(getTodoStorePath(this.env));
           const todos = store.items.filter((it) => it.sessionId === sessionId);
+          // 持久化快照到 assistant 消息（刷新后可恢复）
+          const session = this.sessions.get(sessionId);
+          if (session) this.sessions.attachTodoSnapshot(session, toolCallId, todos);
           server.sendToSession(sessionId, {
             type: 'todo-updated',
             sessionId,

@@ -3,8 +3,9 @@
 // 两种变体：sidebar（侧边栏，无关闭按钮）和 inline（对话流内，带关闭按钮）。
 // 两侧共享同一 store 数据源，WS 推送时天然同步。
 
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { CircleCheck, Circle, Loader2, X, ListTodo } from 'lucide-react';
+import { CircleCheck, Circle, Loader2, ListTodo, ChevronDown } from 'lucide-react';
 import type { TodoItem } from '../../types/api';
 import { cn } from '@/lib/utils';
 
@@ -23,6 +24,7 @@ export function TodoProgressCard({
   className,
 }: TodoProgressCardProps) {
   const { t } = useTranslation();
+  const [collapsed, setCollapsed] = useState(false);
 
   const total = todos.length;
   const completed = todos.filter((item) => item.status === 'completed').length;
@@ -50,6 +52,11 @@ export function TodoProgressCard({
     <div
       className={cn(
         'flex flex-col gap-2.5',
+        'min-h-0 overflow-hidden',
+        // sidebar: 限高 240px，避免挤占 Context Section
+        !isInline && 'max-h-60',
+        // inline: 限高 320px，避免在对话流中过长
+        isInline && 'max-h-80',
         isInline &&
           'rounded-lg border border-border bg-card p-3 shadow-sm',
         !isInline && 'p-4',
@@ -64,14 +71,15 @@ export function TodoProgressCard({
             {completed}/{total} {t('task.todoCompleted')}
           </span>
         </div>
-        {isInline && onClose && (
+        {isInline && (
           <button
             type="button"
-            onClick={onClose}
+            onClick={() => setCollapsed((v) => !v)}
             className="flex size-5 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-            title={t('task.todoClose')}
+            title={collapsed ? t('task.todoExpand') : t('task.todoCollapse')}
+            aria-expanded={!collapsed}
           >
-            <X className="size-3.5" />
+            <ChevronDown className={cn('size-3.5 transition-transform', collapsed && '-rotate-90')} />
           </button>
         )}
       </div>
@@ -84,12 +92,14 @@ export function TodoProgressCard({
         />
       </div>
 
-      {/* 任务列表 */}
-      <div className="flex flex-col gap-2">
-        {todos.map((item) => (
-          <TodoRow key={item.id} item={item} />
-        ))}
-      </div>
+      {/* 任务列表（inline 折叠时隐藏） */}
+      {(!isInline || !collapsed) && (
+        <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-1">
+          {todos.map((item) => (
+            <TodoRow key={item.id} item={item} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -97,7 +107,7 @@ export function TodoProgressCard({
 /** 单个任务行 */
 function TodoRow({ item }: { item: TodoItem }) {
   return (
-    <div className="flex items-start gap-2">
+    <div className="flex min-w-0 items-start gap-2">
       {item.status === 'completed' && (
         <CircleCheck className="size-4 shrink-0 text-emerald-500" />
       )}
@@ -109,7 +119,7 @@ function TodoRow({ item }: { item: TodoItem }) {
       )}
       <span
         className={cn(
-          'text-xs',
+          'min-w-0 break-words text-xs',
           item.status === 'completed' && 'text-muted-foreground line-through',
           item.status === 'in_progress' && 'font-medium text-foreground',
           item.status === 'pending' && 'text-muted-foreground',

@@ -9,6 +9,7 @@ import type {
   StreamDelta,
 } from './llm/types';
 import type { Tool, ToolContext, ToolResult } from './tools/types';
+import type { TodoItem } from './tools/todo';
 
 // ============================================================================
 // LLM Router（由 LLM 插件注册，ServiceNames.LLM_ROUTER）
@@ -119,6 +120,8 @@ export interface AgentMessage {
   thinking?: string;
   /** 工具名（role=tool 时，部分 provider 用 name 区分工具来源） */
   name?: string;
+  /** 该 assistant 消息内 todo 工具调用完成时的 todos 快照（用于前端按调用时刻渲染） */
+  todoSnapshot?: TodoItem[];
 }
 
 // ============================================================================

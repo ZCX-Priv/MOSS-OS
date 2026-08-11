@@ -5,7 +5,7 @@
 // - 插件：src/plugins/*/plugin.json + index.ts，传入 PluginContext（受限能力）
 // 清单替代原 metadata，index.ts 导出工厂函数 (manifest) => Module | Plugin
 
-import { readdir, stat, readFile } from 'node:fs/promises';
+import { readdir, stat, readFile, mkdir, cp } from 'node:fs/promises';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import type {
@@ -148,13 +148,19 @@ export class ExtensionManager {
         );
 
     // 阶段 2：插件
-    const pluginDirs: string[] = [];
+    // 用户目录 ~/.moss/plugins 为主加载源（与 skills/mcps 架构一致）
+    const userPluginsDir = join(this.env.dataDir, 'plugins');
+    const builtinPluginDirs: string[] = [];
     if (!this.options.disableBuiltinPlugins) {
-      pluginDirs.push(
+      builtinPluginDirs.push(
         join(this.env.packageRoot, 'src', 'plugins'),
         join(this.env.packageRoot, 'dist', 'plugins'),
       );
+      // 首次启动播种：从包内模板复制到 ~/.moss/plugins
+      await this.seedBuiltinPlugins(userPluginsDir, builtinPluginDirs);
     }
+    // 加载顺序：用户目录优先（覆盖同名）> 包内模板 > extraPluginDirs
+    const pluginDirs: string[] = [userPluginsDir, ...builtinPluginDirs];
     if (this.options.extraPluginDirs) {
       pluginDirs.push(...this.options.extraPluginDirs);
     }
@@ -374,6 +380,46 @@ export class ExtensionManager {
   // ========================================================================
   // 内部：发现与加载
   // ========================================================================
+
+  /**
+   * 首次启动播种：若 ~/.moss/plugins 不存在，从包内模板目录递归复制所有插件子目录。
+   * 仅当目标目录不存在时执行，用户删除的插件不会被重新添加。
+   * 播种失败不阻断启动，仅记录日志。
+   */
+  private async seedBuiltinPlugins(userDir: string, builtinDirs: string[]): Promise<void> {
+    try {
+      await stat(userDir);
+      return; // 已存在，不覆盖用户修改
+    } catch {
+      // 不存在，继续播种
+    }
+    await mkdir(userDir, { recursive: true }).catch(() => {});
+    let seeded = 0;
+    for (const builtinDir of builtinDirs) {
+      let entries: string[];
+      try {
+        entries = await readdir(builtinDir);
+      } catch {
+        continue; // 内置目录不存在（开发模式），跳过
+      }
+      for (const name of entries) {
+        const src = join(builtinDir, name);
+        const s = await stat(src).catch(() => null);
+        if (!s || !s.isDirectory()) continue;
+        const dest = join(userDir, name);
+        // 仅复制目标不存在的插件子目录（避免多个 builtinDir 间互相覆盖）
+        const destExists = await stat(dest).catch(() => null);
+        if (destExists) continue;
+        await cp(src, dest, { recursive: true }).catch(err => {
+          this.logger.debug(`Failed to seed builtin plugin ${name}`, {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+        seeded++;
+      }
+    }
+    this.logger.info(`Seeded builtin plugins to ${userDir}`, { count: seeded });
+  }
 
   private async discoverInDirs(
     dirs: string[],

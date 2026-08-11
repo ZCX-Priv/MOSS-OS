@@ -54,7 +54,9 @@ export class TaskStore {
   // ==========================================================================
 
   listTasks(): TaskItem[] {
-    return this.data.tasks.map(t => ({ ...t }));
+    return this.data.tasks
+      .map(t => ({ ...t }))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
   getTask(id: string): TaskItem | null {

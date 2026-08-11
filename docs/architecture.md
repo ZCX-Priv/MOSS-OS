@@ -74,7 +74,7 @@ MOSS/
 │   │   ├── server/              # HTTP + WS 服务
 │   │   ├── tools/               # 内置工具 + Skill/Spec 注册表
 │   │   └── update/              # 版本检查
-│   ├── plugins/                 # 插件（低权限，受限服务消费）
+│   ├── plugins/                 # 内置插件模板源（首次启动播种到 ~/.moss/plugins/）
 │   └── utils/                   # 通用工具
 ├── agent/prompts/main/          # Agent 系统提示词（.md）
 │   └── spec/                    # 规范文档（递归子目录）
@@ -111,11 +111,11 @@ MOSS/
 | 类型 | 目录 | 清单 | 上下文 | 权限 |
 |---|---|---|---|---|
 | **模组 (Module)** | `src/modules/*/` | `module.json` | `ModuleContext`（完整能力）| 可注册受保护服务，先加载 |
-| **插件 (Plugin)** | `src/plugins/*/` | `plugin.json` | `PluginContext`（受限）| 仅可消费声明白名单服务，后加载 |
+| **插件 (Plugin)** | `~/.moss/plugins/*/`（主）+ `src/plugins/*/`（模板源） | `plugin.json` | `PluginContext`（受限）| 仅可消费声明白名单服务，后加载 |
 
 **加载流程**（`src/core/extension-manager.ts`）：
 1. 阶段 1：扫描 `src/modules/*/module.json` + `index.ts`
-2. 阶段 2：扫描 `src/plugins/*/plugin.json` + `index.ts`（含 `extraPluginDirs`）
+2. 阶段 2：扫描 `~/.moss/plugins/*/plugin.json` + `index.ts`（用户目录优先）+ `src/plugins/*/`（内置模板）+ `extraPluginDirs`
 3. 阶段 3：合并拓扑排序（模组优先入度 0，同等条件模组先出队）
 4. 按拓扑序 `initialize()`，反向序 `destroy()`
 
@@ -304,6 +304,7 @@ onEvent('done', finishReason)
 | `~/.moss/automations-history.json` | 自动化运行历史（新）| JSON |
 | `~/.moss/extensions.json` | 扩展启用/禁用配置（新）| JSON |
 | `~/.moss/skills/` | 用户自定义 Skill | .md（YAML front-matter + body）|
+| `~/.moss/plugins/` | 用户/内置插件（首次播种） | 目录（plugin.json + index.ts）|
 | `~/.moss/agent/prompts/main/` | 用户自定义系统提示词 | .md |
 | `~/.moss/agent/prompts/main/spec/` | 用户自定义规范 | .md（递归子目录）|
 

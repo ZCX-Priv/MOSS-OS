@@ -2,8 +2,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import type { OverlayType } from './types';
 import { Sidebar } from './components/layout/Sidebar';
-import { HomePage } from './components/pages/HomePage';
-import { TaskRunningPage } from './components/pages/TaskRunningPage';
+import { TaskPage } from './components/pages/TaskPage';
 import {
   PluginMarketPage,
   PluginsTab,
@@ -71,8 +70,8 @@ export default function App() {
             <SidebarTrigger />
           </header>
           <Routes>
-            <Route path="/" element={<HomePage onOpenOverlay={openOverlay} />} />
-            <Route path="/task/:taskId" element={<TaskRunningPage onOpenOverlay={openOverlay} />} />
+            <Route path="/" element={<TaskPage onOpenOverlay={openOverlay} />} />
+            <Route path="/task/:taskId" element={<TaskPage onOpenOverlay={openOverlay} />} />
             <Route path="/plugins" element={<PluginMarketPage />}>
               <Route index element={<PluginsTab />} />
               <Route path="skills" element={<SkillsTab />} />

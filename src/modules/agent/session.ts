@@ -6,6 +6,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, unlink
 import { join } from 'node:path';
 import type { AgentMessage } from '../contracts';
 import type { UnifiedMessage } from '../llm/types';
+import type { TodoItem } from '../tools/todo';
 import type { Environment, Logger } from '../../core/types';
 
 /** 上下文文件轨迹（与前端 ContextFile 对齐） */
@@ -248,6 +249,19 @@ export class SessionStore {
       toolCallId,
       name,
     });
+    session.updatedAt = new Date().toISOString();
+    this.saveSession(session);
+  }
+
+  /** 把 todo 快照附加到包含该 toolCallId 的 assistant 消息上（持久化） */
+  attachTodoSnapshot(session: Session, toolCallId: string, todos: TodoItem[]): void {
+    for (let i = session.messages.length - 1; i >= 0; i--) {
+      const m = session.messages[i];
+      if (m.role === 'assistant' && m.toolCalls?.some((tc) => tc.id === toolCallId)) {
+        m.todoSnapshot = todos;
+        break;
+      }
+    }
     session.updatedAt = new Date().toISOString();
     this.saveSession(session);
   }
