@@ -178,12 +178,11 @@ export function ModelSelector() {
     return (
       <>
         <Button
-          variant="outline"
+          variant="ghost"
           size="sm"
           className="gap-1.5 rounded-full"
           onClick={() => setSheetOpen(true)}
         >
-          <span className="size-1.5 rounded-full bg-primary" />
           <span>{currentModelName || 'Auto'}</span>
           <ChevronDown className="size-3 opacity-70" />
         </Button>
@@ -261,8 +260,7 @@ export function ModelSelector() {
       }}
     >
       <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="sm" className="gap-1.5 rounded-full">
-          <span className="size-1.5 rounded-full bg-primary" />
+        <Button variant="ghost" size="sm" className="gap-1.5 rounded-full">
           <span>{currentModelName || 'Auto'}</span>
           <ChevronDown className="size-3 opacity-70" />
         </Button>

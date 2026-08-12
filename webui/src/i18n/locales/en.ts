@@ -42,6 +42,7 @@ export const en = {
       chat: 'Chat',
       index: 'Index',
       docs: 'Docs',
+      mcp: 'MCP',
       skills: 'Skills',
       commands: 'Commands',
       rules: 'Rules',

@@ -20,6 +20,7 @@ export type SettingsSection =
   | 'chat'
   | 'index'
   | 'docs'
+  | 'mcp'
   | 'skills'
   | 'commands'
   | 'rules'

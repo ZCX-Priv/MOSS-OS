@@ -27,7 +27,6 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarMenuSub,
-  SidebarSeparator,
   SidebarTrigger,
 } from '@/components/ui/sidebar';
 import {
@@ -102,8 +101,6 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
         </div>
       </SidebarHeader>
 
-      <SidebarSeparator />
-
       {/* 导航 */}
       <SidebarContent>
         <SidebarGroup>
@@ -137,8 +134,6 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
             })}
           </SidebarMenu>
         </SidebarGroup>
-
-        <SidebarSeparator />
 
         {/* 任务列表（折叠时隐藏） */}
         <SidebarGroup className="group-data-[collapsible=icon]:hidden">

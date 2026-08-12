@@ -42,6 +42,7 @@ export const zh = {
       chat: '对话流',
       index: '索引',
       docs: '文档',
+      mcp: 'MCP',
       skills: '技能',
       commands: '命令',
       rules: '规则',

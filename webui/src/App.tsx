@@ -123,6 +123,7 @@ export default function App() {
               <Route path="chat" element={<PlaceholderSection section="chat" />} />
               <Route path="index" element={<PlaceholderSection section="index" />} />
               <Route path="docs" element={<PlaceholderSection section="docs" />} />
+              <Route path="mcp" element={<PlaceholderSection section="mcp" />} />
               <Route path="skills" element={<PlaceholderSection section="skills" />} />
               <Route path="commands" element={<PlaceholderSection section="commands" />} />
               <Route path="rules" element={<PlaceholderSection section="rules" />} />

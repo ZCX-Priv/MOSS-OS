@@ -5,8 +5,8 @@ import {
   ChevronRight,
   FileText,
   Info,
-  PanelRightClose,
-  PanelRightOpen,
+  List,
+  PanelRight,
   Plus,
   Loader2,
   HelpCircle,
@@ -82,6 +82,10 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
 
   // 当前活跃标签对象
   const activeTab = sidebarTabs.find((t) => t.id === activeSidebarTabId) ?? sidebarTabs[0];
+  // 下拉菜单只显示当前标签栏中未打开的标签页类型；两类都已打开时禁用加号按钮
+  const hasSummaryTab = sidebarTabs.some((tab) => tab.type === 'summary');
+  const hasTerminalTab = sidebarTabs.some((tab) => tab.type === 'terminal');
+  const allTabTypesOpen = hasSummaryTab && hasTerminalTab;
 
   // 挂载时加载会话历史（若 store 中无消息）+ todos + context
   useEffect(() => {
@@ -162,7 +166,11 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
                   : 'border-transparent text-muted-foreground hover:bg-muted/50 hover:text-foreground',
               )}
             >
-              {tab.type === 'terminal' && <Terminal className="size-3.5" />}
+              {tab.type === 'terminal' ? (
+                <Terminal className="size-3.5" />
+              ) : (
+                <List className="size-3.5" />
+              )}
               <span className="max-w-[120px] truncate">{t(tab.title)}</span>
               {/* hover 时显示 X 关闭按钮（单标签不显示） */}
               {sidebarTabs.length > 1 && (
@@ -180,26 +188,35 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
             </div>
           ))}
         </div>
-        {/* 加号下拉菜单：新建标签页 */}
+        {/* 加号下拉菜单：新建标签页（仅显示当前标签栏中未打开的类型） */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon-sm" title={t('task.add')}>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              title={t('task.add')}
+              disabled={allTabTypesOpen}
+            >
               <Plus />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" sideOffset={4} collisionPadding={8}>
-            <DropdownMenuItem
-              onSelect={() => addSidebarTab('summary', 'task.taskSummary')}
-            >
-              <FileText className="size-4" />
-              {t('task.newSummaryTab')}
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onSelect={() => addSidebarTab('terminal', 'terminal.title')}
-            >
-              <Terminal className="size-4" />
-              {t('task.newTerminalTab')}
-            </DropdownMenuItem>
+            {!hasSummaryTab && (
+              <DropdownMenuItem
+                onSelect={() => addSidebarTab('summary', 'task.taskSummary')}
+              >
+                <List className="size-4" />
+                {t('task.taskSummary')}
+              </DropdownMenuItem>
+            )}
+            {!hasTerminalTab && (
+              <DropdownMenuItem
+                onSelect={() => addSidebarTab('terminal', 'terminal.title')}
+              >
+                <Terminal className="size-4" />
+                {t('terminal.title')}
+              </DropdownMenuItem>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
@@ -277,24 +294,23 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
       {/* Chat Area */}
       <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
         {/* Chat Header — 移动端：三栏 grid（左 trigger + 居中标题 + 右按钮） */}
-        <div className="grid h-12 grid-cols-3 items-center border-b border-border px-3 md:hidden">
+        <div className="grid h-12 grid-cols-3 items-center px-3 md:hidden">
           <SidebarTrigger />
           <h2 className="truncate text-center text-sm font-medium text-foreground">
             {task?.title ?? t('task.newTask')}
           </h2>
-          <div className="flex justify-end">
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => setRightPanelOpen(!rightPanelOpen)}
-              title={rightPanelOpen ? t('task.collapseRightPanel') : t('task.expandRightPanel')}
-            >
-              {rightPanelOpen ? <PanelRightClose /> : <PanelRightOpen />}
-            </Button>
-          </div>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="ml-auto"
+            onClick={() => setRightPanelOpen(!rightPanelOpen)}
+            title={rightPanelOpen ? t('task.collapseRightPanel') : t('task.expandRightPanel')}
+          >
+            <PanelRight />
+          </Button>
         </div>
         {/* Chat Header — 桌面端：标题 + 右按钮 */}
-        <div className="hidden h-12 items-center justify-between border-b border-border px-4 md:flex">
+        <div className="hidden h-12 items-center justify-between px-4 md:flex">
           <div className="flex items-center gap-2">
             <h2 className="text-sm font-medium text-foreground">
               {task?.title ?? t('task.newTask')}
@@ -306,7 +322,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
             onClick={() => setRightPanelOpen(!rightPanelOpen)}
             title={rightPanelOpen ? t('task.collapseRightPanel') : t('task.expandRightPanel')}
           >
-            {rightPanelOpen ? <PanelRightClose /> : <PanelRightOpen />}
+            <PanelRight />
           </Button>
         </div>
 
@@ -337,7 +353,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
         </div>
 
         {/* Chat Input */}
-        <div className="shrink-0 border-t border-border p-3">
+        <div className="shrink-0 p-3">
           <ChatInput
             variant="task"
             isGenerating={isGenerating}
