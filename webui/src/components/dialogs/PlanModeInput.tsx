@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  Paperclip,
+  Plus,
   Mic,
   ArrowUp,
   ChevronDown,
@@ -61,7 +61,7 @@ export function PlanModeInput({ open, onClose }: PlanModeInputProps) {
           <div className="flex items-center justify-between gap-2 px-1 pt-1.5">
             <div className="flex items-center gap-1.5">
               <Button variant="ghost" size="icon-sm" title={t('common.attachment')}>
-                <Paperclip />
+                <Plus />
               </Button>
               <Button
                 variant="outline"

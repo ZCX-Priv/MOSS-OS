@@ -3,7 +3,7 @@
   "server": {
     "host": "127.0.0.1",
     "port": 7766,
-    "autoPort": true
+    "autoPort": false
   },
   "daemon": {
     "enabled": true,

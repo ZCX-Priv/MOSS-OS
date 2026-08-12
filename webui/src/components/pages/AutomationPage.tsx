@@ -3,7 +3,6 @@
 // 三 tab 路由化：/automation/templates | /automation/configured | /automation/history
 
 import {
-  MessageSquarePlus,
   Newspaper,
   Eye,
   Crosshair,
@@ -79,7 +78,7 @@ export function AutomationPage() {
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       {/* 页面头部 */}
-      <div className="flex items-center justify-between gap-4 border-b border-border px-6 py-4">
+      <div className="hidden items-center justify-between gap-4 border-b border-border px-6 py-4 md:flex">
         <div className="flex flex-col gap-1">
           <h1 className="text-xl font-semibold text-foreground">{t('automation.title')}</h1>
           <p className="text-sm text-muted-foreground">{t('automation.subtitle')}</p>
@@ -88,10 +87,6 @@ export function AutomationPage() {
           <Button className="gap-1.5">
             <Plus />
             <span>{t('automation.manualCreate')}</span>
-          </Button>
-          <Button variant="outline" className="gap-1.5">
-            <MessageSquarePlus />
-            <span>{t('automation.createInChat')}</span>
           </Button>
         </div>
       </div>

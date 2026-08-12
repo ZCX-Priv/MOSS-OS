@@ -152,10 +152,7 @@ export class ExtensionManager {
     const userPluginsDir = join(this.env.dataDir, 'plugins');
     const builtinPluginDirs: string[] = [];
     if (!this.options.disableBuiltinPlugins) {
-      builtinPluginDirs.push(
-        join(this.env.packageRoot, 'src', 'plugins'),
-        join(this.env.packageRoot, 'dist', 'plugins'),
-      );
+      builtinPluginDirs.push(join(this.env.packageRoot, 'plugins'));
       // 首次启动播种：从包内模板复制到 ~/.moss/plugins
       await this.seedBuiltinPlugins(userPluginsDir, builtinPluginDirs);
     }

@@ -278,7 +278,9 @@ class ServerModule implements Module {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const BunAny = Bun as any;
-    const server: BunServer = BunAny.serve({
+    let server: BunServer;
+    try {
+      server = BunAny.serve({
       port,
       hostname: host,
       async fetch(req: Request, srv: BunServer): Promise<Response> {
@@ -335,6 +337,24 @@ class ServerModule implements Module {
         },
       },
     });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/EADDRINUSE|address already in use/i.test(msg)) {
+        this.ctx.logger.error(
+          `Failed to bind ${host}:${port}: address already in use. ` +
+          `A previous MOSS process may still be running. ` +
+          `Run "moss stop" to stop it, or on Windows run "netstat -ano | findstr :${port}" then "taskkill /PID <pid> /T /F". ` +
+          `You can also remove the stale PID file at ~/.moss/moss.pid.`,
+          { error: msg, host, port },
+        );
+      } else {
+        this.ctx.logger.error(
+          `Failed to start server on ${host}:${port}: ${msg}`,
+          { error: msg, host, port },
+        );
+      }
+      throw err;
+    }
 
     this.server = server;
     this.actualPort = port;

@@ -118,22 +118,6 @@ function copyBuiltinTools() {
 }
 
 // ============================================================================
-// 步骤 3.5: 复制内置插件目录到 dist（供生产模式播种 + 动态 import）
-// ============================================================================
-function copyBuiltinPlugins() {
-  log('Copying builtin plugins...');
-  const src = resolve(ROOT, 'src', 'plugins');
-  const dest = resolve(DIST, 'plugins');
-  if (!existsSync(src)) {
-    error(`Builtin plugins source not found: ${src}`);
-    process.exit(1);
-  }
-  mkdirSync(resolve(DIST), { recursive: true });
-  cpSync(src, dest, { recursive: true });
-  log(`Builtin plugins copied: ${dest}`);
-}
-
-// ============================================================================
 // 步骤 4: 构建前端 (Vite build -> dist/webui/)
 // ============================================================================
 function buildFrontend() {
@@ -185,7 +169,6 @@ function main() {
   cleanDist();
   buildBackend();
   copyBuiltinTools();
-  copyBuiltinPlugins();
   buildFrontend();
   verifyArtifacts();
   const elapsed = ((Date.now() - startedAt) / 1000).toFixed(2);

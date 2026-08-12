@@ -21,10 +21,11 @@
 //    - config.changed：标记需刷新配置（由 useConfig 订阅 store 触发重拉）
 //    - extension.changed：标记需刷新插件（由 usePlugins 订阅触发重拉）
 
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { toast } from 'sonner';
 import { useStore } from '../store';
 import { wsClient } from '../api/ws';
+import { pendingAssistant, pendingRunId } from '../lib/pending-assistant';
 import type {
   AgentEvent,
   ChatMessage,
@@ -40,10 +41,14 @@ function genId(): string {
   return `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-export function useWebSocket(): void {
-  // 当前 session 的流式 assistant 消息（按 sessionId 索引）
-  const pendingAssistantRef = useRef<Record<string, ChatMessage>>({});
+// 需要做 runId 过滤的 agent 事件类型
+const AGENT_EVENT_TYPES = new Set([
+  'assistant-text', 'assistant-thinking',
+  'tool-call-start', 'tool-call-delta', 'tool-call-executing', 'tool-call-end',
+  'ask', 'error', 'done', 'chat.done', 'chat.aborted',
+]);
 
+export function useWebSocket(): void {
   useEffect(() => {
     // 1. 建立连接
     wsClient.connect();
@@ -71,6 +76,13 @@ export function useWebSocket(): void {
     const s = useStore.getState();
     const sessionId = msg.sessionId ?? s.activeSessionId ?? '';
 
+    // runId 过滤：丢弃旧 run 的事件（防止打断发送时旧流事件污染新流状态）
+    if (sessionId && AGENT_EVENT_TYPES.has(msg.type)) {
+      const eventRunId = (msg.payload as { runId?: string })?.runId;
+      const currentRunId = pendingRunId.get(sessionId);
+      if (eventRunId && currentRunId && eventRunId !== currentRunId) return;
+    }
+
     switch (msg.type) {
       // ====================================================================
       // Agent 事件流（payload 为完整 AgentEvent）
@@ -80,6 +92,8 @@ export function useWebSocket(): void {
         const event = msg.payload as Extract<AgentEvent, { type: 'assistant-text' }>;
         const pending = ensurePendingAssistant(sessionId);
         s.appendToMessage(sessionId, pending.id, 'content', event.text);
+        // 收到正文 → thinking 已结束
+        s.updateMessage(sessionId, pending.id, { thinkingStreaming: false });
         break;
       }
       case 'assistant-thinking': {
@@ -87,6 +101,8 @@ export function useWebSocket(): void {
         const event = msg.payload as Extract<AgentEvent, { type: 'assistant-thinking' }>;
         const pending = ensurePendingAssistant(sessionId);
         s.appendToMessage(sessionId, pending.id, 'thinking', event.text);
+        // 正在输出 thinking
+        s.updateMessage(sessionId, pending.id, { thinkingStreaming: true });
         break;
       }
       case 'tool-call-start': {
@@ -101,14 +117,14 @@ export function useWebSocket(): void {
           status: 'generating',
         };
         const updatedToolCalls = [...(pending.toolCalls ?? []), newToolCall];
-        s.updateMessage(sessionId, pending.id, { toolCalls: updatedToolCalls });
-        pendingAssistantRef.current[sessionId] = { ...pending, toolCalls: updatedToolCalls };
+        s.updateMessage(sessionId, pending.id, { toolCalls: updatedToolCalls, thinkingStreaming: false });
+        pendingAssistant.set(sessionId, { ...pending, toolCalls: updatedToolCalls });
         break;
       }
       case 'tool-call-delta': {
         const event = msg.payload as Extract<AgentEvent, { type: 'tool-call-delta' }>;
         if (!sessionId) break;
-        const pending = pendingAssistantRef.current[sessionId];
+        const pending = pendingAssistant.get(sessionId);
         if (!pending?.toolCalls) break;
         const updatedToolCalls = pending.toolCalls.map((tc) =>
           tc.id === event.toolCallId
@@ -116,25 +132,25 @@ export function useWebSocket(): void {
             : tc,
         );
         s.updateMessage(sessionId, pending.id, { toolCalls: updatedToolCalls });
-        pendingAssistantRef.current[sessionId] = { ...pending, toolCalls: updatedToolCalls };
+        pendingAssistant.set(sessionId, { ...pending, toolCalls: updatedToolCalls });
         break;
       }
       case 'tool-call-executing': {
         const event = msg.payload as Extract<AgentEvent, { type: 'tool-call-executing' }>;
         if (!sessionId) break;
-        const pending = pendingAssistantRef.current[sessionId];
+        const pending = pendingAssistant.get(sessionId);
         if (!pending?.toolCalls) break;
         const updatedToolCalls = pending.toolCalls.map((tc) =>
           tc.id === event.toolCallId ? { ...tc, status: 'executing' as const } : tc,
         );
         s.updateMessage(sessionId, pending.id, { toolCalls: updatedToolCalls });
-        pendingAssistantRef.current[sessionId] = { ...pending, toolCalls: updatedToolCalls };
+        pendingAssistant.set(sessionId, { ...pending, toolCalls: updatedToolCalls });
         break;
       }
       case 'tool-call-end': {
         const event = msg.payload as Extract<AgentEvent, { type: 'tool-call-end' }>;
         if (!sessionId) break;
-        const pending = pendingAssistantRef.current[sessionId];
+        const pending = pendingAssistant.get(sessionId);
         if (!pending?.toolCalls) break;
         const updatedToolCalls = pending.toolCalls.map((tc) =>
           tc.id === event.toolCallId
@@ -149,11 +165,11 @@ export function useWebSocket(): void {
           toolCalls: updatedToolCalls,
           toolResults: updatedToolResults,
         });
-        pendingAssistantRef.current[sessionId] = {
+        pendingAssistant.set(sessionId, {
           ...pending,
           toolCalls: updatedToolCalls,
           toolResults: updatedToolResults,
-        };
+        });
         break;
       }
       case 'ask': {
@@ -177,37 +193,37 @@ export function useWebSocket(): void {
             timestamp: new Date().toISOString(),
           });
           s.setGenerating(sessionId, false);
-          delete pendingAssistantRef.current[sessionId];
+          pendingAssistant.delete(sessionId);
         }
         toast.error(event.message ?? '发生错误');
         break;
       }
       case 'done': {
         if (sessionId) {
-          const pending = pendingAssistantRef.current[sessionId];
+          const pending = pendingAssistant.get(sessionId);
           if (pending) {
             // 兜底：将未完成的 toolCall 标记为 done（abort 场景下 tool-call-end 不会到达）
             const finalizedToolCalls = pending.toolCalls?.map((tc) =>
               tc.status === 'done' ? tc : { ...tc, status: 'done' as const },
             );
-            s.updateMessage(sessionId, pending.id, { streaming: false, toolCalls: finalizedToolCalls });
-            delete pendingAssistantRef.current[sessionId];
+            s.updateMessage(sessionId, pending.id, { streaming: false, thinkingStreaming: false, toolCalls: finalizedToolCalls });
+            pendingAssistant.delete(sessionId);
           }
           s.setGenerating(sessionId, false);
-          // agent.run 结束，后端兜底 reject 未完成的 ask；前端清空待答提问
-          useStore.getState().clearPendingAsks();
+          // agent.run 结束，后端兜底 reject 未完成的 ask；前端清空该 session 的待答提问
+          useStore.getState().clearPendingAsksBySession(sessionId);
         }
         break;
       }
       case 'chat.done': {
         if (sessionId) {
-          const pending = pendingAssistantRef.current[sessionId];
+          const pending = pendingAssistant.get(sessionId);
           if (pending) {
             const finalizedToolCalls = pending.toolCalls?.map((tc) =>
               tc.status === 'done' ? tc : { ...tc, status: 'done' as const },
             );
-            s.updateMessage(sessionId, pending.id, { streaming: false, toolCalls: finalizedToolCalls });
-            delete pendingAssistantRef.current[sessionId];
+            s.updateMessage(sessionId, pending.id, { streaming: false, thinkingStreaming: false, toolCalls: finalizedToolCalls });
+            pendingAssistant.delete(sessionId);
           }
           s.setGenerating(sessionId, false);
         }
@@ -219,13 +235,13 @@ export function useWebSocket(): void {
         // - 停止按钮场景：useChat.abort 已 setGenerating(false)
         // - 打断发送场景：sendMessage 已 setGenerating(true) 启动新流
         if (sessionId) {
-          const pending = pendingAssistantRef.current[sessionId];
+          const pending = pendingAssistant.get(sessionId);
           if (pending) {
             const finalizedToolCalls = pending.toolCalls?.map((tc) =>
               tc.status === 'done' ? tc : { ...tc, status: 'done' as const },
             );
-            s.updateMessage(sessionId, pending.id, { streaming: false, toolCalls: finalizedToolCalls });
-            delete pendingAssistantRef.current[sessionId];
+            s.updateMessage(sessionId, pending.id, { streaming: false, thinkingStreaming: false, toolCalls: finalizedToolCalls });
+            pendingAssistant.delete(sessionId);
           }
         }
         break;
@@ -344,16 +360,16 @@ export function useWebSocket(): void {
 
   /** 确保当前 session 存在一条流式 assistant 消息，返回该消息 */
   function ensurePendingAssistant(sessionId: string): ChatMessage {
-    let pending = pendingAssistantRef.current[sessionId];
+    let pending = pendingAssistant.get(sessionId);
     // 新一轮判定：上一轮最后一个 toolCall 已完成（status==='done'）→ 本轮 text/thinking 属于新一轮
     // 依据：同一轮内 text/thinking 必在 tool_call 之前；流式改造后 toolCalls 在 generating/executing
     // 阶段就已写入，只有 done 才标志上一轮 LLM 输出真正结束
     if (pending && pending.toolCalls && pending.toolCalls.length > 0) {
       const lastTc = pending.toolCalls[pending.toolCalls.length - 1];
       if (lastTc.status === 'done') {
-        useStore.getState().updateMessage(sessionId, pending.id, { streaming: false });
-        delete pendingAssistantRef.current[sessionId];
-        pending = undefined as unknown as ChatMessage;
+        useStore.getState().updateMessage(sessionId, pending.id, { streaming: false, thinkingStreaming: false });
+        pendingAssistant.delete(sessionId);
+        pending = undefined;
       }
     }
     if (!pending) {
@@ -363,8 +379,9 @@ export function useWebSocket(): void {
         content: '',
         timestamp: new Date().toISOString(),
         streaming: true,
+        thinkingStreaming: false,
       };
-      pendingAssistantRef.current[sessionId] = pending;
+      pendingAssistant.set(sessionId, pending);
       useStore.getState().addMessage(sessionId, pending);
     }
     return pending;

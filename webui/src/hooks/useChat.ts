@@ -2,20 +2,27 @@
 // 对话 action hook：提供 sendMessage / abort / replyAsk。
 // 事件流处理在 useWebSocket 中完成，本 hook 只负责发送动作。
 //
-// sendMessage 流程（阶段3.4 后修正）：
+// sendMessage 流程：
 // 1. 确定 taskId：优先 opts.taskId > activeTaskId
 // 2. 若 task 不存在（新任务），先 api.createTask 获取 task.id（= sessionId）
-// 3. 写入用户消息到 store
-// 4. wsClient.send({type:'chat.stream', sessionId, payload:{message,model,cwd}})
+// 3. 若该 session 正在生成，立即中断旧流：chat.abort + 清理 pending + finalizeStreamingMessages
+// 4. 生成 runId（用于隔离不同 run 的事件）
+// 5. 写入用户消息到 store
+// 6. wsClient.send({type:'chat.stream', sessionId, payload:{message,model,cwd,runId}})
 
 import { useCallback } from 'react';
 import { useStore } from '../store';
 import { wsClient } from '../api/ws';
 import { api } from '../api/http';
+import { pendingAssistant, pendingRunId } from '../lib/pending-assistant';
 import type { ChatMessage } from '../types/api';
 
 function genId(): string {
   return `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function genRunId(): string {
+  return `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
 export function useChat() {
@@ -23,6 +30,7 @@ export function useChat() {
   const setActiveSession = useStore((s) => s.setActiveSession);
   const setActiveTaskId = useStore((s) => s.setActiveTaskId);
   const setGenerating = useStore((s) => s.setGenerating);
+  const finalizeStreamingMessages = useStore((s) => s.finalizeStreamingMessages);
   const addTask = useStore((s) => s.addTask);
   const removePendingAsk = useStore((s) => s.removePendingAsk);
 
@@ -57,16 +65,23 @@ export function useChat() {
         }
       }
 
-      // 若该 session 正在生成，先中断当前流（打断 AI 回复再发送新消息）
-    if (state.generatingBySession[sessionId]) {
-      wsClient.send({ type: 'chat.abort', sessionId });
-      setGenerating(sessionId, false);
-    }
+      // 3. 若该 session 正在生成，立即中断旧流并清理前端状态
+      //    不依赖后端异步 chat.aborted 事件，避免旧流事件污染新流
+      if (state.generatingBySession[sessionId]) {
+        wsClient.send({ type: 'chat.abort', sessionId });
+        setGenerating(sessionId, false);
+        pendingAssistant.delete(sessionId);
+        finalizeStreamingMessages(sessionId);
+      }
 
-    setActiveSession(sessionId);
-    if (taskId) setActiveTaskId(taskId);
+      // 4. 生成 runId（前端生成，后端原样注入事件，用于 run 级别隔离）
+      const runId = genRunId();
+      pendingRunId.set(sessionId, runId);
 
-      // 3. 写入用户消息
+      setActiveSession(sessionId);
+      if (taskId) setActiveTaskId(taskId);
+
+      // 5. 写入用户消息
       const userMsg: ChatMessage = {
         id: genId(),
         role: 'user',
@@ -76,7 +91,7 @@ export function useChat() {
       addMessage(sessionId, userMsg);
       setGenerating(sessionId, true);
 
-      // 4. 通过 WS 发送流式对话请求
+      // 6. 通过 WS 发送流式对话请求（带 runId）
       wsClient.send({
         type: 'chat.stream',
         sessionId,
@@ -84,20 +99,25 @@ export function useChat() {
           message: content,
           model: state.currentModel || undefined,
           cwd: state.workingDirectory || undefined,
+          runId,
         },
       });
 
       return taskId;
     },
-    [addMessage, setActiveSession, setActiveTaskId, setGenerating, addTask],
+    [addMessage, setActiveSession, setActiveTaskId, setGenerating, finalizeStreamingMessages, addTask],
   );
 
-  const abort = useCallback(() => {
-    const { activeSessionId } = useStore.getState();
-    if (!activeSessionId) return;
-    wsClient.send({ type: 'chat.abort', sessionId: activeSessionId });
-    setGenerating(activeSessionId, false);
-  }, [setGenerating]);
+  const abort = useCallback((sessionIdOverride?: string) => {
+    const sid = sessionIdOverride ?? useStore.getState().activeSessionId;
+    if (!sid) return;
+    wsClient.send({ type: 'chat.abort', sessionId: sid });
+    setGenerating(sid, false);
+    // 立即清理前端状态，不等待后端 chat.aborted 事件
+    pendingAssistant.delete(sid);
+    pendingRunId.delete(sid);
+    finalizeStreamingMessages(sid);
+  }, [setGenerating, finalizeStreamingMessages]);
 
   const replyAsk = useCallback(
     (toolCallId: string, answer: string) => {

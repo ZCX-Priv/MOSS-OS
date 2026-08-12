@@ -5,13 +5,14 @@ import {
   ChevronRight,
   FileText,
   Info,
-  Maximize2,
   PanelRightClose,
   PanelRightOpen,
   Plus,
   Loader2,
   HelpCircle,
   Atom,
+  Terminal,
+  X,
 } from 'lucide-react';
 import { resolveToolIcon } from '@/lib/tool-icons';
 import type { OverlayType } from '../../types';
@@ -19,11 +20,21 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from '@/components/ui/dropdown-menu';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
+import { SidebarTrigger } from '@/components/ui/sidebar';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { useIsMobile } from '@/hooks/use-mobile';
 import { ChatInput } from '../shared/ChatInput';
 import { TodoProgressCard } from '../shared/TodoProgressCard';
 import { AskPromptCard } from '../shared/AskPromptCard';
+import { TerminalView } from '../shared/TerminalView';
 import { useStore } from '../../store';
 import { useChat } from '../../hooks/useChat';
 import { api } from '../../api/http';
@@ -53,7 +64,8 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
   const { t } = useTranslation();
   const { taskId = '' } = useParams<{ taskId: string }>();
   const navigate = useNavigate();
-  const [rightPanelOpen, setRightPanelOpen] = useState(true);
+  const [rightPanelOpen, setRightPanelOpen] = useState(false);
+  const isMobile = useIsMobile();
 
   const messages = useStore((s) => s.messagesBySession[taskId] ?? EMPTY_MESSAGES);
   const isGenerating = useStore((s) => s.generatingBySession[taskId] ?? false);
@@ -61,7 +73,15 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
   const todos = useStore((s) => s.todosBySession[taskId] ?? EMPTY_TODOS);
   const pendingAsks = useStore((s) => s.pendingAsks);
   const context = useStore((s) => s.contextBySession[taskId]);
+  const sidebarTabs = useStore((s) => s.sidebarTabs);
+  const activeSidebarTabId = useStore((s) => s.activeSidebarTabId);
+  const addSidebarTab = useStore((s) => s.addSidebarTab);
+  const removeSidebarTab = useStore((s) => s.removeSidebarTab);
+  const setActiveSidebarTab = useStore((s) => s.setActiveSidebarTab);
   const { sendMessage, abort } = useChat();
+
+  // 当前活跃标签对象
+  const activeTab = sidebarTabs.find((t) => t.id === activeSidebarTabId) ?? sidebarTabs[0];
 
   // 挂载时加载会话历史（若 store 中无消息）+ todos + context
   useEffect(() => {
@@ -124,12 +144,157 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
     [taskId, sendMessage, navigate],
   );
 
+  // 右侧面板内容（移动端 Sheet 与桌面端 aside 共用，避免重复 JSX）
+  const rightPanelContent = (
+    <>
+      {/* Panel Header：标签页栏 + 加号下拉菜单 */}
+      <div className="flex h-12 items-center gap-2 border-b border-border px-3">
+        {/* 标签页栏 */}
+        <div className="flex flex-1 items-center gap-1.5 overflow-x-auto no-scrollbar">
+          {sidebarTabs.map((tab) => (
+            <div
+              key={tab.id}
+              onClick={() => setActiveSidebarTab(tab.id)}
+              className={cn(
+                'group relative flex cursor-pointer items-center gap-1.5 rounded-lg border px-3 py-1 text-sm transition-colors',
+                tab.id === activeTab?.id
+                  ? 'border-border bg-muted text-foreground'
+                  : 'border-transparent text-muted-foreground hover:bg-muted/50 hover:text-foreground',
+              )}
+            >
+              {tab.type === 'terminal' && <Terminal className="size-3.5" />}
+              <span className="max-w-[120px] truncate">{t(tab.title)}</span>
+              {/* hover 时显示 X 关闭按钮（单标签不显示） */}
+              {sidebarTabs.length > 1 && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    removeSidebarTab(tab.id);
+                  }}
+                  className="ml-0.5 hidden size-4 items-center justify-center rounded hover:bg-muted group-hover:flex"
+                >
+                  <X className="size-3" />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+        {/* 加号下拉菜单：新建标签页 */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon-sm" title={t('task.add')}>
+              <Plus />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" sideOffset={4} collisionPadding={8}>
+            <DropdownMenuItem
+              onSelect={() => addSidebarTab('summary', 'task.taskSummary')}
+            >
+              <FileText className="size-4" />
+              {t('task.newSummaryTab')}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onSelect={() => addSidebarTab('terminal', 'terminal.title')}
+            >
+              <Terminal className="size-4" />
+              {t('task.newTerminalTab')}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+
+      {/* 标签内容路由 */}
+      <div className="flex flex-1 flex-col overflow-hidden">
+        {activeTab?.type === 'summary' && (
+          <>
+            <TodoProgressCard
+              todos={todos}
+              variant="sidebar"
+              className="border-b border-border"
+            />
+            {/* Context Section */}
+            <div className="flex flex-1 flex-col gap-2 overflow-hidden p-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-xs font-medium text-foreground">
+                  <span>{t('task.context')}</span>
+                  <Info className="size-3 text-muted-foreground" />
+                </div>
+                <Button variant="ghost" size="xs">
+                  {t('task.compress')}
+                </Button>
+              </div>
+              <div className="flex items-center gap-2">
+                <Progress value={contextPercent} className="flex-1" />
+                <span className="text-xs text-muted-foreground">{contextPercent}%</span>
+              </div>
+              <Tabs defaultValue="files" className="flex flex-1 flex-col gap-2 overflow-hidden">
+                <TabsList>
+                  <TabsTrigger value="files">{t('task.files')}</TabsTrigger>
+                  <TabsTrigger value="others">{t('task.others')}</TabsTrigger>
+                </TabsList>
+                <TabsContent value="files" className="flex-1 min-h-0 overflow-hidden">
+                  <ScrollArea className="h-full">
+                    <div className="flex flex-col gap-0.5">
+                      {contextFiles.length === 0 ? (
+                        <span className="px-2 py-4 text-xs text-muted-foreground">
+                          {t('task.noContextFiles')}
+                        </span>
+                      ) : (
+                        contextFiles.map((file) => (
+                          <Button
+                            key={file.path}
+                            variant="ghost"
+                            size="xs"
+                            className="justify-start gap-1.5 font-normal"
+                          >
+                            <FileText className="size-3.5 text-primary" />
+                            <span className="truncate">{file.path}</span>
+                          </Button>
+                        ))
+                      )}
+                    </div>
+                  </ScrollArea>
+                </TabsContent>
+                <TabsContent value="others" className="flex-1 min-h-0">
+                  <div className="px-2 py-4 text-xs text-muted-foreground">
+                    {t('task.noOthers')}
+                  </div>
+                </TabsContent>
+              </Tabs>
+            </div>
+          </>
+        )}
+        {activeTab?.type === 'terminal' && (
+          <TerminalView toolCallId={activeTab.toolCallId} />
+        )}
+      </div>
+    </>
+  );
+
   return (
     <div className="flex flex-1 min-h-0 overflow-hidden">
       {/* Chat Area */}
       <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
-        {/* Chat Header */}
-        <div className="flex h-12 items-center justify-between border-b border-border px-4">
+        {/* Chat Header — 移动端：三栏 grid（左 trigger + 居中标题 + 右按钮） */}
+        <div className="grid h-12 grid-cols-3 items-center border-b border-border px-3 md:hidden">
+          <SidebarTrigger />
+          <h2 className="truncate text-center text-sm font-medium text-foreground">
+            {task?.title ?? t('task.newTask')}
+          </h2>
+          <div className="flex justify-end">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => setRightPanelOpen(!rightPanelOpen)}
+              title={rightPanelOpen ? t('task.collapseRightPanel') : t('task.expandRightPanel')}
+            >
+              {rightPanelOpen ? <PanelRightClose /> : <PanelRightOpen />}
+            </Button>
+          </div>
+        </div>
+        {/* Chat Header — 桌面端：标题 + 右按钮 */}
+        <div className="hidden h-12 items-center justify-between border-b border-border px-4 md:flex">
           <div className="flex items-center gap-2">
             <h2 className="text-sm font-medium text-foreground">
               {task?.title ?? t('task.newTask')}
@@ -176,87 +341,34 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
           <ChatInput
             variant="task"
             isGenerating={isGenerating}
-            onAbort={abort}
+            onAbort={() => abort(taskId)}
             onOpenOverlay={onOpenOverlay}
             onSend={handleSend}
           />
         </div>
       </div>
 
-      {/* Right Panel */}
-      {rightPanelOpen && (
-        <aside className="flex w-80 flex-col border-l border-border bg-card">
-          {/* Panel Header */}
-          <div className="flex h-12 items-center justify-between border-b border-border px-4">
-            <h3 className="text-sm font-medium text-foreground">{t('task.taskSummary')}</h3>
-            <div className="flex items-center gap-1">
-              <Button variant="ghost" size="icon-sm" title={t('task.add')}>
-                <Plus />
-              </Button>
-              <Button variant="ghost" size="icon-sm" title={t('task.expand')}>
-                <Maximize2 className="size-3.5" />
-              </Button>
-            </div>
-          </div>
-
-          {/* Todo Section */}
-          <TodoProgressCard
-            todos={todos}
-            variant="sidebar"
-            className="border-b border-border"
-          />
-
-          {/* Context Section */}
-          <div className="flex flex-1 flex-col gap-2 overflow-hidden p-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5 text-xs font-medium text-foreground">
-                <span>{t('task.context')}</span>
-                <Info className="size-3 text-muted-foreground" />
-              </div>
-              <Button variant="ghost" size="xs">
-                {t('task.compress')}
-              </Button>
-            </div>
-            <div className="flex items-center gap-2">
-              <Progress value={contextPercent} className="flex-1" />
-              <span className="text-xs text-muted-foreground">{contextPercent}%</span>
-            </div>
-            <Tabs defaultValue="files" className="flex flex-1 flex-col gap-2 overflow-hidden">
-              <TabsList>
-                <TabsTrigger value="files">{t('task.files')}</TabsTrigger>
-                <TabsTrigger value="others">{t('task.others')}</TabsTrigger>
-              </TabsList>
-              <TabsContent value="files" className="flex-1 min-h-0 overflow-hidden">
-                <ScrollArea className="h-full">
-                  <div className="flex flex-col gap-0.5">
-                    {contextFiles.length === 0 ? (
-                      <span className="px-2 py-4 text-xs text-muted-foreground">
-                        {t('task.noContextFiles')}
-                      </span>
-                    ) : (
-                      contextFiles.map((file) => (
-                        <Button
-                          key={file.path}
-                          variant="ghost"
-                          size="xs"
-                          className="justify-start gap-1.5 font-normal"
-                        >
-                          <FileText className="size-3.5 text-primary" />
-                          <span className="truncate">{file.path}</span>
-                        </Button>
-                      ))
-                    )}
-                  </div>
-                </ScrollArea>
-              </TabsContent>
-              <TabsContent value="others" className="flex-1 min-h-0">
-                <div className="px-2 py-4 text-xs text-muted-foreground">
-                  {t('task.noOthers')}
-                </div>
-              </TabsContent>
-            </Tabs>
-          </div>
-        </aside>
+      {/* Right Panel — 移动端：Sheet 抽屉；桌面端：内嵌 aside */}
+      {isMobile ? (
+        <Sheet open={rightPanelOpen} onOpenChange={setRightPanelOpen}>
+          <SheetContent
+            side="right"
+            showCloseButton={false}
+            className="w-[85%] max-w-sm gap-0 bg-card p-0 text-card-foreground"
+          >
+            <SheetHeader className="sr-only">
+              <SheetTitle>{t('task.taskSummary')}</SheetTitle>
+              <SheetDescription>{t('task.taskSummary')}</SheetDescription>
+            </SheetHeader>
+            {rightPanelContent}
+          </SheetContent>
+        </Sheet>
+      ) : (
+        rightPanelOpen && (
+          <aside className="flex w-80 flex-col border-l border-border bg-card">
+            {rightPanelContent}
+          </aside>
+        )
       )}
     </div>
   );
@@ -289,8 +401,12 @@ function MessageBubble({ message }: { message: ChatMessage }) {
         <details className="group">
           <summary className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
             <ChevronRight className="size-3.5 transition-transform group-open:rotate-90" />
-            <Atom className="size-3.5" />
-            <span>{message.streaming ? '思考中' : '已完成思考'}</span>
+            {message.thinkingStreaming ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <Atom className="size-3.5" />
+            )}
+            <span>{message.thinkingStreaming ? '思考中' : '已完成思考'}</span>
           </summary>
           <div className="mt-1 text-xs text-muted-foreground">
             {message.thinking}

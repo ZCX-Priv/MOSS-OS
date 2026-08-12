@@ -24,6 +24,8 @@ import type {
   SkillItem,
   SpecItem,
   ToolItem,
+  SidebarTab,
+  SidebarTabType,
 } from '../types/api';
 
 // ============================================================================
@@ -97,6 +99,10 @@ interface UIState {
 
   // --- UI 面板（兼容旧 webui 逻辑，新 UI 当前未直接使用） ---
   activePanel: 'chat' | 'config' | 'api-config' | 'mcp' | 'sessions';
+
+  // --- 右侧边栏标签页（全局，localStorage 持久化） ---
+  sidebarTabs: SidebarTab[];
+  activeSidebarTabId: string | null;
 }
 
 // ============================================================================
@@ -124,6 +130,8 @@ interface UIActions {
 
   // 生成态
   setGenerating: (sessionId: string, v: boolean) => void;
+  /** 将指定 session 中所有 streaming 的消息标记为已完成 */
+  finalizeStreamingMessages: (sessionId: string) => void;
 
   // 输入 / 工作目录
   setInput: (input: string) => void;
@@ -190,6 +198,8 @@ interface UIActions {
   addPendingAsk: (ask: PendingAsk) => void;
   removePendingAsk: (toolCallId: string) => void;
   clearPendingAsks: () => void;
+  /** 仅清除指定 session 的 pendingAsks */
+  clearPendingAsksBySession: (sessionId: string) => void;
 
   // WS
   setWsStatus: (s: UIState['wsStatus']) => void;
@@ -199,6 +209,16 @@ interface UIActions {
 
   // 面板
   setActivePanel: (p: UIState['activePanel']) => void;
+
+  // 右侧边栏标签页
+  /** 新建标签页，返回新标签 id；自动设为活跃 */
+  addSidebarTab: (type: SidebarTabType, title: string, toolCallId?: string) => string;
+  /** 删除标签页；若删的是活跃标签则自动切到最后一个；删空则重建默认 summary */
+  removeSidebarTab: (id: string) => void;
+  /** 设置活跃标签页 */
+  setActiveSidebarTab: (id: string) => void;
+  /** 重命名标签页 */
+  renameSidebarTab: (id: string, title: string) => void;
 }
 
 export type Store = UIState & UIActions;
@@ -268,6 +288,34 @@ export const useStore = create<Store>((set) => ({
     (localStorage.getItem('moss-send-shortcut') as 'enter' | 'ctrl-enter') ||
     'ctrl-enter',
 
+  // --- 右侧边栏标签页（localStorage 持久化） ---
+  sidebarTabs: (() => {
+    try {
+      const raw = localStorage.getItem('moss-sidebar-tabs');
+      if (raw) {
+        const tabs = JSON.parse(raw) as SidebarTab[];
+        if (Array.isArray(tabs) && tabs.length > 0) return tabs;
+      }
+    } catch {
+      // 静默回退
+    }
+    return [
+      {
+        id: 'default-summary',
+        type: 'summary' as const,
+        title: 'task.taskSummary',
+        createdAt: Date.now(),
+      },
+    ];
+  })(),
+  activeSidebarTabId: (() => {
+    try {
+      return localStorage.getItem('moss-active-sidebar-tab') || 'default-summary';
+    } catch {
+      return 'default-summary';
+    }
+  })(),
+
   // --- 面板 ---
   activePanel: 'chat',
 
@@ -326,6 +374,19 @@ export const useStore = create<Store>((set) => ({
   setGenerating: (sessionId, v) =>
     set((state) => ({
       generatingBySession: { ...state.generatingBySession, [sessionId]: v },
+    })),
+  finalizeStreamingMessages: (sessionId) =>
+    set((state) => ({
+      messagesBySession: {
+        ...state.messagesBySession,
+        [sessionId]: (state.messagesBySession[sessionId] ?? []).map((m) => {
+          if (!m.streaming) return m;
+          const finalizedToolCalls = m.toolCalls?.map((tc) =>
+            tc.status === 'done' ? tc : { ...tc, status: 'done' as const },
+          );
+          return { ...m, streaming: false, thinkingStreaming: false, toolCalls: finalizedToolCalls };
+        }),
+      },
     })),
 
   // --- Actions: 输入 / 工作目录 ---
@@ -449,6 +510,10 @@ export const useStore = create<Store>((set) => ({
       pendingAsks: state.pendingAsks.filter((a) => a.toolCallId !== toolCallId),
     })),
   clearPendingAsks: () => set({ pendingAsks: [] }),
+  clearPendingAsksBySession: (sessionId) =>
+    set((state) => ({
+      pendingAsks: state.pendingAsks.filter((a) => a.sessionId !== sessionId),
+    })),
 
   // --- Actions: WS ---
   setWsStatus: (wsStatus) => set({ wsStatus }),
@@ -461,4 +526,74 @@ export const useStore = create<Store>((set) => ({
 
   // --- Actions: 面板 ---
   setActivePanel: (activePanel) => set({ activePanel }),
+
+  // --- Actions: 右侧边栏标签页 ---
+  addSidebarTab: (type, title, toolCallId) => {
+    const id =
+      typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? crypto.randomUUID()
+        : `tab-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const tab: SidebarTab = { id, type, title, toolCallId, createdAt: Date.now() };
+    set((state) => {
+      const tabs = [...state.sidebarTabs, tab];
+      try {
+        localStorage.setItem('moss-sidebar-tabs', JSON.stringify(tabs));
+        localStorage.setItem('moss-active-sidebar-tab', id);
+      } catch {
+        // 静默
+      }
+      return { sidebarTabs: tabs, activeSidebarTabId: id };
+    });
+    return id;
+  },
+
+  removeSidebarTab: (id) =>
+    set((state) => {
+      let tabs = state.sidebarTabs.filter((t) => t.id !== id);
+      let activeId = state.activeSidebarTabId;
+      // 删空则重建默认 summary 标签
+      if (tabs.length === 0) {
+        tabs = [
+          {
+            id: 'default-summary',
+            type: 'summary',
+            title: 'task.taskSummary',
+            createdAt: Date.now(),
+          },
+        ];
+        activeId = 'default-summary';
+      } else if (activeId === id) {
+        // 删的是活跃标签 → 切到最后一个
+        activeId = tabs[tabs.length - 1].id;
+      }
+      try {
+        localStorage.setItem('moss-sidebar-tabs', JSON.stringify(tabs));
+        localStorage.setItem('moss-active-sidebar-tab', activeId ?? '');
+      } catch {
+        // 静默
+      }
+      return { sidebarTabs: tabs, activeSidebarTabId: activeId };
+    }),
+
+  setActiveSidebarTab: (id) => {
+    try {
+      localStorage.setItem('moss-active-sidebar-tab', id);
+    } catch {
+      // 静默
+    }
+    set({ activeSidebarTabId: id });
+  },
+
+  renameSidebarTab: (id, title) =>
+    set((state) => {
+      const tabs = state.sidebarTabs.map((t) =>
+        t.id === id ? { ...t, title } : t,
+      );
+      try {
+        localStorage.setItem('moss-sidebar-tabs', JSON.stringify(tabs));
+      } catch {
+        // 静默
+      }
+      return { sidebarTabs: tabs };
+    }),
 }));

@@ -34,6 +34,7 @@ export const en = {
     title: 'Work with MOSS',
   },
   settings: {
+    title: 'Settings',
     nav: {
       general: 'General',
       agent: 'Agents',
@@ -195,6 +196,15 @@ export const en = {
     askSending: 'Sending…',
     askQuestion: 'Question',
     askReply: 'Reply',
+    newSummaryTab: 'New Summary Tab',
+    newTerminalTab: 'New Terminal Tab',
+  },
+  terminal: {
+    title: 'Terminal',
+    empty: 'No command execution yet',
+    executing: 'Executing...',
+    generating: 'Generating arguments...',
+    exitCode: 'Exit code',
   },
   plugins: {
     title: 'Plugins',

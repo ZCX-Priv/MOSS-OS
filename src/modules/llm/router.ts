@@ -26,7 +26,7 @@ export class LLMRouterImpl implements LLMRouter {
     this.logger = logger;
   }
 
-  async complete(req: UnifiedRequest): Promise<UnifiedResponse> {
+  async complete(req: UnifiedRequest, signal?: AbortSignal): Promise<UnifiedResponse> {
     const cfg = this.resolveModel(req.model);
     const provider = getProvider(cfg.format);
 
@@ -56,6 +56,7 @@ export class LLMRouterImpl implements LLMRouter {
         headers,
         body: finalBody,
         stream: false,
+        signal,
       },
       this.logger,
     );
@@ -88,7 +89,7 @@ export class LLMRouterImpl implements LLMRouter {
     return result;
   }
 
-  async *stream(req: UnifiedRequest): AsyncIterable<StreamDelta> {
+  async *stream(req: UnifiedRequest, signal?: AbortSignal): AsyncIterable<StreamDelta> {
     const cfg = this.resolveModel(req.model);
     const provider = getProvider(cfg.format);
 
@@ -115,6 +116,7 @@ export class LLMRouterImpl implements LLMRouter {
         headers,
         body: processed.body,
         stream: true,
+        signal,
       },
       this.logger,
     );

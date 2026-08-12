@@ -74,10 +74,10 @@ MOSS/
 │   │   ├── server/              # HTTP + WS 服务
 │   │   ├── tools/               # 内置工具 + Skill/Spec 注册表
 │   │   └── update/              # 版本检查
-│   ├── plugins/                 # 内置插件模板源（首次启动播种到 ~/.moss/plugins/）
 │   └── utils/                   # 通用工具
 ├── agent/prompts/main/          # Agent 系统提示词（.md）
 │   └── spec/                    # 规范文档（递归子目录）
+├── plugins/                     # 内置插件模板源（首次启动播种到 ~/.moss/plugins/）
 ├── skills/                      # Skill 定义（.md，YAML front-matter）
 ├── config/                      # 配置模板
 │   ├── config.json              # AppConfig 模板
@@ -111,11 +111,11 @@ MOSS/
 | 类型 | 目录 | 清单 | 上下文 | 权限 |
 |---|---|---|---|---|
 | **模组 (Module)** | `src/modules/*/` | `module.json` | `ModuleContext`（完整能力）| 可注册受保护服务，先加载 |
-| **插件 (Plugin)** | `~/.moss/plugins/*/`（主）+ `src/plugins/*/`（模板源） | `plugin.json` | `PluginContext`（受限）| 仅可消费声明白名单服务，后加载 |
+| **插件 (Plugin)** | `~/.moss/plugins/*/`（主）+ `plugins/*/`（模板源） | `plugin.json` | `PluginContext`（受限）| 仅可消费声明白名单服务，后加载 |
 
 **加载流程**（`src/core/extension-manager.ts`）：
 1. 阶段 1：扫描 `src/modules/*/module.json` + `index.ts`
-2. 阶段 2：扫描 `~/.moss/plugins/*/plugin.json` + `index.ts`（用户目录优先）+ `src/plugins/*/`（内置模板）+ `extraPluginDirs`
+2. 阶段 2：扫描 `~/.moss/plugins/*/plugin.json` + `index.ts`（用户目录优先）+ `plugins/*/`（内置模板）+ `extraPluginDirs`
 3. 阶段 3：合并拓扑排序（模组优先入度 0，同等条件模组先出队）
 4. 按拓扑序 `initialize()`，反向序 `destroy()`
 

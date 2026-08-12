@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Paperclip, Mic, ArrowUp, ChevronDown, FolderOpen, FolderInput, Loader2, Square } from 'lucide-react';
+import { Plus, Mic, ArrowUp, ChevronDown, FolderOpen, FolderInput, Loader2, Square } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
@@ -93,7 +93,7 @@ export function ChatInput({
       <div className="flex items-center justify-between gap-2 px-1 pt-1.5">
         <div className="flex items-center gap-1.5">
           <Button variant="ghost" size="icon-sm" title={t('common.attachment')}>
-            <Paperclip />
+            <Plus />
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -159,7 +159,7 @@ export function ChatInput({
           <Button variant="ghost" size="icon-sm" title={t('common.voiceInput')}>
             <Mic />
           </Button>
-          {isGenerating && !input.trim() ? (
+          {isGenerating ? (
             <Button
               size="icon-sm"
               variant="destructive"

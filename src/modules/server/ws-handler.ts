@@ -123,6 +123,7 @@ export class WsHandler {
       message?: string;
       model?: string;
       cwd?: string;
+      runId?: string;
     };
 
     if (!payload.message) {
@@ -132,13 +133,14 @@ export class WsHandler {
 
     const sessionId = msg.sessionId || `sess_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     state.sessionId = sessionId;
+    const runId = payload.runId;
 
     // 中断控制
     const abortController = new AbortController();
     state.abortController = abortController;
 
     const onEvent = (event: AgentEvent) => {
-      state.conn.send({ type: event.type, sessionId: event.sessionId, payload: event });
+      state.conn.send({ type: event.type, sessionId: event.sessionId, payload: { ...event, runId } });
     };
 
     try {
@@ -149,10 +151,11 @@ export class WsHandler {
         cwd: payload.cwd || process.cwd(),
         onEvent,
         signal: abortController.signal,
+        runId,
       });
 
       if (abortController.signal.aborted) {
-        state.conn.send({ type: 'chat.aborted', sessionId: result.sessionId });
+        state.conn.send({ type: 'chat.aborted', sessionId: result.sessionId, payload: { runId } });
       } else {
         state.conn.send({
           type: 'chat.done',
@@ -160,17 +163,18 @@ export class WsHandler {
           payload: {
             finishReason: result.finishReason,
             finalText: result.finalText,
+            runId,
           },
         });
       }
     } catch (err) {
       if (abortController.signal.aborted) {
-        state.conn.send({ type: 'chat.aborted', sessionId });
+        state.conn.send({ type: 'chat.aborted', sessionId, payload: { runId } });
       } else {
         state.conn.send({
           type: 'error',
           sessionId,
-          payload: { message: err instanceof Error ? err.message : String(err) },
+          payload: { message: err instanceof Error ? err.message : String(err), runId },
         });
       }
     } finally {

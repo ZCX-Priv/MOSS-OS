@@ -19,14 +19,16 @@ export interface LLMRouter {
   /**
    * 发送非流式请求。
    * @param req 统一请求（req.model 为 ModelConfig.id 或 API 模型名）
+   * @param signal 中断信号，传入后底层 HTTP 请求可被外部 abort
    */
-  complete(req: UnifiedRequest): Promise<UnifiedResponse>;
+  complete(req: UnifiedRequest, signal?: AbortSignal): Promise<UnifiedResponse>;
 
   /**
    * 发送流式请求。
+   * @param signal 中断信号，传入后底层 HTTP 请求可被外部 abort
    * @returns 异步迭代器，逐个产出 StreamDelta
    */
-  stream(req: UnifiedRequest): AsyncIterable<StreamDelta>;
+  stream(req: UnifiedRequest, signal?: AbortSignal): AsyncIterable<StreamDelta>;
 }
 
 // ============================================================================
@@ -86,18 +88,20 @@ export interface AgentRunInput {
   onEvent: (event: AgentEvent) => void;
   /** 中断信号 */
   signal?: AbortSignal;
+  /** 运行实例 ID（前端生成，用于隔离不同 run 的事件） */
+  runId?: string;
 }
 
 export type AgentEvent =
-  | { type: 'assistant-text'; sessionId: string; text: string }
-  | { type: 'assistant-thinking'; sessionId: string; text: string }
-  | { type: 'tool-call-start'; sessionId: string; toolName: string; toolCallId: string; args: unknown }
-  | { type: 'tool-call-delta'; sessionId: string; toolCallId: string; argumentsDelta: string }
-  | { type: 'tool-call-executing'; sessionId: string; toolName: string; toolCallId: string }
-  | { type: 'tool-call-end'; sessionId: string; toolName: string; toolCallId: string; result: ToolResult }
-  | { type: 'ask'; sessionId: string; toolCallId: string; question: string }
-  | { type: 'error'; sessionId: string; message: string }
-  | { type: 'done'; sessionId: string; finishReason: string };
+  | { type: 'assistant-text'; sessionId: string; text: string; runId?: string }
+  | { type: 'assistant-thinking'; sessionId: string; text: string; runId?: string }
+  | { type: 'tool-call-start'; sessionId: string; toolName: string; toolCallId: string; args: unknown; runId?: string }
+  | { type: 'tool-call-delta'; sessionId: string; toolCallId: string; argumentsDelta: string; runId?: string }
+  | { type: 'tool-call-executing'; sessionId: string; toolName: string; toolCallId: string; runId?: string }
+  | { type: 'tool-call-end'; sessionId: string; toolName: string; toolCallId: string; result: ToolResult; runId?: string }
+  | { type: 'ask'; sessionId: string; toolCallId: string; question: string; runId?: string }
+  | { type: 'error'; sessionId: string; message: string; runId?: string }
+  | { type: 'done'; sessionId: string; finishReason: string; runId?: string };
 
 export interface AgentRunResult {
   sessionId: string;

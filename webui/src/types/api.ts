@@ -21,6 +21,30 @@ export interface ToolResult {
     | { type: 'image'; source: { data: string; mimeType: string } }
   >;
   isError?: boolean;
+  /** 工具元数据（后端 shell 等工具运行时返回，含 command/cwd/exitCode 等） */
+  metadata?: {
+    command?: string;
+    cwd?: string;
+    exitCode?: number;
+    stdoutLength?: number;
+    stderrLength?: number;
+    truncated?: boolean;
+    timedOut?: boolean;
+  };
+}
+
+/** 右侧边栏标签页类型 */
+export type SidebarTabType = 'summary' | 'terminal';
+
+/** 右侧边栏标签页 */
+export interface SidebarTab {
+  id: string;
+  type: SidebarTabType;
+  /** 标题 i18n key（如 'task.taskSummary' / 'terminal.title'） */
+  title: string;
+  /** 仅 terminal 类型：绑定特定 toolCallId（可选，缺省显示当前 session 所有 shell 调用） */
+  toolCallId?: string;
+  createdAt: number;
 }
 
 export interface ChatMessage {
@@ -31,8 +55,10 @@ export interface ChatMessage {
   toolCalls?: ToolCall[];
   toolResults?: Array<{ toolCallId: string; result: ToolResult }>;
   timestamp: string;
-  /** 是否正在流式生成 */
+  /** 是否正在流式生成（整体） */
   streaming?: boolean;
+  /** thinking 是否仍在输出（独立于 streaming，用于 thinking 区转圈） */
+  thinkingStreaming?: boolean;
   /** 该消息内 todo 工具调用完成时的 todos 快照（对话流内卡片按此渲染，避免共享实时状态） */
   todoSnapshot?: TodoItem[];
 }
@@ -315,15 +341,15 @@ export interface WSMessage {
 }
 
 export type AgentEvent =
-  | { type: 'assistant-text'; sessionId: string; text: string }
-  | { type: 'assistant-thinking'; sessionId: string; text: string }
-  | { type: 'tool-call-start'; sessionId: string; toolName: string; toolCallId: string; args: unknown }
-  | { type: 'tool-call-delta'; sessionId: string; toolCallId: string; argumentsDelta: string }
-  | { type: 'tool-call-executing'; sessionId: string; toolName: string; toolCallId: string }
-  | { type: 'tool-call-end'; sessionId: string; toolName: string; toolCallId: string; result: ToolResult }
-  | { type: 'ask'; sessionId: string; toolCallId: string; question: string }
-  | { type: 'error'; sessionId: string; message: string }
-  | { type: 'done'; sessionId: string; finishReason: string };
+  | { type: 'assistant-text'; sessionId: string; text: string; runId?: string }
+  | { type: 'assistant-thinking'; sessionId: string; text: string; runId?: string }
+  | { type: 'tool-call-start'; sessionId: string; toolName: string; toolCallId: string; args: unknown; runId?: string }
+  | { type: 'tool-call-delta'; sessionId: string; toolCallId: string; argumentsDelta: string; runId?: string }
+  | { type: 'tool-call-executing'; sessionId: string; toolName: string; toolCallId: string; runId?: string }
+  | { type: 'tool-call-end'; sessionId: string; toolName: string; toolCallId: string; result: ToolResult; runId?: string }
+  | { type: 'ask'; sessionId: string; toolCallId: string; question: string; runId?: string }
+  | { type: 'error'; sessionId: string; message: string; runId?: string }
+  | { type: 'done'; sessionId: string; finishReason: string; runId?: string };
 
 /** 工具发起的、待用户回复的提问 */
 export interface PendingAsk {

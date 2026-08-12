@@ -9,7 +9,8 @@
 // Ctrl+C 优雅退出，关闭所有子进程。
 
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -65,6 +66,11 @@ function startBackend() {
     log('backend', `ERROR: entry not found: ${entry}`);
     process.exit(1);
   }
+
+  // 预检残留 PID：若 ~/.moss/moss.pid 记录的进程仍存活，
+  // foreground 后端会因单例检测直接退出，提前提示用户清理。
+  checkStalePid();
+
   // bun run --watch src/main.ts start --foreground --log-level debug
   return spawnChild('backend', 'bun', [
     'run',
@@ -74,6 +80,53 @@ function startBackend() {
     '--foreground',
     '--log-level', 'debug',
   ]);
+}
+
+/**
+ * 预检残留 PID 文件：若 ~/.moss/moss.pid 记录的进程仍存活，
+ * 后端 foreground 模式会因单例检测直接退出。提前打印警告，避免用户面对 ECONNREFUSED 不知所措。
+ * 不自动杀进程（避免误杀用户故意保留的 daemon）。
+ */
+function checkStalePid() {
+  const pidFile = resolve(homedir(), '.moss', 'moss.pid');
+  if (!existsSync(pidFile)) return;
+  let info;
+  try {
+    info = JSON.parse(readFileSync(pidFile, 'utf8'));
+  } catch {
+    return;
+  }
+  if (!info || typeof info.pid !== 'number') return;
+  if (isPidAlive(info.pid)) {
+    log('backend', `WARNING: live MOSS process detected (PID ${info.pid}) from ${pidFile}.`);
+    log('backend', `  The foreground backend will exit due to single-instance check.`);
+    log('backend', `  Run "moss stop" or kill PID ${info.pid} first, then restart dev.`);
+  } else {
+    log('backend', `NOTE: stale PID file at ${pidFile} (PID ${info.pid} not alive); will be auto-cleaned on start.`);
+  }
+}
+
+function isPidAlive(pid) {
+  try {
+    if (isWin) {
+      const r = spawnSync('tasklist', ['/FI', `PID eq ${pid}`, '/NH', '/FO', 'CSV'], { shell: true });
+      const out = r.stdout?.toString() ?? '';
+      return !/no tasks/i.test(out) && !/没有运行/i.test(out) && String(pid) in toPidSet(out);
+    }
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function toPidSet(csv) {
+  const set = {};
+  for (const line of csv.split('\n')) {
+    const m = line.match(/"?(\d+)"?,/);
+    if (m) set[m[1]] = true;
+  }
+  return set;
 }
 
 function startFrontend() {

@@ -118,7 +118,7 @@ export class AgentEngineImpl implements AgentEngine {
       const toolCallAccumulators = new Map<number, { id: string; name: string; args: string }>();
 
       try {
-        for await (const delta of llm.stream(req)) {
+        for await (const delta of llm.stream(req, signal)) {
           if (signal?.aborted) break;
 
           switch (delta.type) {
@@ -178,6 +178,15 @@ export class AgentEngineImpl implements AgentEngine {
           }
         }
       } catch (err) {
+        if (signal?.aborted) {
+          // 用户主动中断：不发 error 事件，静默退出
+          finishReason = 'aborted';
+          finalText = assistantText;
+          if (finalText || assistantThinking) {
+            this.sessions.addAssistantMessage(session, finalText, undefined, assistantThinking || undefined);
+          }
+          break;
+        }
         const msg = err instanceof Error ? err.message : String(err);
         this.logger.error('LLM stream failed', { error: msg, turn });
         onEvent({ type: 'error', sessionId, message: msg });
@@ -246,6 +255,11 @@ export class AgentEngineImpl implements AgentEngine {
             onEvent,
             signal,
           });
+          // 工具执行完毕后检查 abort，避免继续下一轮
+          if (signal?.aborted) {
+            finishReason = 'aborted';
+            break;
+          }
         } catch (err) {
           this.logger.error('executeToolCall threw unexpectedly', {
             toolCallId: tc.id,
@@ -396,6 +410,17 @@ export class AgentEngineImpl implements AgentEngine {
     },
   ): Promise<void> {
     const { sessionId, cwd, toolCallId, onEvent, signal } = ctx;
+
+    // 工具执行前再次检查 abort（防止在工具队列等待期间被 abort）
+    if (signal?.aborted) {
+      this.sessions.addToolMessage(
+        this.sessions.get(sessionId)!,
+        toolCallId,
+        'Error: aborted by user',
+        tc.name,
+      );
+      return;
+    }
 
     onEvent({
       type: 'tool-call-executing',

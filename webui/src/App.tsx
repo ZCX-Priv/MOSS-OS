@@ -1,5 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
+import { Plus } from 'lucide-react';
 import type { OverlayType } from './types';
 import { Sidebar } from './components/layout/Sidebar';
 import { TaskPage } from './components/pages/TaskPage';
@@ -30,6 +32,7 @@ import { PluginDropdown } from './components/dialogs/PluginDropdown';
 import { SlashCommandMenu } from './components/dialogs/SlashCommandMenu';
 import { PlanModeInput } from './components/dialogs/PlanModeInput';
 import { SidebarProvider, SidebarInset, SidebarTrigger } from '@/components/ui/sidebar';
+import { Button } from '@/components/ui/button';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/sonner';
 import { useWebSocket } from './hooks/useWebSocket';
@@ -46,6 +49,20 @@ export default function App() {
 
   const [overlay, setOverlay] = useState<OverlayType>(null);
   const { pathname } = useLocation();
+  const { t } = useTranslation();
+  // TaskPage 自带含左 trigger 的合并 header，全局移动端 header 仅在其他路由显示
+  const isTaskRoute = pathname === '/' || pathname.startsWith('/task');
+  // 移动端 header 标题与右侧 button（仅非 TaskPage 路由）
+  const isPluginsRoute = pathname.startsWith('/plugins');
+  const isAutomationRoute = pathname.startsWith('/automation');
+  const isSettingsRoute = pathname.startsWith('/settings');
+  const mobileTitle = isPluginsRoute
+    ? t('plugins.title')
+    : isAutomationRoute
+      ? t('automation.title')
+      : isSettingsRoute
+        ? t('settings.title')
+        : '';
 
   const openOverlay = useCallback((o: OverlayType) => {
     setOverlay(o);
@@ -65,10 +82,22 @@ export default function App() {
       <SidebarProvider className="h-svh min-h-0 overflow-hidden">
         <Sidebar onOpenOverlay={openOverlay} />
         <SidebarInset className="min-h-0 overflow-hidden">
-          {/* 移动端顶部 trigger 入口（Sheet 关闭时可见） */}
-          <header className="flex h-12 items-center gap-2 border-b px-3 md:hidden">
-            <SidebarTrigger />
-          </header>
+          {/* 移动端顶部 header：仅非 TaskPage 路由显示（TaskPage 自带含左 trigger 的 header） */}
+          {!isTaskRoute && (
+            <header className="grid h-12 grid-cols-3 items-center border-b border-border px-3 md:hidden">
+              <SidebarTrigger />
+              <h1 className="truncate text-center text-sm font-medium text-foreground">
+                {mobileTitle}
+              </h1>
+              <div className="flex justify-end">
+                {isAutomationRoute && (
+                  <Button variant="ghost" size="icon-sm" title={t('automation.manualCreate')}>
+                    <Plus />
+                  </Button>
+                )}
+              </div>
+            </header>
+          )}
           <Routes>
             <Route path="/" element={<TaskPage onOpenOverlay={openOverlay} />} />
             <Route path="/task/:taskId" element={<TaskPage onOpenOverlay={openOverlay} />} />

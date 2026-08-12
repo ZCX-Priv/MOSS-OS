@@ -26,7 +26,7 @@
     "baseUrl": ".",
     "paths": {
       "@core/*": ["src/core/*"],
-      "@plugins/*": ["src/plugins/*"],
+      "@plugins/*": ["plugins/*"],
       "@utils/*": ["src/utils/*"],
       "@cli/*": ["src/cli/*"]
     }

@@ -34,6 +34,7 @@ export const zh = {
     title: 'Work with MOSS',
   },
   settings: {
+    title: '设置',
     nav: {
       general: '通用',
       agent: '智能体',
@@ -195,6 +196,15 @@ export const zh = {
     askSending: '发送中…',
     askQuestion: '问题',
     askReply: '回复',
+    newSummaryTab: '新建任务摘要标签',
+    newTerminalTab: '新建终端标签',
+  },
+  terminal: {
+    title: '终端',
+    empty: '暂无命令执行记录',
+    executing: '执行中…',
+    generating: '生成参数中…',
+    exitCode: '退出码',
   },
   plugins: {
     title: '插件库',

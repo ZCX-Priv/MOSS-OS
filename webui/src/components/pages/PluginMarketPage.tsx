@@ -46,7 +46,7 @@ export function PluginMarketPage() {
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       {/* Header */}
-      <div className="flex flex-col gap-1 border-b border-border px-6 py-4">
+      <div className="hidden flex-col gap-1 border-b border-border px-6 py-4 md:flex">
         <h1 className="text-xl font-semibold text-foreground">{t('plugins.title')}</h1>
         <p className="text-sm text-muted-foreground">{t('plugins.subtitle')}</p>
       </div>

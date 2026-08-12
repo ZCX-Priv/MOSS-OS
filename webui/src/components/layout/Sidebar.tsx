@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
-  CirclePlus,
+  MessageCirclePlus,
   Plug,
   AlarmClock,
   ListFilter,
@@ -78,12 +78,12 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
   };
 
   const navItems: {
-    icon: typeof CirclePlus;
+    icon: typeof MessageCirclePlus;
     labelKey: string;
     page: string;
     action?: 'new-task';
   }[] = [
-    { icon: CirclePlus, labelKey: 'sidebar.newTask', page: 'home', action: 'new-task' },
+    { icon: MessageCirclePlus, labelKey: 'sidebar.newTask', page: 'home', action: 'new-task' },
     { icon: Plug, labelKey: 'sidebar.pluginLibrary', page: 'plugins' },
     { icon: AlarmClock, labelKey: 'sidebar.automation', page: 'automation' },
   ];

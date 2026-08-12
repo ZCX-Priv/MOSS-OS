@@ -10,7 +10,8 @@ import {
   killProcess,
   writePidFile,
 } from '../utils/pid';
-import type { LogLevel } from '../core/types';
+import { ServiceNames, type LogLevel } from '../core/types';
+import type { ServerInstance } from '../modules/server/types';
 
 export interface ParsedArgs {
   command: string;
@@ -123,15 +124,20 @@ async function startForeground(parsed: ParsedArgs): Promise<number> {
   const env = detectEnvironment();
   const kernel = new Microkernel();
   try {
-    await kernel.start({
+    const ctx = await kernel.start({
       foreground: true,
       logLevel: parsed.logLevel,
     });
+
+    // 从 ServerInstance 服务读取实际监听端口，写入 PID 文件（修复 moss status 不显示端口的 bug）
+    const serverInstance = ctx.services.tryResolve<ServerInstance>(ServiceNames.SERVER_INSTANCE);
+    const port = serverInstance?.port;
 
     // 写 PID 文件
     writePidFile(env.pidFile, {
       pid: process.pid,
       startedAt: new Date().toISOString(),
+      port,
     });
 
     console.log(`MOSS started (PID ${process.pid})`);
