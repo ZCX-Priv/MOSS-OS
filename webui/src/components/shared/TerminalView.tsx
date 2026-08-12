@@ -5,11 +5,11 @@ import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Loader2 } from 'lucide-react';
 import { useStore } from '../../store';
-import type { ChatMessage, ToolCall, ToolResult } from '../../types/api';
+import type { TaskMessage, ToolCall, ToolResult } from '../../types/api';
 import { ansiToHtml, parseShellResult, parseShellCommand } from '@/lib/ansi';
 
 // 稳定引用的空数组，避免 useStore 选择器每次返回新 [] 触发 useSyncExternalStore 无限循环
-const EMPTY_MESSAGES: ChatMessage[] = [];
+const EMPTY_MESSAGES: TaskMessage[] = [];
 
 interface ShellEntry {
   tc: ToolCall;

@@ -8,7 +8,7 @@ import type {
   McpServer,
   McpTool,
   Session,
-  ChatMessage,
+  TaskMessage,
   MessageRole,
   TaskItem,
   TaskGroup,
@@ -67,13 +67,13 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 }
 
 /**
- * 把后端 AgentMessage[] 适配为前端 ChatMessage[]：
+ * 把后端 AgentMessage[] 适配为前端 TaskMessage[]：
  * - 过滤 system 消息（防御性，物理隔离后后端已不返回）
  * - 补 id / timestamp（后端 AgentMessage 无这两个字段）
  * - 把 role:'tool' 独立消息合并回前一条 assistant 的 toolResults
  */
-function adaptAgentMessages(raw: unknown[]): ChatMessage[] {
-  const result: ChatMessage[] = [];
+function adaptAgentMessages(raw: unknown[]): TaskMessage[] {
+  const result: TaskMessage[] = [];
   const list = Array.isArray(raw) ? raw : [];
   for (let i = 0; i < list.length; i++) {
     const m = list[i] as {
@@ -83,7 +83,7 @@ function adaptAgentMessages(raw: unknown[]): ChatMessage[] {
       toolCallId?: string;
       name?: string;
       thinking?: string;
-      todoSnapshot?: ChatMessage['todoSnapshot'];
+      todoSnapshot?: TaskMessage['todoSnapshot'];
     } | null;
     if (!m) continue;
     if (m.role === 'system') continue;
@@ -138,17 +138,6 @@ export const api = {
   updateAppConfig: (patch: Partial<AppConfig>) => request<AppConfig>('PUT', '/api/config', patch),
   getApiConfig: () => request<ApiConfig>('GET', '/api/api-config'),
   updateApiConfig: (patch: Partial<ApiConfig>) => request<ApiConfig>('PUT', '/api/api-config', patch),
-
-  // ==========================================================================
-  // 对话（非流式，fallback）
-  // ==========================================================================
-  chat: (message: string, sessionId?: string, model?: string, cwd?: string) =>
-    request<{
-      sessionId: string;
-      finishReason: string;
-      finalText: string;
-      events: unknown[];
-    }>('POST', '/api/chat', { message, sessionId, model, cwd }),
 
   // ==========================================================================
   // 会话

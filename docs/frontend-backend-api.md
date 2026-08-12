@@ -29,22 +29,21 @@
 | 技术栈 | React 18 + zustand + react-markdown |
 | API 客户端 | `webui/src/api/http.ts` + `ws.ts`（完整实现） |
 | 状态管理 | `webui/src/store/index.ts`（zustand，完整） |
-| 业务 hooks | `useChat.ts`（WS 流式对话）+ `useConfig.ts`（配置加载） |
+| 业务 hooks | `useTask.ts`（WS 流式任务）+ `useConfig.ts`（配置加载） |
 | 类型定义 | `webui/src/types/index.ts`（完整的前后端共享类型） |
 
-**可迁移内容**：http/ws 客户端封装、类型定义、useChat/useConfig 的业务逻辑（需适配新前端的 React 19 + 无 zustand 环境）。
+**可迁移内容**：http/ws 客户端封装、类型定义、useTask/useConfig 的业务逻辑（需适配新前端的 React 19 + 无 zustand 环境）。
 
 ### 1.3 后端 `src/modules/server/` 现状
 
 已实现的 HTTP 路由（14 个）：
 - `GET /api/health`
 - `GET|PUT /api/config`、`GET|PUT /api/api-config`
-- `POST /api/chat`（非流式）
 - `GET /api/session`、`GET /api/session/:id`、`DELETE /api/session/:id`
 - `GET /api/mcp/servers`、`GET /api/mcp/tools`、`POST /api/mcp/call`、`POST /api/mcp/connect`、`POST /api/mcp/disconnect`
 
 已实现的 WS 消息（4 种入站）：
-- `chat.stream` / `chat.abort` / `session.subscribe` / `tool.ask.reply`
+- `task.stream` / `task.abort` / `session.subscribe` / `tool.ask.reply`
 
 已注册但**未暴露 HTTP**的后端服务：
 - `SkillRegistry`（`skill.registry`）—— Skills 已加载但无查询接口
@@ -64,7 +63,7 @@
 | 通道 | 用途 | 协议 |
 |---|---|---|
 | HTTP REST | 配置、会话、Agent、Automation、Plugins、Skills、Specs、Models 等 CRUD | `/api/*`，JSON |
-| WebSocket | 流式对话、ask 回复、todo 实时更新、automation 运行通知 | `/ws`，JSON 帧 |
+| WebSocket | 流式任务、ask 回复、todo 实时更新、automation 运行通知 | `/ws`，JSON 帧 |
 
 ### 2.2 鉴权
 
@@ -128,35 +127,10 @@ GET /api/api-config    → ApiConfig
 PUT /api/api-config    ← Partial<ApiConfig> → ApiConfig
 ```
 
-#### 3.1.4 非流式对话
-```
-POST /api/chat
-```
-**请求**：
-```ts
-{
-  message: string;
-  sessionId?: string;
-  model?: string;
-  provider?: string;
-  cwd?: string;
-}
-```
-**响应**：
-```ts
-{
-  sessionId: string;
-  finishReason: 'stop' | 'length' | 'error' | 'aborted';
-  finalText: string;
-  events: AgentEvent[];
-}
-```
-> 流式对话优先走 WebSocket（见第四章），此接口仅作 fallback。
-
-#### 3.1.5 会话管理
+#### 3.1.4 会话管理
 ```
 GET    /api/session          → { sessions: Session[] }
-GET    /api/session/:id      → { sessionId: string; messages: ChatMessage[] }
+GET    /api/session/:id      → { sessionId: string; messages: TaskMessage[] }
 DELETE /api/session/:id      → { deleted: boolean }
 ```
 
@@ -182,7 +156,7 @@ POST /api/mcp/disconnect              ← { server }
 ```
 GET    /api/tasks                     → { groups: TaskGroup[]; tasks: TaskItem[] }
 POST   /api/tasks                     ← { title: string; groupId?: string } → TaskItem
-GET    /api/tasks/:id                 → { task: TaskItem; messages: ChatMessage[]; todos: TodoItem[]; contextFiles: ContextFile[] }
+GET    /api/tasks/:id                 → { task: TaskItem; messages: TaskMessage[]; todos: TodoItem[]; contextFiles: ContextFile[] }
 PATCH  /api/tasks/:id                 ← { title?: string; groupId?: string } → TaskItem
 DELETE /api/tasks/:id                 → { deleted: boolean }
 
@@ -460,8 +434,8 @@ GET    /api/version                    → { version: string; commit?: string; b
 
 | type | 用途 | payload |
 |---|---|---|
-| `chat.stream` | 流式对话 | `{ message, model?, provider?, cwd? }` |
-| `chat.abort` | 中断对话 | `{}` |
+| `task.stream` | 流式任务 | `{ message, model?, provider?, cwd? }` |
+| `task.abort` | 中断任务 | `{}` |
 | `session.subscribe` | 订阅会话 | `{}` |
 | `tool.ask.reply` | 回复 ask 提问 | `{ toolCallId, answer }` |
 
@@ -476,7 +450,7 @@ GET    /api/version                    → { version: string; commit?: string; b
 | `ask` | 工具提问 | `{ toolCallId, question }` |
 | `error` | 错误 | `{ message }` |
 | `done` | Agent 循环结束 | `{ finishReason }` |
-| `chat.done` | 对话完成 | `{ finishReason, finalText }` |
+| `task.done` | 任务完成 | `{ finishReason, finalText }` |
 | `session.subscribed` | 订阅成功 | `{}` |
 | `tool.ask.accepted` | ask 回复已接受 | `{ toolCallId }` |
 
@@ -486,7 +460,7 @@ GET    /api/version                    → { version: string; commit?: string; b
 
 | type | 用途 | payload |
 |---|---|---|
-| `task.create` | 创建新任务（替代直接发 chat.stream） | `{ title?, groupId? }` → 返回 `{ task }` |
+| `task.create` | 创建新任务（替代直接发 task.stream） | `{ title?, groupId? }` → 返回 `{ task }` |
 | `task.switch` | 切换当前任务 | `{ taskId }` |
 | `automation.run` | 手动触发自动化 | `{ automationId }` |
 
@@ -532,7 +506,7 @@ export interface ToolResult {
   isError?: boolean;
 }
 
-export interface ChatMessage {
+export interface TaskMessage {
   id: string;
   role: MessageRole;
   content: string;
@@ -691,7 +665,7 @@ webui/src/
 ├── store/
 │   └── index.ts             # 全局状态（见 6.2 状态管理方案选型）
 ├── hooks/
-│   ├── useChat.ts           # 对话 hook（迁移 + 扩展 task 概念）
+│   ├── useTask.ts           # 任务 hook（迁移 + 扩展 task 概念）
 │   ├── useConfig.ts         # 配置 hook（迁移）
 │   ├── useTasks.ts          # 任务列表 + 分组
 │   ├── useModels.ts         # 模型列表 + 当前选择
@@ -721,9 +695,9 @@ webui/src/
 
 ### 6.3 关键 hook 设计要点
 
-#### useChat（迁移 + 扩展）
-- 旧版：基于 sessionId，sendMessage 直接发 `chat.stream`
-- 新版：基于 taskId，sendMessage 时若 taskId 无对应 sessionId 则先创建任务，再发 `chat.stream`（sessionId 复用 task 元信息中的 sessionId，或后端在 chat.stream 时按 taskId 派生）
+#### useTask（迁移 + 扩展）
+- 旧版：基于 sessionId，sendMessage 直接发 `task.stream`
+- 新版：基于 taskId，sendMessage 时若 taskId 无对应 sessionId 则先创建任务，再发 `task.stream`（sessionId 复用 task 元信息中的 sessionId，或后端在 task.stream 时按 taskId 派生）
 - 新增：订阅 `todo-updated` / `context-updated` / `file-created` / `file-edited` 事件，更新 store
 
 #### useTasks（新增）
@@ -820,7 +794,7 @@ webui/src/
 
 ### 阶段 2：迁移已有接口对接
 5. 实现 `useConfig` hook，对接 `GET /api/config` + `/api/api-config`，替换 SettingsPage 硬编码
-6. 实现 `useChat` hook，对接 WS `chat.stream`，让 HomePage 输入框可发消息
+6. 实现 `useTask` hook，对接 WS `task.stream`，让 HomePage 输入框可发消息
 7. 实现 `useTasks` hook（基于现有 `/api/session` 适配），替换 Sidebar 硬编码任务列表
 8. 对接 `/api/health`、`/api/mcp/*`（SettingsPage-MCP 面板）
 
@@ -836,7 +810,7 @@ webui/src/
 
 ### 阶段 5：WS 增强
 15. agent/tools 模组在工具执行时推送 `todo-updated` / `context-updated` / `file-*` 事件
-16. 前端 useChat 订阅新事件，TaskRunningPage 右侧面板实时更新
+16. 前端 useTask 订阅新事件，TaskRunningPage 右侧面板实时更新
 17. automation 模组推送 `automation.started` / `automation.finished`
 
 ### 阶段 6：插件管理 + 收尾
@@ -853,7 +827,6 @@ webui/src/
 | 健康 | GET | /api/health | ✅ 已有 |
 | 应用配置 | GET/PUT | /api/config | ✅ 已有 |
 | API 配置 | GET/PUT | /api/api-config | ✅ 已有 |
-| 非流式对话 | POST | /api/chat | ✅ 已有 |
 | 会话 | GET/GET/DELETE | /api/session, /api/session/:id | ✅ 已有 |
 | MCP | GET/POST | /api/mcp/* | ✅ 已有 |
 | 任务 | GET/POST/GET/PATCH/DELETE | /api/tasks, /api/tasks/:id | 🆕 新增 |
@@ -873,8 +846,8 @@ webui/src/
 
 | WS 入站 | 用途 | 状态 |
 |---|---|---|
-| chat.stream | 流式对话 | ✅ 已有 |
-| chat.abort | 中断 | ✅ 已有 |
+| task.stream | 流式任务 | ✅ 已有 |
+| task.abort | 中断 | ✅ 已有 |
 | session.subscribe | 订阅会话 | ✅ 已有 |
 | tool.ask.reply | 回复 ask | ✅ 已有 |
 | task.create | 创建任务 | 🆕 新增 |
@@ -886,7 +859,7 @@ webui/src/
 | assistant-text/thinking | 文本/思考流 | ✅ 已有 |
 | tool-call-start/end | 工具调用 | ✅ 已有 |
 | ask / error / done | 提问/错误/完成 | ✅ 已有 |
-| chat.done / session.subscribed / tool.ask.accepted | 控制消息 | ✅ 已有 |
+| task.done / session.subscribed / tool.ask.accepted | 控制消息 | ✅ 已有 |
 | todo-updated | Todo 变更 | 🆕 新增 |
 | context-updated | 上下文变更 | 🆕 新增 |
 | file-created / file-edited | 文件操作 | 🆕 新增 |

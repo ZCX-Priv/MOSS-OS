@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate, useLocation, Outlet } from 'react-router-dom';
+import { Outlet } from 'react-router-dom';
 import type { LucideIcon } from 'lucide-react';
 import {
   Settings,
@@ -8,12 +8,10 @@ import {
   MessageSquare,
   Globe,
   FileText,
-  Wrench,
-  Cable,
+  Palette,
   ClipboardList,
-  Anchor,
+  Webhook,
   Info,
-  Search,
   ChevronDown,
   Check,
   Sun,
@@ -72,68 +70,84 @@ import { useAgents } from '../../hooks/useAgents';
 import { useStore } from '../../store';
 import type { ModelItem, ThinkingEffort } from '../../types/api';
 
-interface NavItem {
+export interface NavItem {
   id: SettingsSection;
   labelKey: string;
   Icon: LucideIcon;
 }
 
-const navItems: NavItem[] = [
+export const settingsNavItems: NavItem[] = [
   { id: 'general', labelKey: 'settings.nav.general', Icon: Settings },
+  { id: 'appearance', labelKey: 'settings.nav.appearance', Icon: Palette },
   { id: 'agent', labelKey: 'settings.nav.agent', Icon: Bot },
   { id: 'model', labelKey: 'settings.nav.model', Icon: Brain },
-  { id: 'chat', labelKey: 'settings.nav.chat', Icon: MessageSquare },
+  { id: 'task', labelKey: 'settings.nav.task', Icon: MessageSquare },
   { id: 'index', labelKey: 'settings.nav.index', Icon: Layers },
   { id: 'docs', labelKey: 'settings.nav.docs', Icon: FileText },
-  { id: 'mcp', labelKey: 'settings.nav.mcp', Icon: Cable },
-  { id: 'skills', labelKey: 'settings.nav.skills', Icon: Wrench },
   { id: 'commands', labelKey: 'settings.nav.commands', Icon: Terminal },
   { id: 'rules', labelKey: 'settings.nav.rules', Icon: ClipboardList },
   { id: 'memory', labelKey: 'settings.nav.memory', Icon: Database },
-  { id: 'hooks', labelKey: 'settings.nav.hooks', Icon: Anchor },
+  { id: 'hooks', labelKey: 'settings.nav.hooks', Icon: Webhook },
   { id: 'about', labelKey: 'settings.nav.about', Icon: Info },
 ];
 
+export interface SearchableSetting {
+  labelKey: string;
+  descriptionKey?: string;
+  section: SettingsSection;
+}
+
+export const settingsSearchIndex: SearchableSetting[] = [
+  // 页面级（导航项 + placeholder 页面描述）
+  { labelKey: 'settings.nav.general', section: 'general' },
+  { labelKey: 'settings.nav.appearance', section: 'appearance' },
+  { labelKey: 'settings.nav.agent', section: 'agent' },
+  { labelKey: 'settings.nav.model', section: 'model' },
+  { labelKey: 'settings.placeholder.taskTitle', descriptionKey: 'settings.placeholder.taskDesc', section: 'task' },
+  { labelKey: 'settings.placeholder.indexTitle', descriptionKey: 'settings.placeholder.indexDesc', section: 'index' },
+  { labelKey: 'settings.placeholder.docsTitle', descriptionKey: 'settings.placeholder.docsDesc', section: 'docs' },
+  { labelKey: 'settings.placeholder.commandsTitle', descriptionKey: 'settings.placeholder.commandsDesc', section: 'commands' },
+  { labelKey: 'settings.placeholder.rulesTitle', descriptionKey: 'settings.placeholder.rulesDesc', section: 'rules' },
+  { labelKey: 'settings.placeholder.memoryTitle', descriptionKey: 'settings.placeholder.memoryDesc', section: 'memory' },
+  { labelKey: 'settings.placeholder.hooksTitle', descriptionKey: 'settings.placeholder.hooksDesc', section: 'hooks' },
+  { labelKey: 'settings.nav.about', section: 'about' },
+
+  // 通用设置详细项
+  { labelKey: 'settings.general.theme', descriptionKey: 'settings.general.selectTheme', section: 'general' },
+  { labelKey: 'settings.general.language', descriptionKey: 'settings.general.languageDesc', section: 'general' },
+  { labelKey: 'settings.general.sendShortcut', descriptionKey: 'settings.general.sendShortcutDesc', section: 'general' },
+  { labelKey: 'settings.general.editorSettings', descriptionKey: 'settings.general.editorSettingsDesc', section: 'general' },
+  { labelKey: 'settings.general.shortcutSettings', descriptionKey: 'settings.general.shortcutSettingsDesc', section: 'general' },
+  { labelKey: 'settings.general.importConfig', descriptionKey: 'settings.general.importConfigDesc', section: 'general' },
+  { labelKey: 'settings.general.localLink', descriptionKey: 'settings.general.localLinkDesc', section: 'general' },
+  { labelKey: 'settings.general.markdownOpen', descriptionKey: 'settings.general.markdownOpenDesc', section: 'general' },
+
+  // 智能体设置详细项
+  { labelKey: 'settings.agent.builtIn', section: 'agent' },
+  { labelKey: 'settings.agent.custom', section: 'agent' },
+  { labelKey: 'settings.agent.createAgent', section: 'agent' },
+
+  // 模型设置详细项
+  { labelKey: 'settings.model.addModel', section: 'model' },
+  { labelKey: 'settings.model.contextWindow', section: 'model' },
+  { labelKey: 'settings.model.thinkingMode', descriptionKey: 'settings.model.thinkingModeDesc', section: 'model' },
+  { labelKey: 'settings.model.displayName', section: 'model' },
+  { labelKey: 'settings.model.modelName', section: 'model' },
+  { labelKey: 'settings.model.apiFormat', section: 'model' },
+  { labelKey: 'settings.model.endpoint', section: 'model' },
+  { labelKey: 'settings.model.apiKey', section: 'model' },
+  { labelKey: 'settings.model.defaultThinkingEffort', descriptionKey: 'settings.model.defaultThinkingEffortDesc', section: 'model' },
+
+  // 关于设置详细项
+  { labelKey: 'settings.about.relatedLinks', section: 'about' },
+  { labelKey: 'settings.about.docs', section: 'about' },
+];
+
 export function SettingsPage() {
-  const { t } = useTranslation();
-  const navigate = useNavigate();
-  const { pathname } = useLocation();
-  const [searchQuery, setSearchQuery] = useState('');
-
   return (
-    <div className="flex flex-1 overflow-hidden">
-      {/* 左侧导航栏 */}
-      <aside className="flex w-60 flex-col border-r border-border">
-        <div className="border-b border-border p-3">
-          <div className="relative">
-            <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              type="text"
-              placeholder={t('settings.searchPlaceholder')}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-8"
-            />
-          </div>
-        </div>
-        <nav className="flex flex-col gap-0.5 p-2">
-          {navItems.map((item) => (
-            <Button
-              key={item.id}
-              variant={pathname === `/settings/${item.id}` ? 'secondary' : 'ghost'}
-              className="justify-start gap-2"
-              onClick={() => navigate(`/settings/${item.id}`)}
-            >
-              <item.Icon className="size-4" />
-              <span>{t(item.labelKey)}</span>
-            </Button>
-          ))}
-        </nav>
-      </aside>
-
-      {/* 右侧内容区域 */}
-      <section className="flex-1 overflow-auto"><Outlet /></section>
-    </div>
+    <section className="flex-1 overflow-auto">
+      <Outlet />
+    </section>
   );
 }
 
@@ -855,10 +869,10 @@ export function AboutSettings() {
 
 /* ===== 占位 section 路由组件（按 section 查表渲染 PlaceholderSettings） ===== */
 const PLACEHOLDER_SECTION_KEYS: Record<string, { titleKey: string; descKey: string }> = {
-  chat: { titleKey: 'settings.placeholder.chatTitle', descKey: 'settings.placeholder.chatDesc' },
+  task: { titleKey: 'settings.placeholder.taskTitle', descKey: 'settings.placeholder.taskDesc' },
   index: { titleKey: 'settings.placeholder.indexTitle', descKey: 'settings.placeholder.indexDesc' },
   docs: { titleKey: 'settings.placeholder.docsTitle', descKey: 'settings.placeholder.docsDesc' },
-  skills: { titleKey: 'settings.placeholder.skillsTitle', descKey: 'settings.placeholder.skillsDesc' },
+  appearance: { titleKey: 'settings.placeholder.appearanceTitle', descKey: 'settings.placeholder.appearanceDesc' },
   commands: { titleKey: 'settings.placeholder.commandsTitle', descKey: 'settings.placeholder.commandsDesc' },
   rules: { titleKey: 'settings.placeholder.rulesTitle', descKey: 'settings.placeholder.rulesDesc' },
   memory: { titleKey: 'settings.placeholder.memoryTitle', descKey: 'settings.placeholder.memoryDesc' },
@@ -867,7 +881,7 @@ const PLACEHOLDER_SECTION_KEYS: Record<string, { titleKey: string; descKey: stri
 
 export function PlaceholderSection({ section }: { section: string }) {
   const { t } = useTranslation();
-  const keys = PLACEHOLDER_SECTION_KEYS[section] ?? PLACEHOLDER_SECTION_KEYS.chat;
+  const keys = PLACEHOLDER_SECTION_KEYS[section] ?? PLACEHOLDER_SECTION_KEYS.task;
   return <PlaceholderSettings title={t(keys.titleKey)} description={t(keys.descKey)} />;
 }
 

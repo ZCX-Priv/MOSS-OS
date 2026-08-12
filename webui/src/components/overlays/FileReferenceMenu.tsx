@@ -42,7 +42,7 @@ const menuItems: MenuItem[] = [
   { id: 'file', labelKey: 'fileRef.file', icon: File },
   { id: 'folder', labelKey: 'fileRef.folder', icon: Folder },
   { id: 'doc', labelKey: 'fileRef.doc', icon: Book },
-  { id: 'past-chats', labelKey: 'fileRef.pastChats', icon: History },
+  { id: 'past-tasks', labelKey: 'fileRef.pastTasks', icon: History },
   { id: 'code', labelKey: 'fileRef.code', icon: Code },
   { id: 'rule', labelKey: 'fileRef.rule', icon: ClipboardList },
   { id: 'workspace', labelKey: 'fileRef.workspace', icon: Layers },

@@ -46,7 +46,7 @@ MOSS/
 │   │   ├── api/                 # HTTP + WS 客户端封装
 │   │   ├── components/          # UI 组件（pages/layout/overlays/dialogs/shared/ui）
 │   │   ├── contexts/            # Theme + I18n Context
-│   │   ├── hooks/               # 业务 hooks（useChat/useConfig/...）
+│   │   ├── hooks/               # 业务 hooks（useTask/useConfig/...）
 │   │   ├── store/               # 全局状态（React Context + useReducer）
 │   │   ├── types/               # 前后端共享类型
 │   │   ├── i18n/                # 国际化（zh/en）
@@ -160,7 +160,7 @@ MOSS/
 | 通道 | 用途 | 协议 |
 |---|---|---|
 | **HTTP REST** | 配置读写、会话管理、MCP 管理、Agent/Automation CRUD、Skills/Specs 查询 | `/api/*`，JSON |
-| **WebSocket** | 流式对话（assistant-text/thinking/tool-call 实时推送）、ask 回复、todo 更新、automation 运行通知 | `/ws`，JSON 帧 |
+| **WebSocket** | 流式任务（assistant-text/thinking/tool-call 实时推送）、ask 回复、todo 更新、automation 运行通知 | `/ws`，JSON 帧 |
 
 ### 4.2 鉴权
 

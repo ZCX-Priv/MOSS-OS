@@ -15,7 +15,6 @@ import {
   createGetApiConfigHandler,
   createUpdateApiConfigHandler,
 } from './routes/config';
-import { createChatHandler } from './routes/chat';
 import {
   createListSessionsHandler,
   createDeleteSessionHandler,
@@ -175,8 +174,6 @@ class ServerModule implements Module {
     this.router.addRoute({ method: 'PUT', pattern: '/api/config', handler: createUpdateAppConfigHandler(config), auth: true });
     this.router.addRoute({ method: 'GET', pattern: '/api/api-config', handler: createGetApiConfigHandler(config), auth: true });
     this.router.addRoute({ method: 'PUT', pattern: '/api/api-config', handler: createUpdateApiConfigHandler(config), auth: true });
-
-    this.router.addRoute({ method: 'POST', pattern: '/api/chat', handler: createChatHandler(services), auth: true });
 
     this.router.addRoute({ method: 'GET', pattern: '/api/session', handler: createListSessionsHandler(services), auth: true });
     this.router.addRoute({ method: 'DELETE', pattern: '/api/session/:id', handler: createDeleteSessionHandler(services), auth: true });

@@ -18,9 +18,9 @@ export interface ContextFile {
 
 export interface Session {
   id: string;
-  /** 系统提示词（独立存储，不混入对话历史） */
+  /** 系统提示词（独立存储，不混入任务历史） */
   systemPrompt: string;
-  /** 对话历史（不含系统提示，仅 user/assistant/tool） */
+  /** 任务历史（不含系统提示，仅 user/assistant/tool） */
   messages: AgentMessage[];
   /** 创建时间 */
   createdAt: string;
@@ -292,7 +292,7 @@ export class SessionStore {
       return;
     }
 
-    // 裁剪：保留 systemPrompt + 最后 N 条对话消息
+    // 裁剪：保留 systemPrompt + 最后 N 条任务消息
     const rest = session.messages;
 
     // 从后往前保留，直到不超过预算（系统提示预留）

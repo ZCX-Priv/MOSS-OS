@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
   MessageCirclePlus,
-  Plug,
+  Cable,
   AlarmClock,
   ListFilter,
   Search,
@@ -11,6 +11,7 @@ import {
   MoreHorizontal,
   Pencil,
   Trash2,
+  ArrowLeft,
 } from 'lucide-react';
 import type { OverlayType } from '../../types';
 import type { TaskItem } from '../../types/api';
@@ -28,6 +29,7 @@ import {
   SidebarMenuItem,
   SidebarMenuSub,
   SidebarTrigger,
+  useSidebar,
 } from '@/components/ui/sidebar';
 import {
   Collapsible,
@@ -53,6 +55,7 @@ import { Button } from '@/components/ui/button';
 import { UserMenu } from '../overlays/UserMenu';
 import { ConfirmDialog } from '../overlays/ConfirmDialog';
 import { useTasks } from '../../hooks/useTasks';
+import { settingsNavItems, settingsSearchIndex } from '../pages/SettingsPage';
 
 interface SidebarProps {
   onOpenOverlay: (overlay: OverlayType) => void;
@@ -63,6 +66,14 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const { tasks, taskGroups, updateTask, deleteTask } = useTasks();
+  const isSettingsRoute = pathname.startsWith('/settings');
+  const [settingsSearch, setSettingsSearch] = useState('');
+  const { isMobile, setOpenMobile } = useSidebar();
+
+  // 移动端点击导航后关闭 Sheet 抽屉，避免 z-50 遮罩持续覆盖屏幕
+  const closeMobile = () => {
+    if (isMobile) setOpenMobile(false);
+  };
 
   // 任务项操作状态
   const [renameTask, setRenameTask] = useState<TaskItem | null>(null);
@@ -83,26 +94,124 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
     action?: 'new-task';
   }[] = [
     { icon: MessageCirclePlus, labelKey: 'sidebar.newTask', page: 'home', action: 'new-task' },
-    { icon: Plug, labelKey: 'sidebar.pluginLibrary', page: 'plugins' },
+    { icon: Cable, labelKey: 'sidebar.pluginLibrary', page: 'plugins' },
     { icon: AlarmClock, labelKey: 'sidebar.automation', page: 'automation' },
   ];
+
+  const settingsSearchResults = settingsSearch.trim()
+    ? settingsSearchIndex
+        .map((item) => {
+          const navItem = settingsNavItems.find((n) => n.id === item.section);
+          return {
+            ...item,
+            label: t(item.labelKey),
+            description: item.descriptionKey ? t(item.descriptionKey) : '',
+            sectionLabel: navItem ? t(navItem.labelKey) : '',
+            SectionIcon: navItem?.Icon,
+          };
+        })
+        .filter((item) => {
+          const q = settingsSearch.toLowerCase();
+          return (
+            item.label.toLowerCase().includes(q) ||
+            item.description.toLowerCase().includes(q) ||
+            item.sectionLabel.toLowerCase().includes(q)
+          );
+        })
+    : null;
 
   return (
     <>
     <UISidebar collapsible="icon">
       {/* Header: 品牌 + 折叠按钮 */}
       <SidebarHeader>
-        <div className="flex items-center justify-between gap-2 px-1 py-1">
-          <div className="flex min-w-0 items-center gap-2 group-data-[collapsible=icon]:hidden">
-            <img src="/MOSS.png" alt="MOSS" className="size-6 shrink-0 rounded-md" />
-            <span className="truncate text-sm font-semibold">MOSS</span>
+        {isSettingsRoute ? (
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                tooltip={t('settings.backToApp')}
+                onClick={() => { closeMobile(); navigate('/'); }}
+              >
+                <ArrowLeft className="size-4" />
+                <span>{t('settings.backToApp')}</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        ) : (
+          <div className="flex items-center justify-between gap-2 px-1 py-1">
+            <div className="flex min-w-0 items-center gap-2 group-data-[collapsible=icon]:hidden">
+              <img src="/MOSS.png" alt="MOSS" className="size-6 shrink-0 rounded-md" />
+              <span className="truncate text-sm font-semibold">MOSS</span>
+            </div>
+            <SidebarTrigger className="shrink-0 group-data-[collapsible=icon]:mx-auto" />
           </div>
-          <SidebarTrigger className="shrink-0 group-data-[collapsible=icon]:mx-auto" />
-        </div>
+        )}
       </SidebarHeader>
 
       {/* 导航 */}
       <SidebarContent>
+        {isSettingsRoute ? (
+          <SidebarGroup>
+            <SidebarGroupContent>
+              <div className="px-2 pb-1 group-data-[collapsible=icon]:hidden">
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    type="text"
+                    placeholder={t('settings.searchPlaceholder')}
+                    value={settingsSearch}
+                    onChange={(e) => setSettingsSearch(e.target.value)}
+                    className="h-8 pl-8 text-sm"
+                  />
+                </div>
+              </div>
+              <SidebarMenu>
+                {settingsSearchResults ? (
+                  settingsSearchResults.length > 0 ? (
+                    settingsSearchResults.map((result) => (
+                      <SidebarMenuItem key={`${result.section}-${result.labelKey}`}>
+                        <button
+                          className="flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm hover:bg-sidebar-accent hover:text-sidebar-accent-foreground h-8"
+                          onClick={() => {
+                            closeMobile();
+                            navigate(`/settings/${result.section}`);
+                            setSettingsSearch('');
+                          }}
+                        >
+                          {result.SectionIcon && <result.SectionIcon className="size-4 shrink-0" />}
+                          <span className="flex-1 truncate">{result.label}</span>
+                          <span className="shrink-0 text-xs text-muted-foreground">{result.sectionLabel}</span>
+                        </button>
+                      </SidebarMenuItem>
+                    ))
+                  ) : (
+                    <li className="px-2 py-4 text-center text-xs text-muted-foreground">
+                      {t('settings.noResults')}
+                    </li>
+                  )
+                ) : (
+                  settingsNavItems.map((item) => {
+                    const isActive = pathname === `/settings/${item.id}`;
+                    const label = t(item.labelKey);
+                    return (
+                      <SidebarMenuItem key={item.id}>
+                        <SidebarMenuButton
+                          isActive={isActive}
+                          tooltip={label}
+                          onClick={() => { closeMobile(); navigate(`/settings/${item.id}`); }}
+                        >
+                          <item.Icon className="size-4" />
+                          <span>{label}</span>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    );
+                  })
+                )}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        ) : (
+          <>
         <SidebarGroup>
           <SidebarMenu>
             {navItems.map((item) => {
@@ -117,6 +226,7 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
                     isActive={isActive}
                     tooltip={label}
                     onClick={() => {
+                      closeMobile();
                       if (item.action === 'new-task') {
                         useStore.getState().setActiveTaskId(null);
                         useStore.getState().setActiveSession(null);
@@ -171,7 +281,7 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
                             <SidebarMenuButton
                               isActive={pathname === `/task/${task.id}`}
                               size="sm"
-                              onClick={() => navigate(`/task/${task.id}`)}
+                              onClick={() => { closeMobile(); navigate(`/task/${task.id}`); }}
                             >
                               <span className="truncate pr-5">{task.title}</span>
                             </SidebarMenuButton>
@@ -215,12 +325,16 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+          </>
+        )}
       </SidebarContent>
 
-      {/* Footer: 用户菜单 */}
-      <SidebarFooter>
-        <UserMenu />
-      </SidebarFooter>
+      {/* Footer: 用户菜单（设置模式下隐藏） */}
+      {!isSettingsRoute && (
+        <SidebarFooter>
+          <UserMenu />
+        </SidebarFooter>
+      )}
     </UISidebar>
 
     {/* 重命名弹窗 */}

@@ -19,7 +19,7 @@ import { ModelSelector } from '../overlays/ModelSelector';
 import { useDirectoryPicker } from '../../hooks/useDirectoryPicker';
 import { DirectoryPickerDialog } from '../overlays/DirectoryPickerDialog';
 
-interface ChatInputProps {
+interface TaskInputProps {
   placeholder?: string;
   onOpenOverlay?: (overlay: OverlayType) => void;
   variant?: 'home' | 'task';
@@ -28,14 +28,14 @@ interface ChatInputProps {
   onAbort?: () => void;
 }
 
-export function ChatInput({
+export function TaskInput({
   placeholder,
   onOpenOverlay,
   variant = 'home',
   onSend,
   isGenerating = false,
   onAbort,
-}: ChatInputProps) {
+}: TaskInputProps) {
   const { t } = useTranslation();
   const [input, setInput] = useState('');
   const workingDirectory = useStore((s) => s.workingDirectory);
@@ -77,13 +77,13 @@ export function ChatInput({
   };
 
   const folderLabel =
-    workingDirectory.split(/[\\/]/).pop() || t('chatInput.selectFolder');
+    workingDirectory.split(/[\\/]/).pop() || t('taskInput.selectFolder');
 
   return (
     <>
     <Card className="w-full gap-0 rounded-2xl p-2 shadow-sm">
       <Textarea
-        placeholder={placeholder ?? t('chatInput.placeholder')}
+        placeholder={placeholder ?? t('taskInput.placeholder')}
         value={input}
         onChange={(e) => setInput(e.target.value)}
         onKeyDown={handleKeyDown}
@@ -100,7 +100,7 @@ export function ChatInput({
               <Badge
                 variant="secondary"
                 className="gap-1 rounded-full px-2 py-1 font-normal cursor-pointer"
-                title={workingDirectory || t('chatInput.selectFolder')}
+                title={workingDirectory || t('taskInput.selectFolder')}
               >
                 {isResolving ? (
                   <Loader2 className="size-3 animate-spin" />
@@ -116,7 +116,7 @@ export function ChatInput({
                 <Input
                   value={workingDirectory}
                   onChange={(e) => setWorkingDirectory(e.target.value)}
-                  placeholder={t('chatInput.selectFolder')}
+                  placeholder={t('taskInput.selectFolder')}
                   className="h-8 text-xs"
                 />
               </div>

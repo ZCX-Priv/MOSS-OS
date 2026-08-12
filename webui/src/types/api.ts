@@ -47,7 +47,7 @@ export interface SidebarTab {
   createdAt: number;
 }
 
-export interface ChatMessage {
+export interface TaskMessage {
   id: string;
   role: MessageRole;
   content: string;
@@ -59,7 +59,7 @@ export interface ChatMessage {
   streaming?: boolean;
   /** thinking 是否仍在输出（独立于 streaming，用于 thinking 区转圈） */
   thinkingStreaming?: boolean;
-  /** 该消息内 todo 工具调用完成时的 todos 快照（对话流内卡片按此渲染，避免共享实时状态） */
+  /** 该消息内 todo 工具调用完成时的 todos 快照（任务流内卡片按此渲染，避免共享实时状态） */
   todoSnapshot?: TodoItem[];
 }
 

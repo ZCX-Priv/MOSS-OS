@@ -7,7 +7,7 @@ import { create } from 'zustand';
 import type {
   AppConfig,
   ApiConfig,
-  ChatMessage,
+  TaskMessage,
   PendingAsk,
   Session,
   McpServer,
@@ -36,7 +36,7 @@ interface UIState {
   // --- 会话 / 消息 ---
   activeSessionId: string | null;
   sessions: Session[];
-  messagesBySession: Record<string, ChatMessage[]>;
+  messagesBySession: Record<string, TaskMessage[]>;
   /** 是否正在生成（按 sessionId 索引；缺省视为 false） */
   generatingBySession: Record<string, boolean>;
   /** 工具发起的、等待用户回复的提问列表 */
@@ -98,7 +98,7 @@ interface UIState {
   sendShortcut: 'enter' | 'ctrl-enter';
 
   // --- UI 面板（兼容旧 webui 逻辑，新 UI 当前未直接使用） ---
-  activePanel: 'chat' | 'config' | 'api-config' | 'mcp' | 'sessions';
+  activePanel: 'task' | 'config' | 'api-config' | 'mcp' | 'sessions';
 
   // --- 右侧边栏标签页（全局，localStorage 持久化） ---
   sidebarTabs: SidebarTab[];
@@ -117,14 +117,22 @@ interface UIActions {
   removeSession: (id: string) => void;
 
   // 消息
-  setMessages: (sessionId: string, messages: ChatMessage[]) => void;
-  addMessage: (sessionId: string, message: ChatMessage) => void;
-  updateMessage: (sessionId: string, messageId: string, patch: Partial<ChatMessage>) => void;
+  setMessages: (sessionId: string, messages: TaskMessage[]) => void;
+  addMessage: (sessionId: string, message: TaskMessage) => void;
+  updateMessage: (sessionId: string, messageId: string, patch: Partial<TaskMessage>) => void;
   appendToMessage: (
     sessionId: string,
     messageId: string,
     field: 'content' | 'thinking',
     text: string,
+  ) => void;
+  /** 合并 appendToMessage + updateMessage(thinkingStreaming) 为单次 set，降低高频流式更新的渲染压力 */
+  appendTextAndMarkThinking: (
+    sessionId: string,
+    messageId: string,
+    field: 'content' | 'thinking',
+    text: string,
+    thinkingStreaming: boolean,
   ) => void;
   clearMessages: (sessionId: string) => void;
 
@@ -317,7 +325,7 @@ export const useStore = create<Store>((set) => ({
   })(),
 
   // --- 面板 ---
-  activePanel: 'chat',
+  activePanel: 'task',
 
   // --- Actions: 会话 ---
   setActiveSession: (id) => set({ activeSessionId: id }),
@@ -362,6 +370,17 @@ export const useStore = create<Store>((set) => ({
         ...state.messagesBySession,
         [sessionId]: (state.messagesBySession[sessionId] ?? []).map((m) =>
           m.id === messageId ? { ...m, [field]: (m[field] ?? '') + text } : m,
+        ),
+      },
+    })),
+  appendTextAndMarkThinking: (sessionId, messageId, field, text, thinkingStreaming) =>
+    set((state) => ({
+      messagesBySession: {
+        ...state.messagesBySession,
+        [sessionId]: (state.messagesBySession[sessionId] ?? []).map((m) =>
+          m.id === messageId
+            ? { ...m, [field]: (m[field] ?? '') + text, thinkingStreaming }
+            : m,
         ),
       },
     })),

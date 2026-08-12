@@ -117,14 +117,13 @@ export default function App() {
             <Route path="/settings" element={<SettingsPage />}>
               <Route index element={<Navigate to="general" replace />} />
               <Route path="general" element={<GeneralSettings />} />
+              <Route path="appearance" element={<PlaceholderSection section="appearance" />} />
               <Route path="agent" element={<AgentSettings />} />
               <Route path="model" element={<ModelSettings />} />
               <Route path="about" element={<AboutSettings />} />
-              <Route path="chat" element={<PlaceholderSection section="chat" />} />
+              <Route path="task" element={<PlaceholderSection section="task" />} />
               <Route path="index" element={<PlaceholderSection section="index" />} />
               <Route path="docs" element={<PlaceholderSection section="docs" />} />
-              <Route path="mcp" element={<PlaceholderSection section="mcp" />} />
-              <Route path="skills" element={<PlaceholderSection section="skills" />} />
               <Route path="commands" element={<PlaceholderSection section="commands" />} />
               <Route path="rules" element={<PlaceholderSection section="rules" />} />
               <Route path="memory" element={<PlaceholderSection section="memory" />} />

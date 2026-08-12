@@ -15,13 +15,12 @@ export type OverlayType =
 
 export type SettingsSection =
   | 'general'
+  | 'appearance'
   | 'agent'
   | 'model'
-  | 'chat'
+  | 'task'
   | 'index'
   | 'docs'
-  | 'mcp'
-  | 'skills'
   | 'commands'
   | 'rules'
   | 'memory'

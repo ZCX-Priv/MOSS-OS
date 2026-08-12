@@ -173,22 +173,22 @@ body {
 }
 
 /* 聊天消息区滚动条：覆盖全局 ::-webkit-scrollbar { display:none }，显示可交互滚动条 */
-.chat-scroll-area::-webkit-scrollbar {
+.task-scroll-area::-webkit-scrollbar {
   width: 8px;
   display: block;
 }
-.chat-scroll-area::-webkit-scrollbar-track {
+.task-scroll-area::-webkit-scrollbar-track {
   background: transparent;
 }
-.chat-scroll-area::-webkit-scrollbar-thumb {
+.task-scroll-area::-webkit-scrollbar-thumb {
   background: var(--border);
   border-radius: 4px;
 }
-.chat-scroll-area::-webkit-scrollbar-thumb:hover {
+.task-scroll-area::-webkit-scrollbar-thumb:hover {
   background: var(--muted-foreground);
 }
 /* Firefox */
-.chat-scroll-area {
+.task-scroll-area {
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
 }

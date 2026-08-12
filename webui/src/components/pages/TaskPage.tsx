@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
@@ -31,18 +31,18 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { useIsMobile } from '@/hooks/use-mobile';
-import { ChatInput } from '../shared/ChatInput';
+import { TaskInput } from '../shared/TaskInput';
 import { TodoProgressCard } from '../shared/TodoProgressCard';
 import { AskPromptCard } from '../shared/AskPromptCard';
 import { TerminalView } from '../shared/TerminalView';
 import { useStore } from '../../store';
-import { useChat } from '../../hooks/useChat';
+import { useTask } from '../../hooks/useTask';
 import { api } from '../../api/http';
 import { wsClient } from '../../api/ws';
-import type { ChatMessage, TodoItem } from '../../types/api';
+import type { TaskMessage, TodoItem } from '../../types/api';
 
 // 稳定引用的空数组，避免 useStore 选择器每次返回新 [] 触发 useSyncExternalStore 无限循环
-const EMPTY_MESSAGES: ChatMessage[] = [];
+const EMPTY_MESSAGES: TaskMessage[] = [];
 const EMPTY_TODOS: TodoItem[] = [];
 
 // 根据当前小时返回问候语 i18n key
@@ -78,7 +78,8 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
   const addSidebarTab = useStore((s) => s.addSidebarTab);
   const removeSidebarTab = useStore((s) => s.removeSidebarTab);
   const setActiveSidebarTab = useStore((s) => s.setActiveSidebarTab);
-  const { sendMessage, abort } = useChat();
+  const toolIconMap = useStore((s) => s.toolIconMap);
+  const { sendMessage, abort } = useTask();
 
   // 当前活跃标签对象
   const activeTab = sidebarTabs.find((t) => t.id === activeSidebarTabId) ?? sidebarTabs[0];
@@ -127,6 +128,15 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
     useStore.getState().setActiveTaskId(taskId);
     // 同步后端 ConnectionState，确保异步事件推送到正确连接
     wsClient.send({ type: 'session.subscribe', sessionId: taskId });
+
+    return () => {
+      // 卸载时若 activeSessionId 仍指向自己，清除之，防止 useWebSocket 误用旧 session。
+      // 注意：不停止后端 agent.run（任务可在后台继续），仅防状态污染。
+      const cur = useStore.getState().activeSessionId;
+      if (cur === taskId) {
+        useStore.getState().setActiveSession(null);
+      }
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [taskId]);
 
@@ -291,9 +301,9 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
 
   return (
     <div className="flex flex-1 min-h-0 overflow-hidden">
-      {/* Chat Area */}
+      {/* Task Area */}
       <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
-        {/* Chat Header — 移动端：三栏 grid（左 trigger + 居中标题 + 右按钮） */}
+        {/* Task Header — 移动端：三栏 grid（左 trigger + 居中标题 + 右按钮） */}
         <div className="grid h-12 grid-cols-3 items-center px-3 md:hidden">
           <SidebarTrigger />
           <h2 className="truncate text-center text-sm font-medium text-foreground">
@@ -309,7 +319,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
             <PanelRight />
           </Button>
         </div>
-        {/* Chat Header — 桌面端：标题 + 右按钮 */}
+        {/* Task Header — 桌面端：标题 + 右按钮 */}
         <div className="hidden h-12 items-center justify-between px-4 md:flex">
           <div className="flex items-center gap-2">
             <h2 className="text-sm font-medium text-foreground">
@@ -326,8 +336,8 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
           </Button>
         </div>
 
-        {/* Chat Messages */}
-        <div className="min-h-0 flex-1 overflow-y-auto chat-scroll-area">
+        {/* Task Messages */}
+        <div className="min-h-0 flex-1 overflow-y-auto task-scroll-area">
           <div className="flex min-h-full flex-col gap-4 p-4">
             {messages.length === 0 && !isGenerating && (
               <div className="flex flex-1 flex-col items-center justify-center gap-6">
@@ -338,7 +348,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
               </div>
             )}
             {messages.map((msg) => (
-              <MessageBubble key={msg.id} message={msg} />
+              <MessageBubble key={msg.id} message={msg} todos={todos} toolIconMap={toolIconMap} />
             ))}
             {isGenerating && messages[messages.length - 1]?.role !== 'assistant' && (
               <div className="flex items-center gap-2 text-muted-foreground">
@@ -352,9 +362,9 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
           </div>
         </div>
 
-        {/* Chat Input */}
+        {/* Task Input */}
         <div className="shrink-0 p-3">
-          <ChatInput
+          <TaskInput
             variant="task"
             isGenerating={isGenerating}
             onAbort={() => abort(taskId)}
@@ -391,11 +401,13 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
 }
 
 /** 渲染单条消息 */
-function MessageBubble({ message }: { message: ChatMessage }) {
+interface MessageBubbleProps {
+  message: TaskMessage;
+  todos: TodoItem[];
+  toolIconMap: Record<string, string>;
+}
+const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap }: MessageBubbleProps) {
   const { t } = useTranslation();
-  // 获取当前 session 的 todos，用于在对话流中渲染 TodoProgressCard
-  const todos = useStore((s) => s.todosBySession[s.activeSessionId ?? ''] ?? EMPTY_TODOS);
-  const toolIconMap = useStore((s) => s.toolIconMap);
 
   // 防御：system 已被后端物理隔离、tool 已被适配层合并进 assistant；此处不应出现
   if (message.role === 'system' || message.role === 'tool') return null;
@@ -438,7 +450,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
           )}
         </div>
       )}
-      {/* todo 工具调用 → 在对话流中渲染 TodoProgressCard（像其他工具一样在调用位置显示） */}
+      {/* todo 工具调用 → 在任务流中渲染 TodoProgressCard（像其他工具一样在调用位置显示） */}
       {message.toolCalls?.some((tc) => tc.name === 'todo') && todos.length > 0 && (
         <TodoProgressCard todos={message.todoSnapshot ?? todos} variant="inline" />
       )}
@@ -550,4 +562,4 @@ function MessageBubble({ message }: { message: ChatMessage }) {
       )}
     </div>
   );
-}
+});

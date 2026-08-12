@@ -63,7 +63,7 @@ export interface ToolRegistry {
 
 export interface AgentEngine {
   /**
-   * 启动一轮对话（ReAct 循环）。
+   * 启动一轮任务（ReAct 循环）。
    * 流式事件通过 onEvent 回调推送。
    * @returns 最终的 assistant 消息
    */

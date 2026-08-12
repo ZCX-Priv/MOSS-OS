@@ -3,7 +3,7 @@
 // 双 tab 路由化：/plugins（插件）| /plugins/skills（技能）
 
 import { useState } from 'react';
-import { Search } from 'lucide-react';
+import { Search, Puzzle, WandSparkles, Wrench } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useLocation, Outlet, useOutletContext } from 'react-router-dom';
 import { Card } from '@/components/ui/card';
@@ -11,11 +11,10 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { usePlugins, getPluginIconGradient } from '../../hooks/usePlugins';
+import { usePlugins } from '../../hooks/usePlugins';
 import { useSkills } from '../../hooks/useSkills';
 import { useTools } from '../../hooks/useTools';
 import { TOOL_ICON_MAP } from '../../lib/tool-icons';
-import { Wrench } from 'lucide-react';
 
 // Outlet context 类型：搜索框 query 与 setQuery 共享给子组件
 interface PluginOutletContext {
@@ -59,14 +58,17 @@ export function PluginMarketPage() {
         <div className="flex items-center justify-between gap-4 border-b border-border px-6 py-3">
           <TabsList>
             <TabsTrigger value="plugins" className="gap-1.5">
+              <Puzzle className="size-3.5" />
               {t('plugins.pluginsTab')}
               <Badge variant="secondary">{plugins.length}</Badge>
             </TabsTrigger>
             <TabsTrigger value="skills" className="gap-1.5">
+              <WandSparkles className="size-3.5" />
               {t('plugins.skillsTab')}
               <Badge variant="secondary">{skills.length}</Badge>
             </TabsTrigger>
             <TabsTrigger value="tools" className="gap-1.5">
+              <Wrench className="size-3.5" />
               {t('plugins.toolsTab')}
               <Badge variant="secondary">{tools.length}</Badge>
             </TabsTrigger>
@@ -115,14 +117,10 @@ export function PluginsTab() {
           </div>
         )}
         {filteredPlugins.map((plugin) => {
-          const gradient = plugin.iconGradient ?? getPluginIconGradient(plugin.name);
           return (
             <Card key={plugin.id} className="flex flex-row items-center gap-3 p-3">
-              <div
-                className="flex size-10 shrink-0 items-center justify-center rounded-lg text-xs font-bold text-white"
-                style={{ backgroundImage: gradient }}
-              >
-                {plugin.name.slice(0, 1).toUpperCase()}
+              <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                <Puzzle className="size-5" />
               </div>
               <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <div className="flex items-center gap-2">
@@ -179,8 +177,8 @@ export function SkillsTab() {
         )}
         {filteredSkills.map((skill) => (
           <Card key={skill.name} className="flex flex-row items-center gap-3 p-3">
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-primary/80 to-primary text-xs font-bold text-primary-foreground">
-              {skill.name.slice(0, 1).toUpperCase()}
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+              <WandSparkles className="size-5" />
             </div>
             <div className="flex min-w-0 flex-1 flex-col gap-0.5">
               <div className="flex items-center gap-2">

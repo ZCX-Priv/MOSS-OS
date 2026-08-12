@@ -1,21 +1,21 @@
-// UI/src/hooks/useChat.ts
-// 对话 action hook：提供 sendMessage / abort / replyAsk。
+// UI/src/hooks/useTask.ts
+// 任务 action hook：提供 sendMessage / abort / replyAsk。
 // 事件流处理在 useWebSocket 中完成，本 hook 只负责发送动作。
 //
 // sendMessage 流程：
 // 1. 确定 taskId：优先 opts.taskId > activeTaskId
 // 2. 若 task 不存在（新任务），先 api.createTask 获取 task.id（= sessionId）
-// 3. 若该 session 正在生成，立即中断旧流：chat.abort + 清理 pending + finalizeStreamingMessages
+// 3. 若该 session 正在生成，立即中断旧流：task.abort + 清理 pending + finalizeStreamingMessages
 // 4. 生成 runId（用于隔离不同 run 的事件）
 // 5. 写入用户消息到 store
-// 6. wsClient.send({type:'chat.stream', sessionId, payload:{message,model,cwd,runId}})
+// 6. wsClient.send({type:'task.stream', sessionId, payload:{message,model,cwd,runId}})
 
 import { useCallback } from 'react';
 import { useStore } from '../store';
 import { wsClient } from '../api/ws';
 import { api } from '../api/http';
 import { pendingAssistant, pendingRunId } from '../lib/pending-assistant';
-import type { ChatMessage } from '../types/api';
+import type { TaskMessage } from '../types/api';
 
 function genId(): string {
   return `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -25,7 +25,7 @@ function genRunId(): string {
   return `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-export function useChat() {
+export function useTask() {
   const addMessage = useStore((s) => s.addMessage);
   const setActiveSession = useStore((s) => s.setActiveSession);
   const setActiveTaskId = useStore((s) => s.setActiveTaskId);
@@ -66,9 +66,9 @@ export function useChat() {
       }
 
       // 3. 若该 session 正在生成，立即中断旧流并清理前端状态
-      //    不依赖后端异步 chat.aborted 事件，避免旧流事件污染新流
+      //    不依赖后端异步 task.aborted 事件，避免旧流事件污染新流
       if (state.generatingBySession[sessionId]) {
-        wsClient.send({ type: 'chat.abort', sessionId });
+        wsClient.send({ type: 'task.abort', sessionId });
         setGenerating(sessionId, false);
         pendingAssistant.delete(sessionId);
         finalizeStreamingMessages(sessionId);
@@ -82,7 +82,7 @@ export function useChat() {
       if (taskId) setActiveTaskId(taskId);
 
       // 5. 写入用户消息
-      const userMsg: ChatMessage = {
+      const userMsg: TaskMessage = {
         id: genId(),
         role: 'user',
         content,
@@ -91,9 +91,9 @@ export function useChat() {
       addMessage(sessionId, userMsg);
       setGenerating(sessionId, true);
 
-      // 6. 通过 WS 发送流式对话请求（带 runId）
+      // 6. 通过 WS 发送流式任务请求（带 runId）
       wsClient.send({
-        type: 'chat.stream',
+        type: 'task.stream',
         sessionId,
         payload: {
           message: content,
@@ -111,9 +111,9 @@ export function useChat() {
   const abort = useCallback((sessionIdOverride?: string) => {
     const sid = sessionIdOverride ?? useStore.getState().activeSessionId;
     if (!sid) return;
-    wsClient.send({ type: 'chat.abort', sessionId: sid });
+    wsClient.send({ type: 'task.abort', sessionId: sid });
     setGenerating(sid, false);
-    // 立即清理前端状态，不等待后端 chat.aborted 事件
+    // 立即清理前端状态，不等待后端 task.aborted 事件
     pendingAssistant.delete(sid);
     pendingRunId.delete(sid);
     finalizeStreamingMessages(sid);

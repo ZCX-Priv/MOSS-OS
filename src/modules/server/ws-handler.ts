@@ -71,10 +71,10 @@ export class WsHandler {
 
     // 2. 内置消息处理
     switch (msg.type) {
-      case 'chat.stream':
-        return this.handleChatStream(state, msg);
-      case 'chat.abort':
-        return this.handleChatAbort(state, msg);
+      case 'task.stream':
+        return this.handleTaskStream(state, msg);
+      case 'task.abort':
+        return this.handleTaskAbort(state, msg);
       case 'session.subscribe':
         return this.handleSessionSubscribe(state, msg);
       case 'tool.ask.reply':
@@ -112,7 +112,7 @@ export class WsHandler {
   // 内置消息处理
   // ========================================================================
 
-  private async handleChatStream(state: ConnectionState, msg: WSMessage): Promise<void> {
+  private async handleTaskStream(state: ConnectionState, msg: WSMessage): Promise<void> {
     const agent = this.services.tryResolve<AgentEngine>('agent.engine');
     if (!agent) {
       state.conn.send({ type: 'error', sessionId: msg.sessionId, payload: { message: 'Agent engine not available' } });
@@ -155,10 +155,10 @@ export class WsHandler {
       });
 
       if (abortController.signal.aborted) {
-        state.conn.send({ type: 'chat.aborted', sessionId: result.sessionId, payload: { runId } });
+        state.conn.send({ type: 'task.aborted', sessionId: result.sessionId, payload: { runId } });
       } else {
         state.conn.send({
-          type: 'chat.done',
+          type: 'task.done',
           sessionId: result.sessionId,
           payload: {
             finishReason: result.finishReason,
@@ -169,7 +169,7 @@ export class WsHandler {
       }
     } catch (err) {
       if (abortController.signal.aborted) {
-        state.conn.send({ type: 'chat.aborted', sessionId, payload: { runId } });
+        state.conn.send({ type: 'task.aborted', sessionId, payload: { runId } });
       } else {
         state.conn.send({
           type: 'error',
@@ -185,10 +185,10 @@ export class WsHandler {
     }
   }
 
-  private handleChatAbort(state: ConnectionState, msg: WSMessage): void {
+  private handleTaskAbort(state: ConnectionState, msg: WSMessage): void {
     if (state.abortController && state.sessionId === msg.sessionId) {
       state.abortController.abort();
-      this.logger.info(`Chat aborted: ${msg.sessionId}`);
+      this.logger.info(`Task aborted: ${msg.sessionId}`);
     }
   }
 

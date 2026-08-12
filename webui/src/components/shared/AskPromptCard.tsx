@@ -10,7 +10,7 @@ import type { PendingAsk } from '../../types/api';
 import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { useChat } from '../../hooks/useChat';
+import { useTask } from '../../hooks/useTask';
 
 interface AskPromptCardProps {
   ask: PendingAsk;
@@ -19,7 +19,7 @@ interface AskPromptCardProps {
 
 export function AskPromptCard({ ask, className }: AskPromptCardProps) {
   const { t } = useTranslation();
-  const { replyAsk } = useChat();
+  const { replyAsk } = useTask();
   const [answer, setAnswer] = useState('');
   const [sending, setSending] = useState(false);
 

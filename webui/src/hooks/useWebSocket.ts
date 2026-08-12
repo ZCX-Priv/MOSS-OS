@@ -9,7 +9,7 @@
 //    - assistant-text / assistant-thinking：累积到当前流式 assistant 消息
 //    - tool-call-start / tool-call-end：附加工具调用与结果
 //    - ask：加入 pendingAsks
-//    - done / chat.done：结束流式，清生成态
+//    - done / task.done：结束流式，清生成态
 //    - error：写入错误消息，清生成态
 //    - session.subscribed：设置 activeSessionId
 //    - tool.ask.accepted：移除 pendingAsk
@@ -28,7 +28,7 @@ import { wsClient } from '../api/ws';
 import { pendingAssistant, pendingRunId } from '../lib/pending-assistant';
 import type {
   AgentEvent,
-  ChatMessage,
+  TaskMessage,
   TaskItem,
   TodoItem,
   ContextFile,
@@ -45,8 +45,77 @@ function genId(): string {
 const AGENT_EVENT_TYPES = new Set([
   'assistant-text', 'assistant-thinking',
   'tool-call-start', 'tool-call-delta', 'tool-call-executing', 'tool-call-end',
-  'ask', 'error', 'done', 'chat.done', 'chat.aborted',
+  'ask', 'error', 'done', 'task.done', 'task.aborted',
 ]);
+
+// ============================================================================
+// 批处理缓冲区：对高频流式事件（assistant-text / assistant-thinking / tool-call-delta）
+// 用 requestAnimationFrame 合并，避免每条事件都同步触发 store.set()，从而饿死路由切换渲染。
+// 低频事件（tool-call-start/end/executing、done、error 等）执行前会先 flushPending()，保证顺序。
+// ============================================================================
+interface PendingTextAppend {
+  sessionId: string;
+  messageId: string;
+  field: 'content' | 'thinking';
+  text: string;
+  thinkingStreaming: boolean;
+}
+interface PendingToolDelta {
+  sessionId: string;
+  messageId: string;
+  toolCallId: string;
+  argumentsDelta: string;
+}
+
+const pendingTextMap = new Map<string, PendingTextAppend>();
+const pendingToolDeltaMap = new Map<string, PendingToolDelta>();
+let rafId: number | null = null;
+
+function scheduleFlush(): void {
+  if (rafId !== null) return;
+  rafId = requestAnimationFrame(() => {
+    rafId = null;
+    flushPending();
+  });
+}
+
+function flushPending(): void {
+  // 1. 刷新文本缓冲：每组（sessionId|messageId|field）一次 store 更新
+  if (pendingTextMap.size > 0) {
+    const entries = Array.from(pendingTextMap.values());
+    pendingTextMap.clear();
+    for (const op of entries) {
+      useStore.getState().appendTextAndMarkThinking(
+        op.sessionId, op.messageId, op.field, op.text, op.thinkingStreaming,
+      );
+    }
+  }
+  // 2. 刷新 tool-call-delta 缓冲：按 sessionId|messageId 分组，合并 delta 后一次 updateMessage
+  if (pendingToolDeltaMap.size > 0) {
+    const entries = Array.from(pendingToolDeltaMap.values());
+    pendingToolDeltaMap.clear();
+    const grouped = new Map<string, { sessionId: string; messageId: string; deltas: Map<string, string> }>();
+    for (const op of entries) {
+      const key = `${op.sessionId}|${op.messageId}`;
+      let g = grouped.get(key);
+      if (!g) {
+        g = { sessionId: op.sessionId, messageId: op.messageId, deltas: new Map() };
+        grouped.set(key, g);
+      }
+      g.deltas.set(op.toolCallId, (g.deltas.get(op.toolCallId) ?? '') + op.argumentsDelta);
+    }
+    for (const g of grouped.values()) {
+      const pending = pendingAssistant.get(g.sessionId);
+      if (!pending?.toolCalls) continue;
+      const updatedToolCalls = pending.toolCalls.map((tc) => {
+        const delta = g.deltas.get(tc.id);
+        return delta ? { ...tc, arguments: tc.arguments + delta } : tc;
+      });
+      useStore.getState().updateMessage(g.sessionId, g.messageId, { toolCalls: updatedToolCalls });
+      pendingAssistant.set(g.sessionId, { ...pending, toolCalls: updatedToolCalls });
+    }
+  }
+}
 
 export function useWebSocket(): void {
   useEffect(() => {
@@ -91,21 +160,41 @@ export function useWebSocket(): void {
         if (!sessionId) return;
         const event = msg.payload as Extract<AgentEvent, { type: 'assistant-text' }>;
         const pending = ensurePendingAssistant(sessionId);
-        s.appendToMessage(sessionId, pending.id, 'content', event.text);
-        // 收到正文 → thinking 已结束
-        s.updateMessage(sessionId, pending.id, { thinkingStreaming: false });
+        // 缓冲文本 append（rAF 批处理），避免每 token 同步触发 2 次 store.set()
+        const key = `${sessionId}|${pending.id}|content`;
+        const existing = pendingTextMap.get(key);
+        if (existing) {
+          existing.text += event.text;
+          existing.thinkingStreaming = false;
+        } else {
+          pendingTextMap.set(key, {
+            sessionId, messageId: pending.id, field: 'content',
+            text: event.text, thinkingStreaming: false,
+          });
+        }
+        scheduleFlush();
         break;
       }
       case 'assistant-thinking': {
         if (!sessionId) return;
         const event = msg.payload as Extract<AgentEvent, { type: 'assistant-thinking' }>;
         const pending = ensurePendingAssistant(sessionId);
-        s.appendToMessage(sessionId, pending.id, 'thinking', event.text);
-        // 正在输出 thinking
-        s.updateMessage(sessionId, pending.id, { thinkingStreaming: true });
+        const key = `${sessionId}|${pending.id}|thinking`;
+        const existing = pendingTextMap.get(key);
+        if (existing) {
+          existing.text += event.text;
+          existing.thinkingStreaming = true;
+        } else {
+          pendingTextMap.set(key, {
+            sessionId, messageId: pending.id, field: 'thinking',
+            text: event.text, thinkingStreaming: true,
+          });
+        }
+        scheduleFlush();
         break;
       }
       case 'tool-call-start': {
+        flushPending(); // 确保之前的文本/delta 已写入，避免顺序错乱
         const event = msg.payload as Extract<AgentEvent, { type: 'tool-call-start' }>;
         if (!sessionId) break;
         const pending = ensurePendingAssistant(sessionId);
@@ -126,16 +215,22 @@ export function useWebSocket(): void {
         if (!sessionId) break;
         const pending = pendingAssistant.get(sessionId);
         if (!pending?.toolCalls) break;
-        const updatedToolCalls = pending.toolCalls.map((tc) =>
-          tc.id === event.toolCallId
-            ? { ...tc, arguments: tc.arguments + event.argumentsDelta }
-            : tc,
-        );
-        s.updateMessage(sessionId, pending.id, { toolCalls: updatedToolCalls });
-        pendingAssistant.set(sessionId, { ...pending, toolCalls: updatedToolCalls });
+        // 缓冲 delta（rAF 批处理），避免每参数片段同步触发 store.set()
+        const key = `${sessionId}|${event.toolCallId}`;
+        const existing = pendingToolDeltaMap.get(key);
+        if (existing) {
+          existing.argumentsDelta += event.argumentsDelta;
+        } else {
+          pendingToolDeltaMap.set(key, {
+            sessionId, messageId: pending.id, toolCallId: event.toolCallId,
+            argumentsDelta: event.argumentsDelta,
+          });
+        }
+        scheduleFlush();
         break;
       }
       case 'tool-call-executing': {
+        flushPending(); // 确保之前的 delta 已写入
         const event = msg.payload as Extract<AgentEvent, { type: 'tool-call-executing' }>;
         if (!sessionId) break;
         const pending = pendingAssistant.get(sessionId);
@@ -148,6 +243,7 @@ export function useWebSocket(): void {
         break;
       }
       case 'tool-call-end': {
+        flushPending(); // 确保之前的 delta 已写入，避免 end 后还有残余 delta
         const event = msg.payload as Extract<AgentEvent, { type: 'tool-call-end' }>;
         if (!sessionId) break;
         const pending = pendingAssistant.get(sessionId);
@@ -184,6 +280,7 @@ export function useWebSocket(): void {
         break;
       }
       case 'error': {
+        flushPending(); // 确保流式文本在终止前全部写入
         const event = (msg.payload ?? {}) as { message?: string };
         if (sessionId) {
           s.addMessage(sessionId, {
@@ -199,6 +296,7 @@ export function useWebSocket(): void {
         break;
       }
       case 'done': {
+        flushPending(); // 确保流式文本在终止前全部写入
         if (sessionId) {
           const pending = pendingAssistant.get(sessionId);
           if (pending) {
@@ -215,7 +313,8 @@ export function useWebSocket(): void {
         }
         break;
       }
-      case 'chat.done': {
+      case 'task.done': {
+        flushPending(); // 确保流式文本在终止前全部写入
         if (sessionId) {
           const pending = pendingAssistant.get(sessionId);
           if (pending) {
@@ -229,10 +328,11 @@ export function useWebSocket(): void {
         }
         break;
       }
-      case 'chat.aborted': {
+      case 'task.aborted': {
+        flushPending(); // 确保流式文本在终止前全部写入
         // 用户主动中断（停止按钮 / 打断发送）。
         // 仅清理流式消息状态，不写 Error 消息、不改 generating：
-        // - 停止按钮场景：useChat.abort 已 setGenerating(false)
+        // - 停止按钮场景：useTask.abort 已 setGenerating(false)
         // - 打断发送场景：sendMessage 已 setGenerating(true) 启动新流
         if (sessionId) {
           const pending = pendingAssistant.get(sessionId);
@@ -268,7 +368,7 @@ export function useWebSocket(): void {
         const payload = (msg.payload ?? {}) as { todos?: TodoItem[]; toolCallId?: string };
         if (payload.todos) {
           useStore.getState().setTodos(sessionId, payload.todos);
-          // 回填快照到发起这次 todo 调用的 message，使对话流内卡片按调用时刻渲染
+          // 回填快照到发起这次 todo 调用的 message，使任务流内卡片按调用时刻渲染
           if (payload.toolCallId) {
             const msgs = useStore.getState().messagesBySession[sessionId] ?? [];
             const target = msgs.find((m) => m.toolCalls?.some((tc) => tc.id === payload.toolCallId));
@@ -359,7 +459,7 @@ export function useWebSocket(): void {
   }
 
   /** 确保当前 session 存在一条流式 assistant 消息，返回该消息 */
-  function ensurePendingAssistant(sessionId: string): ChatMessage {
+  function ensurePendingAssistant(sessionId: string): TaskMessage {
     let pending = pendingAssistant.get(sessionId);
     // 新一轮判定：上一轮最后一个 toolCall 已完成（status==='done'）→ 本轮 text/thinking 属于新一轮
     // 依据：同一轮内 text/thinking 必在 tool_call 之前；流式改造后 toolCalls 在 generating/executing
