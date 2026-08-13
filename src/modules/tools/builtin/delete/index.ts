@@ -2,6 +2,7 @@
 // delete 工具 execute 逻辑：删除文件或目录（递归）。破坏性操作。
 // 元数据见同目录 tool.json。
 
+import { t } from '../../../../core/i18n';
 import { existsSync, statSync, unlinkSync, rmSync } from 'node:fs';
 import { isAbsolute, normalize, resolve } from 'node:path';
 import type { ToolContext, ToolResult } from '../../types';
@@ -40,7 +41,7 @@ export default {
           };
         }
         rmSync(absPath, { recursive: true, force: false });
-        ctx.logger.info(`Directory deleted: ${absPath}`);
+        ctx.logger.info(t('tools.directoryDeleted', { path: absPath }));
         return {
           content: [{ type: 'text', text: `Successfully deleted directory: ${absPath}` }],
           metadata: { path: absPath, type: 'directory', recursive: true },
@@ -48,7 +49,7 @@ export default {
       }
 
       unlinkSync(absPath);
-      ctx.logger.info(`File deleted: ${absPath}`);
+      ctx.logger.info(t('tools.fileDeleted', { path: absPath }));
       return {
         content: [{ type: 'text', text: `Successfully deleted file: ${absPath}` }],
         metadata: { path: absPath, type: 'file' },

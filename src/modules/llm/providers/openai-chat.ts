@@ -2,6 +2,7 @@
 // OpenAI Chat Completions provider。
 // 兼容 DeepSeek、通义千问、智谱 GLM、Kimi 等。
 
+import { t } from '../../../core/i18n';
 import type {
   LLMProvider,
   ModelConfig,
@@ -53,7 +54,7 @@ export class OpenAIChatProvider implements LLMProvider {
     const data = raw as OpenAIChatResponse;
     const choice = data.choices?.[0];
     if (!choice) {
-      throw new Error('OpenAI Chat response missing choices');
+      throw new Error(t('llm.openaiMissingChoices'));
     }
     const msg = choice.message;
     const content = msg?.content ?? '';

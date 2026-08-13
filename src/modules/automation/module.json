@@ -1,7 +1,7 @@
 {
   "name": "automation",
   "version": "1.0.0",
-  "description": "Automation service: cron-based scheduled agent runs with persistence",
+  "description": "自动化服务：基于 cron 的定时 Agent 运行，支持持久化",
   "type": "module",
   "dependencies": {
     "agent": "^1.0.0",

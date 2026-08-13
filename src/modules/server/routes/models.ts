@@ -9,6 +9,7 @@ import type { HttpRequest, HttpResponse, RouteHandler } from '../types';
 import type { ConfigService, ModelConfig, ServiceRegistry } from '../../../core/types';
 import { ServiceNames } from '../../../core/types';
 import type { LLMRouter } from '../../contracts';
+import { ErrorCode } from '../../../core/error-codes';
 
 /** 生成模型 id：model_{timestamp}_{random} */
 function generateModelId(): string {
@@ -57,7 +58,7 @@ export function createSetCurrentModelHandler(config: ConfigService): RouteHandle
   return async (req: HttpRequest): Promise<HttpResponse> => {
     const body = (req.body ?? {}) as { modelId?: string };
     if (!body.modelId) {
-      return { status: 400, body: { error: 'modelId required' } };
+      return { status: 400, body: { error: ErrorCode.MODEL_ID_REQUIRED } };
     }
     try {
       await config.updateAppConfig({
@@ -85,7 +86,7 @@ export function createCreateModelHandler(config: ConfigService): RouteHandler {
       thinking?: ThinkingPatch;
     };
     if (!body.name || !body.model || !body.format || !body.endpoint) {
-      return { status: 400, body: { error: 'name, model, format, endpoint required' } };
+      return { status: 400, body: { error: ErrorCode.MODEL_FIELDS_REQUIRED } };
     }
     try {
       const apiConfig = config.getApiConfig();
@@ -114,13 +115,13 @@ export function createDeleteModelHandler(config: ConfigService): RouteHandler {
   return async (_req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
     const id = params?.id;
     if (!id) {
-      return { status: 400, body: { error: 'model id required' } };
+      return { status: 400, body: { error: ErrorCode.MODEL_ID_REQUIRED } };
     }
     try {
       const apiConfig = config.getApiConfig();
       const exists = apiConfig.models.some(m => m.id === id);
       if (!exists) {
-        return { status: 404, body: { error: `model '${id}' not found` } };
+        return { status: 404, body: { error: ErrorCode.MODEL_NOT_FOUND } };
       }
       const newModels = apiConfig.models.filter(m => m.id !== id);
       await config.updateApiConfig({ models: newModels });
@@ -143,7 +144,7 @@ export function createUpdateModelHandler(config: ConfigService): RouteHandler {
   return async (req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
     const id = params?.id;
     if (!id) {
-      return { status: 400, body: { error: 'model id required' } };
+      return { status: 400, body: { error: ErrorCode.MODEL_ID_REQUIRED } };
     }
     const body = (req.body ?? {}) as {
       name?: string;
@@ -158,7 +159,7 @@ export function createUpdateModelHandler(config: ConfigService): RouteHandler {
       const apiConfig = config.getApiConfig();
       const idx = apiConfig.models.findIndex(m => m.id === id);
       if (idx < 0) {
-        return { status: 404, body: { error: `model '${id}' not found` } };
+        return { status: 404, body: { error: ErrorCode.MODEL_NOT_FOUND } };
       }
       const existing = apiConfig.models[idx];
       const newModel: ModelConfig = {
@@ -196,11 +197,11 @@ export function createTestModelHandler(services: ServiceRegistry): RouteHandler 
   return async (_req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
     const id = params?.id;
     if (!id) {
-      return { status: 400, body: { error: 'model id required' } };
+      return { status: 400, body: { error: ErrorCode.MODEL_ID_REQUIRED } };
     }
     const router = services.tryResolve<LLMRouter>(ServiceNames.LLM_ROUTER);
     if (!router) {
-      return { status: 503, body: { error: 'LLM router not available' } };
+      return { status: 503, body: { error: ErrorCode.LLM_ROUTER_UNAVAILABLE } };
     }
     const start = Date.now();
     try {
@@ -234,17 +235,17 @@ export function createReorderModelsHandler(config: ConfigService): RouteHandler 
   return async (req: HttpRequest): Promise<HttpResponse> => {
     const body = (req.body ?? {}) as { modelIds?: string[] };
     if (!body.modelIds || !Array.isArray(body.modelIds)) {
-      return { status: 400, body: { error: 'modelIds array required' } };
+      return { status: 400, body: { error: ErrorCode.MODEL_IDS_ARRAY_REQUIRED } };
     }
     try {
       const apiConfig = config.getApiConfig();
       const existingIds = new Set(apiConfig.models.map((m) => m.id));
       if (body.modelIds.length !== apiConfig.models.length) {
-        return { status: 400, body: { error: 'modelIds length mismatch' } };
+        return { status: 400, body: { error: ErrorCode.MODEL_IDS_LENGTH_MISMATCH } };
       }
       for (const id of body.modelIds) {
         if (!existingIds.has(id)) {
-          return { status: 400, body: { error: `unknown model id: ${id}` } };
+          return { status: 400, body: { error: ErrorCode.UNKNOWN_MODEL_ID } };
         }
       }
       const idToModel = new Map(apiConfig.models.map((m) => [m.id, m]));

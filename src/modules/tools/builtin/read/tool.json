@@ -1,6 +1,6 @@
 {
   "name": "read",
-  "description": "Read the contents of a text file. Returns lines with line numbers. Supports offset and limit for partial reads. Binary files are detected and rejected.",
+  "description": "读取文本文件内容，返回带行号的行。支持 offset 和 limit 进行部分读取。会自动检测并拒绝二进制文件。",
   "icon": "file-text",
   "annotations": {
     "readOnlyHint": true,
@@ -11,16 +11,16 @@
     "properties": {
       "path": {
         "type": "string",
-        "description": "Absolute or relative path to the file to read."
+        "description": "要读取的文件的绝对或相对路径"
       },
       "offset": {
         "type": "integer",
-        "description": "Line number to start reading from (1-based, default 1).",
+        "description": "开始读取的行号（从 1 开始，默认 1）。",
         "minimum": 1
       },
       "limit": {
         "type": "integer",
-        "description": "Maximum number of lines to read (default 2000).",
+        "description": "最多读取的行数（默认 2000）。",
         "minimum": 1,
         "maximum": 10000
       }

@@ -183,7 +183,7 @@ export function ModelSelector() {
           className="gap-1.5 rounded-full"
           onClick={() => setSheetOpen(true)}
         >
-          <span>{currentModelName || 'Auto'}</span>
+          <span>{currentModelName || t('modelSelector.auto')}</span>
           <ChevronDown className="size-3 opacity-70" />
         </Button>
         <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
@@ -261,7 +261,7 @@ export function ModelSelector() {
     >
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" size="sm" className="gap-1.5 rounded-full">
-          <span>{currentModelName || 'Auto'}</span>
+          <span>{currentModelName || t('modelSelector.auto')}</span>
           <ChevronDown className="size-3 opacity-70" />
         </Button>
       </DropdownMenuTrigger>

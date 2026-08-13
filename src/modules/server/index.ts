@@ -2,6 +2,7 @@
 // Server 模组入口：基于 Bun.serve 启动 HTTP + WebSocket 服务。
 // 清单来自 module.json，由 ExtensionManager 注入 manifest。
 
+import { t } from '../../core/i18n';
 import type { Module, ModuleContext, ModuleManifest } from '../../core/types';
 import { ServiceNames } from '../../core/types';
 import { HttpRouter } from './http-router';
@@ -48,6 +49,7 @@ import {
   createGetTaskHandler,
   createUpdateTaskHandler,
   createDeleteTaskHandler,
+  createReorderTasksHandler,
   createListTaskGroupsHandler,
   createCreateTaskGroupHandler,
   createUpdateTaskGroupHandler,
@@ -150,7 +152,7 @@ class ServerModule implements Module {
       this.wsHandler.broadcast({ type: 'extension.changed', payload: data });
     });
 
-    ctx.logger.info(`Server module started at http://${this.actualHost}:${this.actualPort}`, {
+    ctx.logger.info(t('server.started', { host: this.actualHost, port: this.actualPort }), {
       staticAssets: this.assets.isAvailable(),
     });
   }
@@ -158,7 +160,7 @@ class ServerModule implements Module {
   async destroy(): Promise<void> {
     if (this.server) {
       await this.server.stop();
-      this.ctx.logger.info('Server module stopped');
+      this.ctx.logger.info(t('server.stopped'));
     }
   }
 
@@ -214,6 +216,7 @@ class ServerModule implements Module {
     this.router.addRoute({ method: 'GET', pattern: '/api/tasks/:id', handler: createGetTaskHandler(services, env), auth: true });
     this.router.addRoute({ method: 'PATCH', pattern: '/api/tasks/:id', handler: createUpdateTaskHandler(services), auth: true });
     this.router.addRoute({ method: 'DELETE', pattern: '/api/tasks/:id', handler: createDeleteTaskHandler(services), auth: true });
+    this.router.addRoute({ method: 'PUT', pattern: '/api/tasks/reorder', handler: createReorderTasksHandler(services), auth: true });
     this.router.addRoute({ method: 'GET', pattern: '/api/task-groups', handler: createListTaskGroupsHandler(services), auth: true });
     this.router.addRoute({ method: 'POST', pattern: '/api/task-groups', handler: createCreateTaskGroupHandler(services), auth: true });
     this.router.addRoute({ method: 'PATCH', pattern: '/api/task-groups/:id', handler: createUpdateTaskGroupHandler(services), auth: true });
@@ -262,9 +265,7 @@ class ServerModule implements Module {
       port = await this.findFreePort(host, port);
       if (port !== cfg.server.port) {
         this.ctx.logger.warn(
-          `autoPort: configured port ${cfg.server.port} unavailable, using ${port}. ` +
-          `If using vite dev proxy (hardcoded to ${cfg.server.port}), WS/HTTP from webui may fail. ` +
-          `Set server.autoPort=false or free port ${cfg.server.port}.`,
+          t('server.autoPortUnavailable', { configured: cfg.server.port, actual: port }),
         );
       }
     }
@@ -323,7 +324,7 @@ class ServerModule implements Module {
           if (!id) return;
           const text = typeof message === 'string' ? message : new TextDecoder().decode(message);
           wsHandler.handleMessage(id, text).catch(err => {
-            logger.error('WS message handling failed', {
+            logger.error(t('server.wsMessageFailed'), {
               error: err instanceof Error ? err.message : String(err),
             });
           });
@@ -338,15 +339,12 @@ class ServerModule implements Module {
       const msg = err instanceof Error ? err.message : String(err);
       if (/EADDRINUSE|address already in use/i.test(msg)) {
         this.ctx.logger.error(
-          `Failed to bind ${host}:${port}: address already in use. ` +
-          `A previous MOSS process may still be running. ` +
-          `Run "moss stop" to stop it, or on Windows run "netstat -ano | findstr :${port}" then "taskkill /PID <pid> /T /F". ` +
-          `You can also remove the stale PID file at ~/.moss/moss.pid.`,
+          t('server.bindInUse', { host, port }),
           { error: msg, host, port },
         );
       } else {
         this.ctx.logger.error(
-          `Failed to start server on ${host}:${port}: ${msg}`,
+          t('server.startFailed', { host, port, msg }),
           { error: msg, host, port },
         );
       }
@@ -394,7 +392,7 @@ async function handleHttp(
   });
   const body = req.body ? await req.text() : '';
 
-  logger.debug(`${method} ${url}`);
+  logger.debug(t('server.httpRequest', { method, url }));
 
   const result = await router.handle(method, url, headers, body);
   const respHeaders: Record<string, string> = {

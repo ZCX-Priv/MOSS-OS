@@ -2,6 +2,7 @@
 // MCP Client 模组入口：注册 MCPManager 服务。
 // 清单来自 module.json，由 ExtensionManager 注入 manifest。
 
+import { t } from '../../core/i18n';
 import type { Module, ModuleContext, ModuleManifest } from '../../core/types';
 import { ServiceNames } from '../../core/types';
 import { MCPManagerImpl } from './manager';
@@ -25,7 +26,7 @@ class McpModule implements Module {
 
     // 初始化连接（非阻塞，避免单个 MCP 服务器慢导致模组加载超时）
     this.manager.initialize().catch(err => {
-      ctx.logger.error('MCP manager initialization failed', {
+      ctx.logger.error(t('mcp.managerInitFailed'), {
         error: err instanceof Error ? err.message : String(err),
       });
     });
@@ -33,13 +34,13 @@ class McpModule implements Module {
     // 监听配置变更，重载 MCP 服务器
     ctx.config.onChange((_which) => {
       this.manager?.reloadAll().catch(err => {
-        ctx.logger.error('MCP reload failed', {
+        ctx.logger.error(t('mcp.reloadFailed'), {
           error: err instanceof Error ? err.message : String(err),
         });
       });
     });
 
-    ctx.logger.info('MCP module initialized');
+    ctx.logger.info(t('mcp.moduleInitialized'));
   }
 
   async destroy(): Promise<void> {

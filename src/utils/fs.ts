@@ -1,6 +1,7 @@
 // src/utils/fs.ts
 // 安全文件操作：路径解析、防越权、二进制检测。
 
+import { t } from '../core/i18n';
 import { resolve, normalize, isAbsolute, relative, sep } from 'node:path';
 import { existsSync, statSync, readFileSync } from 'node:fs';
 import { isValidUtf8, stripBom } from './encoding';
@@ -32,7 +33,7 @@ export function isPathInside(path: string, base: string): boolean {
 export function assertPathInside(path: string, base: string): void {
   const rel = relative(base, path);
   if (rel.startsWith('..') || isAbsolute(rel)) {
-    throw new Error(`Path "${path}" escapes base directory "${base}"`);
+    throw new Error(t('fs.pathEscapesBase', { path, base }));
   }
 }
 

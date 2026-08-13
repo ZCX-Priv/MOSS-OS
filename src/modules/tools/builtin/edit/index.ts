@@ -2,6 +2,7 @@
 // edit 工具 execute 逻辑：精确字符串匹配替换，oldString 必须唯一，支持 replaceAll。
 // 元数据见同目录 tool.json。
 
+import { t } from '../../../../core/i18n';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { isAbsolute, normalize, resolve } from 'node:path';
 import { hasUtf8Bom, stripBom } from '../../../../utils/encoding';
@@ -85,7 +86,7 @@ export default {
 
     try {
       writeFileSync(absPath, hadBom ? '\uFEFF' + newContent : newContent, 'utf8');
-      ctx.logger.info(`File edited: ${absPath}`, { replacements });
+      ctx.logger.info(t('tools.fileEdited', { path: absPath }), { replacements });
       return {
         content: [
           {

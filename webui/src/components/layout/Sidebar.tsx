@@ -1,18 +1,39 @@
-import { useState } from 'react';
+import { useState, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
   MessageCirclePlus,
   Cable,
   AlarmClock,
-  ListFilter,
+  ListChecks,
   Search,
   ChevronRight,
   MoreHorizontal,
   Pencil,
   Trash2,
   ArrowLeft,
+  GripVertical,
+  Check,
+  CheckCheck,
+  X,
 } from 'lucide-react';
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import { restrictToParentElement } from '@dnd-kit/modifiers';
+import {
+  SortableContext,
+  verticalListSortingStrategy,
+  useSortable,
+  arrayMove,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import { cn } from '@/lib/utils';
 import type { OverlayType } from '../../types';
 import type { TaskItem } from '../../types/api';
 import { useStore } from '../../store';
@@ -65,7 +86,7 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { pathname } = useLocation();
-  const { tasks, taskGroups, updateTask, deleteTask } = useTasks();
+  const { tasks, taskGroups, updateTask, deleteTask, reorderTasks } = useTasks();
   const isSettingsRoute = pathname.startsWith('/settings');
   const [settingsSearch, setSettingsSearch] = useState('');
   const { isMobile, setOpenMobile } = useSidebar();
@@ -85,6 +106,54 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
       await updateTask(renameTask.id, { title: renameTitle.trim() });
       setRenameTask(null);
     }
+  };
+
+  // 管理模式（批量选择 + 拖拽排序）
+  const [manageMode, setManageMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [batchDeleteOpen, setBatchDeleteOpen] = useState(false);
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+
+  const visibleTaskIds = tasks.map((t) => t.id);
+  const allSelected = visibleTaskIds.length > 0 && visibleTaskIds.every((id) => selectedIds.has(id));
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    setSelectedIds(allSelected ? new Set() : new Set(visibleTaskIds));
+  };
+
+  const handleBatchDelete = async () => {
+    for (const id of selectedIds) {
+      await deleteTask(id);
+    }
+    setSelectedIds(new Set());
+    setBatchDeleteOpen(false);
+  };
+
+  const handleDragEnd = (groupId: string, groupTaskIds: string[]) => (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = groupTaskIds.indexOf(String(active.id));
+    const newIndex = groupTaskIds.indexOf(String(over.id));
+    if (oldIndex === -1 || newIndex === -1) return;
+    const newOrderIds = arrayMove(groupTaskIds, oldIndex, newIndex);
+    // 乐观更新：立即按新顺序重排该组任务，避免松手回弹闪烁
+    const current = useStore.getState().tasks;
+    const inGroup = current.filter((t) => t.groupId === groupId);
+    const byId = new Map(inGroup.map((t) => [t.id, t]));
+    const reordered = newOrderIds.map((id, idx) => ({ ...byId.get(id)!, order: idx }));
+    const others = current.filter((t) => t.groupId !== groupId);
+    useStore.getState().setTasks([...others, ...reordered]);
+    // 持久化（后端返回后再次 setTasks 校正）
+    void reorderTasks(newOrderIds);
   };
 
   const navItems: {
@@ -250,8 +319,14 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
           <div className="flex items-center justify-between px-2 pb-1">
             <SidebarGroupLabel className="h-auto p-0">{t('sidebar.taskList')}</SidebarGroupLabel>
             <div className="flex items-center gap-0.5">
-              <Button variant="ghost" size="icon-xs" title={t('sidebar.filter')}>
-                <ListFilter />
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                title={t('sidebar.manage')}
+                onClick={() => { setManageMode((v) => !v); setSelectedIds(new Set()); }}
+                className={cn(manageMode && 'bg-muted text-foreground')}
+              >
+                <ListChecks />
               </Button>
               <Button
                 variant="ghost"
@@ -264,64 +339,82 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
             </div>
           </div>
           <SidebarGroupContent>
+            {manageMode && (
+              <div className="flex items-center gap-1 px-2 pb-1">
+                <Button variant="ghost" size="sm" className="h-7 gap-1 px-2 text-xs" onClick={toggleSelectAll}>
+                  <CheckCheck className="size-3.5" />
+                  {allSelected ? t('sidebar.deselectAll') : t('sidebar.selectAll')}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 gap-1 px-2 text-xs text-destructive hover:text-destructive"
+                  disabled={selectedIds.size === 0}
+                  onClick={() => setBatchDeleteOpen(true)}
+                >
+                  <Trash2 className="size-3.5" />
+                  {t('sidebar.deleteSelected')}
+                </Button>
+                <div className="ml-auto flex items-center gap-1">
+                  {selectedIds.size > 0 && (
+                    <span className="flex size-5 items-center justify-center rounded-full bg-muted text-xs text-muted-foreground">
+                      {selectedIds.size}
+                    </span>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    title={t('sidebar.exitManage')}
+                    onClick={() => { setManageMode(false); setSelectedIds(new Set()); }}
+                  >
+                    <X />
+                  </Button>
+                </div>
+              </div>
+            )}
             <SidebarMenu>
-              {taskGroups.map((group) => (
-                <Collapsible key={group.id} defaultOpen={group.expanded}>
-                  <SidebarMenuItem>
-                    <CollapsibleTrigger asChild>
-                      <SidebarMenuButton>
-                        <ChevronRight className="size-4 transition-transform [[data-state=open]_&]:rotate-90" />
-                        <span>{group.name}</span>
-                      </SidebarMenuButton>
-                    </CollapsibleTrigger>
-                    <CollapsibleContent>
-                      <SidebarMenuSub>
-                        {tasks.filter((task) => task.groupId === group.id).map((task) => (
-                          <SidebarMenuItem key={task.id} className="group/item">
-                            <SidebarMenuButton
-                              isActive={pathname === `/task/${task.id}`}
-                              size="sm"
-                              onClick={() => { closeMobile(); navigate(`/task/${task.id}`); }}
-                            >
-                              <span className="truncate pr-5">{task.title}</span>
-                            </SidebarMenuButton>
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button
-                                  variant="ghost"
-                                  size="icon-xs"
-                                  className="absolute right-0.5 top-1/2 z-10 -translate-y-1/2 opacity-0 transition-opacity group-hover/item:opacity-100 data-[state=open]:opacity-100"
-                                  onClick={(e) => e.stopPropagation()}
-                                >
-                                  <MoreHorizontal className="size-3.5" />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end" side="right" sideOffset={4} collisionPadding={8}>
-                                <DropdownMenuItem
-                                  onSelect={() => {
-                                    setRenameTitle(task.title);
-                                    setRenameTask(task);
-                                  }}
-                                >
-                                  <Pencil className="size-3.5" />
-                                  {t('sidebar.rename')}
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  variant="destructive"
-                                  onSelect={() => setDeleteTaskId(task.id)}
-                                >
-                                  <Trash2 className="size-3.5" />
-                                  {t('sidebar.delete')}
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </SidebarMenuItem>
-                        ))}
-                      </SidebarMenuSub>
-                    </CollapsibleContent>
-                  </SidebarMenuItem>
-                </Collapsible>
-              ))}
+              {taskGroups.map((group) => {
+                const groupTasks = tasks.filter((task) => task.groupId === group.id);
+                const groupTaskIds = groupTasks.map((t) => t.id);
+                return (
+                  <Collapsible key={group.id} defaultOpen={group.expanded}>
+                    <SidebarMenuItem>
+                      <CollapsibleTrigger asChild>
+                        <SidebarMenuButton>
+                          <ChevronRight className="size-4 transition-transform [[data-state=open]_&]:rotate-90" />
+                          <span>{group.name}</span>
+                        </SidebarMenuButton>
+                      </CollapsibleTrigger>
+                      <CollapsibleContent>
+                        <SidebarMenuSub>
+                          <DndContext
+                            sensors={sensors}
+                            collisionDetection={closestCenter}
+                            modifiers={[restrictToParentElement]}
+                            onDragEnd={handleDragEnd(group.id, groupTaskIds)}
+                          >
+                            <SortableContext items={groupTaskIds} strategy={verticalListSortingStrategy}>
+                              {groupTasks.map((task) => (
+                                <TaskRow
+                                  key={task.id}
+                                  task={task}
+                                  manageMode={manageMode}
+                                  isSelected={selectedIds.has(task.id)}
+                                  isActive={pathname === `/task/${task.id}`}
+                                  onToggleSelect={toggleSelect}
+                                  onNavigate={(id) => { closeMobile(); navigate(`/task/${id}`); }}
+                                  onRename={(tk) => { setRenameTitle(tk.title); setRenameTask(tk); }}
+                                  onDelete={(id) => setDeleteTaskId(id)}
+                                />
+                              ))}
+                            </SortableContext>
+                          </DndContext>
+                        </SidebarMenuSub>
+                      </CollapsibleContent>
+                    </SidebarMenuItem>
+                  </Collapsible>
+                );
+              })}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
@@ -379,6 +472,119 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
         setDeleteTaskId(null);
       }}
     />
+
+    {/* 批量删除确认弹窗 */}
+    <ConfirmDialog
+      open={batchDeleteOpen}
+      onOpenChange={(o) => !o && setBatchDeleteOpen(false)}
+      title={t('sidebar.batchDeleteTask')}
+      description={t('sidebar.batchDeleteTaskDesc', { count: selectedIds.size })}
+      variant="danger"
+      confirmText={t('sidebar.delete')}
+      cancelText={t('common.cancel')}
+      onConfirm={handleBatchDelete}
+    />
     </>
+  );
+}
+
+interface TaskRowProps {
+  task: TaskItem;
+  manageMode: boolean;
+  isSelected: boolean;
+  isActive: boolean;
+  onToggleSelect: (id: string) => void;
+  onNavigate: (id: string) => void;
+  onRename: (task: TaskItem) => void;
+  onDelete: (id: string) => void;
+}
+
+function TaskRow({
+  task,
+  manageMode,
+  isSelected,
+  isActive,
+  onToggleSelect,
+  onNavigate,
+  onRename,
+  onDelete,
+}: TaskRowProps) {
+  const { t } = useTranslation();
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: task.id });
+  // 仅垂直：剥离 x 分量（restrictToParentElement 已限制不超出父 ul 边界）
+  const restrictedTransform = transform ? { ...transform, x: 0 } : null;
+  const style: CSSProperties = {
+    transform: CSS.Transform.toString(restrictedTransform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  if (manageMode) {
+    return (
+      <li
+        ref={setNodeRef}
+        style={style}
+        className="group/menu-item relative group/item flex w-full min-w-0 items-center gap-1.5"
+      >
+        <button
+          type="button"
+          onClick={() => onToggleSelect(task.id)}
+          className={cn(
+            'flex size-4 shrink-0 items-center justify-center rounded border transition-colors',
+            isSelected ? 'border-primary bg-primary text-primary-foreground' : 'border-input',
+          )}
+        >
+          {isSelected && <Check className="size-3" />}
+        </button>
+        <button
+          type="button"
+          onClick={() => onToggleSelect(task.id)}
+          className="flex h-8 min-w-0 flex-1 items-center overflow-hidden rounded-md px-2 text-left text-sm hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+        >
+          <span className="truncate">{task.title}</span>
+        </button>
+        <button
+          type="button"
+          className="flex size-5 shrink-0 cursor-grab items-center justify-center text-muted-foreground hover:text-foreground active:cursor-grabbing"
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical className="size-3.5" />
+        </button>
+      </li>
+    );
+  }
+
+  return (
+    <li ref={setNodeRef} style={style} className="group/menu-item relative group/item">
+      <SidebarMenuButton
+        isActive={isActive}
+        onClick={() => onNavigate(task.id)}
+      >
+        <span className="truncate pr-5">{task.title}</span>
+      </SidebarMenuButton>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            className="absolute right-0.5 top-1/2 z-10 -translate-y-1/2 opacity-0 transition-opacity group-hover/item:opacity-100 data-[state=open]:opacity-100"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <MoreHorizontal className="size-3.5" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" side="right" sideOffset={4} collisionPadding={8}>
+          <DropdownMenuItem onSelect={() => onRename(task)}>
+            <Pencil className="size-3.5" />
+            {t('sidebar.rename')}
+          </DropdownMenuItem>
+          <DropdownMenuItem variant="destructive" onSelect={() => onDelete(task.id)}>
+            <Trash2 className="size-3.5" />
+            {t('sidebar.delete')}
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </li>
   );
 }

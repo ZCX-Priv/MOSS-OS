@@ -1,6 +1,6 @@
 {
   "name": "use_skill",
-  "description": "Invoke a registered skill. Skills are prompt templates loaded from the skills/ directory. Returns the skill prompt text (with {{placeholder}} substitution from args). Available built-in skills: brainstorming, code-review, tdd, explain.",
+  "description": "调用已注册的技能。技能是从 skills/ 目录加载的提示词模板。返回技能提示词文本（通过 args 替换 {{placeholder}}）。可用内置技能：brainstorming、code-review、tdd、explain。",
   "icon": "sparkles",
   "annotations": {
     "readOnlyHint": true,
@@ -11,11 +11,11 @@
     "properties": {
       "skill": {
         "type": "string",
-        "description": "Name of the skill to invoke."
+        "description": "要调用的技能名称"
       },
       "args": {
         "type": "object",
-        "description": "Arguments to substitute into skill prompt placeholders (e.g. {topic: \"react hooks\"} for {{topic}}).",
+        "description": "替换到技能提示词占位符中的参数（如 {topic: \"react hooks\"} 对应 {{topic}}）。",
         "additionalProperties": true
       }
     },

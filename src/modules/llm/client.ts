@@ -1,6 +1,7 @@
 // src/plugins/llm/client.ts
 // 底层 HTTP 调用：超时、重试、错误归一化。
 
+import { t } from '../../core/i18n';
 import { LLMError } from './types';
 import type { Logger } from '../../core/types';
 
@@ -84,14 +85,14 @@ export async function httpRequest(
           // 5xx 可重试
           if (resp.status >= 500 && attempt <= maxRetries) {
             const delay = backoffMs(attempt);
-            logger.warn(`HTTP ${resp.status} (stream), retrying in ${delay}ms (attempt ${attempt}/${maxRetries})`);
+            logger.warn(t('llm.httpStreamRetry', { status: resp.status, delay, attempt, maxRetries }));
             await sleep(delay);
             continue;
           }
           if (resp.status === 429 && attempt <= maxRetries) {
             const retryAfter = parseRetryAfter(headers['retry-after']);
             const delay = retryAfter ?? backoffMs(attempt);
-            logger.warn(`HTTP 429 (stream), retrying in ${delay}ms (attempt ${attempt}/${maxRetries})`);
+            logger.warn(t('llm.http429StreamRetry', { delay, attempt, maxRetries }));
             await sleep(delay);
             continue;
           }
@@ -112,7 +113,7 @@ export async function httpRequest(
         if (attempt <= maxRetries) {
           const retryAfter = parseRetryAfter(headers['retry-after']);
           const delay = retryAfter ?? backoffMs(attempt);
-          logger.warn(`HTTP 429, retrying in ${delay}ms (attempt ${attempt}/${maxRetries})`);
+          logger.warn(t('llm.http429Retry', { delay, attempt, maxRetries }));
           await sleep(delay);
           continue;
         }
@@ -126,7 +127,7 @@ export async function httpRequest(
       if (resp.status >= 500) {
         if (attempt <= maxRetries) {
           const delay = backoffMs(attempt);
-          logger.warn(`HTTP ${resp.status}, retrying in ${delay}ms (attempt ${attempt}/${maxRetries})`);
+          logger.warn(t('llm.httpRetry', { status: resp.status, delay, attempt, maxRetries }));
           await sleep(delay);
           continue;
         }
@@ -157,13 +158,13 @@ export async function httpRequest(
         throw new LLMError('Request aborted by caller', undefined, false);
       }
       if (isAbort && attempt <= maxRetries) {
-        logger.warn(`Request timeout, retrying (attempt ${attempt}/${maxRetries})`);
+        logger.warn(t('llm.requestTimeoutRetry', { attempt, maxRetries }));
         continue;
       }
       // 网络错误重试
       if (!isAbort && attempt <= maxRetries) {
         const delay = backoffMs(attempt);
-        logger.warn(`Network error, retrying in ${delay}ms (attempt ${attempt}/${maxRetries}): ${err instanceof Error ? err.message : String(err)}`);
+        logger.warn(t('llm.networkErrorRetry', { delay, attempt, maxRetries, error: err instanceof Error ? err.message : String(err) }));
         await sleep(delay);
         continue;
       }

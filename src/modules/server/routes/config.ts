@@ -3,6 +3,7 @@
 
 import type { HttpRequest, HttpResponse, RouteHandler } from '../types';
 import type { ConfigService } from '../../../core/types';
+import { ErrorCode } from '../../../core/error-codes';
 
 export function createGetAppConfigHandler(config: ConfigService): RouteHandler {
   return async (): Promise<HttpResponse> => {
@@ -13,7 +14,7 @@ export function createGetAppConfigHandler(config: ConfigService): RouteHandler {
 export function createUpdateAppConfigHandler(config: ConfigService): RouteHandler {
   return async (req: HttpRequest): Promise<HttpResponse> => {
     if (!req.body || typeof req.body !== 'object') {
-      return { status: 400, body: { error: 'Invalid body, expected object' } };
+      return { status: 400, body: { error: ErrorCode.CONFIG_INVALID_BODY } };
     }
     try {
       await config.updateAppConfig(req.body as Record<string, unknown> as never);
@@ -36,7 +37,7 @@ export function createGetApiConfigHandler(config: ConfigService): RouteHandler {
 export function createUpdateApiConfigHandler(config: ConfigService): RouteHandler {
   return async (req: HttpRequest): Promise<HttpResponse> => {
     if (!req.body || typeof req.body !== 'object') {
-      return { status: 400, body: { error: 'Invalid body, expected object' } };
+      return { status: 400, body: { error: ErrorCode.CONFIG_INVALID_BODY } };
     }
     try {
       await config.updateApiConfig(req.body as Record<string, unknown> as never);

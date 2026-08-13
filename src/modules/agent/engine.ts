@@ -1,6 +1,7 @@
 // src/plugins/agent/engine.ts
 // Agent ReAct 循环引擎。
 
+import { t } from '../../core/i18n';
 import { buildSystemPrompt, buildTools } from './context';
 import { SessionStore, type ContextFile } from './session';
 import { TaskStore, type TaskItem, type TaskGroup } from './task-store';
@@ -50,7 +51,7 @@ export class AgentEngineImpl implements AgentEngine {
     const cfg = this.config.getAppConfig().agent;
     const model = input.model ?? cfg.defaultModel;
 
-    this.logger.info(`Agent run start`, { sessionId, model });
+    this.logger.info(t('agent.runStart'), { sessionId, model });
 
     // 解析依赖服务
     const llm = this.services.tryResolve<LLMRouter>(ServiceNames.LLM_ROUTER);
@@ -80,7 +81,7 @@ export class AgentEngineImpl implements AgentEngine {
     try {
       mcpTools = mcpManager?.listTools() ?? [];
     } catch (err) {
-      this.logger.warn('Failed to list MCP tools', {
+      this.logger.warn(t('agent.listMcpToolsFailed'), {
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -188,7 +189,7 @@ export class AgentEngineImpl implements AgentEngine {
           break;
         }
         const msg = err instanceof Error ? err.message : String(err);
-        this.logger.error('LLM stream failed', { error: msg, turn });
+        this.logger.error(t('agent.llmStreamFailed'), { error: msg, turn });
         onEvent({ type: 'error', sessionId, message: msg });
         finishReason = 'error';
         // 把已收集的文本作为最终输出
@@ -261,7 +262,7 @@ export class AgentEngineImpl implements AgentEngine {
             break;
           }
         } catch (err) {
-          this.logger.error('executeToolCall threw unexpectedly', {
+          this.logger.error(t('agent.executeToolCallThrew'), {
             toolCallId: tc.id,
             toolName: tc.name,
             error: err instanceof Error ? err.message : String(err),
@@ -282,7 +283,7 @@ export class AgentEngineImpl implements AgentEngine {
     }
 
     if (turn >= maxTurns && finishReason === 'stop') {
-      this.logger.warn(`Agent reached max turns (${maxTurns})`, { sessionId });
+      this.logger.warn(t('agent.reachedMaxTurns', { maxTurns }), { sessionId });
       finishReason = 'length';
     }
 
@@ -291,7 +292,7 @@ export class AgentEngineImpl implements AgentEngine {
     // 兜底清理未完成的 ask（正常流程下应已被 resolve/reject）
     this.cleanupPendingAsks();
 
-    this.logger.info(`Agent run complete`, { sessionId, turn, finishReason });
+    this.logger.info(t('agent.runComplete'), { sessionId, turn, finishReason });
 
     return {
       sessionId,
@@ -355,6 +356,11 @@ export class AgentEngineImpl implements AgentEngine {
 
   deleteTask(id: string): boolean {
     return this.tasks.deleteTask(id);
+  }
+
+  /** 按给定 id 顺序重排任务 order（分组内排序持久化） */
+  reorderTasks(taskIds: string[]): boolean {
+    return this.tasks.reorderTasks(taskIds);
   }
 
   listTaskGroups(): TaskGroup[] {
@@ -551,7 +557,7 @@ export class AgentEngineImpl implements AgentEngine {
           break;
       }
     } catch (err) {
-      this.logger.warn('notifyToolSideEffects failed', {
+      this.logger.warn(t('agent.notifySideEffectsFailed'), {
         toolName,
         sessionId,
         error: err instanceof Error ? err.message : String(err),

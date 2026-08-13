@@ -1,6 +1,7 @@
 // src/modules/llm/router.ts
 // LLM 路由器：按 modelId 查找 ModelConfig + 流式/非流式分发。
 
+import { t } from '../../core/i18n';
 import { getProvider } from './providers';
 import { httpRequest } from './client';
 import { parseSSEStream } from './stream';
@@ -44,7 +45,7 @@ export class LLMRouterImpl implements LLMRouter {
     const finalEndpoint = processed.endpoint;
     const finalBody = processed.body;
 
-    this.logger.debug(`LLM request: ${cfg.model}`, {
+    this.logger.debug(t('llm.request', { model: cfg.model }), {
       provider: cfg.format,
       endpoint: finalEndpoint,
     });
@@ -104,7 +105,7 @@ export class LLMRouterImpl implements LLMRouter {
       model: cfg.model,
     });
 
-    this.logger.debug(`LLM stream request: ${cfg.model}`, {
+    this.logger.debug(t('llm.streamRequest', { model: cfg.model }), {
       provider: cfg.format,
       endpoint: processed.endpoint,
     });

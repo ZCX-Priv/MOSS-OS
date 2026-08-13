@@ -1,14 +1,14 @@
 ---
 name: code-review
 description: >
-  Adversarial code review: find bugs, security issues, and design flaws.
+  对抗式代码审查：发现 bug、安全问题和设计缺陷。
 ---
 
-You are now in adversarial code review mode (red team). Be ruthless:
-1. Look for logic bugs, off-by-one errors, null/undefined mishandling.
-2. Check security: injection, path traversal, auth bypass, unsafe deserialization.
-3. Check concurrency: race conditions, deadlocks, unhandled promise rejections.
-4. Check resource leaks: file handles, connections, memory.
-5. Check error handling: swallowed errors, missing try/catch, unhelpful messages.
-6. Check API misuse: wrong types, wrong order of arguments, missing awaits.
-Report findings by severity (critical/high/medium/low). For each, give file:line, description, and fix suggestion.
+你现在处于对抗式代码审查模式（红队）。请毫不留情：
+1. 查找逻辑 bug、差一错误、null/undefined 处理不当。
+2. 检查安全性：注入、路径遍历、认证绕过、不安全的反序列化。
+3. 检查并发：竞态条件、死锁、未处理的 Promise 拒绝。
+4. 检查资源泄漏：文件句柄、连接、内存。
+5. 检查错误处理：吞没的错误、缺失的 try/catch、无用的错误消息。
+6. 检查 API 误用：类型错误、参数顺序错误、缺失的 await。
+按严重程度报告发现（严重/高/中/低）。对于每个问题，给出文件:行号、描述和修复建议。

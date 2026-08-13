@@ -1,6 +1,6 @@
 {
   "name": "delete",
-  "description": "Delete a file or directory. For a directory, recursive must be true (recursive deletion). This is a destructive operation and cannot be undone.",
+  "description": "删除文件或目录。对于目录，recursive 必须为 true（递归删除）。此操作具有破坏性且不可撤销。",
   "icon": "trash-2",
   "annotations": {
     "destructiveHint": true,
@@ -11,11 +11,11 @@
     "properties": {
       "path": {
         "type": "string",
-        "description": "Absolute or relative path to the file or directory to delete."
+        "description": "要删除的文件或目录的绝对或相对路径"
       },
       "recursive": {
         "type": "boolean",
-        "description": "Required when deleting a directory. If true, recursively delete the directory tree. Ignored for files."
+        "description": "删除目录时必填。如果为 true，递归删除目录树。对文件忽略"
       }
     },
     "required": ["path"],

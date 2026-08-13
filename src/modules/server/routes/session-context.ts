@@ -10,6 +10,7 @@ import type { HttpRequest, HttpResponse, RouteHandler } from '../types';
 import type { ServiceRegistry, ConfigService } from '../../../core/types';
 import type { AgentEngine } from '../../contracts';
 import type { ContextFile } from '../../agent/session';
+import { ErrorCode } from '../../../core/error-codes';
 
 export interface SessionContextResponse {
   sessionId: string;
@@ -32,7 +33,7 @@ export function createSessionContextHandler(
   return async (_req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
     const sessionId = params?.id;
     if (!sessionId) {
-      return { status: 400, body: { error: 'sessionId required' } };
+      return { status: 400, body: { error: ErrorCode.SESSION_ID_REQUIRED } };
     }
 
     const maxTokens = config.getAppConfig().agent.maxTokens;

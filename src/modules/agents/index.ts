@@ -2,6 +2,7 @@
 // Agents 模组入口：实现 AgentRegistry，注册 agents.registry 服务。
 // 持久化到 ~/.moss/agents.json，预置 1 个内置 Agent（name:"Agent", builtIn:true, default:true）。
 
+import { t } from '../../core/i18n';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import type { Module, ModuleContext, ModuleManifest, Environment, Logger } from '../../core/types';
@@ -108,7 +109,7 @@ class AgentRegistryImpl implements AgentRegistry {
       mkdirSync(dirname(this.storePath), { recursive: true });
       writeFileSync(this.storePath, JSON.stringify(this.data, null, 2), 'utf8');
     } catch (err) {
-      this.logger.error('Failed to save agents.json', {
+      this.logger.error(t('agents.saveFailed'), {
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -156,7 +157,7 @@ class AgentRegistryImpl implements AgentRegistry {
     };
     this.data.agents.push(agent);
     this.save();
-    this.logger.info(`Agent created: ${id} (${data.name})`);
+    this.logger.info(t('agents.agentCreated', { id, name: data.name }));
     return {
       id: agent.id,
       name: agent.name,
@@ -189,7 +190,7 @@ class AgentRegistryImpl implements AgentRegistry {
     if (this.data.defaultAgentId === id) return false; // 默认 Agent 不允许删除
     this.data.agents.splice(idx, 1);
     this.save();
-    this.logger.info(`Agent removed: ${id}`);
+    this.logger.info(t('agents.agentRemoved', { id }));
     return true;
   }
 
@@ -208,7 +209,7 @@ class AgentRegistryImpl implements AgentRegistry {
     if (!exists) return false;
     this.data.defaultAgentId = id;
     this.save();
-    this.logger.info(`Default agent set: ${id}`);
+    this.logger.info(t('agents.defaultSet', { id }));
     return true;
   }
 }
@@ -226,7 +227,7 @@ class AgentsModule implements Module {
       scope: 'agents',
       registrantType: 'module',
     });
-    ctx.logger.info('Agents module initialized', {
+    ctx.logger.info(t('agents.moduleInitialized'), {
       agentCount: registry.list().length,
       defaultAgent: registry.getDefault().id,
     });

@@ -1,6 +1,7 @@
 // src/plugins/llm/providers/index.ts
 // Provider 注册表。
 
+import { t } from '../../../core/i18n';
 import type { LLMProvider, ProviderFormat } from '../types';
 import { OpenAIChatProvider } from './openai-chat';
 import { OpenAIResponsesProvider } from './openai-responses';
@@ -28,7 +29,7 @@ export function getProvider(format: ProviderFormat): LLMProvider {
       provider = new GeminiProvider();
       break;
     default:
-      throw new Error(`Unknown provider format: ${format satisfies never}`);
+      throw new Error(t('llm.unknownProviderFormat', { format: String(format) }));
   }
   registry.set(format, provider);
   return provider;

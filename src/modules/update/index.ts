@@ -2,6 +2,7 @@
 // 更新检查模组：定时检查 npm registry 版本，通过事件总线广播更新通知。
 // 清单来自 module.json，由 ExtensionManager 注入 manifest。
 
+import { t } from '../../core/i18n';
 import type { Module, ModuleContext, ModuleManifest } from '../../core/types';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -22,11 +23,11 @@ class UpdateModule implements Module {
 
     const cfg = ctx.config.getAppConfig().update;
     if (!cfg.autoCheck) {
-      ctx.logger.info('Update module: autoCheck disabled');
+      ctx.logger.info(t('update.autoCheckDisabled'));
       return;
     }
 
-    ctx.logger.info('Update module initialized', {
+    ctx.logger.info(t('update.initialized'), {
       currentVersion: this.currentVersion,
       channel: cfg.channel,
       checkIntervalHours: cfg.checkIntervalHours,
@@ -35,7 +36,7 @@ class UpdateModule implements Module {
     // 启动时延迟检查（避免阻塞启动）
     setTimeout(() => {
       this.checkForUpdate().catch(err => {
-        ctx.logger.debug('Update check failed', {
+        ctx.logger.debug(t('update.checkFailed'), {
           error: err instanceof Error ? err.message : String(err),
         });
       });
@@ -71,7 +72,7 @@ class UpdateModule implements Module {
         signal: AbortSignal.timeout(10000),
       });
       if (!resp.ok) {
-        this.ctx.logger.debug('Update check: npm registry returned non-ok', { status: resp.status });
+        this.ctx.logger.debug(t('update.registryNonOk'), { status: resp.status });
         return;
       }
       const data = (await resp.json()) as { version?: string };
@@ -79,7 +80,7 @@ class UpdateModule implements Module {
       if (!latest) return;
 
       if (isNewerVersion(latest, this.currentVersion)) {
-        this.ctx.logger.info(`Update available: ${this.currentVersion} -> ${latest}`);
+        this.ctx.logger.info(t('update.available', { current: this.currentVersion, latest }));
         await this.ctx.eventBus.broadcast('update:available', {
           current: this.currentVersion,
           latest,
@@ -93,10 +94,10 @@ class UpdateModule implements Module {
           payload: { current: this.currentVersion, latest },
         });
       } else {
-        this.ctx.logger.debug('Update check: up to date', { version: this.currentVersion });
+        this.ctx.logger.debug(t('update.upToDate'), { version: this.currentVersion });
       }
     } catch (err) {
-      this.ctx.logger.debug('Update check failed', {
+      this.ctx.logger.debug(t('update.checkFailed'), {
         error: err instanceof Error ? err.message : String(err),
       });
     }

@@ -5,6 +5,7 @@
 // ~/.moss/agent/prompts/main/spec/（同 id 覆盖）。
 // 支持热重载：递归监听用户 spec 目录变更，自动增删 spec。
 
+import { t } from '../../core/i18n';
 import { stat } from 'node:fs/promises';
 import { watch, type FSWatcher } from 'node:fs';
 import { join, relative } from 'node:path';
@@ -115,7 +116,7 @@ export function createSpecRegistry(env: Environment, logger: Logger): SpecRegist
 
   // 启动热重载监听（异步，不阻塞初始化）
   startWatch(reg, userDir, logger).catch(err => {
-    logger.debug('Spec hot-reload watch failed to start', {
+    logger.debug(t('tools.specWatchFailed'), {
       error: err instanceof Error ? err.message : String(err),
     });
   });
@@ -154,7 +155,7 @@ function loadSpecsFromDirSync(
           reg.reloadBySourceFile(full, spec);
         }
       } catch (err) {
-        logger.warn(`Failed to load spec file ${full}`, {
+        logger.warn(t('tools.loadSpecFailed', { file: full }), {
           error: err instanceof Error ? err.message : String(err),
         });
       }
@@ -263,7 +264,7 @@ async function startWatch(reg: SpecRegistry, dir: string, logger: Logger): Promi
     // recursive: true 递归监听子目录（Bun 跨平台支持）
     watcher = watch(dir, { recursive: true });
   } catch (err) {
-    logger.debug('Spec directory watch unavailable', {
+    logger.debug(t('tools.specDirWatchUnavailable'), {
       error: err instanceof Error ? err.message : String(err),
     });
     return;
@@ -284,22 +285,22 @@ async function startWatch(reg: SpecRegistry, dir: string, logger: Logger): Promi
               const spec = parseSpecFile(full, dir);
               if (spec) {
                 reg.reloadBySourceFile(full, spec);
-                logger.info(`Spec reloaded: ${spec.id}`, { file: full });
+                logger.info(t('tools.specReloaded', { id: spec.id }), { file: full });
               }
             } catch (err) {
-              logger.warn(`Failed to reload spec ${full}`, {
+              logger.warn(t('tools.reloadSpecFailed', { file: full }), {
                 error: err instanceof Error ? err.message : String(err),
               });
             }
           } else {
             reg.removeBySourceFile(full);
-            logger.info(`Spec removed: ${full}`);
+            logger.info(t('tools.specRemoved', { file: full }));
           }
         })
         .catch(() => {
           // 文件已不存在
           reg.removeBySourceFile(full);
-          logger.info(`Spec removed: ${full}`);
+          logger.info(t('tools.specRemoved', { file: full }));
         });
     } else if (eventType === 'change') {
       // 文件内容变更
@@ -307,10 +308,10 @@ async function startWatch(reg: SpecRegistry, dir: string, logger: Logger): Promi
         const spec = parseSpecFile(full, dir);
         if (spec) {
           reg.reloadBySourceFile(full, spec);
-          logger.info(`Spec reloaded: ${spec.id}`, { file: full });
+          logger.info(t('tools.specReloaded', { id: spec.id }), { file: full });
         }
       } catch (err) {
-        logger.warn(`Failed to reload spec ${full}`, {
+        logger.warn(t('tools.reloadSpecFailed', { file: full }), {
           error: err instanceof Error ? err.message : String(err),
         });
       }

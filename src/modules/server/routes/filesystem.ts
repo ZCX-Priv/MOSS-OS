@@ -16,6 +16,7 @@ import type { Environment } from '../../../core/types';
 import { readdirSync, existsSync, statSync, type Dirent } from 'node:fs';
 import { join } from 'node:path';
 import * as nfd from 'nativefiledialog-for-bun';
+import { ErrorCode } from '../../../core/error-codes';
 
 interface ResolveBody {
   folderName?: string;
@@ -68,7 +69,7 @@ export function createResolveDirectoryHandler(env: Environment): RouteHandler {
     const body = (req.body ?? {}) as ResolveBody;
     const folderName = body.folderName?.trim();
     if (!folderName) {
-      return { status: 400, body: { error: 'folderName required' } };
+      return { status: 400, body: { error: ErrorCode.FS_FOLDER_NAME_REQUIRED } };
     }
     const hint = body.hint?.trim();
     const isWin = env.isWindows;
@@ -150,11 +151,11 @@ export function createSuggestPathsHandler(env: Environment): RouteHandler {
     const tryAdd = (p: string, label: string) => {
       if (isDirectorySafe(p)) paths.push({ path: p, label });
     };
-    tryAdd(env.homeDir, 'Home');
-    tryAdd(join(env.homeDir, 'Desktop'), 'Desktop');
-    tryAdd(join(env.homeDir, 'Documents'), 'Documents');
-    tryAdd(join(env.homeDir, 'Downloads'), 'Downloads');
-    tryAdd(process.cwd(), 'Current');
+    tryAdd(env.homeDir, '主目录');
+    tryAdd(join(env.homeDir, 'Desktop'), '桌面');
+    tryAdd(join(env.homeDir, 'Documents'), '文档');
+    tryAdd(join(env.homeDir, 'Downloads'), '下载');
+    tryAdd(process.cwd(), '当前目录');
     return { status: 200, body: { paths } };
   };
 }

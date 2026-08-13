@@ -2,6 +2,7 @@
 // shell 工具 execute 逻辑：执行 shell 命令，捕获 stdout/stderr/exitCode。
 // 元数据见同目录 tool.json。
 
+import { t } from '../../../../core/i18n';
 import { isAbsolute, normalize, resolve } from 'node:path';
 import { decodeShellOutput } from '../../../../utils/encoding';
 import type { ToolContext, ToolResult } from '../../types';
@@ -47,7 +48,7 @@ export default {
       env.LC_ALL = env.LC_ALL ?? 'zh_CN.UTF-8';
     }
 
-    ctx.logger.info(`Shell execute: ${p.command}`, { cwd, timeoutMs });
+    ctx.logger.info(t('tools.shellExecute', { command: p.command }), { cwd, timeoutMs });
 
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -115,8 +116,8 @@ async function waitForProcWithTimeout(
   ctx: { signal?: AbortSignal; logger: { warn: (m: string, c?: Record<string, unknown>) => void } },
 ): Promise<number> {
   const timeoutPromise = new Promise<number>(resolve => {
-    const t = setTimeout(() => {
-      ctx.logger.warn(`Shell command timed out after ${timeoutMs}ms, killing`);
+    const timer = setTimeout(() => {
+      ctx.logger.warn(t('tools.shellTimeout', { timeoutMs }));
       try {
         proc.kill?.();
       } catch {
@@ -128,7 +129,7 @@ async function waitForProcWithTimeout(
       ctx.signal.addEventListener(
         'abort',
         () => {
-          clearTimeout(t);
+          clearTimeout(timer);
           try {
             proc.kill?.();
           } catch {

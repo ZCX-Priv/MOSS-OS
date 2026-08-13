@@ -47,7 +47,7 @@ export function PlanModeInput({ open, onClose }: PlanModeInputProps) {
           <div className="flex items-center gap-2 px-1">
             <Badge variant="default" className="gap-1">
               <Sparkles className="size-3" />
-              Plan
+              {t('planMode.badge')}
             </Badge>
             <Input
               type="text"

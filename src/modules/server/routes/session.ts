@@ -4,6 +4,7 @@
 import type { HttpRequest, HttpResponse, RouteHandler } from '../types';
 import type { ServiceRegistry } from '../../../core/types';
 import type { AgentEngine } from '../../contracts';
+import { ErrorCode } from '../../../core/error-codes';
 
 export function createListSessionsHandler(services: ServiceRegistry): RouteHandler {
   return async (): Promise<HttpResponse> => {
@@ -19,7 +20,7 @@ export function createDeleteSessionHandler(services: ServiceRegistry): RouteHand
   return async (req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
     const sessionId = params?.id ?? (req.body as { sessionId?: string } | null)?.sessionId;
     if (!sessionId) {
-      return { status: 400, body: { error: 'sessionId required' } };
+      return { status: 400, body: { error: ErrorCode.SESSION_ID_REQUIRED } };
     }
     const agent = services.tryResolve<AgentEngine & { deleteSession?: (id: string) => void }>('agent.engine');
     agent?.deleteSession?.(sessionId);
@@ -31,7 +32,7 @@ export function createSessionHistoryHandler(services: ServiceRegistry): RouteHan
   return async (_req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
     const sessionId = params?.id;
     if (!sessionId) {
-      return { status: 400, body: { error: 'sessionId required' } };
+      return { status: 400, body: { error: ErrorCode.SESSION_ID_REQUIRED } };
     }
     const agent = services.tryResolve<AgentEngine & { getHistory?: (id: string) => unknown }>('agent.engine');
     if (!agent?.getHistory) {

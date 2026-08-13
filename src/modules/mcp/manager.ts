@@ -6,6 +6,7 @@
 //   2. <packageRoot>/mcps/*.json （默认模板，首次运行时复制到用户目录）
 //   3. config.json.mcpServers   （已 deprecated，仅为向后兼容保留；非空时 warn）
 
+import { t } from '../../core/i18n';
 import { McpClient, type McpClientEntry, type McpToolResult, type ServerConfig } from './client';
 import type { MCPManager } from '../contracts';
 import type { ConfigService, EventBus, Environment, Logger } from '../../core/types';
@@ -37,7 +38,7 @@ export class MCPManagerImpl implements MCPManager {
   async initialize(): Promise<void> {
     this.serverDefs = await this.loadServerDefs();
     const names = Array.from(this.serverDefs.keys());
-    this.logger.info(`MCP manager initializing`, { serverCount: names.length, names });
+    this.logger.info(t('mcp.managerInitializing'), { serverCount: names.length, names });
 
     // 并行连接（单服务器失败不影响其他）
     await Promise.allSettled(
@@ -45,7 +46,7 @@ export class MCPManagerImpl implements MCPManager {
         try {
           await this.connect(name);
         } catch (err) {
-          this.logger.error(`MCP server "${name}" connect failed`, {
+          this.logger.error(t('mcp.connectFailed', { name }), {
             error: err instanceof Error ? err.message : String(err),
           });
         }
@@ -76,8 +77,7 @@ export class MCPManagerImpl implements MCPManager {
       const legacyNames = Object.keys(legacyServers);
       if (legacyNames.length > 0) {
         this.logger.warn(
-          `config.json "mcpServers" is deprecated, please migrate to ~/.moss/mcps/*.json files. ` +
-            `Legacy entries will be merged but may be overridden by directory files.`,
+          t('mcp.mcpServersDeprecated'),
           { legacyNames },
         );
         for (const name of legacyNames) {
@@ -110,12 +110,12 @@ export class MCPManagerImpl implements MCPManager {
         // 文件名作为默认 name，但优先使用文件内 name 字段
         const name = parsed.name ?? file.replace(/\.json$/, '');
         if (!parsed.transport) {
-          this.logger.warn(`MCP server file ${full} missing "transport" field, skipped`);
+          this.logger.warn(t('mcp.missingTransport', { file: full }));
           continue;
         }
         defs.set(name, parsed as ServerConfig);
       } catch (err) {
-        this.logger.warn(`Failed to parse MCP server file ${full}`, {
+        this.logger.warn(t('mcp.parseFileFailed', { file: full }), {
           error: err instanceof Error ? err.message : String(err),
         });
       }
@@ -143,7 +143,7 @@ export class MCPManagerImpl implements MCPManager {
       const src = join(builtinDir, file);
       const dst = join(userDir, file);
       await copyFile(src, dst).catch(err => {
-        this.logger.debug(`Failed to copy default MCP server file ${file}`, {
+        this.logger.debug(t('mcp.copyDefaultFailed', { file }), {
           error: err instanceof Error ? err.message : String(err),
         });
       });
@@ -173,7 +173,7 @@ export class MCPManagerImpl implements MCPManager {
       status: 'connected',
     });
 
-    this.logger.info(`MCP server "${serverName}" connected`, {
+    this.logger.info(t('mcp.serverConnected', { name: serverName }), {
       effectiveTransport: client.getEffectiveTransport(),
     });
     await this.eventBus.broadcast('mcp:server:connected', { server: serverName });
@@ -182,17 +182,17 @@ export class MCPManagerImpl implements MCPManager {
   async disconnect(serverName: string): Promise<void> {
     const entry = this.entries.get(serverName);
     if (!entry) {
-      this.logger.warn(`MCP server "${serverName}" not connected, cannot disconnect`);
+      this.logger.warn(t('mcp.notConnected', { name: serverName }));
       return;
     }
     await entry.client.disconnect();
     this.entries.delete(serverName);
-    this.logger.info(`MCP server "${serverName}" disconnected`);
+    this.logger.info(t('mcp.serverDisconnected', { name: serverName }));
     await this.eventBus.broadcast('mcp:server:disconnected', { server: serverName });
   }
 
   async reloadAll(): Promise<void> {
-    this.logger.info('Reloading all MCP servers');
+    this.logger.info(t('mcp.reloadingAll'));
     // 断开所有
     const names = Array.from(this.entries.keys());
     await Promise.allSettled(names.map(n => this.disconnect(n).catch(() => {})));
@@ -251,7 +251,7 @@ export class MCPManagerImpl implements MCPManager {
   ): Promise<McpToolResult> {
     const entry = this.entries.get(serverName);
     if (!entry || entry.status !== 'connected') {
-      throw new Error(`MCP server "${serverName}" not connected`);
+      throw new Error(t('mcp.serverNotConnected', { name: serverName }));
     }
     return await entry.client.callTool(toolName, args);
   }

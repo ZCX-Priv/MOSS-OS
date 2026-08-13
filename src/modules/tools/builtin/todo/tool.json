@@ -1,6 +1,6 @@
 {
   "name": "todo",
-  "description": "Create or update a todo item. Use action=\"create\" with text (and optional priority) to add a new todo; returns the new item with its id. Use action=\"update\" with id and at least one of text/status/priority to modify an existing todo. Todos are persisted across sessions.",
+  "description": "创建或更新待办项。使用 action=\"create\" 加 text（和可选 priority）添加新待办；返回新项及其 id。使用 action=\"update\" 加 id 和 text/status/priority 中至少一项修改现有待办。待办跨会话持久化。",
   "icon": "list-checks",
   "annotations": {
     "idempotentHint": false
@@ -11,25 +11,25 @@
       "action": {
         "type": "string",
         "enum": ["create", "update"],
-        "description": "Operation to perform."
+        "description": "要执行的操作"
       },
       "text": {
         "type": "string",
-        "description": "Todo text content. Required for create. Optional for update."
+        "description": "待办文本内容。创建时必填。更新时可选"
       },
       "priority": {
         "type": "string",
         "enum": ["low", "medium", "high"],
-        "description": "Priority (default medium)."
+        "description": "优先级（默认 medium）"
       },
       "id": {
         "type": "string",
-        "description": "Todo id. Required for update."
+        "description": "待办 id。更新时必填"
       },
       "status": {
         "type": "string",
         "enum": ["pending", "in_progress", "completed"],
-        "description": "New status. Only for update."
+        "description": "新状态。仅用于更新"
       }
     },
     "required": ["action"],

@@ -1,6 +1,6 @@
 {
   "name": "glob",
-  "description": "Find files by glob pattern. Supports * (non-separator), ** (any depth), ? (single char), [abc] (char class). Returns a sorted list of matching file paths. Skips node_modules/.git/dist/build by default.",
+  "description": "按 glob 模式查找文件。支持 *（非分隔符）、**（任意深度）、?（单字符）、[abc]（字符类）。返回排序后的匹配文件路径列表。默认跳过 node_modules/.git/dist/build。",
   "icon": "folder-search",
   "annotations": {
     "readOnlyHint": true,
@@ -11,15 +11,15 @@
     "properties": {
       "pattern": {
         "type": "string",
-        "description": "Glob pattern, e.g. \"**/*.ts\", \"src/**/*.json\", \"*.md\". Use \"/\" as path separator."
+        "description": "glob 模式，如 \"**/*.ts\"、\"src/**/*.json\"、\"*.md\"。使用 \"/\" 作为路径分隔符"
       },
       "path": {
         "type": "string",
-        "description": "Root directory to search in (default: agent working directory). Absolute or relative to cwd."
+        "description": "搜索的根目录（默认：agent 工作目录）。绝对或相对路径"
       },
       "maxResults": {
         "type": "integer",
-        "description": "Maximum number of results to return (default 200, max 1000).",
+        "description": "最多返回的结果数（默认 200，最大 1000）。",
         "minimum": 1,
         "maximum": 1000
       }

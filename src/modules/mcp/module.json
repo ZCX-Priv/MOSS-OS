@@ -1,7 +1,7 @@
 {
   "name": "mcp",
   "version": "1.0.0",
-  "description": "MCP client: connect external MCP servers (stdio + http + sse)",
+  "description": "MCP 客户端：连接外部 MCP 服务器（stdio + http + sse）",
   "type": "module",
   "dependencies": {}
 }

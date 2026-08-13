@@ -79,6 +79,17 @@ export function useTasks() {
     }
   }, []);
 
+  const reorderTasks = useCallback(async (taskIds: string[]) => {
+    try {
+      const { tasks } = await api.reorderTasks(taskIds);
+      useStore.getState().setTasks(tasks);
+      return tasks;
+    } catch (err) {
+      console.warn('reorderTasks failed:', err);
+      return null;
+    }
+  }, []);
+
   const createTaskGroup = useCallback(async (name: string) => {
     try {
       const group = await api.createTaskGroup(name);
@@ -122,6 +133,7 @@ export function useTasks() {
     createTask,
     updateTask,
     deleteTask,
+    reorderTasks,
     createTaskGroup,
     updateTaskGroup,
     deleteTaskGroup,

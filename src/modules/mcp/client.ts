@@ -13,6 +13,7 @@
 //   - StreamableHTTPClientTransport         @modelcontextprotocol/sdk/client/streamableHttp
 //   - SSEClientTransport                    @modelcontextprotocol/sdk/client/sse
 
+import { t } from '../../core/i18n';
 import type { EventBus, Logger } from '../../core/types';
 
 // ============================================================================
@@ -115,7 +116,7 @@ export class McpClient {
     const clientMod = (await import('@modelcontextprotocol/sdk/client')) as McpSdkModule;
     const Client = clientMod.Client;
     if (!Client) {
-      throw new Error('MCP SDK Client not found in @modelcontextprotocol/sdk/client');
+      throw new Error(t('mcp.sdkClientNotFound'));
     }
 
     let transport: McpSdkTransport;
@@ -128,7 +129,7 @@ export class McpClient {
         transport = await this.createHttpTransport();
         this.effectiveTransport = 'http';
       } catch (err) {
-        this.logger.warn(`MCP "${this.name}" http transport failed, falling back to sse`, {
+        this.logger.warn(t('mcp.httpFallbackSse', { name: this.name }), {
           error: err instanceof Error ? err.message : String(err),
         });
         transport = await this.createSseTransport();
@@ -138,7 +139,7 @@ export class McpClient {
       transport = await this.createSseTransport();
       this.effectiveTransport = 'sse';
     } else {
-      throw new Error(`Unknown transport: ${this.config.transport}`);
+      throw new Error(t('mcp.unknownTransport', { transport: this.config.transport }));
     }
 
     // 创建 client 实例
@@ -153,7 +154,7 @@ export class McpClient {
     } catch (err) {
       if (this.config.transport === 'http' && this.effectiveTransport === 'http') {
         // http connect 失败，回退 SSE
-        this.logger.warn(`MCP "${this.name}" http connect failed, retrying with sse`, {
+        this.logger.warn(t('mcp.httpConnectFailedRetrySse', { name: this.name }), {
           error: err instanceof Error ? err.message : String(err),
         });
         await this.sdkClient.close().catch(() => {});
@@ -170,7 +171,7 @@ export class McpClient {
       }
     }
 
-    this.logger.info(`MCP client "${this.name}" connected`, {
+    this.logger.info(t('mcp.clientConnected', { name: this.name }), {
       transport: this.config.transport,
       effective: this.effectiveTransport,
     });
@@ -213,9 +214,9 @@ export class McpClient {
         description: t.description,
         inputSchema: t.inputSchema,
       }));
-      this.logger.debug(`MCP "${this.name}" tools refreshed`, { count: this.tools.length });
+      this.logger.debug(t('mcp.toolsRefreshed', { name: this.name }), { count: this.tools.length });
     } catch (err) {
-      this.logger.warn(`MCP "${this.name}" listTools failed`, {
+      this.logger.warn(t('mcp.listToolsFailed', { name: this.name }), {
         error: err instanceof Error ? err.message : String(err),
       });
       this.tools = [];
@@ -224,7 +225,7 @@ export class McpClient {
 
   async callTool(toolName: string, args: unknown): Promise<McpToolResult> {
     if (!this.sdkClient) {
-      throw new Error(`MCP client "${this.name}" not connected`);
+      throw new Error(t('mcp.clientNotConnected', { name: this.name }));
     }
     const result = await this.sdkClient.callTool({
       name: toolName,
@@ -268,8 +269,8 @@ export class McpClient {
   private async createStdioTransport(): Promise<McpSdkTransport> {
     const stdioMod = (await import('@modelcontextprotocol/sdk/client/stdio')) as McpSdkModule;
     const StdioTransport = stdioMod.StdioClientTransport;
-    if (!StdioTransport) throw new Error('StdioClientTransport not available in MCP SDK');
-    if (!this.config.command) throw new Error('stdio transport requires "command"');
+    if (!StdioTransport) throw new Error(t('mcp.stdioTransportNotFound'));
+    if (!this.config.command) throw new Error(t('mcp.stdioRequiresCommand'));
     // 合并环境变量：继承当前进程 + 用户配置 + UTF-8 引导（避免子进程 GBK 输出乱码）
     const env = {
       ...process.env,
@@ -291,8 +292,8 @@ export class McpClient {
   private async createHttpTransport(): Promise<McpSdkTransport> {
     const httpMod = (await import('@modelcontextprotocol/sdk/client/streamableHttp')) as McpSdkModule;
     const HttpTransport = httpMod.StreamableHTTPClientTransport;
-    if (!HttpTransport) throw new Error('StreamableHTTPClientTransport not available in MCP SDK');
-    if (!this.config.url) throw new Error('http transport requires "url"');
+    if (!HttpTransport) throw new Error(t('mcp.httpTransportNotFound'));
+    if (!this.config.url) throw new Error(t('mcp.httpRequiresUrl'));
     return new HttpTransport(new URL(this.config.url), {
       requestInit: { headers: this.config.headers },
     });
@@ -301,8 +302,8 @@ export class McpClient {
   private async createSseTransport(): Promise<McpSdkTransport> {
     const sseMod = (await import('@modelcontextprotocol/sdk/client/sse')) as McpSdkModule;
     const SseTransport = sseMod.SSEClientTransport;
-    if (!SseTransport) throw new Error('SSEClientTransport not available in MCP SDK');
-    if (!this.config.url) throw new Error('sse transport requires "url"');
+    if (!SseTransport) throw new Error(t('mcp.sseTransportNotFound'));
+    if (!this.config.url) throw new Error(t('mcp.sseRequiresUrl'));
     return new SseTransport(new URL(this.config.url), {
       requestInit: { headers: this.config.headers },
     });

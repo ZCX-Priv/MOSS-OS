@@ -10,6 +10,7 @@
 import type { HttpRequest, HttpResponse, RouteHandler } from '../types';
 import type { ServiceRegistry } from '../../../core/types';
 import type { AgentRegistry, AgentDetail } from '../../agents';
+import { ErrorCode } from '../../../core/error-codes';
 
 function resolveRegistry(services: ServiceRegistry): AgentRegistry | null {
   return services.tryResolve<AgentRegistry>('agents.registry');
@@ -31,7 +32,7 @@ export function createCreateAgentHandler(services: ServiceRegistry): RouteHandle
   return async (req: HttpRequest): Promise<HttpResponse> => {
     const reg = resolveRegistry(services);
     if (!reg) {
-      return { status: 503, body: { error: 'agents.registry not available' } };
+      return { status: 503, body: { error: ErrorCode.AGENT_REGISTRY_UNAVAILABLE } };
     }
     const body = (req.body ?? {}) as {
       name?: string;
@@ -44,7 +45,7 @@ export function createCreateAgentHandler(services: ServiceRegistry): RouteHandle
       maxTokens?: number;
     };
     if (!body.name) {
-      return { status: 400, body: { error: 'name required' } };
+      return { status: 400, body: { error: ErrorCode.AGENT_NAME_REQUIRED } };
     }
     const agent = reg.create({
       name: body.name,
@@ -64,15 +65,15 @@ export function createGetAgentHandler(services: ServiceRegistry): RouteHandler {
   return async (_req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
     const id = params?.id;
     if (!id) {
-      return { status: 400, body: { error: 'agent id required' } };
+      return { status: 400, body: { error: ErrorCode.AGENT_ID_REQUIRED } };
     }
     const reg = resolveRegistry(services);
     if (!reg) {
-      return { status: 503, body: { error: 'agents.registry not available' } };
+      return { status: 503, body: { error: ErrorCode.AGENT_REGISTRY_UNAVAILABLE } };
     }
     const agent = reg.get(id);
     if (!agent) {
-      return { status: 404, body: { error: `agent '${id}' not found` } };
+      return { status: 404, body: { error: ErrorCode.AGENT_NOT_FOUND } };
     }
     return { status: 200, body: agent };
   };
@@ -82,16 +83,16 @@ export function createUpdateAgentHandler(services: ServiceRegistry): RouteHandle
   return async (req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
     const id = params?.id;
     if (!id) {
-      return { status: 400, body: { error: 'agent id required' } };
+      return { status: 400, body: { error: ErrorCode.AGENT_ID_REQUIRED } };
     }
     const reg = resolveRegistry(services);
     if (!reg) {
-      return { status: 503, body: { error: 'agents.registry not available' } };
+      return { status: 503, body: { error: ErrorCode.AGENT_REGISTRY_UNAVAILABLE } };
     }
     const body = (req.body ?? {}) as Partial<AgentDetail>;
     const agent = reg.update(id, body);
     if (!agent) {
-      return { status: 404, body: { error: `agent '${id}' not found or cannot update built-in` } };
+      return { status: 404, body: { error: ErrorCode.AGENT_NOT_FOUND_OR_BUILTIN } };
     }
     return { status: 200, body: agent };
   };
@@ -101,17 +102,17 @@ export function createDeleteAgentHandler(services: ServiceRegistry): RouteHandle
   return async (_req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
     const id = params?.id;
     if (!id) {
-      return { status: 400, body: { error: 'agent id required' } };
+      return { status: 400, body: { error: ErrorCode.AGENT_ID_REQUIRED } };
     }
     const reg = resolveRegistry(services);
     if (!reg) {
-      return { status: 503, body: { error: 'agents.registry not available' } };
+      return { status: 503, body: { error: ErrorCode.AGENT_REGISTRY_UNAVAILABLE } };
     }
     const deleted = reg.remove(id);
     if (!deleted) {
       return {
         status: 404,
-        body: { error: `agent '${id}' not found, is built-in, or is default` },
+        body: { error: ErrorCode.AGENT_NOT_FOUND_BUILTIN_DEFAULT },
       };
     }
     return { status: 200, body: { deleted: true } };
@@ -122,15 +123,15 @@ export function createSetDefaultAgentHandler(services: ServiceRegistry): RouteHa
   return async (req: HttpRequest): Promise<HttpResponse> => {
     const reg = resolveRegistry(services);
     if (!reg) {
-      return { status: 503, body: { error: 'agents.registry not available' } };
+      return { status: 503, body: { error: ErrorCode.AGENT_REGISTRY_UNAVAILABLE } };
     }
     const body = (req.body ?? {}) as { id?: string };
     if (!body.id) {
-      return { status: 400, body: { error: 'id required' } };
+      return { status: 400, body: { error: ErrorCode.ID_REQUIRED } };
     }
     const ok = reg.setDefault(body.id);
     if (!ok) {
-      return { status: 404, body: { error: `agent '${body.id}' not found` } };
+      return { status: 404, body: { error: ErrorCode.AGENT_NOT_FOUND } };
     }
     return { status: 200, body: { default: body.id } };
   };

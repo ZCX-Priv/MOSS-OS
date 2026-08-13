@@ -14,6 +14,7 @@ import type { HttpRequest, HttpResponse, RouteHandler } from '../types';
 import type { ServiceRegistry, Environment } from '../../../core/types';
 import type { AgentEngine } from '../../contracts';
 import { getTodoStorePath, readTodoStore } from '../../tools/todo';
+import { ErrorCode } from '../../../core/error-codes';
 
 type AgentEngineWithTasks = AgentEngine & {
   listTasks?: () => Array<{
@@ -53,6 +54,7 @@ type AgentEngineWithTasks = AgentEngine & {
     sessionId?: string;
   } | null;
   deleteTask?: (id: string) => boolean;
+  reorderTasks?: (taskIds: string[]) => boolean;
   listTaskGroups?: () => Array<{
     id: string;
     name: string;
@@ -100,11 +102,11 @@ export function createCreateTaskHandler(services: ServiceRegistry): RouteHandler
   return async (req: HttpRequest): Promise<HttpResponse> => {
     const engine = resolveEngine(services);
     if (!engine?.createTask) {
-      return { status: 503, body: { error: 'agent engine not available' } };
+      return { status: 503, body: { error: ErrorCode.AGENT_ENGINE_UNAVAILABLE } };
     }
     const body = (req.body ?? {}) as { title?: string; groupId?: string };
     if (!body.title) {
-      return { status: 400, body: { error: 'title required' } };
+      return { status: 400, body: { error: ErrorCode.TASK_TITLE_REQUIRED } };
     }
     const task = engine.createTask(body.title, body.groupId);
     return { status: 201, body: task };
@@ -115,15 +117,15 @@ export function createGetTaskHandler(services: ServiceRegistry, env: Environment
   return async (_req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
     const id = params?.id;
     if (!id) {
-      return { status: 400, body: { error: 'task id required' } };
+      return { status: 400, body: { error: ErrorCode.TASK_ID_REQUIRED } };
     }
     const engine = resolveEngine(services);
     if (!engine?.getTask) {
-      return { status: 503, body: { error: 'agent engine not available' } };
+      return { status: 503, body: { error: ErrorCode.AGENT_ENGINE_UNAVAILABLE } };
     }
     const task = engine.getTask(id);
     if (!task) {
-      return { status: 404, body: { error: `task '${id}' not found` } };
+      return { status: 404, body: { error: ErrorCode.TASK_NOT_FOUND } };
     }
 
     // 消息历史
@@ -152,16 +154,16 @@ export function createUpdateTaskHandler(services: ServiceRegistry): RouteHandler
   return async (req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
     const id = params?.id;
     if (!id) {
-      return { status: 400, body: { error: 'task id required' } };
+      return { status: 400, body: { error: ErrorCode.TASK_ID_REQUIRED } };
     }
     const engine = resolveEngine(services);
     if (!engine?.updateTask) {
-      return { status: 503, body: { error: 'agent engine not available' } };
+      return { status: 503, body: { error: ErrorCode.AGENT_ENGINE_UNAVAILABLE } };
     }
     const body = (req.body ?? {}) as { title?: string; groupId?: string };
     const task = engine.updateTask(id, body);
     if (!task) {
-      return { status: 404, body: { error: `task '${id}' not found` } };
+      return { status: 404, body: { error: ErrorCode.TASK_NOT_FOUND } };
     }
     return { status: 200, body: task };
   };
@@ -171,19 +173,42 @@ export function createDeleteTaskHandler(services: ServiceRegistry): RouteHandler
   return async (_req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
     const id = params?.id;
     if (!id) {
-      return { status: 400, body: { error: 'task id required' } };
+      return { status: 400, body: { error: ErrorCode.TASK_ID_REQUIRED } };
     }
     const engine = resolveEngine(services);
     if (!engine?.deleteTask) {
-      return { status: 503, body: { error: 'agent engine not available' } };
+      return { status: 503, body: { error: ErrorCode.AGENT_ENGINE_UNAVAILABLE } };
     }
     const deleted = engine.deleteTask(id);
     // 同时删除关联的 session
     engine.deleteSession?.(id);
     if (!deleted) {
-      return { status: 404, body: { error: `task '${id}' not found` } };
+      return { status: 404, body: { error: ErrorCode.TASK_NOT_FOUND } };
     }
     return { status: 200, body: { deleted: true } };
+  };
+}
+
+/**
+ * PUT /api/tasks/reorder —— 按给定 id 顺序重排任务 order（分组内排序持久化）。
+ * body: { taskIds: string[] }
+ */
+export function createReorderTasksHandler(services: ServiceRegistry): RouteHandler {
+  return async (req: HttpRequest): Promise<HttpResponse> => {
+    const body = (req.body ?? {}) as { taskIds?: string[] };
+    if (!body.taskIds || !Array.isArray(body.taskIds) || body.taskIds.length === 0) {
+      return { status: 400, body: { error: ErrorCode.TASK_IDS_ARRAY_REQUIRED } };
+    }
+    const engine = resolveEngine(services);
+    if (!engine?.reorderTasks) {
+      return { status: 503, body: { error: ErrorCode.AGENT_ENGINE_UNAVAILABLE } };
+    }
+    const ok = engine.reorderTasks(body.taskIds);
+    if (!ok) {
+      return { status: 400, body: { error: ErrorCode.SOME_TASK_NOT_FOUND } };
+    }
+    const tasks = engine.listTasks?.() ?? [];
+    return { status: 200, body: { reordered: true, tasks } };
   };
 }
 
@@ -206,11 +231,11 @@ export function createCreateTaskGroupHandler(services: ServiceRegistry): RouteHa
   return async (req: HttpRequest): Promise<HttpResponse> => {
     const engine = resolveEngine(services);
     if (!engine?.createTaskGroup) {
-      return { status: 503, body: { error: 'agent engine not available' } };
+      return { status: 503, body: { error: ErrorCode.AGENT_ENGINE_UNAVAILABLE } };
     }
     const body = (req.body ?? {}) as { name?: string };
     if (!body.name) {
-      return { status: 400, body: { error: 'name required' } };
+      return { status: 400, body: { error: ErrorCode.TASK_NAME_REQUIRED } };
     }
     const group = engine.createTaskGroup(body.name);
     return { status: 201, body: group };
@@ -221,16 +246,16 @@ export function createUpdateTaskGroupHandler(services: ServiceRegistry): RouteHa
   return async (req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
     const id = params?.id;
     if (!id) {
-      return { status: 400, body: { error: 'group id required' } };
+      return { status: 400, body: { error: ErrorCode.GROUP_ID_REQUIRED } };
     }
     const engine = resolveEngine(services);
     if (!engine?.updateTaskGroup) {
-      return { status: 503, body: { error: 'agent engine not available' } };
+      return { status: 503, body: { error: ErrorCode.AGENT_ENGINE_UNAVAILABLE } };
     }
     const body = (req.body ?? {}) as { name?: string };
     const group = engine.updateTaskGroup(id, body);
     if (!group) {
-      return { status: 404, body: { error: `group '${id}' not found` } };
+      return { status: 404, body: { error: ErrorCode.GROUP_NOT_FOUND } };
     }
     return { status: 200, body: group };
   };
@@ -240,18 +265,18 @@ export function createDeleteTaskGroupHandler(services: ServiceRegistry): RouteHa
   return async (req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
     const id = params?.id;
     if (!id) {
-      return { status: 400, body: { error: 'group id required' } };
+      return { status: 400, body: { error: ErrorCode.GROUP_ID_REQUIRED } };
     }
     const engine = resolveEngine(services);
     if (!engine?.deleteTaskGroup) {
-      return { status: 503, body: { error: 'agent engine not available' } };
+      return { status: 503, body: { error: ErrorCode.AGENT_ENGINE_UNAVAILABLE } };
     }
     const body = (req.body ?? {}) as { moveTasksTo?: string };
     const deleted = engine.deleteTaskGroup(id, body.moveTasksTo);
     if (!deleted) {
       return {
         status: 404,
-        body: { error: `group '${id}' not found or cannot delete default group` },
+        body: { error: ErrorCode.GROUP_NOT_FOUND_OR_DEFAULT },
       };
     }
     return { status: 200, body: { deleted: true } };

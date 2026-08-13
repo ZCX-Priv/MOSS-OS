@@ -1,6 +1,6 @@
 {
   "name": "write",
-  "description": "Write content to a file, overwriting if it exists. Parent directories are created automatically if createDirs is true. This is a destructive operation.",
+  "description": "将内容写入文件，如已存在则覆盖。当 createDirs 为 true 时自动创建父目录。此操作具有破坏性。",
   "icon": "file-plus",
   "annotations": {
     "destructiveHint": true,
@@ -11,15 +11,15 @@
     "properties": {
       "path": {
         "type": "string",
-        "description": "Absolute or relative path to the file to write."
+        "description": "要写入的文件的绝对或相对路径"
       },
       "content": {
         "type": "string",
-        "description": "The content to write to the file."
+        "description": "要写入文件的内容"
       },
       "createDirs": {
         "type": "boolean",
-        "description": "Whether to create parent directories if they do not exist (default true)."
+        "description": "是否在父目录不存在时自动创建（默认 true）"
       }
     },
     "required": ["path", "content"],

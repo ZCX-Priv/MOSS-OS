@@ -12,6 +12,7 @@ import {
   type TodoStatus,
   type TodoPriority,
 } from '../../tools/todo';
+import { ErrorCode } from '../../../core/error-codes';
 
 /** 入参可能缺 id/createdAt/updatedAt，由后端补齐。兼容旧字段 content。 */
 interface TodoInput {
@@ -28,7 +29,7 @@ export function createListTodosHandler(env: Environment): RouteHandler {
   return async (_req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
     const sessionId = params?.sessionId;
     if (!sessionId) {
-      return { status: 400, body: { error: 'sessionId required' } };
+      return { status: 400, body: { error: ErrorCode.TODOS_SESSION_ID_REQUIRED } };
     }
     const store = readTodoStore(storePath);
     const todos = store.items.filter(it => it.sessionId === sessionId);
@@ -41,11 +42,11 @@ export function createReplaceTodosHandler(env: Environment): RouteHandler {
   return async (req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
     const sessionId = params?.sessionId;
     if (!sessionId) {
-      return { status: 400, body: { error: 'sessionId required' } };
+      return { status: 400, body: { error: ErrorCode.TODOS_SESSION_ID_REQUIRED } };
     }
     const body = (req.body ?? {}) as { todos?: TodoInput[] };
     if (!Array.isArray(body.todos)) {
-      return { status: 400, body: { error: 'body.todos must be an array' } };
+      return { status: 400, body: { error: ErrorCode.TODOS_MUST_BE_ARRAY } };
     }
 
     const store = readTodoStore(storePath);

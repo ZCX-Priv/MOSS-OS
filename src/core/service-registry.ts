@@ -3,6 +3,7 @@
 // - 模组（registrantType='module'）可注册任意服务名
 // - 插件（registrantType='plugin'）不可注册 ProtectedServiceNames 中的服务名
 
+import { t } from './i18n';
 import type { ProtectedServiceRegistry, ServiceRegistry } from './types';
 import { ProtectedServiceNames } from './types';
 
@@ -49,7 +50,7 @@ class ServiceRegistryImpl implements ServiceRegistry {
             `Use { override: true } to force override.`,
         );
       }
-      this.logger.warn(`Service "${name}" overridden by scope "${scope}" (was "${existing.scope}")`);
+      this.logger.warn(t('serviceRegistry.serviceOverridden', { name, scope, oldScope: existing.scope }));
     }
     this.services.set(name, { service, scope, name, registrantType });
   }
@@ -57,7 +58,7 @@ class ServiceRegistryImpl implements ServiceRegistry {
   resolve<T>(name: string): T {
     const entry = this.services.get(name);
     if (!entry) {
-      throw new Error(`Service "${name}" not registered`);
+      throw new Error(t('serviceRegistry.notRegistered', { name }));
     }
     return entry.service as T;
   }
@@ -73,7 +74,7 @@ class ServiceRegistryImpl implements ServiceRegistry {
 
   unregister(name: string): void {
     if (!this.services.delete(name)) {
-      this.logger.warn(`Service "${name}" not registered, cannot unregister`);
+      this.logger.warn(t('serviceRegistry.notRegistered', { name }));
     }
   }
 

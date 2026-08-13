@@ -2,6 +2,7 @@
 // write 工具 execute 逻辑：覆盖写入文件，自动创建父目录。
 // 元数据见同目录 tool.json。
 
+import { t } from '../../../../core/i18n';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, normalize, resolve } from 'node:path';
 import type { ToolContext, ToolResult } from '../../types';
@@ -25,7 +26,7 @@ export default {
         mkdirSync(dirname(absPath), { recursive: true });
       }
       writeFileSync(absPath, p.content, 'utf8');
-      ctx.logger.info(`File written: ${absPath}`, { bytes: p.content.length });
+      ctx.logger.info(t('tools.fileWritten', { path: absPath }), { bytes: p.content.length });
       return {
         content: [{ type: 'text', text: `Successfully wrote ${p.content.length} bytes to ${absPath}` }],
         metadata: { path: absPath, bytes: p.content.length },

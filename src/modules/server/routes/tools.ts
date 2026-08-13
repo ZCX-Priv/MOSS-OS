@@ -6,6 +6,7 @@ import type { HttpRequest, HttpResponse, RouteHandler } from '../types';
 import type { ConfigService, ServiceRegistry } from '../../../core/types';
 import { ServiceNames } from '../../../core/types';
 import type { ToolRegistry } from '../../contracts';
+import { ErrorCode } from '../../../core/error-codes';
 
 /** GET /api/tools：返回所有已加载工具（含 disabled）的完整信息 */
 export function createListToolsHandler(services: ServiceRegistry): RouteHandler {
@@ -32,11 +33,11 @@ export function createUpdateToolHandler(config: ConfigService): RouteHandler {
   return async (req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
     const name = params?.name;
     if (!name) {
-      return { status: 400, body: { error: 'tool name required' } };
+      return { status: 400, body: { error: ErrorCode.TOOL_NAME_REQUIRED } };
     }
     const body = (req.body ?? {}) as { enabled?: boolean };
     if (typeof body.enabled !== 'boolean') {
-      return { status: 400, body: { error: 'field "enabled" (boolean) is required' } };
+      return { status: 400, body: { error: ErrorCode.TOOL_ENABLED_REQUIRED } };
     }
     try {
       // updateAppConfig 做 deep merge，仅需传 patch；写入后 registry.isEnabled 实时生效

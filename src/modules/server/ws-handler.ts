@@ -1,11 +1,13 @@
 // src/plugins/server/ws-handler.ts
 // WebSocket 消息分发：处理前端 WS 消息，转发 Agent 事件到客户端。
 
+import { t } from '../../core/i18n';
 import type { Logger, ServiceRegistry } from '../../core/types';
 import { ServiceNames } from '../../core/types';
 import type { WSMessage, WSMessageHandler, WSConnection } from './types';
 import type { AgentEngine, AgentEvent } from '../contracts';
 import type { AutomationService } from '../automation';
+import { ErrorCode } from '../../core/error-codes';
 
 interface ConnectionState {
   conn: WSConnection;
@@ -32,7 +34,7 @@ export class WsHandler {
   /** 注册新连接 */
   registerConnection(conn: WSConnection): void {
     this.states.set(conn.id, { conn });
-    this.logger.debug(`WS connected: ${conn.id}`);
+    this.logger.debug(t('server.wsConnected', { id: conn.id }));
   }
 
   /** 移除连接 */
@@ -42,7 +44,7 @@ export class WsHandler {
       state.abortController.abort();
     }
     this.states.delete(id);
-    this.logger.debug(`WS disconnected: ${id}`);
+    this.logger.debug(t('server.wsDisconnected', { id }));
   }
 
   /** 处理来自客户端的消息 */
@@ -54,7 +56,7 @@ export class WsHandler {
     try {
       msg = JSON.parse(raw) as WSMessage;
     } catch {
-      state.conn.send({ type: 'error', payload: { message: 'Invalid JSON' } });
+      state.conn.send({ type: 'error', payload: { message: ErrorCode.WS_INVALID_JSON } });
       return;
     }
 
@@ -63,7 +65,7 @@ export class WsHandler {
       try {
         await h(msg);
       } catch (err) {
-        this.logger.error('WS message handler failed', {
+        this.logger.error(t('server.wsHandlerFailed'), {
           error: err instanceof Error ? err.message : String(err),
         });
       }
@@ -115,7 +117,7 @@ export class WsHandler {
   private async handleTaskStream(state: ConnectionState, msg: WSMessage): Promise<void> {
     const agent = this.services.tryResolve<AgentEngine>('agent.engine');
     if (!agent) {
-      state.conn.send({ type: 'error', sessionId: msg.sessionId, payload: { message: 'Agent engine not available' } });
+      state.conn.send({ type: 'error', sessionId: msg.sessionId, payload: { message: ErrorCode.WS_AGENT_ENGINE_UNAVAILABLE } });
       return;
     }
 
@@ -127,7 +129,7 @@ export class WsHandler {
     };
 
     if (!payload.message) {
-      state.conn.send({ type: 'error', sessionId: msg.sessionId, payload: { message: 'message required' } });
+      state.conn.send({ type: 'error', sessionId: msg.sessionId, payload: { message: ErrorCode.WS_MESSAGE_REQUIRED } });
       return;
     }
 
@@ -188,7 +190,7 @@ export class WsHandler {
   private handleTaskAbort(state: ConnectionState, msg: WSMessage): void {
     if (state.abortController && state.sessionId === msg.sessionId) {
       state.abortController.abort();
-      this.logger.info(`Task aborted: ${msg.sessionId}`);
+      this.logger.info(t('server.taskAborted', { sessionId: msg.sessionId ?? '' }));
     }
   }
 
@@ -226,19 +228,19 @@ export class WsHandler {
   private handleAskReply(state: ConnectionState, msg: WSMessage): void {
     const agent = this.services.tryResolve<AgentEngine>('agent.engine');
     if (!agent) {
-      state.conn.send({ type: 'error', payload: { message: 'Agent engine not available' } });
+      state.conn.send({ type: 'error', payload: { message: ErrorCode.WS_AGENT_ENGINE_UNAVAILABLE } });
       return;
     }
     const payload = (msg.payload ?? {}) as { toolCallId?: string; answer?: string };
     if (!payload.toolCallId || typeof payload.answer !== 'string') {
-      state.conn.send({ type: 'error', payload: { message: 'toolCallId and answer required' } });
+      state.conn.send({ type: 'error', payload: { message: ErrorCode.WS_TOOLCALLID_ANSWER_REQUIRED } });
       return;
     }
     const ok = agent.resolveAsk(payload.toolCallId, payload.answer);
     if (!ok) {
       state.conn.send({
         type: 'error',
-        payload: { message: `No pending ask for toolCallId=${payload.toolCallId}` },
+        payload: { message: ErrorCode.WS_NO_PENDING_ASK },
       });
       return;
     }
@@ -255,18 +257,18 @@ export class WsHandler {
       createTask?: (title: string, groupId?: string) => unknown;
     }>(ServiceNames.AGENT_ENGINE);
     if (!agent?.createTask) {
-      state.conn.send({ type: 'error', payload: { message: 'Agent engine createTask not available' } });
+      state.conn.send({ type: 'error', payload: { message: ErrorCode.WS_CREATE_TASK_UNAVAILABLE } });
       return;
     }
     const payload = (msg.payload ?? {}) as { title?: string; groupId?: string };
     if (!payload.title || typeof payload.title !== 'string') {
-      state.conn.send({ type: 'error', payload: { message: 'title required' } });
+      state.conn.send({ type: 'error', payload: { message: ErrorCode.WS_TITLE_REQUIRED } });
       return;
     }
     try {
       const task = agent.createTask(payload.title, payload.groupId);
       state.conn.send({ type: 'task.created', payload: { task } });
-      this.logger.info(`Task created via WS: ${(task as { id?: string }).id ?? ''}`);
+      this.logger.info(t('server.taskCreatedViaWs', { id: (task as { id?: string }).id ?? '' }));
     } catch (err) {
       state.conn.send({
         type: 'error',
@@ -284,12 +286,12 @@ export class WsHandler {
     const payload = (msg.payload ?? {}) as { taskId?: string };
     const taskId = payload.taskId ?? msg.sessionId;
     if (!taskId) {
-      state.conn.send({ type: 'error', payload: { message: 'taskId required' } });
+      state.conn.send({ type: 'error', payload: { message: ErrorCode.WS_TASK_ID_REQUIRED } });
       return;
     }
     state.sessionId = taskId;
     state.conn.send({ type: 'session.subscribed', sessionId: taskId });
-    this.logger.debug(`WS task switched: ${taskId}`);
+    this.logger.debug(t('server.wsTaskSwitched', { id: taskId }));
   }
 
   /**
@@ -300,12 +302,12 @@ export class WsHandler {
   private handleAutomationRun(state: ConnectionState, msg: WSMessage): void {
     const automation = this.services.tryResolve<AutomationService>(ServiceNames.AUTOMATION_SERVICE);
     if (!automation) {
-      state.conn.send({ type: 'error', payload: { message: 'Automation service not available' } });
+      state.conn.send({ type: 'error', payload: { message: ErrorCode.WS_AUTOMATION_SERVICE_UNAVAILABLE } });
       return;
     }
     const payload = (msg.payload ?? {}) as { automationId?: string };
     if (!payload.automationId) {
-      state.conn.send({ type: 'error', payload: { message: 'automationId required' } });
+      state.conn.send({ type: 'error', payload: { message: ErrorCode.WS_AUTOMATION_ID_REQUIRED } });
       return;
     }
     try {
@@ -314,7 +316,7 @@ export class WsHandler {
         type: 'automation.started',
         payload: { automationId: payload.automationId, runId },
       });
-      this.logger.info(`Automation triggered via WS: ${payload.automationId} (run ${runId})`);
+      this.logger.info(t('server.automationTriggeredWs', { id: payload.automationId, runId }));
     } catch (err) {
       state.conn.send({
         type: 'error',

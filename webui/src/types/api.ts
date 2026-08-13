@@ -61,6 +61,8 @@ export interface TaskMessage {
   thinkingStreaming?: boolean;
   /** 该消息内 todo 工具调用完成时的 todos 快照（任务流内卡片按此渲染，避免共享实时状态） */
   todoSnapshot?: TodoItem[];
+  /** 是否为错误消息（用于错误卡片渲染） */
+  isError?: boolean;
 }
 
 export interface Session {
@@ -137,6 +139,8 @@ export interface TaskItem {
   active?: boolean;
   /** 关联的 sessionId（task.id 即 sessionId，简化模型） */
   sessionId?: string;
+  /** 分组内排序权重（小→前）；缺失视为最后 */
+  order?: number;
 }
 
 export interface TaskGroup {

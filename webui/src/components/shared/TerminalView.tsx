@@ -118,7 +118,7 @@ function TerminalEntry({ tc, result }: { tc: ToolCall; result?: ToolResult }) {
             />
           )}
           {parsed.stdout === '' && parsed.stderr === '' && (
-            <span className="text-zinc-600">(empty)</span>
+            <span className="text-zinc-600">{t('terminal.emptyOutput')}</span>
           )}
           {/* 退出码标记 */}
           <div className="flex items-center gap-1.5 text-[10px]">
@@ -126,10 +126,10 @@ function TerminalEntry({ tc, result }: { tc: ToolCall; result?: ToolResult }) {
               [{t('terminal.exitCode')}: {exitCode ?? 0}]
             </span>
             {result?.metadata?.truncated && (
-              <span className="text-yellow-500/80">truncated</span>
+              <span className="text-yellow-500/80">{t('terminal.truncated')}</span>
             )}
             {result?.metadata?.timedOut && (
-              <span className="text-yellow-500/80">timed out</span>
+              <span className="text-yellow-500/80">{t('terminal.timedOut')}</span>
             )}
           </div>
         </div>

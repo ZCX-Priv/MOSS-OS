@@ -169,6 +169,7 @@ export interface AppConfig {
     host: string;
     port: number;
     autoPort: boolean;
+    locale?: string;
   };
   daemon: {
     enabled: boolean;

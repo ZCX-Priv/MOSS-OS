@@ -5,6 +5,7 @@
 
 import type { HttpRequest, HttpResponse, RouteHandler } from '../types';
 import type { ServiceRegistry } from '../../../core/types';
+import { ErrorCode } from '../../../core/error-codes';
 
 interface ExtensionInfo {
   name: string;
@@ -64,15 +65,15 @@ export function createGetPluginHandler(services: ServiceRegistry): RouteHandler 
   return async (_req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
     const id = params?.id;
     if (!id) {
-      return { status: 400, body: { error: 'plugin id required' } };
+      return { status: 400, body: { error: ErrorCode.PLUGIN_ID_REQUIRED } };
     }
     const ext = services.tryResolve<KernelExtensionsService>('kernel.extensions');
     if (!ext?.getList) {
-      return { status: 404, body: { error: 'plugin not found' } };
+      return { status: 404, body: { error: ErrorCode.PLUGIN_NOT_FOUND } };
     }
     const found = ext.getList().find(e => e.name === id);
     if (!found) {
-      return { status: 404, body: { error: `plugin '${id}' not found` } };
+      return { status: 404, body: { error: ErrorCode.PLUGIN_NOT_FOUND } };
     }
     return { status: 200, body: toPluginItem(found) };
   };
@@ -82,16 +83,16 @@ export function createUpdatePluginHandler(services: ServiceRegistry): RouteHandl
   return async (req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
     const id = params?.id;
     if (!id) {
-      return { status: 400, body: { error: 'plugin id required' } };
+      return { status: 400, body: { error: ErrorCode.PLUGIN_ID_REQUIRED } };
     }
     const body = (req.body ?? {}) as { enabled?: boolean };
     if (body.enabled === undefined) {
-      return { status: 400, body: { error: 'enabled field required' } };
+      return { status: 400, body: { error: ErrorCode.PLUGIN_ENABLED_REQUIRED } };
     }
 
     const ext = services.tryResolve<KernelExtensionsService>('kernel.extensions');
     if (!ext) {
-      return { status: 503, body: { error: 'kernel.extensions service not available' } };
+      return { status: 503, body: { error: ErrorCode.EXTENSIONS_SERVICE_UNAVAILABLE } };
     }
 
     if (body.enabled) {

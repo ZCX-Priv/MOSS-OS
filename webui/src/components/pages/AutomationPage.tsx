@@ -78,7 +78,7 @@ export function AutomationPage() {
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       {/* 页面头部 */}
-      <div className="hidden items-center justify-between gap-4 border-b border-border px-6 py-4 md:flex">
+      <div className="hidden items-center justify-between gap-4 px-6 py-4 md:flex">
         <div className="flex flex-col gap-1">
           <h1 className="text-xl font-semibold text-foreground">{t('automation.title')}</h1>
           <p className="text-sm text-muted-foreground">{t('automation.subtitle')}</p>
@@ -96,7 +96,7 @@ export function AutomationPage() {
         value={tab}
         onValueChange={(v) => navigate(`/automation/${v}`)}
       >
-        <div className="border-b border-border px-6 py-3">
+        <div className="px-6 py-3">
           <TabsList>
             <TabsTrigger value="configured" className="gap-1.5">
               {t('automation.configured')}
@@ -132,7 +132,7 @@ export function TemplatesTab() {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {templates.length === 0 && (
           <div className="col-span-full py-12 text-center text-sm text-muted-foreground">
-            {t('automation.noConfigured', { defaultValue: '暂无模板' })}
+            {t('automation.noTemplates')}
           </div>
         )}
         {templates.map((template) => {
@@ -183,7 +183,7 @@ export function ConfiguredTab() {
   const handleTrigger = async (id: string) => {
     try {
       await triggerAutomation(id);
-      toast.success(t('automation.triggered', { defaultValue: '已触发' }));
+      toast.success(t('automation.triggeredToast'));
     } catch {
       /* hook 已 toast */
     }
@@ -204,7 +204,7 @@ export function ConfiguredTab() {
   const handleDelete = async (id: string) => {
     try {
       await deleteAutomation(id);
-      toast.success(t('automation.deleted', { defaultValue: '已删除' }));
+      toast.success(t('automation.deletedToast'));
     } catch {
       /* hook 已 toast */
     }
@@ -237,12 +237,12 @@ export function ConfiguredTab() {
                   <h3 className="text-sm font-medium text-foreground">{a.title}</h3>
                   {a.paused && (
                     <Badge variant="outline" className="font-normal">
-                      {t('automation.paused', { defaultValue: '已暂停' })}
+                      {t('automation.pausedBadge')}
                     </Badge>
                   )}
                   {!a.enabled && (
                     <Badge variant="outline" className="font-normal">
-                      {t('automation.disabled', { defaultValue: '已禁用' })}
+                      {t('automation.disabledBadge')}
                     </Badge>
                   )}
                 </div>
@@ -252,10 +252,10 @@ export function ConfiguredTab() {
                     <code className="rounded bg-muted px-1 py-0.5">{a.cron}</code>
                   </span>
                   <span>
-                    {t('automation.lastRun', { defaultValue: '上次' })}: {formatTime(a.lastRunAt)}
+                    {t('automation.lastRunAt')}: {formatTime(a.lastRunAt)}
                   </span>
                   <span>
-                    {t('automation.nextRun', { defaultValue: '下次' })}: {formatTime(a.nextRunAt)}
+                    {t('automation.nextRunAt')}: {formatTime(a.nextRunAt)}
                   </span>
                 </div>
               </div>
@@ -265,7 +265,7 @@ export function ConfiguredTab() {
                   size="icon"
                   className="size-7"
                   onClick={() => void handleTrigger(a.id)}
-                  title={t('automation.triggered', { defaultValue: '触发' })}
+                  title={t('automation.triggerBtn')}
                 >
                   <Play className="size-3.5" />
                 </Button>
@@ -274,7 +274,7 @@ export function ConfiguredTab() {
                   size="icon"
                   className="size-7"
                   onClick={() => void handleTogglePause(a.id, a.paused)}
-                  title={a.paused ? t('automation.resume', { defaultValue: '恢复' }) : t('automation.pause', { defaultValue: '暂停' })}
+                  title={a.paused ? t('automation.resumeBtn') : t('automation.pauseBtn')}
                 >
                   {a.paused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
                 </Button>
@@ -283,7 +283,7 @@ export function ConfiguredTab() {
                   size="icon"
                   className="size-7 text-destructive hover:text-destructive"
                   onClick={() => void handleDelete(a.id)}
-                  title={t('automation.deleted', { defaultValue: '删除' })}
+                  title={t('automation.deleteBtn')}
                 >
                   <Trash2 className="size-3.5" />
                 </Button>
@@ -318,7 +318,7 @@ export function HistoryTab() {
           const automation = automations.find((a) => a.id === run.automationId);
           return (
             <Card key={run.id} className="flex flex-row items-center gap-3 p-3">
-              <RunStatusIcon status={run.status} />
+              <RunStatusIcon status={({ running: t('automation.statusRunning'), success: t('automation.statusSuccess'), failed: t('automation.statusFailed'), timeout: t('automation.statusTimeout') }[run.status] ?? run.status)} />
               <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <div className="flex items-center gap-2">
                   <h3 className="text-sm font-medium text-foreground">
@@ -330,10 +330,10 @@ export function HistoryTab() {
                 </div>
                 <div className="flex items-center gap-3 text-xs text-muted-foreground">
                   <span>
-                    {t('automation.lastRun', { defaultValue: '开始' })}: {formatTime(run.startedAt)}
+                    {t('automation.startedAt')}: {formatTime(run.startedAt)}
                   </span>
                   <span>
-                    {t('automation.nextRun', { defaultValue: '结束' })}: {formatTime(run.finishedAt)}
+                    {t('automation.finishedAt')}: {formatTime(run.finishedAt)}
                   </span>
                 </div>
                 {run.error && (

@@ -5,6 +5,7 @@
 // - 插件：src/plugins/*/plugin.json + index.ts，传入 PluginContext（受限能力）
 // 清单替代原 metadata，index.ts 导出工厂函数 (manifest) => Module | Plugin
 
+import { t } from './i18n';
 import { readdir, stat, readFile, mkdir, cp } from 'node:fs/promises';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -105,7 +106,7 @@ export class ExtensionManager {
       const data = { disabled: Array.from(this.disabledExtensions) };
       writeFileSync(disabledPath, JSON.stringify(data, null, 2), 'utf8');
     } catch (err) {
-      this.logger.error('Failed to save extensions.json', {
+      this.logger.error(t('extension.saveDisabledListFailed'), {
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -163,7 +164,7 @@ export class ExtensionManager {
     }
     const pluginCandidates = await this.discoverInDirs(pluginDirs, 'plugin.json');
 
-    this.logger.info(`Discovered ${moduleCandidates.length} module candidates, ${pluginCandidates.length} plugin candidates`, {
+    this.logger.info(t('extension.discovered', { moduleCount: moduleCandidates.length, pluginCount: pluginCandidates.length }), {
       modules: moduleCandidates.map(c => c.name),
       plugins: pluginCandidates.map(c => c.name),
     });
@@ -172,7 +173,7 @@ export class ExtensionManager {
     const enabledModuleCandidates = moduleCandidates.filter(c => !this.disabledExtensions.has(c.name));
     const enabledPluginCandidates = pluginCandidates.filter(c => !this.disabledExtensions.has(c.name));
     if (this.disabledExtensions.size > 0) {
-      this.logger.info(`Skipping disabled extensions`, {
+      this.logger.info(t('extension.skippingDisabled'), {
         disabled: Array.from(this.disabledExtensions),
       });
     }
@@ -188,7 +189,7 @@ export class ExtensionManager {
       if (r.status === 'fulfilled') {
         this.modules.set(r.value.manifest.name, r.value);
       } else {
-        this.logger.error(`Failed to load module "${c.name}"`, {
+        this.logger.error(t('extension.loadModuleFailed', { name: c.name }), {
           error: r.reason instanceof Error ? r.reason.message : String(r.reason),
         });
       }
@@ -198,7 +199,7 @@ export class ExtensionManager {
       if (r.status === 'fulfilled') {
         this.plugins.set(r.value.manifest.name, r.value);
       } else {
-        this.logger.error(`Failed to load plugin "${c.name}"`, {
+        this.logger.error(t('extension.loadPluginFailed', { name: c.name }), {
           error: r.reason instanceof Error ? r.reason.message : String(r.reason),
         });
       }
@@ -207,7 +208,7 @@ export class ExtensionManager {
     // 阶段 3：合并拓扑排序（模组优先入度 0）
     this.loadOrder = this.combinedTopoSort();
 
-    this.logger.info('Extensions loaded', {
+    this.logger.info(t('extension.loaded'), {
       order: this.loadOrder.map(o => `${o.kind}:${o.name}`),
       total: this.loadOrder.length,
     });
@@ -229,7 +230,7 @@ export class ExtensionManager {
       const failedDeps = Object.keys(deps).filter(d => failed.has(d));
       if (failedDeps.length > 0) {
         this.logger.warn(
-          `${kind} "${name}" skipped: dependencies failed [${failedDeps.join(', ')}]`,
+          t('extension.skippedDepsFailed', { kind, name, deps: failedDeps.join(', ') }),
         );
         entry.state = 'error';
         failed.add(name);
@@ -261,12 +262,12 @@ export class ExtensionManager {
           await this.withTimeout(plg.initialize(ctx), EXTENSION_INIT_TIMEOUT_MS, `initialize(plugin:${name})`);
         }
         entry.state = 'active';
-        this.logger.info(`${kind} "${name}" v${manifest.version} activated`);
+        this.logger.info(t('extension.activated', { kind, name, version: manifest.version }));
         await this.coreCtx.eventBus.broadcast('plugin:loaded', { kind, name, version: manifest.version });
       } catch (err) {
         entry.state = 'error';
         failed.add(name);
-        this.logger.error(`${kind} "${name}" initialization failed`, {
+        this.logger.error(t('extension.initFailed', { kind, name }), {
           error: err instanceof Error ? err.message : String(err),
         });
         await this.coreCtx.eventBus.broadcast('plugin:error', {
@@ -294,11 +295,11 @@ export class ExtensionManager {
         this.coreCtx.services.unregisterScope(name);
         this.coreCtx.eventBus.offAll(name);
         entry.state = 'shutdown';
-        this.logger.info(`${kind} "${name}" destroyed`);
+        this.logger.info(t('extension.destroyed', { kind, name }));
         await this.coreCtx.eventBus.broadcast('plugin:unloaded', { kind, name });
       } catch (err) {
         entry.state = 'error';
-        this.logger.error(`${kind} "${name}" destroy failed`, {
+        this.logger.error(t('extension.destroyFailed', { kind, name }), {
           error: err instanceof Error ? err.message : String(err),
         });
       }
@@ -408,14 +409,14 @@ export class ExtensionManager {
         const destExists = await stat(dest).catch(() => null);
         if (destExists) continue;
         await cp(src, dest, { recursive: true }).catch(err => {
-          this.logger.debug(`Failed to seed builtin plugin ${name}`, {
+          this.logger.debug(t('extension.seedPluginFailed', { name }), {
             error: err instanceof Error ? err.message : String(err),
           });
         });
         seeded++;
       }
     }
-    this.logger.info(`Seeded builtin plugins to ${userDir}`, { count: seeded });
+    this.logger.info(t('extension.seededPlugins', { dir: userDir }), { count: seeded });
   }
 
   private async discoverInDirs(
@@ -467,7 +468,7 @@ export class ExtensionManager {
     }
     const instance = factory(manifest);
     if (!instance || typeof instance.initialize !== 'function') {
-      throw new Error(`Module factory for "${c.name}" did not return a valid Module instance`);
+      throw new Error(t('extension.moduleFactoryInvalid', { name: c.name }));
     }
     instance.manifest = manifest;
     return { module: instance, state: 'loaded', modulePath: c.indexPath, manifest };
@@ -486,7 +487,7 @@ export class ExtensionManager {
     }
     const instance = factory(manifest);
     if (!instance || typeof instance.initialize !== 'function') {
-      throw new Error(`Plugin factory for "${c.name}" did not return a valid Plugin instance`);
+      throw new Error(t('extension.pluginFactoryInvalid', { name: c.name }));
     }
     instance.manifest = manifest;
     return { plugin: instance, state: 'loaded', modulePath: c.indexPath, manifest };
@@ -501,14 +502,14 @@ export class ExtensionManager {
     try {
       parsed = JSON.parse(raw);
     } catch (err) {
-      throw new Error(`Failed to parse manifest ${manifestPath}: ${err instanceof Error ? err.message : err}`);
+      throw new Error(t('extension.manifestParseFailed', { path: manifestPath, error: err instanceof Error ? err.message : String(err) }));
     }
     const m = parsed as Partial<ExtensionManifest>;
     if (!m || typeof m !== 'object') {
-      throw new Error(`Manifest ${manifestPath} is not an object`);
+      throw new Error(t('extension.manifestNotObject', { path: manifestPath }));
     }
     if (typeof m.name !== 'string' || typeof m.version !== 'string') {
-      throw new Error(`Manifest ${manifestPath} missing required fields "name" and "version"`);
+      throw new Error(t('extension.manifestMissingFields', { path: manifestPath }));
     }
     // type 字段允许缺省，由 manifestName 隐式决定；若存在必须匹配
     if (m.type !== undefined && m.type !== expectedType) {
@@ -550,7 +551,7 @@ export class ExtensionManager {
       for (const dep of node.deps) {
         if (!nodes.has(dep)) {
           this.logger.warn(
-            `${node.kind} "${node.name}" depends on missing extension "${dep}", will skip during init`,
+            t('extension.depMissing', { kind: node.kind, name: node.name, dep }),
           );
           continue;
         }
@@ -587,7 +588,7 @@ export class ExtensionManager {
         if (!sorted.some(s => s.name === n.name)) cyclic.push({ name: n.name, kind: n.kind });
       }
       this.logger.error(
-        `Circular dependency detected among extensions: [${cyclic.map(c => `${c.kind}:${c.name}`).join(', ')}]`,
+        t('extension.circularDependency', { extensions: cyclic.map(c => `${c.kind}:${c.name}`).join(', ') }),
       );
       cyclic.sort((a, b) => a.name.localeCompare(b.name));
       sorted.push(...cyclic);

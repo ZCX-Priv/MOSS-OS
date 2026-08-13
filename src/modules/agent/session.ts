@@ -2,6 +2,7 @@
 // 会话状态、历史、上下文裁剪。
 // 持久化：每个 session 存为 ~/.moss/sessions/<sessionId>.json，启动时全量加载到内存。
 
+import { t } from '../../core/i18n';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AgentMessage } from '../contracts';
@@ -72,15 +73,15 @@ export class SessionStore {
             this.sessions.set(session.id, session);
           }
         } catch (err) {
-          this.logger.warn('Failed to load session file, skipping', {
+          this.logger.warn(t('agent.loadSessionFailed'), {
             file: name,
             error: err instanceof Error ? err.message : String(err),
           });
         }
       }
-      this.logger.debug(`Loaded ${this.sessions.size} sessions from disk`);
+      this.logger.debug(t('agent.loadedSessions', { count: this.sessions.size }));
     } catch (err) {
-      this.logger.warn('Failed to scan sessions directory', {
+      this.logger.warn(t('agent.scanSessionsDirFailed'), {
         dir: this.sessionsDir,
         error: err instanceof Error ? err.message : String(err),
       });
@@ -94,7 +95,7 @@ export class SessionStore {
       const filePath = join(this.sessionsDir, `${session.id}.json`);
       writeFileSync(filePath, JSON.stringify(session, null, 2), 'utf8');
     } catch (err) {
-      this.logger.error('Failed to save session', {
+      this.logger.error(t('agent.saveSessionFailed'), {
         sessionId: session.id,
         error: err instanceof Error ? err.message : String(err),
       });
@@ -150,7 +151,7 @@ export class SessionStore {
       };
       this.sessions.set(sessionId, session);
       this.saveSession(session);
-      this.logger.debug(`Session created: ${sessionId}`);
+      this.logger.debug(t('agent.sessionCreated', { sessionId }));
     }
     return session;
   }
@@ -176,7 +177,7 @@ export class SessionStore {
         unlinkSync(filePath);
       }
     } catch (err) {
-      this.logger.warn('Failed to delete session file', {
+      this.logger.warn(t('agent.deleteSessionFailed'), {
         sessionId,
         error: err instanceof Error ? err.message : String(err),
       });
@@ -338,7 +339,7 @@ export class SessionStore {
 
     session.messages = kept;
     session.totalTokens = systemTokens + used;
-    this.logger.debug(`Context trimmed: ${session.messages.length} messages, ~${session.totalTokens} tokens`);
+    this.logger.debug(t('agent.contextTrimmed', { messages: session.messages.length, tokens: session.totalTokens }));
     this.saveSession(session);
   }
 

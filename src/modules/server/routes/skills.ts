@@ -4,6 +4,7 @@
 import type { HttpRequest, HttpResponse, RouteHandler } from '../types';
 import type { ServiceRegistry } from '../../../core/types';
 import type { SkillRegistry } from '../../tools/skills';
+import { ErrorCode } from '../../../core/error-codes';
 
 export function createListSkillsHandler(services: ServiceRegistry): RouteHandler {
   return async (): Promise<HttpResponse> => {
@@ -24,15 +25,15 @@ export function createGetSkillHandler(services: ServiceRegistry): RouteHandler {
   return async (_req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
     const name = params?.name;
     if (!name) {
-      return { status: 400, body: { error: 'skill name required' } };
+      return { status: 400, body: { error: ErrorCode.SKILL_NAME_REQUIRED } };
     }
     const registry = services.tryResolve<SkillRegistry>('skill.registry');
     if (!registry) {
-      return { status: 404, body: { error: 'skill registry not available' } };
+      return { status: 404, body: { error: ErrorCode.SKILL_REGISTRY_UNAVAILABLE } };
     }
     const skill = registry.get(name);
     if (!skill) {
-      return { status: 404, body: { error: `skill '${name}' not found` } };
+      return { status: 404, body: { error: ErrorCode.SKILL_NOT_FOUND } };
     }
     return {
       status: 200,

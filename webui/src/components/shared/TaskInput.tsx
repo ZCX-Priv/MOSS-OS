@@ -81,14 +81,14 @@ export function TaskInput({
 
   return (
     <>
-    <Card className="w-full gap-0 rounded-2xl p-2 shadow-sm">
+    <Card className="w-full gap-0 rounded-2xl border border-border bg-transparent p-2 shadow-none ring-0">
       <Textarea
         placeholder={placeholder ?? t('taskInput.placeholder')}
         value={input}
         onChange={(e) => setInput(e.target.value)}
         onKeyDown={handleKeyDown}
         rows={variant === 'home' ? 3 : 4}
-        className="max-h-[40vh] resize-none border-0 bg-transparent px-2 shadow-none focus-visible:ring-0"
+        className="max-h-[40vh] resize-none border-0 bg-transparent px-2 shadow-none focus-visible:ring-0 dark:bg-transparent"
       />
       <div className="flex items-center justify-between gap-2 px-1 pt-1.5">
         <div className="flex items-center gap-1.5">

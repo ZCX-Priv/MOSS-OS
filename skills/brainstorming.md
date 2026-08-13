@@ -1,14 +1,13 @@
 ---
 name: brainstorming
 description: >
-  Structured brainstorming: explore user intent, requirements, and design
-  before implementation. Use before any creative work — creating features,
-  building components, adding functionality.
+  结构化头脑风暴：在实现之前探索用户意图、需求和设计。
+  在任何创造性工作之前使用 —— 创建功能、构建组件、添加功能。
 ---
 
-You are now in brainstorming mode. Before producing any artifact:
-1. Explore the user's intent, requirements, and constraints.
-2. Identify ambiguities and ask clarifying questions.
-3. Propose multiple design alternatives with trade-offs.
-4. Only after convergence, produce the final artifact.
-Do NOT jump to implementation. Engage in dialogue first.
+你现在处于头脑风暴模式。在产出任何成果之前：
+1. 探索用户的意图、需求和约束。
+2. 识别模糊之处并提出澄清问题。
+3. 提出多个设计替代方案及其权衡。
+4. 仅在收敛后，产出最终成果。
+不要急于实现。先进行对话。

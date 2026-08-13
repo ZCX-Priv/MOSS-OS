@@ -2,6 +2,7 @@
 // Microkernel 主类：组装所有内核服务，编排模组/插件生命周期。
 // 模组（modules）拥有高权限，先加载；插件（plugins）权限较低，后加载。
 
+import { setBackendLocale, t } from './i18n';
 import { detectEnvironment } from './env';
 import { createRootLogger } from './logger';
 import { createEventBus } from './event-bus';
@@ -40,13 +41,13 @@ export class Microkernel {
 
   async start(options: KernelStartOptions = {}): Promise<KernelContext> {
     if (this.started) {
-      throw new Error('Kernel already started');
+      throw new Error(t('kernel.alreadyStarted'));
     }
 
     // 1. 初始化内核服务
     this.env = detectEnvironment();
     this.logger = createRootLogger(this.env, options.logLevel ?? 'info');
-    this.logger.info('MOSS kernel starting', {
+    this.logger.info(t('kernel.starting'), {
       platform: this.env.platform,
       arch: this.env.arch,
       bunVersion: this.env.runtimeVersion,
@@ -61,12 +62,13 @@ export class Microkernel {
     this.config = createConfigService(this.env, this.eventBus, this.logger);
     try {
       await this.config.load();
+      setBackendLocale(this.config.getAppConfig().server.locale === 'en' ? 'en' : 'zh');
       // 应用配置中的日志级别
       const cfgLevel = this.config.getAppConfig().daemon.logLevel;
       this.logger.setLevel(cfgLevel);
-      this.logger.info('Config loaded', { logLevel: cfgLevel });
+      this.logger.info(t('kernel.configLoaded'), { logLevel: cfgLevel });
     } catch (err) {
-      this.logger.error('Failed to load config, falling back to defaults', {
+      this.logger.error(t('kernel.configLoadFailed'), {
         error: err instanceof Error ? err.message : String(err),
       });
       // 真正回退到默认配置，避免后续所有模块因 "Config not loaded" 连锁失败
@@ -116,7 +118,7 @@ export class Microkernel {
     await this.eventBus.broadcast('kernel:ready', { pid: this.env.pid });
 
     const activeCount = this.extensionManager.getActiveExtensionCount();
-    this.logger.info('MOSS kernel ready', {
+    this.logger.info(t('kernel.ready'), {
       activeExtensions: activeCount,
       services: this.services.list(),
     });
@@ -128,14 +130,14 @@ export class Microkernel {
     if (!this.started) {
       return;
     }
-    this.logger?.info('MOSS kernel stopping');
+    this.logger?.info(t('kernel.stopping'));
     await this.eventBus?.broadcast('kernel:shutdown', {});
 
     if (this.extensionManager) {
       await this.extensionManager.destroyAll();
     }
     this.started = false;
-    this.logger?.info('MOSS kernel stopped');
+    this.logger?.info(t('kernel.stopped'));
   }
 
   isStarted(): boolean {
@@ -144,7 +146,7 @@ export class Microkernel {
 
   private makeContext(): KernelContext {
     if (!this.logger || !this.config || !this.eventBus || !this.services || !this.env || !this.extensionManager) {
-      throw new Error('Kernel not fully initialized');
+      throw new Error(t('kernel.notInitialized'));
     }
     return {
       logger: this.logger,

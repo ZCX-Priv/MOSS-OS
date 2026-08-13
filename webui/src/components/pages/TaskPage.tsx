@@ -414,7 +414,7 @@ const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap 
   if (message.role === 'user') {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[80%] rounded-2xl bg-primary px-3 py-2 text-sm text-primary-foreground">
+        <div className="max-w-[80%] rounded-2xl border border-border bg-indigo-100 px-3 py-2 text-sm text-foreground shadow-sm dark:bg-blue-600 dark:text-white dark:shadow-[0_2px_14px_rgba(37,99,235,0.35)]">
           {message.content}
         </div>
       </div>
@@ -434,7 +434,7 @@ const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap 
             ) : (
               <Atom className="size-3.5" />
             )}
-            <span>{message.thinkingStreaming ? '思考中' : '已完成思考'}</span>
+            <span>{message.thinkingStreaming ? t('task.thinkingStreaming') : t('task.thinkingDone')}</span>
           </summary>
           <div className="mt-1 text-xs text-muted-foreground">
             {message.thinking}
@@ -442,7 +442,7 @@ const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap 
         </details>
       )}
       {/* 正文 */}
-      {message.content && !message.content.startsWith('Error:') && (
+      {message.content && !message.isError && (
         <div className="whitespace-pre-wrap text-sm text-foreground">
           {message.content}
           {message.streaming && (
@@ -520,16 +520,16 @@ const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap 
                   )}
                   <span>{tc.name}</span>
                   {tc.status === 'generating' && (
-                    <span className="text-muted-foreground/60">生成参数中…</span>
+                    <span className="text-muted-foreground/60">{t('terminal.generating')}</span>
                   )}
                   {tc.status === 'executing' && (
-                    <span className="text-muted-foreground/60">执行中…</span>
+                    <span className="text-muted-foreground/60">{t('terminal.executing')}</span>
                   )}
                 </summary>
                 <div className="mt-1 flex flex-col gap-2 rounded-md border border-border p-2 text-xs max-h-[300px] overflow-auto no-scrollbar">
                   {tc.arguments && (
                     <div>
-                      <div className="text-muted-foreground/70">参数</div>
+                      <div className="text-muted-foreground/70">{t('task.toolCallArguments')}</div>
                       <pre className="mono mt-0.5 whitespace-pre-wrap break-all text-foreground">
                         {prettyArgs}
                       </pre>
@@ -538,7 +538,7 @@ const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap 
                   {resultText && (
                     <div>
                       <div className={cn('text-muted-foreground/70', isError && 'text-destructive/80')}>
-                        {isError ? '错误结果' : '结果'}
+                        {isError ? t('task.errorResult') : t('task.result')}
                       </div>
                       <pre className={cn(
                         'mono mt-0.5 whitespace-pre-wrap break-all',
@@ -555,7 +555,7 @@ const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap 
         </div>
       )}
       {/* 错误消息 */}
-      {message.content.startsWith('Error:') && (
+      {message.isError && (
         <Card className="border-destructive/50 p-2 text-xs text-destructive">
           {message.content}
         </Card>

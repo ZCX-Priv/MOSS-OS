@@ -1,6 +1,7 @@
 // src/core/config-service.ts
 // 配置服务：加载 config.json + api.json，Zod 校验，热重载，分发。
 
+import { t } from './i18n';
 import { z } from 'zod';
 import { join } from 'node:path';
 import type {
@@ -47,6 +48,7 @@ const appConfigSchema = z.object({
     host: z.string(),
     port: z.number().int().min(1).max(65535),
     autoPort: z.boolean(),
+    locale: z.string().optional(),
   }),
   daemon: z.object({
     enabled: z.boolean(),
@@ -84,7 +86,7 @@ const apiConfigSchema = z.object({
 export function defaultAppConfig(): AppConfig {
   return {
     version: 1,
-    server: { host: '127.0.0.1', port: 7766, autoPort: true },
+    server: { host: '127.0.0.1', port: 7766, autoPort: true, locale: 'zh' },
     daemon: { enabled: true, logLevel: 'info' },
     update: { autoCheck: true, channel: 'stable', checkIntervalHours: 24 },
     agent: {
@@ -155,19 +157,19 @@ class ConfigServiceImpl implements ConfigService {
     if (!this.fs.exists(appPath)) {
       if (this.fs.exists(pkgAppTemplate)) {
         this.fs.copyFile(pkgAppTemplate, appPath);
-        this.logger.info('Copied config.json template from package');
+        this.logger.info(t('config.copiedAppTemplate'));
       } else {
         this.fs.writeText(appPath, JSON.stringify(defaultAppConfig(), null, 2));
-        this.logger.info('Created default config.json');
+        this.logger.info(t('config.createdDefaultApp'));
       }
     }
     if (!this.fs.exists(apiPath)) {
       if (this.fs.exists(pkgApiTemplate)) {
         this.fs.copyFile(pkgApiTemplate, apiPath);
-        this.logger.info('Copied api.json template from package');
+        this.logger.info(t('config.copiedApiTemplate'));
       } else {
         this.fs.writeText(apiPath, JSON.stringify(defaultApiConfig(), null, 2));
-        this.logger.info('Created default api.json');
+        this.logger.info(t('config.createdDefaultApi'));
       }
     }
 
@@ -189,22 +191,22 @@ class ConfigServiceImpl implements ConfigService {
   loadDefaults(): void {
     this.appConfig = defaultAppConfig();
     this.apiConfig = defaultApiConfig();
-    this.logger.warn('Config fallback to defaults (in-memory only, disk file unchanged)');
+    this.logger.warn(t('config.fallbackToDefaults'));
   }
 
   getAppConfig(): AppConfig {
-    if (!this.appConfig) throw new Error('Config not loaded. Call load() first.');
+    if (!this.appConfig) throw new Error(t('config.notLoadedCallFirst'));
     // 返回深拷贝避免外部意外修改
     return deepClone(this.appConfig);
   }
 
   getApiConfig(): ApiConfig {
-    if (!this.apiConfig) throw new Error('Config not loaded. Call load() first.');
+    if (!this.apiConfig) throw new Error(t('config.notLoadedCallFirst'));
     return deepClone(this.apiConfig);
   }
 
   async updateAppConfig(patch: Partial<AppConfig>): Promise<void> {
-    if (!this.appConfig) throw new Error('Config not loaded.');
+    if (!this.appConfig) throw new Error(t('config.notLoaded'));
     const merged = deepMerge(this.appConfig, patch) as AppConfig;
     const parsed = appConfigSchema.parse(merged);
     this.appConfig = parsed;
@@ -214,7 +216,7 @@ class ConfigServiceImpl implements ConfigService {
   }
 
   async updateApiConfig(patch: Partial<ApiConfig>): Promise<void> {
-    if (!this.apiConfig) throw new Error('Config not loaded.');
+    if (!this.apiConfig) throw new Error(t('config.notLoaded'));
     const merged = deepMerge(this.apiConfig, patch) as ApiConfig;
     const parsed = apiConfigSchema.parse(merged);
     this.apiConfig = parsed;
@@ -232,7 +234,7 @@ class ConfigServiceImpl implements ConfigService {
     await this.eventBus.broadcast('config:changed', { which: 'api' });
     this.notifyChange('app');
     this.notifyChange('api');
-    this.logger.info('Config reloaded from disk');
+    this.logger.info(t('config.reloadedFromDisk'));
   }
 
   onChange(handler: (which: 'app' | 'api') => void): EventBusSubscription {
@@ -250,7 +252,7 @@ class ConfigServiceImpl implements ConfigService {
       try {
         h(which);
       } catch (err) {
-        this.logger.warn('Config change handler failed', {
+        this.logger.warn(t('config.changeHandlerFailed'), {
           error: err instanceof Error ? err.message : String(err),
         });
       }
@@ -263,14 +265,14 @@ class ConfigServiceImpl implements ConfigService {
     try {
       raw = JSON.parse(text);
     } catch (err) {
-      throw new Error(`config.json is not valid JSON: ${err instanceof Error ? err.message : err}`);
+      throw new Error(t('config.configJsonInvalid', { error: err instanceof Error ? err.message : String(err) }));
     }
     const result = appConfigSchema.safeParse(raw);
     if (!result.success) {
       const issues = result.error.issues
         .map(i => `  - ${i.path.join('.')}: ${i.message}`)
         .join('\n');
-      throw new Error(`config.json validation failed:\n${issues}`);
+      throw new Error(t('config.configJsonValidationFailed', { issues }));
     }
     return result.data as AppConfig;
   }
@@ -281,14 +283,14 @@ class ConfigServiceImpl implements ConfigService {
     try {
       raw = JSON.parse(text);
     } catch (err) {
-      throw new Error(`api.json is not valid JSON: ${err instanceof Error ? err.message : err}`);
+      throw new Error(t('config.apiJsonInvalid', { error: err instanceof Error ? err.message : String(err) }));
     }
     const result = apiConfigSchema.safeParse(raw);
     if (!result.success) {
       const issues = result.error.issues
         .map(i => `  - ${i.path.join('.')}: ${i.message}`)
         .join('\n');
-      throw new Error(`api.json validation failed:\n${issues}`);
+      throw new Error(t('config.apiJsonValidationFailed', { issues }));
     }
     return result.data as ApiConfig;
   }
@@ -302,9 +304,9 @@ class ConfigServiceImpl implements ConfigService {
       const handle = (which: 'app' | 'api') => {
         if (debounce) clearTimeout(debounce);
         debounce = setTimeout(() => {
-          this.logger.info(`Config file changed on disk, reloading: ${which}`);
+          this.logger.info(t('config.fileChangedReloading', { which }));
           this.reload().catch(err => {
-            this.logger.error('Config reload failed', {
+            this.logger.error(t('config.reloadFailed'), {
               error: err instanceof Error ? err.message : String(err),
             });
           });
@@ -312,9 +314,9 @@ class ConfigServiceImpl implements ConfigService {
       };
       fs.watch(appPath, () => handle('app'));
       fs.watch(apiPath, () => handle('api'));
-      this.logger.debug('Config file watcher started');
+      this.logger.debug(t('config.watcherStarted'));
     } catch (err) {
-      this.logger.warn('Failed to start config watcher', {
+      this.logger.warn(t('config.watcherStartFailed'), {
         error: err instanceof Error ? err.message : String(err),
       });
     }

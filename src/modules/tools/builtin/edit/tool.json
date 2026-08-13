@@ -1,6 +1,6 @@
 {
   "name": "edit",
-  "description": "Edit a file by replacing a specific string with a new string. The oldString must be unique in the file unless replaceAll is true. Use replaceAll to replace all occurrences.",
+  "description": "通过将特定字符串替换为新字符串来编辑文件。除非 replaceAll 为 true，否则 oldString 必须在文件中唯一。使用 replaceAll 替换所有出现位置。",
   "icon": "file-pen",
   "annotations": {
     "destructiveHint": true
@@ -10,19 +10,19 @@
     "properties": {
       "path": {
         "type": "string",
-        "description": "Absolute or relative path to the file to edit."
+        "description": "要编辑的文件的绝对或相对路径"
       },
       "oldString": {
         "type": "string",
-        "description": "The exact string to find in the file."
+        "description": "要在文件中查找的精确字符串"
       },
       "newString": {
         "type": "string",
-        "description": "The string to replace oldString with."
+        "description": "用于替换 oldString 的字符串"
       },
       "replaceAll": {
         "type": "boolean",
-        "description": "If true, replace all occurrences of oldString (default false)."
+        "description": "如果为 true，替换所有出现的 oldString（默认 false）"
       }
     },
     "required": ["path", "oldString", "newString"],

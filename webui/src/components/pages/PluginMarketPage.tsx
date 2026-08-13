@@ -45,7 +45,7 @@ export function PluginMarketPage() {
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
       {/* Header */}
-      <div className="hidden flex-col gap-1 border-b border-border px-6 py-4 md:flex">
+      <div className="hidden flex-col gap-1 px-6 py-4 md:flex">
         <h1 className="text-xl font-semibold text-foreground">{t('plugins.title')}</h1>
         <p className="text-sm text-muted-foreground">{t('plugins.subtitle')}</p>
       </div>
@@ -55,7 +55,7 @@ export function PluginMarketPage() {
         value={tab}
         onValueChange={(v) => navigate(tabPath(v))}
       >
-        <div className="flex items-center justify-between gap-4 border-b border-border px-6 py-3">
+        <div className="flex items-center justify-between gap-4 px-6 py-3">
           <TabsList>
             <TabsTrigger value="plugins" className="gap-1.5">
               <Puzzle className="size-3.5" />
@@ -113,7 +113,7 @@ export function PluginsTab() {
       <div className="flex flex-col gap-2">
         {filteredPlugins.length === 0 && (
           <div className="py-12 text-center text-sm text-muted-foreground">
-            {t('plugins.noSkills', { defaultValue: '暂无插件' })}
+            {t('plugins.noPlugins')}
           </div>
         )}
         {filteredPlugins.map((plugin) => {
@@ -132,12 +132,12 @@ export function PluginsTab() {
                   )}
                   {plugin.type === 'module' && (
                     <Badge variant="outline" className="font-normal">
-                      module
+                      {t('plugins.moduleType')}
                     </Badge>
                   )}
                 </div>
                 <p className="truncate text-xs text-muted-foreground">
-                  {plugin.description || t('plugins.noSkills', { defaultValue: '无描述' })}
+                  {plugin.description || t('plugins.noDescription')}
                 </p>
               </div>
               <Switch
@@ -230,7 +230,7 @@ export function ToolsTab() {
                   </Badge>
                   {tool.annotations?.destructiveHint && (
                     <Badge variant="secondary" className="font-normal text-amber-600">
-                      destructive
+                      {t('plugins.destructive')}
                     </Badge>
                   )}
                 </div>

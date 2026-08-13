@@ -5,6 +5,7 @@
 import type { HttpRequest, HttpResponse, RouteHandler } from '../types';
 import type { ServiceRegistry } from '../../../core/types';
 import type { SpecRegistry } from '../../tools/specs';
+import { ErrorCode } from '../../../core/error-codes';
 
 /**
  * 统一 specs 路由处理器：无 query.id 时返回列表，有 query.id 时返回单条详情。
@@ -17,11 +18,11 @@ export function createSpecsHandler(services: ServiceRegistry): RouteHandler {
     const id = req.query.id;
     if (id) {
       if (!registry) {
-        return { status: 404, body: { error: 'spec registry not available' } };
+        return { status: 404, body: { error: ErrorCode.SPEC_REGISTRY_UNAVAILABLE } };
       }
       const spec = registry.get(id);
       if (!spec) {
-        return { status: 404, body: { error: `spec '${id}' not found` } };
+        return { status: 404, body: { error: ErrorCode.SPEC_NOT_FOUND } };
       }
       return {
         status: 200,

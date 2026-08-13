@@ -5,6 +5,7 @@
 //   - 静态：export default { execute: async (params, ctx) => {...} }
 //   - 工厂：export default function createExecute(env) { return { execute: ... } }
 
+import { t } from '../../core/i18n';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Environment, Logger } from '../../core/types';
@@ -58,7 +59,7 @@ export async function loadToolFromDir(
 
   // 1. 读取并校验 tool.json
   if (!existsSync(manifestPath)) {
-    logger.warn(`Tool dir skipped (no tool.json): ${dir}`);
+    logger.warn(t('tools.skipNoManifest', { dir }));
     return null;
   }
 
@@ -67,14 +68,14 @@ export async function loadToolFromDir(
     const raw = readFileSync(manifestPath, 'utf8');
     manifest = JSON.parse(raw) as ToolManifest;
   } catch (err) {
-    logger.warn(`Tool dir skipped (invalid tool.json): ${dir}`, {
+    logger.warn(t('tools.skipInvalidManifest', { dir }), {
       error: err instanceof Error ? err.message : String(err),
     });
     return null;
   }
 
   if (!isValidManifest(manifest)) {
-    logger.warn(`Tool dir skipped (tool.json missing required fields): ${dir}`);
+    logger.warn(t('tools.skipMissingFields', { dir }));
     return null;
   }
 
@@ -83,7 +84,7 @@ export async function loadToolFromDir(
   try {
     mod = await import(indexPath);
   } catch (err) {
-    logger.warn(`Tool dir skipped (failed to import index.ts): ${dir}`, {
+    logger.warn(t('tools.skipImportFailed', { dir }), {
       error: err instanceof Error ? err.message : String(err),
     });
     return null;
@@ -91,7 +92,7 @@ export async function loadToolFromDir(
 
   const exported = mod.default;
   if (!exported) {
-    logger.warn(`Tool dir skipped (index.ts has no default export): ${dir}`);
+    logger.warn(t('tools.skipNoDefaultExport', { dir }));
     return null;
   }
 
@@ -103,18 +104,18 @@ export async function loadToolFromDir(
     } else if (exported && typeof exported === 'object') {
       impl = exported as ToolExecuteImpl;
     } else {
-      logger.warn(`Tool dir skipped (invalid export shape): ${dir}`);
+      logger.warn(t('tools.skipInvalidExport', { dir }));
       return null;
     }
   } catch (err) {
-    logger.warn(`Tool factory invocation failed: ${dir}`, {
+    logger.warn(t('tools.factoryFailed', { dir }), {
       error: err instanceof Error ? err.message : String(err),
     });
     return null;
   }
 
   if (!impl || typeof impl.execute !== 'function') {
-    logger.warn(`Tool dir skipped (no execute function): ${dir}`);
+    logger.warn(t('tools.skipNoExecute', { dir }));
     return null;
   }
 

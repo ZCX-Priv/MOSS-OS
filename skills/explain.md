@@ -1,12 +1,12 @@
 ---
 name: explain
 description: >
-  Explain code or concept clearly, assuming intelligent but unfamiliar reader.
-  Accepts a {{topic}} placeholder in the prompt body, replaced by the caller.
+  清晰地解释代码或概念，假设读者聪明但不熟悉该领域。
+  接受 prompt body 中的 {{topic}} 占位符，由调用方替换。
 ---
 
-Explain {{topic}} clearly:
-- Assume the reader is intelligent but unfamiliar with this specific area.
-- Lead with the core idea, then expand with details.
-- Use concrete examples.
-- Call out common pitfalls and misconceptions.
+清晰地解释 {{topic}}：
+- 假设读者聪明但不熟悉这个特定领域。
+- 先讲核心思想，再展开细节。
+- 使用具体的例子。
+- 指出常见的陷阱和误解。

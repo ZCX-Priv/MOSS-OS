@@ -1,7 +1,7 @@
 {
   "name": "server",
   "version": "1.0.0",
-  "description": "HTTP + WebSocket server based on Bun.serve",
+  "description": "基于 Bun.serve 的 HTTP + WebSocket 服务器",
   "type": "module",
   "dependencies": {}
 }

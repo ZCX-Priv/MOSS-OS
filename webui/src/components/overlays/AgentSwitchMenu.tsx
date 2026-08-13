@@ -88,7 +88,7 @@ export function AgentSwitchMenu({ open, onClose }: AgentSwitchMenuProps) {
             )}
             {agents.length === 0 && (
               <div className="px-3 py-6 text-center text-xs text-muted-foreground">
-                {t('agentSwitch.builtIn', { defaultValue: '暂无 Agent' })}
+                {t('agentSwitch.noAgents')}
               </div>
             )}
           </CommandList>

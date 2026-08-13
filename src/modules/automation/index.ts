@@ -4,6 +4,7 @@
 // 调度：cron-parser 解析 + setTimeout 调度循环
 // 触发：调用 agent.engine.run({临时 sessionId, userMessage: prompt})，通过 server.instance.broadcastWS 推送事件
 
+import { t } from '../../core/i18n';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import cronParser from 'cron-parser';
@@ -194,7 +195,7 @@ class AutomationServiceImpl implements AutomationService {
     for (const a of this.data.automations) {
       this.scheduleNext(a);
     }
-    this.logger.info('Automation scheduler started', {
+    this.logger.info(t('automation.schedulerStarted'), {
       scheduled: this.data.automations.filter(a => a.enabled && !a.paused).length,
     });
   }
@@ -209,7 +210,7 @@ class AutomationServiceImpl implements AutomationService {
     for (const r of this.running.values()) {
       r.controller.abort();
     }
-    this.logger.info('Automation scheduler stopped');
+    this.logger.info(t('automation.schedulerStopped'));
   }
 
   // ========================================================================
@@ -234,7 +235,7 @@ class AutomationServiceImpl implements AutomationService {
       mkdirSync(dirname(this.storePath), { recursive: true });
       writeFileSync(this.storePath, JSON.stringify(this.data, null, 2), 'utf8');
     } catch (err) {
-      this.logger.error('Failed to save automations.json', {
+      this.logger.error(t('automation.saveFailed'), {
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -258,7 +259,7 @@ class AutomationServiceImpl implements AutomationService {
       mkdirSync(dirname(this.historyPath), { recursive: true });
       writeFileSync(this.historyPath, JSON.stringify(this.history, null, 2), 'utf8');
     } catch (err) {
-      this.logger.error('Failed to save automations-history.json', {
+      this.logger.error(t('automation.saveHistoryFailed'), {
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -302,7 +303,7 @@ class AutomationServiceImpl implements AutomationService {
     this.data.automations.push(item);
     this.save();
     this.scheduleNext(item);
-    this.logger.info(`Automation created: ${item.id} (${item.title})`);
+    this.logger.info(t('automation.created', { id: item.id, title: item.title }));
     return { ...item };
   }
 
@@ -323,7 +324,7 @@ class AutomationServiceImpl implements AutomationService {
     if (updated.enabled && !updated.paused) {
       this.scheduleNext(updated);
     }
-    this.logger.info(`Automation updated: ${id}`);
+    this.logger.info(t('automation.updated', { id }));
     return { ...updated };
   }
 
@@ -334,7 +335,7 @@ class AutomationServiceImpl implements AutomationService {
     this.data.automations.splice(idx, 1);
     this.save();
     // 历史保留（可后续清理）
-    this.logger.info(`Automation removed: ${id}`);
+    this.logger.info(t('automation.removed', { id }));
     return true;
   }
 
@@ -345,7 +346,7 @@ class AutomationServiceImpl implements AutomationService {
   trigger(id: string): { runId: string } {
     const item = this.data.automations.find(a => a.id === id);
     if (!item) {
-      throw new Error(`automation '${id}' not found`);
+      throw new Error(t('automation.notFoundThrow', { id }));
     }
     const runId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     // 异步执行，不阻塞
@@ -360,7 +361,7 @@ class AutomationServiceImpl implements AutomationService {
     this.data.automations[idx].paused = true;
     this.save();
     this.cancelSchedule(id);
-    this.logger.info(`Automation paused: ${id}`);
+    this.logger.info(t('automation.paused', { id }));
     return true;
   }
 
@@ -373,7 +374,7 @@ class AutomationServiceImpl implements AutomationService {
     if (this.data.automations[idx].enabled) {
       this.scheduleNext(this.data.automations[idx]);
     }
-    this.logger.info(`Automation resumed: ${id}`);
+    this.logger.info(t('automation.resumed', { id }));
     return true;
   }
 
@@ -393,7 +394,7 @@ class AutomationServiceImpl implements AutomationService {
     try {
       cronParser.parse(cron);
     } catch {
-      throw new Error(`invalid cron expression: ${cron}`);
+      throw new Error(t('automation.invalidCronThrow', { cron }));
     }
   }
 
@@ -414,7 +415,7 @@ class AutomationServiceImpl implements AutomationService {
       const interval = cronParser.parse(item.cron);
       next = interval.next().toDate();
     } catch (err) {
-      this.logger.warn(`Failed to parse cron for automation ${item.id}`, {
+      this.logger.warn(t('automation.cronParseFailed', { id: item.id }), {
         cron: item.cron,
         error: err instanceof Error ? err.message : String(err),
       });
@@ -436,7 +437,7 @@ class AutomationServiceImpl implements AutomationService {
         this.timers.delete(item.id);
         void this.executeRun(item, `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`)
           .catch(err => {
-            this.logger.error(`Automation run failed: ${item.id}`, {
+            this.logger.error(t('automation.runFailed', { id: item.id }), {
               error: err instanceof Error ? err.message : String(err),
             });
           })
@@ -501,7 +502,7 @@ class AutomationServiceImpl implements AutomationService {
     });
     this.eventBus.broadcast('automation:started', { automationId: item.id, runId }).catch(() => {});
 
-    this.logger.info(`Automation run started: ${item.id} (run ${runId})`);
+    this.logger.info(t('automation.runStarted', { id: item.id, runId }));
 
     // 临时 sessionId
     const sessionId = `auto_sess_${runId}`;
@@ -519,7 +520,7 @@ class AutomationServiceImpl implements AutomationService {
 
     try {
       if (!agent) {
-        throw new Error('agent.engine not available');
+        throw new Error(t('automation.agentEngineUnavailableThrow'));
       }
       const result = await agent.run({
         sessionId,
@@ -560,7 +561,7 @@ class AutomationServiceImpl implements AutomationService {
         status,
       }).catch(() => {});
 
-      this.logger.info(`Automation run finished: ${item.id} (run ${runId})`, {
+      this.logger.info(t('automation.runFinished', { id: item.id, runId }), {
         status,
         finishReason: result.finishReason,
       });
@@ -583,7 +584,7 @@ class AutomationServiceImpl implements AutomationService {
           error: errorMsg,
         },
       });
-      this.logger.error(`Automation run failed: ${item.id} (run ${runId})`, { error: errorMsg });
+      this.logger.error(t('automation.runFailedWithRun', { id: item.id, runId }), { error: errorMsg });
     } finally {
       this.running.delete(runId);
     }
@@ -631,7 +632,7 @@ class AutomationModule implements Module {
       registrantType: 'module',
     });
     this.service.startScheduler();
-    ctx.logger.info('Automation module initialized', {
+    ctx.logger.info(t('automation.moduleInitialized'), {
       automationCount: this.service.list().length,
       templateCount: this.service.listTemplates().length,
     });

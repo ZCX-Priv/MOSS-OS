@@ -14,6 +14,7 @@
 import type { HttpRequest, HttpResponse, RouteHandler } from '../types';
 import type { ServiceRegistry } from '../../../core/types';
 import type { AutomationService } from '../../automation';
+import { ErrorCode } from '../../../core/error-codes';
 
 function resolveService(services: ServiceRegistry): AutomationService | null {
   return services.tryResolve<AutomationService>('automation.service');
@@ -37,7 +38,7 @@ export function createCreateAutomationHandler(services: ServiceRegistry): RouteH
   return async (req: HttpRequest): Promise<HttpResponse> => {
     const svc = resolveService(services);
     if (!svc) {
-      return { status: 503, body: { error: 'automation.service not available' } };
+      return { status: 503, body: { error: ErrorCode.AUTOMATION_SERVICE_UNAVAILABLE } };
     }
     const body = (req.body ?? {}) as {
       title?: string;
@@ -47,7 +48,7 @@ export function createCreateAutomationHandler(services: ServiceRegistry): RouteH
       agentId?: string;
     };
     if (!body.title || !body.cron || !body.prompt) {
-      return { status: 400, body: { error: 'title, cron, prompt required' } };
+      return { status: 400, body: { error: ErrorCode.AUTOMATION_FIELDS_REQUIRED } };
     }
     try {
       const item = svc.create({
@@ -75,15 +76,15 @@ export function createGetAutomationHandler(services: ServiceRegistry): RouteHand
   return async (_req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
     const id = params?.id;
     if (!id) {
-      return { status: 400, body: { error: 'automation id required' } };
+      return { status: 400, body: { error: ErrorCode.AUTOMATION_ID_REQUIRED } };
     }
     const svc = resolveService(services);
     if (!svc) {
-      return { status: 503, body: { error: 'automation.service not available' } };
+      return { status: 503, body: { error: ErrorCode.AUTOMATION_SERVICE_UNAVAILABLE } };
     }
     const item = svc.get(id);
     if (!item) {
-      return { status: 404, body: { error: `automation '${id}' not found` } };
+      return { status: 404, body: { error: ErrorCode.AUTOMATION_NOT_FOUND } };
     }
     const history = svc.getHistory(id);
     return { status: 200, body: { ...item, history } };
@@ -94,17 +95,17 @@ export function createUpdateAutomationHandler(services: ServiceRegistry): RouteH
   return async (req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
     const id = params?.id;
     if (!id) {
-      return { status: 400, body: { error: 'automation id required' } };
+      return { status: 400, body: { error: ErrorCode.AUTOMATION_ID_REQUIRED } };
     }
     const svc = resolveService(services);
     if (!svc) {
-      return { status: 503, body: { error: 'automation.service not available' } };
+      return { status: 503, body: { error: ErrorCode.AUTOMATION_SERVICE_UNAVAILABLE } };
     }
     const body = (req.body ?? {}) as Record<string, unknown>;
     try {
       const item = svc.update(id, body);
       if (!item) {
-        return { status: 404, body: { error: `automation '${id}' not found` } };
+        return { status: 404, body: { error: ErrorCode.AUTOMATION_NOT_FOUND } };
       }
       return { status: 200, body: item };
     } catch (err) {
@@ -120,15 +121,15 @@ export function createDeleteAutomationHandler(services: ServiceRegistry): RouteH
   return async (_req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
     const id = params?.id;
     if (!id) {
-      return { status: 400, body: { error: 'automation id required' } };
+      return { status: 400, body: { error: ErrorCode.AUTOMATION_ID_REQUIRED } };
     }
     const svc = resolveService(services);
     if (!svc) {
-      return { status: 503, body: { error: 'automation.service not available' } };
+      return { status: 503, body: { error: ErrorCode.AUTOMATION_SERVICE_UNAVAILABLE } };
     }
     const deleted = svc.remove(id);
     if (!deleted) {
-      return { status: 404, body: { error: `automation '${id}' not found` } };
+      return { status: 404, body: { error: ErrorCode.AUTOMATION_NOT_FOUND } };
     }
     return { status: 200, body: { deleted: true } };
   };
@@ -142,11 +143,11 @@ export function createTriggerAutomationHandler(services: ServiceRegistry): Route
   return async (_req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
     const id = params?.id;
     if (!id) {
-      return { status: 400, body: { error: 'automation id required' } };
+      return { status: 400, body: { error: ErrorCode.AUTOMATION_ID_REQUIRED } };
     }
     const svc = resolveService(services);
     if (!svc) {
-      return { status: 503, body: { error: 'automation.service not available' } };
+      return { status: 503, body: { error: ErrorCode.AUTOMATION_SERVICE_UNAVAILABLE } };
     }
     try {
       const { runId } = svc.trigger(id);
@@ -164,15 +165,15 @@ export function createPauseAutomationHandler(services: ServiceRegistry): RouteHa
   return async (_req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
     const id = params?.id;
     if (!id) {
-      return { status: 400, body: { error: 'automation id required' } };
+      return { status: 400, body: { error: ErrorCode.AUTOMATION_ID_REQUIRED } };
     }
     const svc = resolveService(services);
     if (!svc) {
-      return { status: 503, body: { error: 'automation.service not available' } };
+      return { status: 503, body: { error: ErrorCode.AUTOMATION_SERVICE_UNAVAILABLE } };
     }
     const ok = svc.pause(id);
     if (!ok) {
-      return { status: 404, body: { error: `automation '${id}' not found` } };
+      return { status: 404, body: { error: ErrorCode.AUTOMATION_NOT_FOUND } };
     }
     return { status: 200, body: { paused: true } };
   };
@@ -182,15 +183,15 @@ export function createResumeAutomationHandler(services: ServiceRegistry): RouteH
   return async (_req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
     const id = params?.id;
     if (!id) {
-      return { status: 400, body: { error: 'automation id required' } };
+      return { status: 400, body: { error: ErrorCode.AUTOMATION_ID_REQUIRED } };
     }
     const svc = resolveService(services);
     if (!svc) {
-      return { status: 503, body: { error: 'automation.service not available' } };
+      return { status: 503, body: { error: ErrorCode.AUTOMATION_SERVICE_UNAVAILABLE } };
     }
     const ok = svc.resume(id);
     if (!ok) {
-      return { status: 404, body: { error: `automation '${id}' not found` } };
+      return { status: 404, body: { error: ErrorCode.AUTOMATION_NOT_FOUND } };
     }
     return { status: 200, body: { paused: false } };
   };
@@ -204,11 +205,11 @@ export function createAutomationHistoryHandler(services: ServiceRegistry): Route
   return async (_req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
     const id = params?.id;
     if (!id) {
-      return { status: 400, body: { error: 'automation id required' } };
+      return { status: 400, body: { error: ErrorCode.AUTOMATION_ID_REQUIRED } };
     }
     const svc = resolveService(services);
     if (!svc) {
-      return { status: 503, body: { error: 'automation.service not available' } };
+      return { status: 503, body: { error: ErrorCode.AUTOMATION_SERVICE_UNAVAILABLE } };
     }
     return { status: 200, body: { history: svc.getHistory(id) } };
   };

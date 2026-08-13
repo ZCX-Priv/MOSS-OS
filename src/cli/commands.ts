@@ -12,6 +12,7 @@ import {
 } from '../utils/pid';
 import { ServiceNames, type LogLevel } from '../core/types';
 import type { ServerInstance } from '../modules/server/types';
+import { t } from '../core/i18n';
 
 export interface ParsedArgs {
   command: string;
@@ -66,7 +67,7 @@ const VALID_COMMANDS = new Set([
 export async function runCommand(parsed: ParsedArgs): Promise<number> {
   const { command } = parsed;
   if (!VALID_COMMANDS.has(command)) {
-    console.error(`Unknown command: ${command}`);
+    console.error(t('cli.unknownCommand', { command }));
     printHelp();
     return 1;
   }
@@ -102,8 +103,8 @@ async function cmdStart(parsed: ParsedArgs): Promise<number> {
   // 单例检测：若已有进程运行，提示
   const existing = readPidFile(env.pidFile);
   if (existing && isProcessAlive(existing.pid)) {
-    console.error(`MOSS is already running (PID ${existing.pid})`);
-    console.error(`Use "moss status" to inspect, or "moss restart" to restart.`);
+    console.error(t('cli.alreadyRunning', { pid: existing.pid }));
+    console.error(t('cli.useStatusOrRestart'));
     return 1;
   }
   if (existing) {
@@ -140,7 +141,7 @@ async function startForeground(parsed: ParsedArgs): Promise<number> {
       port,
     });
 
-    console.log(`MOSS started (PID ${process.pid})`);
+    console.log(t('cli.started', { pid: process.pid }));
 
     // 注册退出钩子
     const cleanup = async () => {
@@ -157,7 +158,7 @@ async function startForeground(parsed: ParsedArgs): Promise<number> {
       // 永不 resolve，由信号处理退出
     });
   } catch (err) {
-    console.error('Failed to start MOSS:', err instanceof Error ? err.message : err);
+    console.error(t('cli.failedToStart', { error: err instanceof Error ? err.message : String(err) }));
     await kernel.stop().catch(() => {});
     return 1;
   }
@@ -189,12 +190,12 @@ async function startDaemon(): Promise<number> {
   while (Date.now() < deadline) {
     const info = readPidFile(env.pidFile);
     if (info && isProcessAlive(info.pid)) {
-      console.log(`MOSS daemon started (PID ${info.pid})`);
+      console.log(t('cli.daemonStarted', { pid: info.pid }));
       return 0;
     }
     await sleep(200);
   }
-  console.error('Daemon started but PID file not detected (process may have failed)');
+  console.error(t('cli.daemonPidFileMissing'));
   return 1;
 }
 
@@ -202,22 +203,22 @@ async function cmdStop(): Promise<number> {
   const env = detectEnvironment();
   const info = readPidFile(env.pidFile);
   if (!info) {
-    console.log('MOSS is not running (no PID file)');
+    console.log(t('cli.notRunningNoPid'));
     return 0;
   }
   if (!isProcessAlive(info.pid)) {
-    console.log(`MOSS process (PID ${info.pid}) is not alive, cleaning PID file`);
+    console.log(t('cli.processNotAlive', { pid: info.pid }));
     removePidFile(env.pidFile);
     return 0;
   }
-  console.log(`Stopping MOSS (PID ${info.pid})...`);
+  console.log(t('cli.stopping', { pid: info.pid }));
   const ok = await killProcess(info.pid, 5000);
   if (ok) {
     removePidFile(env.pidFile);
-    console.log('MOSS stopped');
+    console.log(t('cli.stopped'));
     return 0;
   }
-  console.error('Failed to stop MOSS process');
+  console.error(t('cli.failedToStop'));
   return 1;
 }
 
@@ -225,19 +226,19 @@ async function cmdStatus(): Promise<number> {
   const env = detectEnvironment();
   const info = readPidFile(env.pidFile);
   if (!info) {
-    console.log('MOSS: not running (no PID file)');
+    console.log(t('cli.statusNotRunningNoPid'));
     return 0;
   }
   const alive = isProcessAlive(info.pid);
   if (!alive) {
-    console.log(`MOSS: not running (stale PID file, PID ${info.pid})`);
+    console.log(t('cli.statusNotRunningStalePid', { pid: info.pid }));
     return 0;
   }
-  console.log(`MOSS: running`);
-  console.log(`  PID:        ${info.pid}`);
-  console.log(`  Started at: ${info.startedAt}`);
-  if (info.port) console.log(`  Port:       ${info.port}`);
-  console.log(`  Data dir:   ${env.dataDir}`);
+  console.log(t('cli.statusRunning'));
+  console.log(t('cli.statusPid', { pid: info.pid }));
+  console.log(t('cli.statusStartedAt', { startedAt: info.startedAt }));
+  if (info.port) console.log(t('cli.statusPort', { port: info.port }));
+  console.log(t('cli.statusDataDir', { dataDir: env.dataDir }));
 
   // 尝试通过 /api/health 获取运行时信息（模组/插件计数、服务列表）
   if (info.port) {
@@ -246,9 +247,9 @@ async function cmdStatus(): Promise<number> {
       const moduleCount = typeof health.modules === 'number' ? health.modules : 0;
       const pluginCount = typeof health.plugins === 'number' ? health.plugins : 0;
       const serviceCount = Array.isArray(health.services) ? health.services.length : 0;
-      console.log(`  Modules:    ${moduleCount}`);
-      console.log(`  Plugins:    ${pluginCount}`);
-      console.log(`  Services:   ${serviceCount}`);
+      console.log(t('cli.statusModules', { count: moduleCount }));
+      console.log(t('cli.statusPlugins', { count: pluginCount }));
+      console.log(t('cli.statusServices', { count: serviceCount }));
     }
   }
   return 0;
@@ -283,7 +284,7 @@ async function cmdRestart(): Promise<number> {
 }
 
 async function cmdUpdate(): Promise<number> {
-  console.log('Update check: please use "npm update -g moss" to update MOSS');
+  console.log(t('cli.updateHint'));
   return 0;
 }
 
@@ -297,38 +298,18 @@ async function cmdVersion(): Promise<number> {
     const fs = require('node:fs');
     const pkgPath = path.join(env.packageRoot, 'package.json');
     const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
-    console.log(`MOSS v${pkg.version}`);
-    console.log(`Bun ${env.runtimeVersion}`);
-    console.log(`Platform: ${env.platform}/${env.arch}`);
+    console.log(t('cli.versionMoss', { version: pkg.version }));
+    console.log(t('cli.versionRuntime', { version: env.runtimeVersion }));
+    console.log(t('cli.versionPlatform', { platform: env.platform, arch: env.arch }));
     return 0;
   } catch (err) {
-    console.error('Failed to read version:', err);
+    console.error(t('cli.failedToReadVersion', { error: err instanceof Error ? err.message : String(err) }));
     return 1;
   }
 }
 
 function printHelp(): void {
-  console.log(`MOSS - AI Agent Application
-
-Usage: moss <command> [options]
-
-Commands:
-  start       Start MOSS as a daemon (default)
-  stop        Stop the running daemon
-  status      Show running status
-  restart     Restart the daemon
-  update      Check for updates
-  version     Show version info
-  help        Show this help
-
-Options:
-  --foreground, -f    Run in foreground (no daemon)
-  --log-level <level> Set log level (debug/info/warn/error/fatal)
-
-Examples:
-  moss start --foreground --log-level debug
-  moss status
-`);
+  console.log(t('cli.helpText'));
 }
 
 function sleep(ms: number): Promise<void> {

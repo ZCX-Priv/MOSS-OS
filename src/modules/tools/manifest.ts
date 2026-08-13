@@ -137,7 +137,7 @@ function inferZodFromValue(val: unknown): z.ZodTypeAny {
 const BUILTIN_DIR = resolveBuiltinConfigDir();
 if (!BUILTIN_DIR) {
   // 不阻断启动，但提示开发者 builtin 目录缺失（config 会回退到空 tools schema）
-  console.warn('[manifest] builtin tools directory not found, tools config will be empty');
+  console.warn('[manifest] 未找到内置工具目录，工具配置将为空');
 }
 const TOOL_CONFIGS: Map<string, ToolConfigSpec> = BUILTIN_DIR
   ? loadToolConfigsFromDir(BUILTIN_DIR)

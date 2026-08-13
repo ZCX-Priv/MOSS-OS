@@ -1,6 +1,7 @@
 // src/plugins/server/http-router.ts
 // HTTP 路由装配：匹配、鉴权、请求体解析、分发。
 
+import { t } from '../../core/i18n';
 import type { HttpRequest, HttpResponse, Route, RouteHandler } from './types';
 import type { ConfigService, Logger } from '../../core/types';
 import { StaticAssets } from './static-assets';
@@ -38,7 +39,7 @@ export class HttpRouter {
       handler: route.handler,
       auth: route.auth,
     });
-    this.logger.debug(`Route registered: ${route.method.toUpperCase()} ${route.pattern}`);
+    this.logger.debug(t('server.routeRegistered', { method: route.method.toUpperCase(), pattern: route.pattern }));
   }
 
   /**
@@ -129,7 +130,7 @@ export class HttpRouter {
           body: resp.body,
         };
       } catch (err) {
-        this.logger.error(`Route handler error: ${method} ${path}`, {
+        this.logger.error(t('server.routeHandlerError', { method, path }), {
           error: err instanceof Error ? err.message : String(err),
         });
         return {

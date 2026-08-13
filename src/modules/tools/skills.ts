@@ -3,6 +3,7 @@
 // 首次启动时从包内 skills/ 播种内置模板到 ~/.moss/skills/（仅当目标目录不存在时）。
 // 支持热重载：监听用户 skills 目录变更，自动增删 skill。
 
+import { t } from '../../core/i18n';
 import { stat } from 'node:fs/promises';
 import { watch, type FSWatcher } from 'node:fs';
 import { join } from 'node:path';
@@ -117,15 +118,15 @@ function seedBuiltinSkills(builtinDir: string, userDir: string, logger: Logger):
         nodeFs.writeFileSync(join(userDir, file), content, 'utf8');
         count++;
       } catch (err) {
-        logger.warn(`Failed to seed skill file ${file}`, {
+        logger.warn(t('tools.seedSkillFailed', { file }), {
           error: err instanceof Error ? err.message : String(err),
         });
       }
     }
-    logger.info(`Seeded builtin skills to ${userDir}`, { count });
+    logger.info(t('tools.seededSkills', { dir: userDir }), { count });
   } catch (err) {
     // 内置目录不存在（开发模式异常）或 mkdir 失败
-    logger.warn('Failed to seed builtin skills', {
+    logger.warn(t('tools.seedBuiltinSkillsFailed'), {
       error: err instanceof Error ? err.message : String(err),
     });
   }
@@ -149,7 +150,7 @@ export function createSkillRegistry(env: Environment, logger: Logger): SkillRegi
 
   // 启动热重载监听（异步，不阻塞初始化）
   startWatch(reg, userDir, logger).catch(err => {
-    logger.debug('Skill hot-reload watch failed to start', {
+    logger.debug(t('tools.skillWatchFailed'), {
       error: err instanceof Error ? err.message : String(err),
     });
   });
@@ -174,7 +175,7 @@ function loadSkillsFromDirSync(reg: SkillRegistry, dir: string, logger: Logger):
         reg.reloadBySourceFile(full, skill);
       }
     } catch (err) {
-      logger.warn(`Failed to load skill file ${full}`, {
+      logger.warn(t('tools.loadSkillFailed', { file: full }), {
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -278,7 +279,7 @@ async function startWatch(reg: SkillRegistry, dir: string, logger: Logger): Prom
   try {
     watcher = watch(dir, { recursive: false });
   } catch (err) {
-    logger.debug('Skill directory watch unavailable', {
+    logger.debug(t('tools.skillDirWatchUnavailable'), {
       error: err instanceof Error ? err.message : String(err),
     });
     return;
@@ -298,22 +299,22 @@ async function startWatch(reg: SkillRegistry, dir: string, logger: Logger): Prom
               const skill = parseSkillFile(full);
               if (skill) {
                 reg.reloadBySourceFile(full, skill);
-                logger.info(`Skill reloaded: ${skill.name}`, { file: full });
+                logger.info(t('tools.skillReloaded', { name: skill.name }), { file: full });
               }
             } catch (err) {
-              logger.warn(`Failed to reload skill ${full}`, {
+              logger.warn(t('tools.reloadSkillFailed', { file: full }), {
                 error: err instanceof Error ? err.message : String(err),
               });
             }
           } else {
             reg.removeBySourceFile(full);
-            logger.info(`Skill removed: ${full}`);
+            logger.info(t('tools.skillRemoved', { file: full }));
           }
         })
         .catch(() => {
           // 文件已不存在
           reg.removeBySourceFile(full);
-          logger.info(`Skill removed: ${full}`);
+          logger.info(t('tools.skillRemoved', { file: full }));
         });
     } else if (eventType === 'change') {
       // 文件内容变更
@@ -321,10 +322,10 @@ async function startWatch(reg: SkillRegistry, dir: string, logger: Logger): Prom
         const skill = parseSkillFile(full);
         if (skill) {
           reg.reloadBySourceFile(full, skill);
-          logger.info(`Skill reloaded: ${skill.name}`, { file: full });
+          logger.info(t('tools.skillReloaded', { name: skill.name }), { file: full });
         }
       } catch (err) {
-        logger.warn(`Failed to reload skill ${full}`, {
+        logger.warn(t('tools.reloadSkillFailed', { file: full }), {
           error: err instanceof Error ? err.message : String(err),
         });
       }

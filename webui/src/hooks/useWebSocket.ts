@@ -26,6 +26,7 @@ import { toast } from 'sonner';
 import { useStore } from '../store';
 import { wsClient } from '../api/ws';
 import { pendingAssistant, pendingRunId } from '../lib/pending-assistant';
+import i18n from '../i18n';
 import type {
   AgentEvent,
   TaskMessage,
@@ -282,17 +283,20 @@ export function useWebSocket(): void {
       case 'error': {
         flushPending(); // 确保流式文本在终止前全部写入
         const event = (msg.payload ?? {}) as { message?: string };
+        const errorCode = event.message ?? '';
+        const localizedMessage = i18n.exists(`errors.${errorCode}`) ? i18n.t(`errors.${errorCode}`) : (errorCode || i18n.t('errors.UNKNOWN'));
         if (sessionId) {
           s.addMessage(sessionId, {
             id: genId(),
             role: 'assistant',
-            content: `Error: ${event.message ?? '未知错误'}`,
+            content: localizedMessage,
+            isError: true,
             timestamp: new Date().toISOString(),
           });
           s.setGenerating(sessionId, false);
           pendingAssistant.delete(sessionId);
         }
-        toast.error(event.message ?? '发生错误');
+        toast.error(localizedMessage);
         break;
       }
       case 'done': {

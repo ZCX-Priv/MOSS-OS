@@ -1,6 +1,6 @@
 {
   "name": "ask",
-  "description": "Ask the user a question and wait for their text reply. Use this when you need clarification, a decision, or information only the user can provide. Returns the user's reply text. The call blocks until the user responds or times out (5 minutes).",
+  "description": "向用户提问并等待文本回复。当需要澄清、决策或仅用户能提供的信息时使用。返回用户的回复文本。调用会阻塞直到用户响应或超时（5 分钟）。",
   "icon": "help-circle",
   "annotations": {
     "readOnlyHint": true,
@@ -11,7 +11,7 @@
     "properties": {
       "question": {
         "type": "string",
-        "description": "The question to ask the user. Be specific and concise."
+        "description": "要向用户提问的问题。请具体且简洁。"
       }
     },
     "required": ["question"],

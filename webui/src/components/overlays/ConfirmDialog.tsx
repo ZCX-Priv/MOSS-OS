@@ -3,6 +3,7 @@
 // 受控使用：open + onOpenChange + onConfirm。
 
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { TriangleAlertIcon, InfoIcon, CircleAlertIcon } from 'lucide-react';
 import {
   AlertDialog,
@@ -56,11 +57,12 @@ export function ConfirmDialog({
   onOpenChange,
   title,
   description,
-  confirmText = '确认',
-  cancelText = '取消',
+  confirmText,
+  cancelText,
   variant = 'info',
   onConfirm,
 }: ConfirmDialogProps) {
+  const { t } = useTranslation();
   const [loading, setLoading] = useState(false);
   const cfg = variantConfig[variant];
   const Icon = cfg.icon;
@@ -90,7 +92,7 @@ export function ConfirmDialog({
           </div>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={loading}>{cancelText}</AlertDialogCancel>
+          <AlertDialogCancel disabled={loading}>{cancelText ?? t('common.cancel')}</AlertDialogCancel>
           <AlertDialogAction
             onClick={(e) => {
               e.preventDefault();
@@ -99,7 +101,7 @@ export function ConfirmDialog({
             disabled={loading}
             className={cn(variant === 'danger' && cfg.actionClass)}
           >
-            {confirmText}
+            {confirmText ?? t('common.confirm')}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

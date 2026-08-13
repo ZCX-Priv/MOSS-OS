@@ -1,6 +1,7 @@
 // src/plugins/tools/registry.ts
 // 工具注册表：注册、查询、执行工具。
 
+import { t } from '../../core/i18n';
 import type { Logger, ConfigService } from '../../core/types';
 import type { Tool, ToolContext, ToolResult } from './types';
 import type { ToolRegistry } from '../contracts';
@@ -19,7 +20,7 @@ export class ToolRegistryImpl implements ToolRegistry {
 
   register(tool: Tool): void {
     if (this.tools.has(tool.name)) {
-      this.logger.warn(`Tool "${tool.name}" already registered, overriding`);
+      this.logger.warn(t('tools.alreadyRegistered', { name: tool.name }));
     }
     // 同步 sourceDir 索引
     if (tool.sourceDir) {
@@ -27,7 +28,7 @@ export class ToolRegistryImpl implements ToolRegistry {
       this.sourceDirIndex.set(tool.sourceDir, tool.name);
     }
     this.tools.set(tool.name, tool);
-    this.logger.debug(`Tool registered: ${tool.name}`);
+    this.logger.debug(t('tools.registered', { name: tool.name }));
   }
 
   unregister(name: string): void {
@@ -36,7 +37,7 @@ export class ToolRegistryImpl implements ToolRegistry {
       this.sourceDirIndex.delete(existing.sourceDir);
     }
     if (!this.tools.delete(name)) {
-      this.logger.warn(`Tool "${name}" not registered, cannot unregister`);
+      this.logger.warn(t('tools.notRegisteredUnregister', { name }));
     }
   }
 
@@ -53,12 +54,12 @@ export class ToolRegistryImpl implements ToolRegistry {
     // 同名工具若已被其他 sourceDir 占用，保留先注册者
     const existing = this.tools.get(tool.name);
     if (existing && existing.sourceDir && existing.sourceDir !== sourceDir) {
-      this.logger.warn(`Tool "${tool.name}" conflict (owned by ${existing.sourceDir}), skip reload from ${sourceDir}`);
+      this.logger.warn(t('tools.reloadConflict', { name: tool.name, owner: existing.sourceDir, dir: sourceDir }));
       return;
     }
     this.tools.set(tool.name, tool);
     this.sourceDirIndex.set(sourceDir, tool.name);
-    this.logger.debug(`Tool reloaded by sourceDir: ${tool.name} (${sourceDir})`);
+    this.logger.debug(t('tools.reloadedBySourceDir', { name: tool.name, dir: sourceDir }));
   }
 
   /** 按来源目录移除工具（文件删除时调用） */
@@ -67,7 +68,7 @@ export class ToolRegistryImpl implements ToolRegistry {
     if (name) {
       this.tools.delete(name);
       this.sourceDirIndex.delete(sourceDir);
-      this.logger.debug(`Tool removed by sourceDir: ${name} (${sourceDir})`);
+      this.logger.debug(t('tools.removedBySourceDir', { name, dir: sourceDir }));
     }
   }
 
@@ -119,7 +120,7 @@ export class ToolRegistryImpl implements ToolRegistry {
     const tool = this.tools.get(name);
     if (!tool) {
       return {
-        content: [{ type: 'text', text: `Error: Tool "${name}" not found` }],
+        content: [{ type: 'text', text: t('toolsExtra.toolNotFoundResult', { name }) }],
         isError: true,
       };
     }
@@ -153,7 +154,7 @@ export class ToolRegistryImpl implements ToolRegistry {
       if (requireConfirmation) {
         ctx.emit({
           type: 'confirm-required',
-          message: `Tool "${name}" requires confirmation`,
+          message: t('toolsExtra.toolRequiresConfirmation', { name }),
           details: params,
         });
       }
@@ -164,7 +165,7 @@ export class ToolRegistryImpl implements ToolRegistry {
       return result;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      this.logger.error(`Tool "${name}" execution failed`, { error: msg });
+      this.logger.error(t('tools.executionFailed', { name }), { error: msg });
       return {
         content: [{ type: 'text', text: `Error executing tool "${name}": ${msg}` }],
         isError: true,

@@ -1,7 +1,7 @@
 {
   "name": "daemon",
   "version": "1.0.0",
-  "description": "Daemon runtime: PID file management, graceful shutdown",
+  "description": "守护进程运行时：PID 文件管理、优雅关闭",
   "type": "module",
   "dependencies": {
     "server": "^1.0.0"

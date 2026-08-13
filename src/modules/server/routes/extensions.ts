@@ -4,6 +4,7 @@
 
 import type { HttpRequest, HttpResponse, RouteHandler } from '../types';
 import type { ServiceRegistry } from '../../../core/types';
+import { ErrorCode } from '../../../core/error-codes';
 
 interface ExtensionInfo {
   name: string;
@@ -40,16 +41,16 @@ export function createUpdateExtensionHandler(services: ServiceRegistry): RouteHa
   return async (req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
     const name = params?.name;
     if (!name) {
-      return { status: 400, body: { error: 'extension name required' } };
+      return { status: 400, body: { error: ErrorCode.EXTENSION_NAME_REQUIRED } };
     }
     const body = (req.body ?? {}) as { enabled?: boolean };
     if (body.enabled === undefined) {
-      return { status: 400, body: { error: 'enabled field required' } };
+      return { status: 400, body: { error: ErrorCode.EXTENSION_ENABLED_REQUIRED } };
     }
 
     const ext = services.tryResolve<KernelExtensionsService>('kernel.extensions');
     if (!ext) {
-      return { status: 503, body: { error: 'kernel.extensions service not available' } };
+      return { status: 503, body: { error: ErrorCode.EXTENSIONS_SERVICE_UNAVAILABLE } };
     }
 
     if (body.enabled) {

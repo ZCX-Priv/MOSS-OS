@@ -3,6 +3,7 @@
 // 结构：{ groups: TaskGroup[], tasks: TaskItem[] }
 // TaskItem.id 即 sessionId（简化模型，1 task ↔ 1 session）
 
+import { t } from '../../core/i18n';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import type { Environment, Logger } from '../../core/types';
@@ -16,6 +17,8 @@ export interface TaskItem {
   active?: boolean;
   /** 关联的 sessionId（task.id 即 sessionId） */
   sessionId?: string;
+  /** 分组内排序权重（小→前）；缺失视为最后，回退 createdAt 倒序 */
+  order?: number;
 }
 
 export interface TaskGroup {
@@ -56,7 +59,13 @@ export class TaskStore {
   listTasks(): TaskItem[] {
     return this.data.tasks
       .map(t => ({ ...t }))
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      .sort((a, b) => {
+        const oa = a.order ?? Number.MAX_SAFE_INTEGER;
+        const ob = b.order ?? Number.MAX_SAFE_INTEGER;
+        if (oa !== ob) return oa - ob;
+        // order 相同（含均缺失）时回退 createdAt 倒序
+        return b.createdAt.localeCompare(a.createdAt);
+      });
   }
 
   getTask(id: string): TaskItem | null {
@@ -67,17 +76,24 @@ export class TaskStore {
   createTask(title: string, groupId?: string): TaskItem {
     const now = new Date().toISOString();
     const id = crypto.randomUUID();
+    const gid = groupId ?? DEFAULT_GROUP_ID;
+    // 新任务置于分组末尾：取分组内现有最大 order + 1（无任务时 0）
+    const groupOrders = this.data.tasks
+      .filter(t => t.groupId === gid)
+      .map(t => t.order ?? -1);
+    const nextOrder = groupOrders.length ? Math.max(...groupOrders) + 1 : 0;
     const task: TaskItem = {
       id,
       title: title || '新任务',
-      groupId: groupId ?? DEFAULT_GROUP_ID,
+      groupId: gid,
       createdAt: now,
       updatedAt: now,
       sessionId: id, // task.id 即 sessionId
+      order: nextOrder,
     };
     this.data.tasks.push(task);
     this.save();
-    this.logger.debug(`Task created: ${id}`, { title, groupId: task.groupId });
+    this.logger.debug(t('agent.taskCreated', { id }), { title, groupId: task.groupId });
     return { ...task };
   }
 
@@ -95,6 +111,26 @@ export class TaskStore {
     const idx = this.data.tasks.findIndex(t => t.id === id);
     if (idx === -1) return false;
     this.data.tasks.splice(idx, 1);
+    this.save();
+    return true;
+  }
+
+  /**
+   * 按给定 id 顺序重写对应任务的 order（0,1,2...）。
+   * 通常入参为某分组内的全部任务 id，重排后组内顺序即入参顺序。
+   * 任一 id 不存在则整体失败、不写入。返回是否全部命中。
+   */
+  reorderTasks(taskIds: string[]): boolean {
+    const idToTask = new Map(this.data.tasks.map(t => [t.id, t]));
+    for (const id of taskIds) {
+      if (!idToTask.has(id)) return false;
+    }
+    const now = new Date().toISOString();
+    taskIds.forEach((id, idx) => {
+      const task = idToTask.get(id)!;
+      task.order = idx;
+      task.updatedAt = now;
+    });
     this.save();
     return true;
   }
@@ -188,7 +224,7 @@ export class TaskStore {
       mkdirSync(dirname(this.storePath), { recursive: true });
       writeFileSync(this.storePath, JSON.stringify(this.data, null, 2), 'utf8');
     } catch (err) {
-      this.logger.error('Failed to save tasks.json', {
+      this.logger.error(t('agent.saveTasksFailed'), {
         error: err instanceof Error ? err.message : String(err),
       });
     }

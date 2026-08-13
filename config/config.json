@@ -3,7 +3,8 @@
   "server": {
     "host": "127.0.0.1",
     "port": 7766,
-    "autoPort": false
+    "autoPort": false,
+    "locale": "zh"
   },
   "daemon": {
     "enabled": true,

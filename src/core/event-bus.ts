@@ -1,6 +1,7 @@
 // src/core/event-bus.ts
 // 事件总线（Hook 系统）：Filter 模式（链式数据修改）+ Action 模式（并行副作用）。
 
+import { t } from './i18n';
 import type {
   EventBus,
   EventBusSubscription,
@@ -85,7 +86,7 @@ class EventBusImpl implements EventBus {
           current = result as T;
         }
       } catch (err) {
-        this.logger.error(`Filter handler for "${event}" threw`, {
+        this.logger.error(t('eventBus.filterHandlerThrew', { event }), {
           scope: entry.scope,
           error: err instanceof Error ? err.message : String(err),
         });
@@ -106,14 +107,14 @@ class EventBusImpl implements EventBus {
       if (r.status === 'rejected') {
         failureCount++;
         const entry = list[idx];
-        this.logger.error(`Action handler for "${event}" failed`, {
+        this.logger.error(t('eventBus.actionHandlerFailed', { event }), {
           scope: entry.scope,
           error: r.reason instanceof Error ? r.reason.message : String(r.reason),
         });
       }
     });
     if (failureCount > 0) {
-      this.logger.warn(`Event "${event}" had ${failureCount}/${list.length} failed handlers`);
+      this.logger.warn(t('eventBus.handlersFailed', { event, failed: failureCount, total: list.length }));
     }
   }
 

@@ -3,6 +3,7 @@
 // 注意：实际的 detach/fork 在 CLI 命令中完成；此模组负责运行时的 PID 文件维护。
 // 清单来自 module.json，由 ExtensionManager 注入 manifest。
 
+import { t } from '../../core/i18n';
 import type { Module, ModuleContext, ModuleManifest } from '../../core/types';
 import { writePidFile, removePidFile } from '../../utils/pid';
 import type { ServerInstanceLike } from '../contracts';
@@ -17,7 +18,7 @@ class DaemonModule implements Module {
     this.ctx = ctx;
     const cfg = ctx.config.getAppConfig();
     if (!cfg.daemon.enabled) {
-      ctx.logger.info('Daemon module disabled by config');
+      ctx.logger.info(t('daemon.disabledByConfig'));
       return;
     }
 
@@ -32,7 +33,7 @@ class DaemonModule implements Module {
       port,
     });
 
-    ctx.logger.info('Daemon module initialized', {
+    ctx.logger.info(t('daemon.initialized'), {
       pid: process.pid,
       port,
       pidFile: ctx.env.pidFile,
@@ -47,12 +48,12 @@ class DaemonModule implements Module {
 
   async destroy(): Promise<void> {
     removePidFile(this.ctx.env.pidFile);
-    this.ctx.logger.info('Daemon module stopped, PID file removed');
+    this.ctx.logger.info(t('daemon.stopped'));
   }
 
   private registerShutdownHandlers(): void {
     const handle = async (signal: string) => {
-      this.ctx.logger.info(`Received ${signal}, shutting down gracefully`);
+      this.ctx.logger.info(t('daemon.receivedSignal', { signal }));
       // 通知其他模组
       await this.ctx.eventBus.broadcast('kernel:shutdown', { signal });
       // 清理 PID 文件

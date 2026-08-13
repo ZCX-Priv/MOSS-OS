@@ -4,6 +4,7 @@
 import type { HttpRequest, HttpResponse, RouteHandler } from '../types';
 import type { ServiceRegistry } from '../../../core/types';
 import type { MCPManager } from '../../contracts';
+import { ErrorCode } from '../../../core/error-codes';
 
 export function createListMcpServersHandler(services: ServiceRegistry): RouteHandler {
   return async (): Promise<HttpResponse> => {
@@ -30,11 +31,11 @@ export function createCallMcpToolHandler(services: ServiceRegistry): RouteHandle
   return async (req: HttpRequest): Promise<HttpResponse> => {
     const mgr = services.tryResolve<MCPManager>('mcp.manager');
     if (!mgr) {
-      return { status: 503, body: { error: 'MCP manager not available' } };
+      return { status: 503, body: { error: ErrorCode.MCP_MANAGER_UNAVAILABLE } };
     }
     const body = req.body as { server?: string; tool?: string; arguments?: unknown } | undefined;
     if (!body?.server || !body?.tool) {
-      return { status: 400, body: { error: 'server and tool required' } };
+      return { status: 400, body: { error: ErrorCode.MCP_SERVER_AND_TOOL_REQUIRED } };
     }
     try {
       const result = await mgr.callTool(body.server, body.tool, body.arguments ?? {});
@@ -52,11 +53,11 @@ export function createConnectMcpServerHandler(services: ServiceRegistry): RouteH
   return async (req: HttpRequest): Promise<HttpResponse> => {
     const mgr = services.tryResolve<MCPManager>('mcp.manager');
     if (!mgr) {
-      return { status: 503, body: { error: 'MCP manager not available' } };
+      return { status: 503, body: { error: ErrorCode.MCP_MANAGER_UNAVAILABLE } };
     }
     const body = req.body as { server?: string } | undefined;
     if (!body?.server) {
-      return { status: 400, body: { error: 'server required' } };
+      return { status: 400, body: { error: ErrorCode.MCP_SERVER_REQUIRED } };
     }
     try {
       await mgr.connect(body.server);
@@ -74,11 +75,11 @@ export function createDisconnectMcpServerHandler(services: ServiceRegistry): Rou
   return async (req: HttpRequest): Promise<HttpResponse> => {
     const mgr = services.tryResolve<MCPManager>('mcp.manager');
     if (!mgr) {
-      return { status: 503, body: { error: 'MCP manager not available' } };
+      return { status: 503, body: { error: ErrorCode.MCP_MANAGER_UNAVAILABLE } };
     }
     const body = req.body as { server?: string } | undefined;
     if (!body?.server) {
-      return { status: 400, body: { error: 'server required' } };
+      return { status: 400, body: { error: ErrorCode.MCP_SERVER_REQUIRED } };
     }
     try {
       await mgr.disconnect(body.server);

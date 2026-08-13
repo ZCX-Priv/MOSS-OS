@@ -31,6 +31,7 @@ import type {
   ResolveDirectoryResult,
   SuggestPath,
 } from '../types/api';
+import i18n from '../i18n';
 
 const BASE_URL = '';
 
@@ -56,7 +57,9 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     let msg = text;
     try {
       const json = JSON.parse(text);
-      msg = json.error ?? text;
+      const errorCode = json.error ?? text;
+      // 尝试通过 i18n 翻译错误码
+      msg = i18n.exists(`errors.${errorCode}`) ? i18n.t(`errors.${errorCode}`) : errorCode;
     } catch {
       // 非 JSON
     }
@@ -188,6 +191,8 @@ export const api = {
   updateTask: (id: string, patch: Partial<Pick<TaskItem, 'title' | 'groupId'>>) =>
     request<TaskItem>('PATCH', `/api/tasks/${id}`, patch),
   deleteTask: (id: string) => request<{ deleted: boolean }>('DELETE', `/api/tasks/${id}`),
+  reorderTasks: (taskIds: string[]) =>
+    request<{ reordered: boolean; tasks: TaskItem[] }>('PUT', '/api/tasks/reorder', { taskIds }),
 
   listTaskGroups: () => request<{ groups: TaskGroup[] }>('GET', '/api/task-groups'),
   createTaskGroup: (name: string) => request<TaskGroup>('POST', '/api/task-groups', { name }),
