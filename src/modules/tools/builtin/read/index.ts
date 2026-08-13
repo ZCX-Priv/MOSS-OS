@@ -3,8 +3,7 @@
 // 元数据（name/description/icon/annotations/inputSchema/config）见同目录 tool.json。
 
 import { existsSync, statSync } from 'node:fs';
-import { isAbsolute, normalize, resolve } from 'node:path';
-import { isBinaryFile, readLinesWithNumbers } from '../../../../utils/fs';
+import { isBinaryFile, readLinesWithNumbers, resolveWithinCwd } from '../../../../utils/fs';
 import type { ToolContext, ToolResult } from '../../types';
 
 export default {
@@ -14,7 +13,7 @@ export default {
       return { content: [{ type: 'text', text: 'Error: path is required' }], isError: true };
     }
 
-    const absPath = resolveSafe(p.path, ctx.cwd);
+    const absPath = resolveWithinCwd(p.path, ctx.cwd);
     if (!absPath) {
       return {
         content: [{ type: 'text', text: `Error: path "${p.path}" escapes working directory` }],
@@ -76,10 +75,3 @@ export default {
     }
   },
 };
-
-/** 解析路径并防越权：返回 null 表示越权 */
-function resolveSafe(path: string, cwd: string): string | null {
-  const base = cwd || process.cwd();
-  const abs = isAbsolute(path) ? normalize(path) : normalize(resolve(base, path));
-  return abs;
-}

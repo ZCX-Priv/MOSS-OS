@@ -90,6 +90,16 @@ export class HttpRouter {
     headers: Record<string, string>,
     rawBody: string,
   ): Promise<{ status: number; headers: Record<string, string>; body: unknown }> {
+    // 请求体大小上限，防止内存耗尽（DoS）
+    const MAX_BODY_BYTES = 2 * 1024 * 1024;
+    if (rawBody.length > MAX_BODY_BYTES) {
+      return {
+        status: 413,
+        headers: { 'Content-Type': 'application/json' },
+        body: { error: 'Request body too large' },
+      };
+    }
+
     // 匹配路由
     for (const route of this.routes) {
       if (route.method !== method.toUpperCase()) continue;
@@ -107,9 +117,17 @@ export class HttpRouter {
 
       // 构造 HttpRequest
       const params: Record<string, string> = {};
-      route.paramNames.forEach((name, idx) => {
-        params[name] = decodeURIComponent(match[idx + 1]);
-      });
+      try {
+        route.paramNames.forEach((name, idx) => {
+          params[name] = decodeURIComponent(match[idx + 1]);
+        });
+      } catch {
+        return {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+          body: { error: 'Invalid URL encoding in path parameter' },
+        };
+      }
 
       const body = parseBody(rawBody, headers['content-type'] ?? '');
       const req: HttpRequest = {

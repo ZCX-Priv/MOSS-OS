@@ -4,14 +4,21 @@
 // 元数据见同目录 tool.json。
 
 import { readdirSync, readFileSync, statSync, type Dirent } from 'node:fs';
-import { isAbsolute, normalize, join } from 'node:path';
-import { isBinaryFile } from '../../../../utils/fs';
+import { join } from 'node:path';
+import { isBinaryFile, resolveWithinCwd } from '../../../../utils/fs';
 import { stripBom } from '../../../../utils/encoding';
 import { globToRegex, IGNORED_DIRS } from '../glob';
 import type { ToolContext, ToolResult } from '../../types';
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const MAX_LINE_DISPLAY = 500;
+/** 正则长度上限，防止 LLM 注入超长模式 */
+const MAX_PATTERN_LENGTH = 500;
+
+/** 预检正则是否可能灾难性回溯（嵌套量词如 (a+)+ / (a*)* 等），是则拒绝 */
+function isRiskyRegex(pattern: string): boolean {
+  return /\([^()]*[+*{][^()]*\)[+*?{]/.test(pattern);
+}
 
 export default {
   async execute(params: unknown, ctx: ToolContext): Promise<ToolResult> {
@@ -26,6 +33,18 @@ export default {
     if (!p.pattern || typeof p.pattern !== 'string') {
       return { content: [{ type: 'text', text: 'Error: pattern is required' }], isError: true };
     }
+    if (p.pattern.length > MAX_PATTERN_LENGTH) {
+      return {
+        content: [{ type: 'text', text: `Error: pattern too long (max ${MAX_PATTERN_LENGTH} chars)` }],
+        isError: true,
+      };
+    }
+    if (isRiskyRegex(p.pattern)) {
+      return {
+        content: [{ type: 'text', text: 'Error: pattern rejected (potentially unsafe regex)' }],
+        isError: true,
+      };
+    }
 
     let regex: RegExp;
     try {
@@ -37,9 +56,19 @@ export default {
       };
     }
 
-    const searchPath = p.path
-      ? (isAbsolute(p.path) ? normalize(p.path) : normalize(join(ctx.cwd || process.cwd(), p.path)))
-      : (ctx.cwd || process.cwd());
+    let searchPath: string;
+    if (p.path) {
+      const confined = resolveWithinCwd(p.path, ctx.cwd);
+      if (!confined) {
+        return {
+          content: [{ type: 'text', text: `Error: path "${p.path}" escapes working directory` }],
+          isError: true,
+        };
+      }
+      searchPath = confined;
+    } else {
+      searchPath = ctx.cwd || process.cwd();
+    }
 
     if (!exists(searchPath)) {
       return {
@@ -142,7 +171,10 @@ export default {
 /** 递归收集文件，返回相对路径（/ 分隔）与绝对路径 */
 function collectFiles(root: string): Array<{ rel: string; abs: string }> {
   const results: Array<{ rel: string; abs: string }> = [];
-  const walk = (dir: string, prefix: string): void => {
+  let fileCount = 0;
+  let stop = false;
+  const walk = (dir: string, prefix: string, depth: number): void => {
+    if (stop || depth > 24) return;
     let entries: Dirent<string>[];
     try {
       entries = readdirSync(dir, { withFileTypes: true });
@@ -150,16 +182,22 @@ function collectFiles(root: string): Array<{ rel: string; abs: string }> {
       return;
     }
     for (const entry of entries) {
+      if (stop) return;
       if (entry.isDirectory()) {
         if (IGNORED_DIRS.has(entry.name)) continue;
-        walk(join(dir, entry.name), prefix ? `${prefix}/${entry.name}` : entry.name);
+        walk(join(dir, entry.name), prefix ? `${prefix}/${entry.name}` : entry.name, depth + 1);
       } else if (entry.isFile()) {
+        if (fileCount >= 50_000) {
+          stop = true;
+          return;
+        }
+        fileCount++;
         const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
         results.push({ rel, abs: join(dir, entry.name) });
       }
     }
   };
-  walk(root, '');
+  walk(root, '', 0);
   return results;
 }
 

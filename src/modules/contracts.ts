@@ -82,6 +82,8 @@ export interface AgentRunInput {
   userMessage: string;
   /** 模型名（可选，默认从配置） */
   model?: string;
+  /** Agent 配置 ID（可选；指定后按该 Agent 的 systemPrompt/model/tools/maxTurns/maxTokens 执行） */
+  agentId?: string;
   /** 工作目录 */
   cwd: string;
   /** 流式事件回调 */

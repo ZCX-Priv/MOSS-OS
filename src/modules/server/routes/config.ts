@@ -7,7 +7,10 @@ import { ErrorCode } from '../../../core/error-codes';
 
 export function createGetAppConfigHandler(config: ConfigService): RouteHandler {
   return async (): Promise<HttpResponse> => {
-    return { status: 200, body: config.getAppConfig() };
+    const cfg = config.getAppConfig();
+    // 脱敏：不回传鉴权令牌（避免经 HTTP 泄露；空 token 表示未设置）
+    const sanitized = { ...cfg, security: { ...cfg.security, authToken: '' } };
+    return { status: 200, body: sanitized };
   };
 }
 
@@ -30,7 +33,13 @@ export function createUpdateAppConfigHandler(config: ConfigService): RouteHandle
 
 export function createGetApiConfigHandler(config: ConfigService): RouteHandler {
   return async (): Promise<HttpResponse> => {
-    return { status: 200, body: config.getApiConfig() };
+    const cfg = config.getApiConfig();
+    // 脱敏：不回传每个模型的 apiKey（避免经 HTTP 泄露；前端编辑时留空表示不修改）
+    const sanitized = {
+      ...cfg,
+      models: cfg.models.map((m) => ({ ...m, apiKey: '' })),
+    };
+    return { status: 200, body: sanitized };
   };
 }
 

@@ -6,6 +6,7 @@ import { Slot } from "radix-ui"
 
 import { useTranslation } from "react-i18next"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { useResizable } from "@/hooks/use-resizable"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -27,9 +28,11 @@ import { PanelLeftIcon } from "lucide-react"
 
 const SIDEBAR_COOKIE_NAME = "sidebar_state"
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7
-const SIDEBAR_WIDTH = "16rem"
 const SIDEBAR_WIDTH_MOBILE = "18rem"
 const SIDEBAR_WIDTH_ICON = "3rem"
+const SIDEBAR_WIDTH_DEFAULT_PX = 256
+const SIDEBAR_WIDTH_MIN_PX = 240
+const SIDEBAR_WIDTH_MAX_PX = 480
 const SIDEBAR_KEYBOARD_SHORTCUT = "b"
 
 type SidebarContextProps = {
@@ -40,6 +43,8 @@ type SidebarContextProps = {
   setOpenMobile: (open: boolean) => void
   isMobile: boolean
   toggleSidebar: () => void
+  width: number
+  setWidth: (width: number) => void
 }
 
 const SidebarContext = React.createContext<SidebarContextProps | null>(null)
@@ -68,6 +73,12 @@ function SidebarProvider({
 }) {
   const isMobile = useIsMobile()
   const [openMobile, setOpenMobile] = React.useState(false)
+
+  // 侧边栏宽度（桌面端，可拖拽调整）
+  const [width, setWidth] = React.useState(SIDEBAR_WIDTH_DEFAULT_PX)
+  const clampWidth = React.useCallback((w: number) => {
+    return Math.min(SIDEBAR_WIDTH_MAX_PX, Math.max(SIDEBAR_WIDTH_MIN_PX, w))
+  }, [])
 
   // This is the internal state of the sidebar.
   // We use openProp and setOpenProp for control from outside the component.
@@ -122,8 +133,10 @@ function SidebarProvider({
       openMobile,
       setOpenMobile,
       toggleSidebar,
+      width,
+      setWidth: (w) => setWidth(clampWidth(w)),
     }),
-    [state, open, setOpen, isMobile, openMobile, setOpenMobile, toggleSidebar]
+    [state, open, setOpen, isMobile, openMobile, setOpenMobile, toggleSidebar, width, clampWidth]
   )
 
   return (
@@ -132,7 +145,7 @@ function SidebarProvider({
         data-slot="sidebar-wrapper"
         style={
           {
-            "--sidebar-width": SIDEBAR_WIDTH,
+            "--sidebar-width": `${width}px`,
             "--sidebar-width-icon": SIDEBAR_WIDTH_ICON,
             ...style,
           } as React.CSSProperties
@@ -163,7 +176,15 @@ function Sidebar({
   collapsible?: "offcanvas" | "icon" | "none"
 }) {
   const { t } = useTranslation()
-  const { isMobile, state, openMobile, setOpenMobile } = useSidebar()
+  const { isMobile, state, openMobile, setOpenMobile, setWidth } = useSidebar()
+
+  // 拖拽调整侧边栏宽度（桌面端展开态），使用 Pointer Capture 避免拖拽卡死
+  const { resizing, bind: resizeBind } = useResizable({
+    side: "right",
+    min: SIDEBAR_WIDTH_MIN_PX,
+    max: SIDEBAR_WIDTH_MAX_PX,
+    onChange: setWidth,
+  })
 
   if (collapsible === "none") {
     return (
@@ -236,6 +257,7 @@ function Sidebar({
           variant === "floating" || variant === "inset"
             ? "p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4))+2px)]"
             : "group-data-[collapsible=icon]:w-(--sidebar-width-icon) group-data-[side=left]:border-r group-data-[side=right]:border-l",
+          resizing && "!transition-none",
           className
         )}
         {...props}
@@ -247,6 +269,21 @@ function Sidebar({
         >
           {children}
         </div>
+        {/* 拖拽调整宽度手柄（仅桌面端展开态） */}
+        {state === "expanded" && (
+          <div
+            data-sidebar="resize-handle"
+            data-slot="sidebar-resize-handle"
+            role="separator"
+            aria-orientation="vertical"
+            {...resizeBind}
+            className={cn(
+              "absolute inset-y-0 z-20 hidden w-1.5 cursor-col-resize touch-none select-none md:block",
+              "after:absolute after:inset-y-0 after:start-1/2 after:w-[2px] after:-translate-x-1/2 after:bg-transparent after:transition-colors hover:after:bg-sidebar-border",
+              side === "left" ? "right-0" : "left-0"
+            )}
+          />
+        )}
       </div>
     </div>
   )
@@ -481,7 +518,7 @@ const sidebarMenuButtonVariants = cva(
       size: {
         default: "h-8 text-sm",
         sm: "h-7 text-xs",
-        lg: "h-12 text-sm group-data-[collapsible=icon]:p-0!",
+        lg: "h-12 text-sm group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:p-0!",
       },
     },
     defaultVariants: {

@@ -4,11 +4,15 @@
 // 元数据见同目录 tool.json。
 
 import { readdirSync, statSync, type Dirent } from 'node:fs';
-import { isAbsolute, normalize, join, sep } from 'node:path';
+import { join, sep } from 'node:path';
+import { resolveWithinCwd } from '../../../../utils/fs';
 import type { ToolContext, ToolResult } from '../../types';
 
 /** 递归遍历时跳过的目录名 */
 export const IGNORED_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.next', '.cache']);
+/** 遍历深度与文件数上限，防止超大目录阻塞事件循环 */
+const MAX_DEPTH = 24;
+const MAX_FILES = 50_000;
 
 export default {
   async execute(params: unknown, ctx: ToolContext): Promise<ToolResult> {
@@ -18,9 +22,18 @@ export default {
       return { content: [{ type: 'text', text: 'Error: pattern is required' }], isError: true };
     }
 
-    const base = p.path
-      ? (isAbsolute(p.path) ? normalize(p.path) : normalize(join(ctx.cwd || process.cwd(), p.path)))
-      : (ctx.cwd || process.cwd());
+    let base: string | null;
+    if (p.path) {
+      base = resolveWithinCwd(p.path, ctx.cwd);
+      if (!base) {
+        return {
+          content: [{ type: 'text', text: `Error: path "${p.path}" escapes working directory` }],
+          isError: true,
+        };
+      }
+    } else {
+      base = ctx.cwd || process.cwd();
+    }
 
     let stat;
     try {
@@ -86,7 +99,10 @@ export default {
  */
 function collectFiles(root: string): string[] {
   const results: string[] = [];
-  const walk = (dir: string, prefix: string): void => {
+  let fileCount = 0;
+  let stop = false;
+  const walk = (dir: string, prefix: string, depth: number): void => {
+    if (stop || depth > MAX_DEPTH) return;
     let entries: Dirent<string>[];
     try {
       entries = readdirSync(dir, { withFileTypes: true });
@@ -94,15 +110,21 @@ function collectFiles(root: string): string[] {
       return;
     }
     for (const entry of entries) {
+      if (stop) return;
       if (entry.isDirectory()) {
         if (IGNORED_DIRS.has(entry.name)) continue;
-        walk(join(dir, entry.name), prefix ? `${prefix}/${entry.name}` : entry.name);
+        walk(join(dir, entry.name), prefix ? `${prefix}/${entry.name}` : entry.name, depth + 1);
       } else if (entry.isFile()) {
+        if (fileCount >= MAX_FILES) {
+          stop = true;
+          return;
+        }
+        fileCount++;
         results.push(prefix ? `${prefix}/${entry.name}` : entry.name);
       }
     }
   };
-  walk(root, '');
+  walk(root, '', 0);
   return results;
 }
 

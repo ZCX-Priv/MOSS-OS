@@ -7,9 +7,12 @@ interface MossDBSchema extends DBSchema {
   };
 }
 
-const DB_NAME = 'moss-db';
+const DB_NAME = 'MOSS-DB';
 const DB_VERSION = 1;
 const SETTINGS_STORE = 'settings';
+
+/** 旧数据库名（改名前的 `moss-db`），用于一次性迁移 */
+const LEGACY_DB_NAME = 'moss-db';
 
 const memoryCache = new Map<string, unknown>();
 let dbPromise: Promise<IDBPDatabase<MossDBSchema>> | null = null;
@@ -50,9 +53,29 @@ export async function idbSet<T>(key: string, value: T): Promise<void> {
   await db.put(SETTINGS_STORE, value, key);
 }
 
-// 删除：同时清理内存缓存与 IndexedDB
-export async function idbDel(key: string): Promise<void> {
-  memoryCache.delete(key);
-  const db = await getDB();
-  await db.delete(SETTINGS_STORE, key);
+/**
+ * 一次性迁移：把改名前的旧库 `moss-db` 全部条目搬入新库 `MOSS-DB`（同时写入内存缓存），
+ * 完成后删除旧库。旧库不存在或迁移失败时静默忽略，不阻塞启动。
+ */
+export async function migrateLegacyDatabase(): Promise<void> {
+  let legacy: IDBPDatabase<MossDBSchema> | null = null;
+  try {
+    legacy = await openDB<MossDBSchema>(LEGACY_DB_NAME, DB_VERSION, {
+      upgrade(db) {
+        if (!db.objectStoreNames.contains(SETTINGS_STORE)) {
+          db.createObjectStore(SETTINGS_STORE);
+        }
+      },
+    });
+    const values = await legacy.getAll(SETTINGS_STORE);
+    const keys = await legacy.getAllKeys(SETTINGS_STORE);
+    for (let i = 0; i < keys.length; i++) {
+      await idbSet(String(keys[i]), values[i]);
+    }
+  } catch {
+    // 迁移失败静默，忽略
+  } finally {
+    legacy?.close();
+    indexedDB.deleteDatabase(LEGACY_DB_NAME);
+  }
 }

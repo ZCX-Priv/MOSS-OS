@@ -31,6 +31,22 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { useResizable } from '@/hooks/use-resizable';
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  KeyboardSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  horizontalListSortingStrategy,
+  useSortable,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { TaskInput } from '../shared/TaskInput';
 import { TodoProgressCard } from '../shared/TodoProgressCard';
 import { AskPromptCard } from '../shared/AskPromptCard';
@@ -39,7 +55,7 @@ import { useStore } from '../../store';
 import { useTask } from '../../hooks/useTask';
 import { api } from '../../api/http';
 import { wsClient } from '../../api/ws';
-import type { TaskMessage, TodoItem } from '../../types/api';
+import type { TaskMessage, TodoItem, SidebarTab } from '../../types/api';
 
 // 稳定引用的空数组，避免 useStore 选择器每次返回新 [] 触发 useSyncExternalStore 无限循环
 const EMPTY_MESSAGES: TaskMessage[] = [];
@@ -65,7 +81,27 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
   const { taskId = '' } = useParams<{ taskId: string }>();
   const navigate = useNavigate();
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
+  const [rightPanelWidth, setRightPanelWidth] = useState(320);
   const isMobile = useIsMobile();
+
+  // 右侧面板拖拽调宽（仅桌面端内嵌 aside）
+  const rightResize = useResizable({
+    side: 'left',
+    min: 240,
+    max: 560,
+    onChange: setRightPanelWidth,
+  });
+
+  // 右侧面板标签页拖拽排序
+  const tabSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor),
+  );
+  const handleTabDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    reorderSidebarTabs(String(active.id), String(over.id));
+  };
 
   const messages = useStore((s) => s.messagesBySession[taskId] ?? EMPTY_MESSAGES);
   const isGenerating = useStore((s) => s.generatingBySession[taskId] ?? false);
@@ -78,6 +114,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
   const addSidebarTab = useStore((s) => s.addSidebarTab);
   const removeSidebarTab = useStore((s) => s.removeSidebarTab);
   const setActiveSidebarTab = useStore((s) => s.setActiveSidebarTab);
+  const reorderSidebarTabs = useStore((s) => s.reorderSidebarTabs);
   const toolIconMap = useStore((s) => s.toolIconMap);
   const { sendMessage, abort } = useTask();
 
@@ -164,40 +201,22 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
       {/* Panel Header：标签页栏 + 加号下拉菜单 */}
       <div className="flex h-12 items-center gap-2 border-b border-border px-3">
         {/* 标签页栏 */}
-        <div className="flex flex-1 items-center gap-1.5 overflow-x-auto no-scrollbar">
-          {sidebarTabs.map((tab) => (
-            <div
-              key={tab.id}
-              onClick={() => setActiveSidebarTab(tab.id)}
-              className={cn(
-                'group relative flex cursor-pointer items-center gap-1.5 rounded-lg border px-3 py-1 text-sm transition-colors',
-                tab.id === activeTab?.id
-                  ? 'border-border bg-muted text-foreground'
-                  : 'border-transparent text-muted-foreground hover:bg-muted/50 hover:text-foreground',
-              )}
-            >
-              {tab.type === 'terminal' ? (
-                <Terminal className="size-3.5" />
-              ) : (
-                <List className="size-3.5" />
-              )}
-              <span className="max-w-[120px] truncate">{t(tab.title)}</span>
-              {/* hover 时显示 X 关闭按钮（单标签不显示） */}
-              {sidebarTabs.length > 1 && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    removeSidebarTab(tab.id);
-                  }}
-                  className="ml-0.5 hidden size-4 items-center justify-center rounded hover:bg-muted group-hover:flex"
-                >
-                  <X className="size-3" />
-                </button>
-              )}
+        <DndContext sensors={tabSensors} collisionDetection={closestCenter} onDragEnd={handleTabDragEnd}>
+          <SortableContext items={sidebarTabs.map((t) => t.id)} strategy={horizontalListSortingStrategy}>
+            <div className="flex flex-1 items-center gap-1.5 overflow-x-auto no-scrollbar">
+              {sidebarTabs.map((tab) => (
+                <SortableTab
+                  key={tab.id}
+                  tab={tab}
+                  isActive={tab.id === activeTab?.id}
+                  canShowClose={sidebarTabs.length > 1}
+                  onSelect={setActiveSidebarTab}
+                  onRemove={removeSidebarTab}
+                />
+              ))}
             </div>
-          ))}
-        </div>
+          </SortableContext>
+        </DndContext>
         {/* 加号下拉菜单：新建标签页（仅显示当前标签栏中未打开的类型） */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -391,10 +410,72 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
         </Sheet>
       ) : (
         rightPanelOpen && (
-          <aside className="flex w-80 flex-col border-l border-border bg-card">
+          <aside
+            className="relative flex flex-col border-l border-border bg-card"
+            style={{ width: rightPanelWidth }}
+          >
+            <div
+              {...rightResize.bind}
+              className="absolute inset-y-0 left-0 z-10 w-1.5 cursor-col-resize touch-none select-none after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] after:-translate-x-1/2 after:bg-transparent hover:after:bg-border"
+            />
             {rightPanelContent}
           </aside>
         )
+      )}
+    </div>
+  );
+}
+
+/** 右侧面板标签页（支持拖拽排序） */
+interface SortableTabProps {
+  tab: SidebarTab;
+  isActive: boolean;
+  canShowClose: boolean;
+  onSelect: (id: string) => void;
+  onRemove: (id: string) => void;
+}
+function SortableTab({ tab, isActive, canShowClose, onSelect, onRemove }: SortableTabProps) {
+  const { t } = useTranslation();
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: tab.id,
+  });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      {...listeners}
+      onClick={() => onSelect(tab.id)}
+      className={cn(
+        'group relative flex cursor-grab items-center gap-1.5 rounded-lg border px-3 py-1 text-sm transition-colors',
+        isDragging && 'z-10 opacity-80',
+        isActive
+          ? 'border-border bg-muted text-foreground'
+          : 'border-transparent text-muted-foreground hover:bg-muted/50 hover:text-foreground',
+      )}
+    >
+      {tab.type === 'terminal' ? (
+        <Terminal className="size-3.5" />
+      ) : (
+        <List className="size-3.5" />
+      )}
+      <span className="max-w-[120px] truncate">{t(tab.title)}</span>
+      {/* hover 时显示 X 关闭按钮（单标签不显示） */}
+      {canShowClose && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onRemove(tab.id);
+          }}
+          className="ml-0.5 hidden size-4 items-center justify-center rounded hover:bg-muted group-hover:flex"
+        >
+          <X className="size-3" />
+        </button>
       )}
     </div>
   );

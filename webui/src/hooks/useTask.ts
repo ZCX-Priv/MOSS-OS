@@ -91,13 +91,14 @@ export function useTask() {
       addMessage(sessionId, userMsg);
       setGenerating(sessionId, true);
 
-      // 6. 通过 WS 发送流式任务请求（带 runId）
+      // 6. 通过 WS 发送流式任务请求（带 runId + agentId）
       wsClient.send({
         type: 'task.stream',
         sessionId,
         payload: {
           message: content,
           model: state.currentModel || undefined,
+          agentId: state.currentAgent || undefined,
           cwd: state.workingDirectory || undefined,
           runId,
         },

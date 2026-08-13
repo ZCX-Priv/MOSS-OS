@@ -31,10 +31,22 @@ export function isPathInside(path: string, base: string): boolean {
  * 允许 base 自身和其下所有子路径；禁止 ../ 跳出。
  */
 export function assertPathInside(path: string, base: string): void {
-  const rel = relative(base, path);
-  if (rel.startsWith('..') || isAbsolute(rel)) {
+  if (!isPathInside(path, base)) {
     throw new Error(t('fs.pathEscapesBase', { path, base }));
   }
+}
+
+/**
+ * 解析工作目录下的路径并做严格隔离。
+ *  - 相对路径基于 cwd 解析，绝对路径直接使用
+ *  - 标准化后必须位于 cwd（含 cwd 自身）之内
+ *  - 越出 cwd 返回 null（调用方应拒绝访问）
+ */
+export function resolveWithinCwd(path: string, cwd: string): string | null {
+  const base = cwd || process.cwd();
+  const abs = isAbsolute(path) ? normalize(path) : normalize(resolve(base, path));
+  if (!isPathInside(abs, base)) return null;
+  return abs;
 }
 
 /**

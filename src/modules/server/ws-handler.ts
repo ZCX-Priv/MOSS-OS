@@ -12,8 +12,8 @@ import { ErrorCode } from '../../core/error-codes';
 interface ConnectionState {
   conn: WSConnection;
   sessionId?: string;
-  /** 当前正在运行的 agent.run 的 AbortController（用于中断） */
-  abortController?: AbortController;
+  /** 当前正在运行的 agent.run 的 AbortController，按 sessionId 索引（支持同连接多会话并发流） */
+  activeRuns: Map<string, AbortController>;
 }
 
 export class WsHandler {
@@ -33,15 +33,18 @@ export class WsHandler {
 
   /** 注册新连接 */
   registerConnection(conn: WSConnection): void {
-    this.states.set(conn.id, { conn });
+    this.states.set(conn.id, { conn, activeRuns: new Map() });
     this.logger.debug(t('server.wsConnected', { id: conn.id }));
   }
 
   /** 移除连接 */
   unregisterConnection(id: string): void {
     const state = this.states.get(id);
-    if (state?.abortController) {
-      state.abortController.abort();
+    if (state) {
+      for (const controller of state.activeRuns.values()) {
+        controller.abort();
+      }
+      state.activeRuns.clear();
     }
     this.states.delete(id);
     this.logger.debug(t('server.wsDisconnected', { id }));
@@ -87,6 +90,10 @@ export class WsHandler {
         return this.handleTaskSwitch(state, msg);
       case 'automation.run':
         return this.handleAutomationRun(state, msg);
+      case 'ping':
+        // 前端心跳探活，回 pong 确认连接存活
+        state.conn.send({ type: 'pong' });
+        return;
       default:
         return;
     }
@@ -126,6 +133,7 @@ export class WsHandler {
       model?: string;
       cwd?: string;
       runId?: string;
+      agentId?: string;
     };
 
     if (!payload.message) {
@@ -137,9 +145,9 @@ export class WsHandler {
     state.sessionId = sessionId;
     const runId = payload.runId;
 
-    // 中断控制
+    // 中断控制（按 sessionId 记录，支持并发流各自独立中断）
     const abortController = new AbortController();
-    state.abortController = abortController;
+    state.activeRuns.set(sessionId, abortController);
 
     const onEvent = (event: AgentEvent) => {
       state.conn.send({ type: event.type, sessionId: event.sessionId, payload: { ...event, runId } });
@@ -150,6 +158,7 @@ export class WsHandler {
         sessionId,
         userMessage: payload.message,
         model: payload.model,
+        agentId: payload.agentId,
         cwd: payload.cwd || process.cwd(),
         onEvent,
         signal: abortController.signal,
@@ -180,16 +189,17 @@ export class WsHandler {
         });
       }
     } finally {
-      // 仅当当前 controller 仍是自己时才清除，避免打断发送时误清新流的 controller
-      if (state.abortController === abortController) {
-        state.abortController = undefined;
+      // 仅当当前记录的仍是自己时才清除，避免误清新流的 controller
+      if (state.activeRuns.get(sessionId) === abortController) {
+        state.activeRuns.delete(sessionId);
       }
     }
   }
 
   private handleTaskAbort(state: ConnectionState, msg: WSMessage): void {
-    if (state.abortController && state.sessionId === msg.sessionId) {
-      state.abortController.abort();
+    const controller = state.activeRuns.get(msg.sessionId ?? '');
+    if (controller) {
+      controller.abort();
       this.logger.info(t('server.taskAborted', { sessionId: msg.sessionId ?? '' }));
     }
   }

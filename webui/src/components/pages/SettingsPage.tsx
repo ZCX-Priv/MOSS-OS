@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Outlet } from 'react-router-dom';
 import type { LucideIcon } from 'lucide-react';
 import {
@@ -158,6 +158,8 @@ export function GeneralSettings() {
   const { locale, setLocale } = useLocale();
   const sendShortcut = useStore((s) => s.sendShortcut);
   const setSendShortcut = useStore((s) => s.setSendShortcut);
+  // 主题切换动画的扩散圆心：记录最后一次点击选项的坐标
+  const themeOriginRef = useRef<{ x: number; y: number } | undefined>(undefined);
 
   return (
     <div className="flex flex-col gap-6 p-6">
@@ -172,11 +174,20 @@ export function GeneralSettings() {
               <div className="text-sm text-foreground">{t('settings.general.theme')}</div>
               <div className="text-xs text-muted-foreground">{t('settings.general.selectTheme')}</div>
             </div>
-            <Select value={mode} onValueChange={(v) => setMode(v as 'system' | 'light' | 'dark')}>
+            <Select
+              value={mode}
+              onValueChange={(v) =>
+                setMode(v as 'system' | 'light' | 'dark', themeOriginRef.current)
+              }
+            >
               <SelectTrigger className="w-40">
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent
+                onPointerDownCapture={(e) => {
+                  themeOriginRef.current = { x: e.clientX, y: e.clientY };
+                }}
+              >
                 <SelectItem value="system">
                   <Monitor className="size-3.5" />
                   {t('settings.general.system')}
@@ -380,6 +391,17 @@ export function ModelSettings() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingModel, setEditingModel] = useState<ModelItem | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
+  const modelDialogRequest = useStore((s) => s.modelDialogRequest);
+  const clearModelDialogRequest = useStore((s) => s.clearModelDialogRequest);
+
+  // 从模型菜单"添加自定义模型"跳转过来时自动打开添加弹窗
+  useEffect(() => {
+    if (modelDialogRequest) {
+      clearModelDialogRequest();
+      setEditingModel(null);
+      setDialogOpen(true);
+    }
+  }, [modelDialogRequest, clearModelDialogRequest]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),

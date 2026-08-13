@@ -5,7 +5,6 @@ import { Card } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -14,10 +13,12 @@ import {
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
 import type { OverlayType } from '../../types';
-import { useStore } from '../../store';
+import { useStore, DEFAULT_WORKING_DIRECTORY } from '../../store';
 import { ModelSelector } from '../overlays/ModelSelector';
+import { PermissionModeSelector } from '../overlays/PermissionModeSelector';
 import { useDirectoryPicker } from '../../hooks/useDirectoryPicker';
 import { DirectoryPickerDialog } from '../overlays/DirectoryPickerDialog';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 interface TaskInputProps {
   placeholder?: string;
@@ -77,7 +78,31 @@ export function TaskInput({
   };
 
   const folderLabel =
-    workingDirectory.split(/[\\/]/).pop() || t('taskInput.selectFolder');
+    !workingDirectory || workingDirectory === DEFAULT_WORKING_DIRECTORY
+      ? t('directoryPicker.default')
+      : workingDirectory.split(/[\\/]/).pop() || workingDirectory;
+
+  const dirName = (path: string) => {
+    const seg = path.split(/[\\/]/).filter(Boolean).pop();
+    return seg ?? path;
+  };
+
+  const renderDirItem = (name: string, path: string, onSelect: () => void) => (
+    <Tooltip delayDuration={500}>
+      <TooltipTrigger asChild>
+        <DropdownMenuItem onSelect={onSelect} className="gap-2 py-1.5">
+          <FolderOpen className="size-3.5 shrink-0 text-muted-foreground" />
+          <div className="flex min-w-0 flex-col">
+            <span className="truncate text-sm font-medium">{name}</span>
+            <span className="truncate font-mono text-xs text-muted-foreground">{path}</span>
+          </div>
+        </DropdownMenuItem>
+      </TooltipTrigger>
+      <TooltipContent side="right">
+        <span className="font-mono">{path}</span>
+      </TooltipContent>
+    </Tooltip>
+  );
 
   return (
     <>
@@ -90,58 +115,55 @@ export function TaskInput({
         rows={variant === 'home' ? 3 : 4}
         className="max-h-[40vh] resize-none border-0 bg-transparent px-2 shadow-none focus-visible:ring-0 dark:bg-transparent"
       />
-      <div className="flex items-center justify-between gap-2 px-1 pt-1.5">
-        <div className="flex items-center gap-1.5">
+      <div className="flex min-w-0 items-center justify-between gap-2 px-1 pt-1.5">
+        <div className="flex min-w-0 items-center gap-1.5">
           <Button variant="ghost" size="icon-sm" title={t('common.attachment')}>
             <Plus />
           </Button>
+          <PermissionModeSelector />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Badge
                 variant="secondary"
-                className="gap-1 rounded-full px-2 py-1 font-normal cursor-pointer"
-                title={workingDirectory || t('taskInput.selectFolder')}
+                className="min-w-0 shrink gap-1 h-7 rounded-[min(var(--radius-md),12px)] border border-border bg-transparent px-3 py-1 font-normal cursor-pointer [&>svg]:size-3.5"
+                title={
+                  !workingDirectory || workingDirectory === DEFAULT_WORKING_DIRECTORY
+                    ? t('directoryPicker.default')
+                    : workingDirectory
+                }
               >
                 {isResolving ? (
-                  <Loader2 className="size-3 animate-spin" />
+                  <Loader2 className="size-3 shrink-0 animate-spin" />
                 ) : (
-                  <FolderOpen className="size-3" />
+                  <FolderOpen className="size-3 shrink-0" />
                 )}
-                <span className="max-w-[10rem] truncate">{folderLabel}</span>
-                <ChevronDown className="size-3 opacity-70" />
+                <span className="min-w-0 flex-1 truncate">{folderLabel}</span>
+                <ChevronDown className="size-3 shrink-0 opacity-70" />
               </Badge>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" collisionPadding={8}>
-              <div className="p-2">
-                <Input
-                  value={workingDirectory}
-                  onChange={(e) => setWorkingDirectory(e.target.value)}
-                  placeholder={t('taskInput.selectFolder')}
-                  className="h-8 text-xs"
-                />
+            <DropdownMenuContent align="start" collisionPadding={8} className="min-w-[18rem]">
+              <div className="px-2 py-1 text-[11px] text-muted-foreground">
+                {t('directoryPicker.recent')}
               </div>
+              {renderDirItem(
+                t('directoryPicker.default'),
+                DEFAULT_WORKING_DIRECTORY,
+                () => setWorkingDirectory(DEFAULT_WORKING_DIRECTORY),
+              )}
+              {recentDirectories.length > 0 && (
+                <div className="max-h-[10.5rem] overflow-y-auto pr-1">
+                  {recentDirectories.map((dir) => (
+                    <div key={dir}>
+                      {renderDirItem(dirName(dir), dir, () => setWorkingDirectory(dir))}
+                    </div>
+                  ))}
+                </div>
+              )}
+              <DropdownMenuSeparator className="mx-2" />
               <DropdownMenuItem onSelect={() => pickDirectory()} className="gap-1.5">
                 <FolderInput className="size-3.5" />
                 <span>{t('directoryPicker.pickFolder')}</span>
               </DropdownMenuItem>
-              {recentDirectories.length > 0 && (
-                <>
-                  <DropdownMenuSeparator />
-                  <div className="px-2 py-1 text-[11px] text-muted-foreground">
-                    {t('directoryPicker.recent')}
-                  </div>
-                  {recentDirectories.map((dir) => (
-                    <DropdownMenuItem
-                      key={dir}
-                      onSelect={() => setWorkingDirectory(dir)}
-                      className="gap-1.5"
-                    >
-                      <FolderOpen className="size-3.5 shrink-0" />
-                      <span className="truncate font-mono text-xs">{dir}</span>
-                    </DropdownMenuItem>
-                  ))}
-                </>
-              )}
             </DropdownMenuContent>
           </DropdownMenu>
           <input
@@ -154,7 +176,7 @@ export function TaskInput({
             onChange={onInputPicked}
           />
         </div>
-        <div className="flex items-center gap-1.5">
+        <div className="flex min-w-0 items-center gap-1.5">
           <ModelSelector />
           <Button variant="ghost" size="icon-sm" title={t('common.voiceInput')}>
             <Mic />

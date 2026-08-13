@@ -525,6 +525,7 @@ class AutomationServiceImpl implements AutomationService {
       const result = await agent.run({
         sessionId,
         userMessage: item.prompt,
+        agentId: item.agentId,
         cwd: this.env.homeDir,
         onEvent,
         signal: controller.signal,

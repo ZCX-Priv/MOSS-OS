@@ -199,3 +199,26 @@ pre,
 .mono {
   font-family: "JetBrains Mono", "Fira Code", "SF Mono", "Cascadia Code", Consolas, monospace;
 }
+
+/* ============================================================
+   主题切换过渡（View Transitions API 圆形扩散揭示）
+   ============================================================
+   分工：扩散动画由 JS（lib/themeTransition.ts）用 WAAPI 对
+   ::view-transition-new(root) 做 clip-path 圆形揭示全权驱动；此处只负责
+   关掉浏览器默认的交叉淡化（否则旧快照同时淡出会透出底色）。
+   mix-blend-mode 复位为 normal：默认值 plus-lighter 仅适配双层淡化，
+   单向揭示下会产生错误提亮。
+
+   减弱动效无需在此处理：JS 守卫已直接跳过 startViewTransition。 */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+/* 旧主题快照静止垫底，新主题从扩散原点圆形擦入 */
+::view-transition-old(root) {
+  z-index: 1;
+}
+::view-transition-new(root) {
+  z-index: 2;
+}

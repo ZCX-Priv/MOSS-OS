@@ -8,7 +8,9 @@
 
 import { useState, useRef, useLayoutEffect } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useNavigate } from 'react-router-dom';
 import { SlidersHorizontal, Plus, ChevronDown } from 'lucide-react';
+import { useStore } from '../../store';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -48,6 +50,7 @@ function toBackendEffort(level: 'high' | 'max'): ThinkingEffort {
 
 export function ModelSelector() {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const { models, currentModel, setCurrent, updateModel } = useModels();
   const isMobile = useIsMobile();
   const currentModelName = models.find((m) => m.id === currentModel)?.name;
@@ -180,11 +183,11 @@ export function ModelSelector() {
         <Button
           variant="ghost"
           size="sm"
-          className="gap-1.5 rounded-full"
+          className="min-w-0 shrink gap-1.5 rounded-[min(var(--radius-md),12px)]"
           onClick={() => setSheetOpen(true)}
         >
-          <span>{currentModelName || t('modelSelector.auto')}</span>
-          <ChevronDown className="size-3 opacity-70" />
+          <span className="min-w-0 flex-1 truncate">{currentModelName || t('modelSelector.auto')}</span>
+          <ChevronDown className="size-3 shrink-0 opacity-70" />
         </Button>
         <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
           <SheetContent side="bottom" className="max-h-[80vh] overflow-y-auto p-4">
@@ -238,7 +241,14 @@ export function ModelSelector() {
                 );
               })}
               <DropdownMenuSeparator />
-              <button className="flex items-center gap-1.5 px-2 py-1.5 text-sm text-muted-foreground">
+              <button
+                className="flex items-center gap-1.5 px-2 py-1.5 text-sm text-muted-foreground"
+                onClick={() => {
+                  navigate('/settings/model');
+                  useStore.getState().requestModelDialog();
+                  setSheetOpen(false);
+                }}
+              >
                 <Plus className="size-3.5" />
                 {t('modelSelector.addCustomModel')}
               </button>
@@ -260,9 +270,9 @@ export function ModelSelector() {
       }}
     >
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="sm" className="gap-1.5 rounded-full">
-          <span>{currentModelName || t('modelSelector.auto')}</span>
-          <ChevronDown className="size-3 opacity-70" />
+        <Button variant="ghost" size="sm" className="min-w-0 shrink gap-1.5 rounded-[min(var(--radius-md),12px)]">
+          <span className="min-w-0 flex-1 truncate">{currentModelName || t('modelSelector.auto')}</span>
+          <ChevronDown className="size-3 shrink-0 opacity-70" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent
@@ -364,7 +374,13 @@ export function ModelSelector() {
           );
         })}
         <DropdownMenuSeparator />
-        <DropdownMenuItem className="gap-1.5 text-muted-foreground">
+        <DropdownMenuItem
+          className="gap-1.5 text-muted-foreground"
+          onSelect={() => {
+            navigate('/settings/model');
+            useStore.getState().requestModelDialog();
+          }}
+        >
           <Plus className="size-3.5" />
           {t('modelSelector.addCustomModel')}
         </DropdownMenuItem>

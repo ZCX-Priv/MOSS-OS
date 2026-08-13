@@ -192,7 +192,7 @@ export const zh = {
       lateNight: '夜深了',
       prompt: '，今天想做些什么？',
     },
-    thinking: '思考中...',
+    thinking: '响应中...',
     noTodos: '暂无待办',
     noContextFiles: '暂无上下文文件',
     noOthers: '暂无其他上下文',
@@ -320,6 +320,31 @@ export const zh = {
     placeholder: '帮你整理论文综述、编写 PPT、分析 Excel 等日常工作，输出专业级工作成果。',
     selectFolder: '选择文件夹…',
   },
+  permissionMode: {
+    title: '执行权限',
+    ask: {
+      label: '询问权限',
+      desc: 'CLI 请求时确认文件编辑和高风险命令',
+    },
+    autoEdit: {
+      label: '自动接受编辑',
+      desc: '无需询问即可写入磁盘',
+    },
+    auto: {
+      label: '自动模式',
+      desc: '会审查工具调用，并执行其认为安全的操作',
+      badge: '需开启一次',
+    },
+    plan: {
+      label: '计划模式',
+      desc: '仅架构和推理，不操作文件',
+    },
+    skip: {
+      label: '跳过权限',
+      desc: '对 Shell 和文件系统的完整工具访问',
+      badge: '高风险',
+    },
+  },
   directoryPicker: {
     resolved: '已自动识别路径',
     notFound: '未找到匹配目录，请手动输入',
@@ -328,6 +353,7 @@ export const zh = {
     resolving: '正在解析路径…',
     pickFolder: '选择文件夹',
     recent: '最近使用',
+    default: '默认',
   },
   pluginDropdown: {
     availablePlugins: '可用插件',

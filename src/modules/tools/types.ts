@@ -51,6 +51,8 @@ export interface ToolContext {
   signal?: AbortSignal;
   /** 向用户提问并阻塞等待回复（若运行环境不支持交互则 undefined） */
   askUser?: (question: string) => Promise<string>;
+  /** 请求用户确认（返回 boolean）。requireConfirmation 工具执行前会调用；未提供且需确认时保守拒绝。 */
+  confirm?: (question: string) => Promise<boolean>;
   /** 当前工具的配置（从 config.tools[name] 读取，供工具消费如 timeout/requireConfirmation） */
   toolConfig?: Record<string, unknown>;
 }

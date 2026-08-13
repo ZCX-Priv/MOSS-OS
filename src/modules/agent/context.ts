@@ -289,10 +289,3 @@ export function buildTools(
 
   return tools;
 }
-
-/** 把 tools 列表转为人类可读描述（用于无工具调用能力的 provider） */
-export function describeTools(tools: UnifiedTool[]): string {
-  if (tools.length === 0) return '';
-  const lines = tools.map(t => `- ${t.function.name}: ${t.function.description}`);
-  return '\n\n# Available Tools\n' + lines.join('\n');
-}

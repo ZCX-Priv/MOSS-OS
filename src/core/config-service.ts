@@ -207,7 +207,13 @@ class ConfigServiceImpl implements ConfigService {
 
   async updateAppConfig(patch: Partial<AppConfig>): Promise<void> {
     if (!this.appConfig) throw new Error(t('config.notLoaded'));
-    const merged = deepMerge(this.appConfig, patch) as AppConfig;
+    // 空 authToken 视为不修改（GET 已脱敏，避免前端 round-trip 清空令牌）
+    const clean = { ...patch } as Record<string, unknown>;
+    const sec = clean.security as Record<string, unknown> | undefined;
+    if (sec && typeof sec === 'object' && sec.authToken === '') {
+      delete sec.authToken;
+    }
+    const merged = deepMerge(this.appConfig, clean) as AppConfig;
     const parsed = appConfigSchema.parse(merged);
     this.appConfig = parsed;
     this.fs.writeText(join(this.env.configDir, 'config.json'), JSON.stringify(parsed, null, 2));
@@ -218,6 +224,13 @@ class ConfigServiceImpl implements ConfigService {
   async updateApiConfig(patch: Partial<ApiConfig>): Promise<void> {
     if (!this.apiConfig) throw new Error(t('config.notLoaded'));
     const merged = deepMerge(this.apiConfig, patch) as ApiConfig;
+    // 空 apiKey 视为不修改（GET 已脱敏），按 id 回填原值，避免 round-trip 清空密钥
+    for (const m of merged.models) {
+      if (!m.apiKey) {
+        const existing = this.apiConfig.models.find((x) => x.id === m.id);
+        if (existing) m.apiKey = existing.apiKey;
+      }
+    }
     const parsed = apiConfigSchema.parse(merged);
     this.apiConfig = parsed;
     this.fs.writeText(join(this.env.configDir, 'api.json'), JSON.stringify(parsed, null, 2));

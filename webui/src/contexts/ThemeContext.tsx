@@ -4,9 +4,14 @@ import {
   useState,
   useEffect,
   useCallback,
+  useRef,
   type ReactNode,
 } from 'react';
 import { idbGetSync, idbSet } from '../utils/idb';
+import {
+  runThemeTransition,
+  type ThemeTransitionOrigin,
+} from '../lib/themeTransition';
 
 export type ThemeMode = 'light' | 'dark' | 'system';
 export type ResolvedTheme = 'light' | 'dark';
@@ -14,7 +19,7 @@ export type ResolvedTheme = 'light' | 'dark';
 interface ThemeContextValue {
   mode: ThemeMode;
   resolvedTheme: ResolvedTheme;
-  setMode: (mode: ThemeMode) => void;
+  setMode: (mode: ThemeMode, origin?: ThemeTransitionOrigin) => void;
 }
 
 const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
@@ -42,12 +47,28 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(() =>
     resolveTheme(getInitialMode()),
   );
+  // 最近一次手动切换的扩散圆心（点击坐标）；系统自动切换无需设置
+  const originRef = useRef<ThemeTransitionOrigin | undefined>(undefined);
+  // 上一次实际应用的主题色，用于判断是否同色切换（同色时跳过动画）
+  const lastResolvedRef = useRef<ResolvedTheme>(resolvedTheme);
 
-  // 当 mode 变化时，同步 DOM 与 resolvedTheme
+  // 当 mode 变化时，同步 DOM 与 resolvedTheme（圆形扩散揭示动画）
   useEffect(() => {
     const resolved = resolveTheme(mode);
-    setResolvedTheme(resolved);
-    document.documentElement.classList.toggle('dark', resolved === 'dark');
+    if (resolved === lastResolvedRef.current) {
+      // 同色切换（如 system→light 且系统本就是浅色）：无需动画，直接同步
+      setResolvedTheme(resolved);
+      document.documentElement.classList.toggle('dark', resolved === 'dark');
+      return;
+    }
+    lastResolvedRef.current = resolved;
+    runThemeTransition(
+      () => {
+        setResolvedTheme(resolved);
+        document.documentElement.classList.toggle('dark', resolved === 'dark');
+      },
+      originRef.current,
+    );
   }, [mode]);
 
   // 跟随系统模式：监听系统主题变化
@@ -56,17 +77,23 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     const mql = window.matchMedia('(prefers-color-scheme: dark)');
     const handler = (e: MediaQueryListEvent) => {
       const resolved: ResolvedTheme = e.matches ? 'dark' : 'light';
-      setResolvedTheme(resolved);
-      document.documentElement.classList.toggle('dark', resolved === 'dark');
+      runThemeTransition(() => {
+        setResolvedTheme(resolved);
+        document.documentElement.classList.toggle('dark', resolved === 'dark');
+      });
     };
     mql.addEventListener('change', handler);
     return () => mql.removeEventListener('change', handler);
   }, [mode]);
 
-  const setMode = useCallback((newMode: ThemeMode) => {
-    setModeState(newMode);
-    void idbSet(STORAGE_KEY, newMode);
-  }, []);
+  const setMode = useCallback(
+    (newMode: ThemeMode, origin?: ThemeTransitionOrigin) => {
+      originRef.current = origin;
+      setModeState(newMode);
+      void idbSet(STORAGE_KEY, newMode);
+    },
+    [],
+  );
 
   return (
     <ThemeContext.Provider value={{ mode, resolvedTheme, setMode }}>

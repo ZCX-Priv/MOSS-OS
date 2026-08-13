@@ -157,6 +157,16 @@ export class ToolRegistryImpl implements ToolRegistry {
           message: t('toolsExtra.toolRequiresConfirmation', { name }),
           details: params,
         });
+        // 强制确认：阻塞等待用户允许，未获批准或无法确认则取消执行（安全默认拒绝）
+        const ok = await ctx.confirm?.(
+          t('toolsExtra.toolRequiresConfirmation', { name }),
+        );
+        if (ok === false || ok === undefined) {
+          return {
+            content: [{ type: 'text', text: `Tool "${name}" canceled (requires confirmation)` }],
+            isError: true,
+          };
+        }
       }
 
       // 注入 toolConfig 到 ctx，供工具自身读取（如 shell 的 timeout）

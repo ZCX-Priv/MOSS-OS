@@ -4,7 +4,7 @@
 
 import { t } from '../../../../core/i18n';
 import { existsSync, statSync, unlinkSync, rmSync } from 'node:fs';
-import { isAbsolute, normalize, resolve } from 'node:path';
+import { resolveWithinCwd } from '../../../../utils/fs';
 import type { ToolContext, ToolResult } from '../../types';
 
 export default {
@@ -15,8 +15,13 @@ export default {
       return { content: [{ type: 'text', text: 'Error: path is required' }], isError: true };
     }
 
-    const base = ctx.cwd || process.cwd();
-    const absPath = isAbsolute(p.path) ? normalize(p.path) : normalize(resolve(base, p.path));
+    const absPath = resolveWithinCwd(p.path, ctx.cwd);
+    if (!absPath) {
+      return {
+        content: [{ type: 'text', text: `Error: path "${p.path}" escapes working directory` }],
+        isError: true,
+      };
+    }
 
     if (!existsSync(absPath)) {
       return {

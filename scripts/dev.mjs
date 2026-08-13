@@ -40,47 +40,83 @@ function hasNpx() {
 }
 
 /**
- * 解析 bun 的真实 .exe 路径（Windows 专用）。
- * Windows 上 spawn('bun',...) 无 shell 时 CreateProcess 不查找 .cmd，
- * 若 bun 是 npm 全局安装的 bun.cmd 会 ENOENT。
- * 此函数用 where.exe 找到 bun.exe 真实路径，直接 spawn 绕开 cmd.exe 批处理中间层。
- * 非 Windows 或找不到时回退 'bun'。
+ * Windows 下将控制台代码页切换为 UTF-8，避免 MOSS 内核的中文日志乱码。
+ * 原因：MOSS 日志以 UTF-8 输出，而 cmd.exe 默认代码页为 936（GBK），
+ * 终端按 GBK 解码 UTF-8 字节导致乱码（如"收到"变成"鏀跺埌"）。
+ * 一次性同步调用，不参与 Ctrl+C 退出，无批处理弹窗副作用。
+ */
+function ensureUtf8Console() {
+  if (!isWin) return;
+  try {
+    // chcp 是 cmd 内置命令，需经 cmd.exe 执行
+    spawnSync(process.env.ComSpec || 'cmd.exe', ['/c', 'chcp 65001 >nul'], { stdio: 'ignore' });
+  } catch {
+    // 忽略失败，仅影响日志显示
+  }
+}
+
+/**
+ * 解析 bun 的真实二进制路径（Windows 专用，兼容 npm 全局安装的 bun.cmd shim）。
+ * Windows 上 spawn('bun',...) 无 shell 时 CreateProcess 只找 .exe，
+ * 若 bun 是 npm 全局安装（只有 bun.cmd shim），会 ENOENT。
+ * 本函数通过读取 bun.cmd 内容提取真实二进制路径，直接 spawn 绕开 cmd.exe 批处理，
+ * 从而消除 Ctrl+C 时的"终止批处理操作吗(Y/N)?"弹窗。
  */
 function resolveBunExe() {
   if (!isWin) return 'bun';
+  const candidates = [];
+
   try {
     const r = spawnSync('where', ['bun'], { encoding: 'utf8' });
     if (r.status === 0) {
-      const lines = r.stdout.split('\n').map(s => s.trim()).filter(Boolean);
-      // 优先选 .exe（Bun 官方安装器或其他 PATH 中的 bun.exe）
-      const exe = lines.find(l => l.toLowerCase().endsWith('.exe'));
+      const lines = r.stdout.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+      // 1) 优先选 .exe（Bun 官方安装器或其他 PATH 中的 bun.exe）
+      const exe = lines.find(l => /\.exe$/i.test(l));
       if (exe) return exe;
-      // 只有 .cmd（npm 全局安装）：从 npm shim 推断 bun.exe 真实路径。
-      // 检查多个候选，覆盖不同 bun 包结构。
-      const cmd = lines.find(l => l.toLowerCase().endsWith('.cmd'));
+
+      // 2) 只有 .cmd（npm 全局安装）：读取 bun.cmd 内容，提取 %~dp0 后的真实二进制路径
+      const cmd = lines.find(l => /\.cmd$/i.test(l));
       if (cmd) {
+        try {
+          const content = readFileSync(cmd, 'utf8');
+          const m = content.match(/%~dp0([^"'`\s]*\.(?:exe|cmd))/i)
+            || content.match(/%~dp0([^"'`\s]+)/i);
+          if (m) {
+            const p = resolve(dirname(cmd), m[1]);
+            if (existsSync(p)) return p;
+          }
+        } catch {
+          // 读 shim 失败，继续尝试候选路径
+        }
+        // 3) 常见候选路径（bun 包结构）
         const base = dirname(cmd);
-        const candidates = [
+        candidates.push(
           resolve(base, 'node_modules', 'bun', 'bin', 'bun.exe'),
+          resolve(base, 'node_modules', '@oven', 'bun', 'bin', 'bun.exe'),
           resolve(base, 'node_modules', 'bun', 'bun.exe'),
-          resolve(base, '.bun', 'bin', 'bun.exe'),
-        ];
-        for (const c of candidates) {
-          if (existsSync(c)) return c;
-        }
-        // 最后兜底：解析 bun.cmd 内容里的真实路径（npm shim 固定含二进制路径）
-        const shim = spawnSync('node', ['-e',
-          `const fs=require('fs');const p=process.argv[1];const s=fs.readFileSync(p,'utf8');const m=s.match(/~dp0\\\\[^\"]+bun\.exe/i);if(m)console.log(m[0].replace('~dp0',''))`,
-          cmd], { encoding: 'utf8' });
-        if (shim.status === 0 && shim.stdout.trim()) {
-          const p = resolve(dirname(cmd), shim.stdout.trim().replace(/^[\\/]+/, ''));
-          if (existsSync(p)) return p;
-        }
+        );
       }
     }
+
+    // 4) npm root -g 兜底（npm 全局安装目录）
+    const root = spawnSync('npm', ['root', '-g'], { encoding: 'utf8' });
+    if (root.status === 0 && root.stdout.trim()) {
+      const g = root.stdout.trim();
+      candidates.push(
+        resolve(g, 'bun', 'bin', 'bun.exe'),
+        resolve(g, '@oven', 'bun', 'bin', 'bun.exe'),
+      );
+    }
   } catch {
-    // where.exe 不可用，回退
+    // where.exe 不可用，继续候选路径
   }
+
+  for (const c of candidates) {
+    if (existsSync(c)) return c;
+  }
+
+  // 全部失败：回退 'bun'（走 shell），并打印诊断便于定位
+  log('backend', 'WARNING: 未能解析 bun.exe 真实路径，将回退到 shell（可能触发批处理弹窗）');
   return 'bun';
 }
 
@@ -126,6 +162,9 @@ function startBackend() {
   // "终止批处理操作吗(Y/N)?"，直接 spawn bun.exe 可彻底消除该弹窗。
   const bunExe = resolveBunExe();
   log('backend', `using bun: ${bunExe}`);
+  if (bunExe === 'bun') {
+    log('backend', 'Warning: bun 将以 shell 方式启动，Ctrl+C 时可能出现"终止批处理操作吗"提示');
+  }
   const child = spawnChild('backend', bunExe, args);
   child.once('error', err => {
     if (err.code === 'ENOENT') {
@@ -266,11 +305,13 @@ async function waitForBackend(port, timeoutMs = 20000) {
 }
 
 async function main() {
+  ensureUtf8Console();
   console.log('=========================================');
   console.log(' MOSS Dev');
   console.log(`  Backend: http://127.0.0.1:${BACKEND_PORT}`);
   console.log(' UI: http://127.0.0.1:3000');
-  console.log(' Tip: 使用 "node scripts/dev.mjs" 启动可避免 npm 在 Windows 的批处理弹窗');
+  console.log('  Tip: 用 "node scripts/dev.mjs" 启动可 0 弹窗（npm run dev 顶层无法消除）');
+  console.log('  Tip: 若日志无 "using bun" 行，说明还在跑旧版，请重启 dev');
   console.log('=========================================');
   startBackend();
   log('dev', 'Waiting for backend to be ready...');

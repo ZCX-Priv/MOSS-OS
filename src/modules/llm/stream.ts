@@ -16,17 +16,45 @@ export async function* parseSSEStream(
   const decoder = new TextDecoder();
   let buffer = '';
 
+  /**
+   * 从 buffer 头部切出一个完整 SSE 事件。
+   * 兼容 \n\n 与 \r\n\r\n 两种分隔符（不同供应商实现各异），取先出现者。
+   * 返回事件文本；无完整事件返回 null。
+   */
+  const shiftEvent = (): string | null => {
+    const idxLF = buffer.indexOf('\n\n');
+    const idxCRLF = buffer.indexOf('\r\n\r\n');
+    if (idxLF === -1 && idxCRLF === -1) return null;
+    const idx = idxCRLF === -1 ? idxLF : idxLF === -1 ? idxCRLF : Math.min(idxLF, idxCRLF);
+    const sepLen = buffer[idx] === '\r' ? 4 : 2;
+    const eventText = buffer.slice(0, idx);
+    buffer = buffer.slice(idx + sepLen);
+    return eventText;
+  };
+
+  // 空闲超时：响应头已返回但流中途停滞（弱网半开连接）时，取消读取避免无限挂起
+  const IDLE_TIMEOUT_MS = 120_000;
+  let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  const resetIdle = (): void => {
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      try {
+        reader.cancel();
+      } catch {
+        // 忽略
+      }
+    }, IDLE_TIMEOUT_MS);
+  };
+
   try {
     while (true) {
+      resetIdle();
       const { done, value } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
 
-      // 按事件分隔符 \n\n 切分
-      let idx: number;
-      while ((idx = buffer.indexOf('\n\n')) >= 0) {
-        const eventText = buffer.slice(0, idx);
-        buffer = buffer.slice(idx + 2);
+      let eventText: string | null;
+      while ((eventText = shiftEvent()) !== null) {
         const data = extractDataField(eventText);
         if (data !== null) {
           if (data === '[DONE]') return;
@@ -40,6 +68,7 @@ export async function* parseSSEStream(
       if (data !== null && data !== '[DONE]') yield data;
     }
   } finally {
+    if (idleTimer) clearTimeout(idleTimer);
     reader.releaseLock();
   }
 }

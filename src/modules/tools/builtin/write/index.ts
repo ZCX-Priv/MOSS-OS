@@ -4,7 +4,8 @@
 
 import { t } from '../../../../core/i18n';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, isAbsolute, normalize, resolve } from 'node:path';
+import { dirname } from 'node:path';
+import { resolveWithinCwd } from '../../../../utils/fs';
 import type { ToolContext, ToolResult } from '../../types';
 
 export default {
@@ -17,8 +18,13 @@ export default {
       return { content: [{ type: 'text', text: 'Error: content must be a string' }], isError: true };
     }
 
-    const base = ctx.cwd || process.cwd();
-    const absPath = isAbsolute(p.path) ? normalize(p.path) : normalize(resolve(base, p.path));
+    const absPath = resolveWithinCwd(p.path, ctx.cwd);
+    if (!absPath) {
+      return {
+        content: [{ type: 'text', text: `Error: path "${p.path}" escapes working directory` }],
+        isError: true,
+      };
+    }
     const createDirs = p.createDirs ?? true;
 
     try {

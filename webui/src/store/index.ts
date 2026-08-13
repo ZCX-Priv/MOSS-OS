@@ -4,6 +4,7 @@
 //       自动化/插件/Skills/Specs/MCP/配置/WS/面板。
 
 import { create } from 'zustand';
+import { idbSet } from '../utils/idb';
 import type {
   AppConfig,
   ApiConfig,
@@ -26,6 +27,7 @@ import type {
   ToolItem,
   SidebarTab,
   SidebarTabType,
+  PermissionMode,
 } from '../types/api';
 
 // ============================================================================
@@ -97,12 +99,22 @@ interface UIState {
   // --- 发送快捷键 ---
   sendShortcut: 'enter' | 'ctrl-enter';
 
-  // --- UI 面板（兼容旧 webui 逻辑，新 UI 当前未直接使用） ---
-  activePanel: 'task' | 'config' | 'api-config' | 'mcp' | 'sessions';
+  // --- 执行权限模式 ---
+  permissionMode: PermissionMode;
 
-  // --- 右侧边栏标签页（全局，localStorage 持久化） ---
+  // --- 右侧边栏标签页（全局，IndexedDB 持久化） ---
   sidebarTabs: SidebarTab[];
   activeSidebarTabId: string | null;
+}
+
+/** 从 IndexedDB 预填充后写入 store 的持久化状态（各字段可选，值非法时忽略） */
+export interface PersistedState {
+  workingDirectory?: string;
+  recentDirectories?: string[];
+  sendShortcut?: 'enter' | 'ctrl-enter';
+  permissionMode?: PermissionMode;
+  sidebarTabs?: SidebarTab[];
+  activeSidebarTabId?: string;
 }
 
 // ============================================================================
@@ -215,8 +227,13 @@ interface UIActions {
   // 发送快捷键
   setSendShortcut: (v: UIState['sendShortcut']) => void;
 
-  // 面板
-  setActivePanel: (p: UIState['activePanel']) => void;
+  // 执行权限模式
+  setPermissionMode: (v: UIState['permissionMode']) => void;
+
+  // 模型菜单"添加自定义模型"跳转设置页并打开弹窗的信号
+  modelDialogRequest: boolean;
+  requestModelDialog: () => void;
+  clearModelDialogRequest: () => void;
 
   // 右侧边栏标签页
   /** 新建标签页，返回新标签 id；自动设为活跃 */
@@ -227,9 +244,31 @@ interface UIActions {
   setActiveSidebarTab: (id: string) => void;
   /** 重命名标签页 */
   renameSidebarTab: (id: string, title: string) => void;
+  /** 拖拽重排标签页顺序 */
+  reorderSidebarTabs: (fromId: string, toId: string) => void;
+
+  // 持久化状态注入（main.tsx 预填充 IndexedDB 后、渲染前调用）
+  hydratePersisted: (patch: PersistedState) => void;
 }
 
 export type Store = UIState & UIActions;
+
+// ============================================================================
+// 工作目录：默认路径 + IndexedDB 持久化
+// ============================================================================
+
+/** 默认工作目录 */
+export const DEFAULT_WORKING_DIRECTORY = 'C:\\';
+
+/** 默认右侧边栏 summary 标签 */
+function defaultSidebarTab(): SidebarTab {
+  return {
+    id: 'default-summary',
+    type: 'summary',
+    title: 'task.taskSummary',
+    createdAt: Date.now(),
+  };
+}
 
 // ============================================================================
 // Store 实现
@@ -245,7 +284,7 @@ export const useStore = create<Store>((set) => ({
 
   // --- 输入 / 工作目录 ---
   input: '',
-  workingDirectory: '',
+  workingDirectory: DEFAULT_WORKING_DIRECTORY,
   recentDirectories: [],
 
   // --- 模型 ---
@@ -292,40 +331,17 @@ export const useStore = create<Store>((set) => ({
   wsStatus: 'closed',
 
   // --- 发送快捷键 ---
-  sendShortcut:
-    (localStorage.getItem('moss-send-shortcut') as 'enter' | 'ctrl-enter') ||
-    'ctrl-enter',
+  sendShortcut: 'ctrl-enter',
 
-  // --- 右侧边栏标签页（localStorage 持久化） ---
-  sidebarTabs: (() => {
-    try {
-      const raw = localStorage.getItem('moss-sidebar-tabs');
-      if (raw) {
-        const tabs = JSON.parse(raw) as SidebarTab[];
-        if (Array.isArray(tabs) && tabs.length > 0) return tabs;
-      }
-    } catch {
-      // 静默回退
-    }
-    return [
-      {
-        id: 'default-summary',
-        type: 'summary' as const,
-        title: 'task.taskSummary',
-        createdAt: Date.now(),
-      },
-    ];
-  })(),
-  activeSidebarTabId: (() => {
-    try {
-      return localStorage.getItem('moss-active-sidebar-tab') || 'default-summary';
-    } catch {
-      return 'default-summary';
-    }
-  })(),
+  // --- 执行权限模式 ---
+  permissionMode: 'ask',
 
-  // --- 面板 ---
-  activePanel: 'task',
+  // 模型菜单"添加自定义模型"跳转设置页并打开弹窗的信号
+  modelDialogRequest: false,
+
+  // --- 右侧边栏标签页（IndexedDB 持久化） ---
+  sidebarTabs: [defaultSidebarTab()],
+  activeSidebarTabId: 'default-summary',
 
   // --- Actions: 会话 ---
   setActiveSession: (id) => set({ activeSessionId: id }),
@@ -410,13 +426,18 @@ export const useStore = create<Store>((set) => ({
 
   // --- Actions: 输入 / 工作目录 ---
   setInput: (input) => set({ input }),
-  setWorkingDirectory: (workingDirectory) => set({ workingDirectory }),
+  setWorkingDirectory: (workingDirectory) => {
+    void idbSet('moss-working-directory', workingDirectory);
+    set({ workingDirectory });
+  },
   addRecentDirectory: (dir) =>
     set((state) => {
       const trimmed = dir.trim();
       if (!trimmed) return state;
       const rest = state.recentDirectories.filter((d) => d !== trimmed);
-      return { recentDirectories: [trimmed, ...rest].slice(0, 5) };
+      const next = [trimmed, ...rest].slice(0, 5);
+      void idbSet('moss-recent-directories', next);
+      return { recentDirectories: next };
     }),
 
   // --- Actions: 模型 ---
@@ -539,12 +560,19 @@ export const useStore = create<Store>((set) => ({
 
   // --- Actions: 发送快捷键 ---
   setSendShortcut: (sendShortcut) => {
-    localStorage.setItem('moss-send-shortcut', sendShortcut);
+    void idbSet('moss-send-shortcut', sendShortcut);
     set({ sendShortcut });
   },
 
-  // --- Actions: 面板 ---
-  setActivePanel: (activePanel) => set({ activePanel }),
+  // --- Actions: 执行权限模式 ---
+  setPermissionMode: (permissionMode) => {
+    void idbSet('moss-permission-mode', permissionMode);
+    set({ permissionMode });
+  },
+
+  // --- Actions: 模型添加弹窗信号 ---
+  requestModelDialog: () => set({ modelDialogRequest: true }),
+  clearModelDialogRequest: () => set({ modelDialogRequest: false }),
 
   // --- Actions: 右侧边栏标签页 ---
   addSidebarTab: (type, title, toolCallId) => {
@@ -555,12 +583,8 @@ export const useStore = create<Store>((set) => ({
     const tab: SidebarTab = { id, type, title, toolCallId, createdAt: Date.now() };
     set((state) => {
       const tabs = [...state.sidebarTabs, tab];
-      try {
-        localStorage.setItem('moss-sidebar-tabs', JSON.stringify(tabs));
-        localStorage.setItem('moss-active-sidebar-tab', id);
-      } catch {
-        // 静默
-      }
+      void idbSet('moss-sidebar-tabs', tabs);
+      void idbSet('moss-active-sidebar-tab', id);
       return { sidebarTabs: tabs, activeSidebarTabId: id };
     });
     return id;
@@ -572,34 +596,19 @@ export const useStore = create<Store>((set) => ({
       let activeId = state.activeSidebarTabId;
       // 删空则重建默认 summary 标签
       if (tabs.length === 0) {
-        tabs = [
-          {
-            id: 'default-summary',
-            type: 'summary',
-            title: 'task.taskSummary',
-            createdAt: Date.now(),
-          },
-        ];
+        tabs = [defaultSidebarTab()];
         activeId = 'default-summary';
       } else if (activeId === id) {
         // 删的是活跃标签 → 切到最后一个
         activeId = tabs[tabs.length - 1].id;
       }
-      try {
-        localStorage.setItem('moss-sidebar-tabs', JSON.stringify(tabs));
-        localStorage.setItem('moss-active-sidebar-tab', activeId ?? '');
-      } catch {
-        // 静默
-      }
+      void idbSet('moss-sidebar-tabs', tabs);
+      void idbSet('moss-active-sidebar-tab', activeId ?? '');
       return { sidebarTabs: tabs, activeSidebarTabId: activeId };
     }),
 
   setActiveSidebarTab: (id) => {
-    try {
-      localStorage.setItem('moss-active-sidebar-tab', id);
-    } catch {
-      // 静默
-    }
+    void idbSet('moss-active-sidebar-tab', id);
     set({ activeSidebarTabId: id });
   },
 
@@ -608,11 +617,51 @@ export const useStore = create<Store>((set) => ({
       const tabs = state.sidebarTabs.map((t) =>
         t.id === id ? { ...t, title } : t,
       );
-      try {
-        localStorage.setItem('moss-sidebar-tabs', JSON.stringify(tabs));
-      } catch {
-        // 静默
-      }
+      void idbSet('moss-sidebar-tabs', tabs);
       return { sidebarTabs: tabs };
+    }),
+
+  reorderSidebarTabs: (fromId, toId) =>
+    set((state) => {
+      const from = state.sidebarTabs.findIndex((t) => t.id === fromId);
+      const to = state.sidebarTabs.findIndex((t) => t.id === toId);
+      if (from < 0 || to < 0 || from === to) return state;
+      const tabs = [...state.sidebarTabs];
+      const [moved] = tabs.splice(from, 1);
+      tabs.splice(to, 0, moved);
+      void idbSet('moss-sidebar-tabs', tabs);
+      return { sidebarTabs: tabs };
+    }),
+
+  // --- Actions: 持久化状态注入 ---
+  hydratePersisted: (patch) =>
+    set((state) => {
+      const next: Partial<UIState> = {};
+      if (typeof patch.workingDirectory === 'string' && patch.workingDirectory.length > 0) {
+        next.workingDirectory = patch.workingDirectory;
+      }
+      if (Array.isArray(patch.recentDirectories)) {
+        const dirs = patch.recentDirectories.filter(
+          (d): d is string => typeof d === 'string',
+        );
+        next.recentDirectories = dirs.slice(0, 5);
+      }
+      if (patch.sendShortcut === 'enter' || patch.sendShortcut === 'ctrl-enter') {
+        next.sendShortcut = patch.sendShortcut;
+      }
+      if (
+        patch.permissionMode === 'ask' ||
+        patch.permissionMode === 'auto' ||
+        patch.permissionMode === 'skip'
+      ) {
+        next.permissionMode = patch.permissionMode;
+      }
+      if (Array.isArray(patch.sidebarTabs) && patch.sidebarTabs.length > 0) {
+        next.sidebarTabs = patch.sidebarTabs;
+      }
+      if (typeof patch.activeSidebarTabId === 'string' && patch.activeSidebarTabId.length > 0) {
+        next.activeSidebarTabId = patch.activeSidebarTabId;
+      }
+      return next;
     }),
 }));

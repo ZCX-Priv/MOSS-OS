@@ -322,6 +322,31 @@ export const en = {
     placeholder: 'Helps you organize literature reviews, write PPTs, analyze Excel and other daily work, delivering professional-grade output.',
     selectFolder: 'Select folder…',
   },
+  permissionMode: {
+    title: 'Execution Permission',
+    ask: {
+      label: 'Ask Permission',
+      desc: 'Confirm file edits and high-risk commands on CLI request',
+    },
+    autoEdit: {
+      label: 'Auto-Accept Edits',
+      desc: 'Write to disk without asking',
+    },
+    auto: {
+      label: 'Auto Mode',
+      desc: 'Reviews tool calls and executes safe operations',
+      badge: 'Enable once',
+    },
+    plan: {
+      label: 'Plan Mode',
+      desc: 'Architecture and reasoning only, no file operations',
+    },
+    skip: {
+      label: 'Skip Permissions',
+      desc: 'Full tool access to Shell and file system',
+      badge: 'High Risk',
+    },
+  },
   directoryPicker: {
     resolved: 'Path auto-resolved',
     notFound: 'No matching directory found, please enter manually',
@@ -330,6 +355,7 @@ export const en = {
     resolving: 'Resolving path…',
     pickFolder: 'Select folder',
     recent: 'Recent',
+    default: 'Default',
   },
   pluginDropdown: {
     availablePlugins: 'Available Plugins',
