@@ -324,24 +324,16 @@ export const zh = {
     title: '执行权限',
     ask: {
       label: '询问权限',
-      desc: 'CLI 请求时确认文件编辑和高风险命令',
-    },
-    autoEdit: {
-      label: '自动接受编辑',
-      desc: '无需询问即可写入磁盘',
+      desc: '操作前先询问',
     },
     auto: {
-      label: '自动模式',
-      desc: '会审查工具调用，并执行其认为安全的操作',
+      label: '自动审查',
+      desc: '安全操作直接执行',
       badge: '需开启一次',
     },
-    plan: {
-      label: '计划模式',
-      desc: '仅架构和推理，不操作文件',
-    },
     skip: {
-      label: '跳过权限',
-      desc: '对 Shell 和文件系统的完整工具访问',
+      label: '完全访问',
+      desc: '全程基本无需确认',
       badge: '高风险',
     },
   },

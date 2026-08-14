@@ -326,24 +326,16 @@ export const en = {
     title: 'Execution Permission',
     ask: {
       label: 'Ask Permission',
-      desc: 'Confirm file edits and high-risk commands on CLI request',
-    },
-    autoEdit: {
-      label: 'Auto-Accept Edits',
-      desc: 'Write to disk without asking',
+      desc: 'Ask before each action',
     },
     auto: {
-      label: 'Auto Mode',
-      desc: 'Reviews tool calls and executes safe operations',
+      label: 'Auto Review',
+      desc: 'Execute safe operations directly',
       badge: 'Enable once',
     },
-    plan: {
-      label: 'Plan Mode',
-      desc: 'Architecture and reasoning only, no file operations',
-    },
     skip: {
-      label: 'Skip Permissions',
-      desc: 'Full tool access to Shell and file system',
+      label: 'Full Access',
+      desc: 'Minimal confirmation needed throughout',
       badge: 'High Risk',
     },
   },

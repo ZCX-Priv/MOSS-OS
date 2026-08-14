@@ -107,8 +107,7 @@ export function PermissionModeSelector() {
               key={mode.id}
               onSelect={() => setPermissionMode(mode.id)}
               className={cn(
-                'gap-2.5 px-2 py-1.5 focus:text-foreground focus:**:text-foreground!',
-                isSelected && 'bg-muted text-foreground',
+                'gap-2.5 px-2 py-1.5 focus:text-inherit',
               )}
             >
               <Icon
@@ -118,7 +117,7 @@ export function PermissionModeSelector() {
                 <span className="text-sm leading-tight">
                   {t(mode.labelKey)}
                 </span>
-                <span className="group-hover/dropdown-menu-item:text-muted-foreground! text-[11px] leading-tight text-muted-foreground">
+                <span className="text-[11px] leading-tight text-muted-foreground">
                   {t(mode.descKey)}
                 </span>
               </div>
@@ -134,7 +133,7 @@ export function PermissionModeSelector() {
                 </Badge>
               )}
               {isSelected && (
-                <CheckCircle2 className="ml-auto size-4 shrink-0 fill-orange-500 text-white dark:text-orange-500" />
+                <CheckCircle2 className="ml-auto size-4 shrink-0 fill-primary text-primary-foreground" />
               )}
             </DropdownMenuItem>
           );

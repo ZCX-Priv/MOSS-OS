@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, memo } from 'react';
+import { useState, useEffect, useCallback, memo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
@@ -41,6 +41,7 @@ import {
   useSensors,
   type DragEndEvent,
 } from '@dnd-kit/core';
+import { restrictToHorizontalAxis, restrictToParentElement } from '@dnd-kit/modifiers';
 import {
   SortableContext,
   horizontalListSortingStrategy,
@@ -201,7 +202,12 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
       {/* Panel Header：标签页栏 + 加号下拉菜单 */}
       <div className="flex h-12 items-center gap-2 border-b border-border px-3">
         {/* 标签页栏 */}
-        <DndContext sensors={tabSensors} collisionDetection={closestCenter} onDragEnd={handleTabDragEnd}>
+        <DndContext
+          sensors={tabSensors}
+          collisionDetection={closestCenter}
+          modifiers={[restrictToHorizontalAxis, restrictToParentElement]}
+          onDragEnd={handleTabDragEnd}
+        >
           <SortableContext items={sidebarTabs.map((t) => t.id)} strategy={horizontalListSortingStrategy}>
             <div className="flex flex-1 items-center gap-1.5 overflow-x-auto no-scrollbar">
               {sidebarTabs.map((tab) => (
@@ -439,8 +445,19 @@ function SortableTab({ tab, isActive, canShowClose, onSelect, onRemove }: Sortab
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: tab.id,
   });
+  // 追踪拖拽状态：拖拽结束后抑制紧随的 click 事件
+  const wasDragRef = useRef(false);
+  useEffect(() => {
+    if (isDragging) {
+      wasDragRef.current = true;
+    } else if (wasDragRef.current) {
+      const timer = setTimeout(() => { wasDragRef.current = false; });
+      return () => clearTimeout(timer);
+    }
+  }, [isDragging]);
+  const restrictedTransform = transform ? { ...transform, y: 0 } : null;
   const style = {
-    transform: CSS.Transform.toString(transform),
+    transform: CSS.Transform.toString(restrictedTransform),
     transition,
   };
   return (
@@ -449,7 +466,13 @@ function SortableTab({ tab, isActive, canShowClose, onSelect, onRemove }: Sortab
       style={style}
       {...attributes}
       {...listeners}
-      onClick={() => onSelect(tab.id)}
+      onClick={() => {
+        if (wasDragRef.current) {
+          wasDragRef.current = false;
+          return;
+        }
+        onSelect(tab.id);
+      }}
       className={cn(
         'group relative flex cursor-grab items-center gap-1.5 rounded-lg border px-3 py-1 text-sm transition-colors',
         isDragging && 'z-10 opacity-80',
