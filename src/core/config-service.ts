@@ -16,6 +16,7 @@ import type {
   ModelConfig,
 } from './types';
 import { buildToolsSchema, buildToolsDefaults } from '../modules/tools/manifest';
+import { DEFAULT_FILE_HISTORY_CONFIG } from '../modules/file-history/types';
 
 // ============================================================================
 // Zod Schemas
@@ -40,6 +41,13 @@ const modelConfigSchema: z.ZodType<ModelConfig> = z.object({
   apiKey: z.string(),
   thinking: providerThinkingSchema,
   contextWindow: z.string().optional(),
+});
+
+const fileHistorySchema = z.object({
+  enabled: z.boolean(),
+  maxBackupsPerFile: z.number().int().min(1).max(100),
+  transcriptEnabled: z.boolean(),
+  backupRetentionDays: z.number().int().min(0).max(365),
 });
 
 const appConfigSchema = z.object({
@@ -72,6 +80,8 @@ const appConfigSchema = z.object({
     authToken: z.string(),
     bindLocalhostOnly: z.boolean(),
   }),
+  // fileHistory 可选，缺失时用默认值（向后兼容旧配置）
+  fileHistory: fileHistorySchema.optional(),
 });
 
 const apiConfigSchema = z.object({
@@ -99,6 +109,7 @@ export function defaultAppConfig(): AppConfig {
     tools: buildToolsDefaults() as AppConfig['tools'],
     mcpServers: {},
     security: { authToken: '', bindLocalhostOnly: true },
+    fileHistory: { ...DEFAULT_FILE_HISTORY_CONFIG },
   };
 }
 

@@ -34,7 +34,10 @@
     "@modelcontextprotocol/sdk": "^1.0.0",
     "cron-parser": "^5.7.0",
     "iconv-lite": "^0.7.3",
+    "mammoth": "^1.12.1",
     "nativefiledialog-for-bun": "^0.3.2",
+    "pdf-parse": "^2.4.5",
+    "xlsx": "^0.18.5",
     "zod": "^3.23.8"
   },
   "devDependencies": {

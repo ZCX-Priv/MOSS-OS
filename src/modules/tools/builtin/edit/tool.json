@@ -1,6 +1,6 @@
 {
   "name": "edit",
-  "description": "通过将特定字符串替换为新字符串来编辑文件。除非 replaceAll 为 true，否则 oldString 必须在文件中唯一。使用 replaceAll 替换所有出现位置。",
+  "description": "通过将特定字符串替换为新字符串来编辑文件。除非 replaceAll 为 true，否则 oldString 必须在文件中唯一。强制 read-before-overwrite：编辑已存在文件前必须先调用 read 工具。自动原子写入（防损坏）+ 哈希备份（支持 undo）+ diff 返回。",
   "icon": "file-pen",
   "annotations": {
     "destructiveHint": true
@@ -29,7 +29,15 @@
     "additionalProperties": false
   },
   "config": {
-    "defaults": { "enabled": true, "requireConfirmation": false },
-    "schema": {}
+    "defaults": {
+      "enabled": true,
+      "requireConfirmation": false,
+      "trackHistory": true,
+      "requireReadBeforeOverwrite": true
+    },
+    "schema": {
+      "trackHistory": { "type": "boolean" },
+      "requireReadBeforeOverwrite": { "type": "boolean" }
+    }
   }
 }

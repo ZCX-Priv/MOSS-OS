@@ -42,6 +42,11 @@ import {
   createReorderModelsHandler,
 } from './routes/models';
 import { createListTodosHandler, createReplaceTodosHandler } from './routes/todos';
+import {
+  createListFileHistoryHandler,
+  createUndoFileHistoryHandler,
+  createRestoreFileHistoryHandler,
+} from './routes/file-history';
 import { createSessionContextHandler } from './routes/session-context';
 import {
   createListTasksHandler,
@@ -213,6 +218,11 @@ class ServerModule implements Module {
     // todos
     this.router.addRoute({ method: 'GET', pattern: '/api/todos/:sessionId', handler: createListTodosHandler(env), auth: true });
     this.router.addRoute({ method: 'PUT', pattern: '/api/todos/:sessionId', handler: createReplaceTodosHandler(env), auth: true });
+
+    // file-history（文件历史：列出 + 撤销 + 恢复）
+    this.router.addRoute({ method: 'GET', pattern: '/api/file-history/:sessionId', handler: createListFileHistoryHandler(services), auth: true });
+    this.router.addRoute({ method: 'POST', pattern: '/api/file-history/:sessionId/undo', handler: createUndoFileHistoryHandler(services), auth: true });
+    this.router.addRoute({ method: 'POST', pattern: '/api/file-history/:sessionId/restore', handler: createRestoreFileHistoryHandler(services), auth: true });
 
     // tasks + 分组
     this.router.addRoute({ method: 'GET', pattern: '/api/tasks', handler: createListTasksHandler(services), auth: true });

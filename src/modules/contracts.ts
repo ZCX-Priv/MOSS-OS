@@ -10,6 +10,11 @@ import type {
 } from './llm/types';
 import type { Tool, ToolContext, ToolResult } from './tools/types';
 import type { TodoItem } from './tools/todo';
+import type {
+  FileHistoryEntry,
+  TrackEditResult,
+  UndoResult,
+} from './file-history/types';
 
 // ============================================================================
 // LLM Router（由 LLM 插件注册，ServiceNames.LLM_ROUTER）
@@ -171,4 +176,58 @@ export interface ServerInstanceLike {
   readonly baseUrl: string;
   broadcastWS(message: unknown): void;
   sendToSession(sessionId: string, message: unknown): void;
+}
+
+// ============================================================================
+// File History Service（由 file-history 模组注册，ServiceNames.FILE_HISTORY）
+// 三层文件历史架构：Track Edit（改前备份）+ Snapshot（每轮快照）+ JSONL 持久化
+// ============================================================================
+
+export interface FileHistoryService {
+  /**
+   * Layer 1：改前备份（同步阻塞，必须在文件修改前调用）。
+   * - 文件不存在 → operation='create'，不备份
+   * - 文件存在 → operation='overwrite'/'edit'，按内容哈希备份（同内容去重）
+   * @returns 备份结果（含 entryId 用于 restore）
+   */
+  trackEdit(
+    sessionId: string,
+    absPath: string,
+    toolCallId: string,
+    toolName: 'write' | 'edit' | 'delete',
+  ): Promise<TrackEditResult>;
+
+  /**
+   * 在文件变更后记录历史条目（写入 transcript）。
+   * 由 write/edit/delete 工具在变更完成后调用，传入变更后的内容 sha。
+   */
+  recordChange(
+    sessionId: string,
+    absPath: string,
+    trackResult: TrackEditResult,
+    hashAfter: string,
+    bytesAfter: number,
+    diff?: string,
+  ): void;
+
+  /** 校验本会话是否 read 过该文件（read-before-mutate 约束） */
+  isRead(sessionId: string, absPath: string): boolean;
+
+  /** 标记文件已被 read（read 工具调用时注册，传入内容 sha） */
+  markRead(sessionId: string, absPath: string, sha: string): void;
+
+  /** Layer 2：创建快照（每轮 LLM 响应后异步调用）。当前实现为 no-op，预留扩展点。 */
+  createSnapshot(sessionId: string): Promise<void>;
+
+  /** 撤销最近 N 次文件变更（默认 1 次）。从备份恢复原内容。 */
+  undo(sessionId: string, steps?: number): Promise<UndoResult>;
+
+  /** 列出某会话的文件历史（前端 UI 用） */
+  listHistory(sessionId: string): FileHistoryEntry[];
+
+  /** 恢复到指定历史条目（前端 UI 用，撤销该条目对应的变更） */
+  restore(sessionId: string, entryId: string): Promise<UndoResult>;
+
+  /** 清理会话资源（会话结束时调用，清空内存 ledger） */
+  clearSession(sessionId: string): void;
 }

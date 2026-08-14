@@ -1,0 +1,122 @@
+// src/modules/file-history/transcript.ts
+// JSONL append-only 持久化：每行一个 FileHistoryEntry。
+// 路径：~/.moss/file-history/<sessionId>.jsonl
+// 支持：追加、读取全部、移除最后 N 条（用于 undo）。
+
+import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync } from 'node:fs';
+import { dirname } from 'node:path';
+import type { FileHistoryEntry } from './types';
+
+/**
+ * 追加一条历史记录到 transcript。
+ * 文件或目录不存在时自动创建。
+ */
+export function appendEntry(transcriptPath: string, entry: FileHistoryEntry): void {
+  try {
+    mkdirSync(dirname(transcriptPath), { recursive: true });
+  } catch (err) {
+    throw new Error(`transcript: failed to mkdir ${dirname(transcriptPath)}: ${err instanceof Error ? err.message : err}`);
+  }
+  try {
+    // 每条记录一行 JSON，确保 JSON.stringify 不含换行（替换 \n 为 \\n）
+    const line = JSON.stringify(entry).replace(/\n/g, '\\n');
+    appendFileSync(transcriptPath, line + '\n', 'utf8');
+  } catch (err) {
+    throw new Error(`transcript: failed to append ${transcriptPath}: ${err instanceof Error ? err.message : err}`);
+  }
+}
+
+/**
+ * 读取全部历史记录。
+ * 文件不存在返回空数组。
+ * 损坏的行（JSON 解析失败）跳过，不抛错（容错）。
+ */
+export function readEntries(transcriptPath: string): FileHistoryEntry[] {
+  if (!existsSync(transcriptPath)) return [];
+  let raw: string;
+  try {
+    raw = readFileSync(transcriptPath, 'utf8');
+  } catch {
+    return [];
+  }
+  const lines = raw.split('\n').filter(l => l.trim().length > 0);
+  const entries: FileHistoryEntry[] = [];
+  for (const line of lines) {
+    try {
+      // 反序列化：还原被转义的换行
+      const json = line.replace(/\\n/g, '\n');
+      const entry = JSON.parse(json) as FileHistoryEntry;
+      entries.push(entry);
+    } catch {
+      // 跳过损坏行
+    }
+  }
+  return entries;
+}
+
+/**
+ * 移除最后 N 条记录，返回被移除的条目（按时间倒序，最近的在前）。
+ * 用于 undo：取出后由 service 层从备份恢复文件内容。
+ * @param transcriptPath transcript 文件路径
+ * @param n 要移除的条数
+ * @returns 被移除的条目数组（索引 0 是最近一次变更）
+ */
+export function removeLastNEntries(
+  transcriptPath: string,
+  n: number,
+): FileHistoryEntry[] {
+  const entries = readEntries(transcriptPath);
+  if (entries.length === 0 || n <= 0) return [];
+
+  const removeCount = Math.min(n, entries.length);
+  const removed = entries.slice(entries.length - removeCount).reverse();
+  const remaining = entries.slice(0, entries.length - removeCount);
+
+  // 重写 transcript（剩余条目）
+  try {
+    if (remaining.length === 0) {
+      // 全部移除：写空文件（保留文件存在，避免下次 append 时 mkdir）
+      writeFileSync(transcriptPath, '', 'utf8');
+    } else {
+      const lines = remaining
+        .map(e => JSON.stringify(e).replace(/\n/g, '\\n'))
+        .join('\n') + '\n';
+      writeFileSync(transcriptPath, lines, 'utf8');
+    }
+  } catch (err) {
+    throw new Error(`transcript: failed to rewrite ${transcriptPath}: ${err instanceof Error ? err.message : err}`);
+  }
+
+  return removed;
+}
+
+/**
+ * 移除指定 ID 的记录（用于 restore 单个条目）。
+ * @returns 被移除的条目（若存在）
+ */
+export function removeEntryById(
+  transcriptPath: string,
+  entryId: string,
+): FileHistoryEntry | null {
+  const entries = readEntries(transcriptPath);
+  const idx = entries.findIndex(e => e.id === entryId);
+  if (idx === -1) return null;
+
+  const removed = entries[idx];
+  const remaining = entries.filter(e => e.id !== entryId);
+
+  try {
+    if (remaining.length === 0) {
+      writeFileSync(transcriptPath, '', 'utf8');
+    } else {
+      const lines = remaining
+        .map(e => JSON.stringify(e).replace(/\n/g, '\\n'))
+        .join('\n') + '\n';
+      writeFileSync(transcriptPath, lines, 'utf8');
+    }
+  } catch (err) {
+    throw new Error(`transcript: failed to rewrite ${transcriptPath}: ${err instanceof Error ? err.message : err}`);
+  }
+
+  return removed;
+}

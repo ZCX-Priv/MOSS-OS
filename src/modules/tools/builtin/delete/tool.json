@@ -1,6 +1,6 @@
 {
   "name": "delete",
-  "description": "删除文件或目录。对于目录，recursive 必须为 true（递归删除）。此操作具有破坏性且不可撤销。",
+  "description": "删除文件或目录。对于目录，recursive 必须为 true（递归删除）。删除前自动哈希备份（支持 undo 恢复）。此操作具有破坏性。",
   "icon": "trash-2",
   "annotations": {
     "destructiveHint": true,
@@ -22,7 +22,13 @@
     "additionalProperties": false
   },
   "config": {
-    "defaults": { "enabled": true, "requireConfirmation": true },
-    "schema": {}
+    "defaults": {
+      "enabled": true,
+      "requireConfirmation": true,
+      "trackHistory": true
+    },
+    "schema": {
+      "trackHistory": { "type": "boolean" }
+    }
   }
 }

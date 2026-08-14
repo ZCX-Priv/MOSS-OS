@@ -161,6 +161,7 @@ export interface ProtectedServiceRegistry {
 // type-only import：编译时擦除，无运行时循环依赖
 // ToolsConfig 从 manifest 的 Zod schema 推导，保持类型与 schema 永远一致
 import type { ToolsConfig } from '../modules/tools/manifest';
+import type { FileHistoryConfig } from '../modules/file-history/types';
 
 /** 应用配置（config.json）的结构 —— 由 config-service 中 Zod schema 严格校验 */
 export interface AppConfig {
@@ -193,6 +194,8 @@ export interface AppConfig {
     authToken: string;
     bindLocalhostOnly: boolean;
   };
+  /** 文件历史服务配置（由 file-history 模组消费） */
+  fileHistory?: FileHistoryConfig;
 }
 
 export type ApiConfig = {
@@ -366,6 +369,8 @@ export const ServiceNames = {
   AUTOMATION_SERVICE: 'automation.service',
   /** 内核扩展管理服务（由 kernel 注册） */
   KERNEL_EXTENSIONS: 'kernel.extensions',
+  /** 文件历史服务（由 file-history 模组注册：Track Edit + Snapshot + undo） */
+  FILE_HISTORY: 'file.history',
 } as const;
 
 /**
