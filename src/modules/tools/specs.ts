@@ -9,7 +9,7 @@ import { t } from '../../core/i18n';
 import { stat } from 'node:fs/promises';
 import { watch, type FSWatcher } from 'node:fs';
 import { join, relative } from 'node:path';
-import type { Environment, Logger } from '../../core/types';
+import type { Environment, EventBus, Logger } from '../../core/types';
 import { ServiceNames } from '../../core/types';
 
 /** 旧常量保留，值等于 ServiceNames.SPEC_REGISTRY，向后兼容 */
@@ -103,7 +103,11 @@ class SpecRegistryImpl implements SpecRegistry {
  * ~/.moss/agent/prompts/main/spec/ 递归加载 .md 文件。
  * 用户目录同 id 覆盖包内模板。监听用户目录变更实现热重载。
  */
-export function createSpecRegistry(env: Environment, logger: Logger): SpecRegistry {
+export function createSpecRegistry(
+  env: Environment,
+  logger: Logger,
+  eventBus: EventBus,
+): SpecRegistry {
   const reg = new SpecRegistryImpl();
   const builtinDir = join(env.packageRoot, 'agent', 'prompts', 'main', 'spec');
   const userDir = join(env.dataDir, 'agent', 'prompts', 'main', 'spec');
@@ -115,7 +119,7 @@ export function createSpecRegistry(env: Environment, logger: Logger): SpecRegist
   loadSpecsFromDirSync(reg, userDir, userDir, logger);
 
   // 启动热重载监听（异步，不阻塞初始化）
-  startWatch(reg, userDir, logger).catch(err => {
+  startWatch(reg, userDir, logger, eventBus).catch(err => {
     logger.debug(t('tools.specWatchFailed'), {
       error: err instanceof Error ? err.message : String(err),
     });
@@ -252,7 +256,12 @@ function splitFrontMatter(raw: string): { frontMatter: ParsedFrontMatter; body: 
 }
 
 /** 启动 fs.watch 递归监听用户 spec 目录，实现热重载 */
-async function startWatch(reg: SpecRegistry, dir: string, logger: Logger): Promise<void> {
+async function startWatch(
+  reg: SpecRegistry,
+  dir: string,
+  logger: Logger,
+  eventBus: EventBus,
+): Promise<void> {
   try {
     await stat(dir);
   } catch {
@@ -268,6 +277,10 @@ async function startWatch(reg: SpecRegistry, dir: string, logger: Logger): Promi
       error: err instanceof Error ? err.message : String(err),
     });
     return;
+  }
+  /** 资源变更通知：广播给订阅方（前端 WS 刷新等） */
+  function notify(id: string): void {
+    void eventBus.broadcast('resources:changed', { kind: 'spec', id });
   }
   watcher.on('change', (eventType: string, filename: string | Buffer | null) => {
     if (filename === null || Buffer.isBuffer(filename)) return;
@@ -286,6 +299,7 @@ async function startWatch(reg: SpecRegistry, dir: string, logger: Logger): Promi
               if (spec) {
                 reg.reloadBySourceFile(full, spec);
                 logger.info(t('tools.specReloaded', { id: spec.id }), { file: full });
+                notify(spec.id);
               }
             } catch (err) {
               logger.warn(t('tools.reloadSpecFailed', { file: full }), {
@@ -295,12 +309,14 @@ async function startWatch(reg: SpecRegistry, dir: string, logger: Logger): Promi
           } else {
             reg.removeBySourceFile(full);
             logger.info(t('tools.specRemoved', { file: full }));
+            notify(name.replace(/\.md$/i, ''));
           }
         })
         .catch(() => {
           // 文件已不存在
           reg.removeBySourceFile(full);
           logger.info(t('tools.specRemoved', { file: full }));
+          notify(name.replace(/\.md$/i, ''));
         });
     } else if (eventType === 'change') {
       // 文件内容变更
@@ -309,6 +325,7 @@ async function startWatch(reg: SpecRegistry, dir: string, logger: Logger): Promi
         if (spec) {
           reg.reloadBySourceFile(full, spec);
           logger.info(t('tools.specReloaded', { id: spec.id }), { file: full });
+          notify(spec.id);
         }
       } catch (err) {
         logger.warn(t('tools.reloadSpecFailed', { file: full }), {

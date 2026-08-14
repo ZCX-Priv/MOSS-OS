@@ -11,6 +11,7 @@ import { McpClient, type McpClientEntry, type McpToolResult, type ServerConfig }
 import type { MCPManager } from '../contracts';
 import type { ConfigService, EventBus, Environment, Logger } from '../../core/types';
 import { readdir, readFile, stat, mkdir, copyFile } from 'node:fs/promises';
+import { watch, type FSWatcher } from 'node:fs';
 import { join } from 'node:path';
 
 export class MCPManagerImpl implements MCPManager {
@@ -21,6 +22,8 @@ export class MCPManagerImpl implements MCPManager {
   private readonly env: Environment;
   /** 当前合并后的服务器定义（按 name 索引） */
   private serverDefs: Map<string, ServerConfig> = new Map();
+  private mcpsWatcher?: FSWatcher;
+  private watchStarted = false;
 
   constructor(deps: {
     config: ConfigService;
@@ -52,6 +55,9 @@ export class MCPManagerImpl implements MCPManager {
         }
       }),
     );
+
+    // 监听用户 mcps 目录配置变更，实现热重载（仅首次启动时设置）
+    this.startWatch();
   }
 
   /**
@@ -200,6 +206,34 @@ export class MCPManagerImpl implements MCPManager {
     await this.initialize();
   }
 
+  /**
+   * 监听用户 mcps 目录（~/.moss/mcps/）的 *.json 变更，防抖后自动重连。
+   * 仅首次调用生效（reloadAll 内部会再次 initialize，需避免重复起 watch）。
+   */
+  private startWatch(): void {
+    if (this.watchStarted) return;
+    this.watchStarted = true;
+    const userDir = join(this.env.dataDir, 'mcps');
+    let debounce: ReturnType<typeof setTimeout> | null = null;
+    try {
+      this.mcpsWatcher = watch(userDir, { recursive: true }, () => {
+        if (debounce) clearTimeout(debounce);
+        debounce = setTimeout(() => {
+          this.reloadAll().catch(err => {
+            this.logger.error(t('mcp.reloadFailed'), {
+              error: err instanceof Error ? err.message : String(err),
+            });
+          });
+        }, 300);
+      });
+      this.logger.debug('mcp mcps dir watcher started', { dir: userDir });
+    } catch (err) {
+      this.logger.warn('mcp mcps dir watcher start failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   listServers(): Array<{ name: string; status: 'connected' | 'disconnected' | 'error'; toolCount: number }> {
     const result: Array<{ name: string; status: 'connected' | 'disconnected' | 'error'; toolCount: number }> = [];
     // 已连接的
@@ -258,6 +292,8 @@ export class MCPManagerImpl implements MCPManager {
 
   /** 关闭所有连接（模组销毁时调用） */
   async shutdown(): Promise<void> {
+    this.mcpsWatcher?.close();
+    this.mcpsWatcher = undefined;
     const names = Array.from(this.entries.keys());
     await Promise.allSettled(names.map(n => this.disconnect(n).catch(() => {})));
   }

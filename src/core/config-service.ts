@@ -1,7 +1,7 @@
 // src/core/config-service.ts
 // 配置服务：加载 config.json + api.json，Zod 校验，热重载，分发。
 
-import { t } from './i18n';
+import { setBackendLocale, t } from './i18n';
 import { z } from 'zod';
 import { join } from 'node:path';
 import type {
@@ -217,6 +217,7 @@ class ConfigServiceImpl implements ConfigService {
     const parsed = appConfigSchema.parse(merged);
     this.appConfig = parsed;
     this.fs.writeText(join(this.env.configDir, 'config.json'), JSON.stringify(parsed, null, 2));
+    this.applyLocale();
     await this.eventBus.broadcast('config:changed', { which: 'app' });
     this.notifyChange('app');
   }
@@ -243,6 +244,7 @@ class ConfigServiceImpl implements ConfigService {
     const apiPath = join(this.env.configDir, 'api.json');
     this.appConfig = this.readAndValidateApp(appPath);
     this.apiConfig = this.readAndValidateApi(apiPath);
+    this.applyLocale();
     await this.eventBus.broadcast('config:changed', { which: 'app' });
     await this.eventBus.broadcast('config:changed', { which: 'api' });
     this.notifyChange('app');
@@ -258,6 +260,12 @@ class ConfigServiceImpl implements ConfigService {
         if (idx >= 0) this.changeHandlers.splice(idx, 1);
       },
     };
+  }
+
+  /** 重新应用后端语言（server.locale 变更时后端 t() 实时同步） */
+  private applyLocale(): void {
+    if (!this.appConfig) return;
+    setBackendLocale(this.appConfig.server.locale === 'en' ? 'en' : 'zh');
   }
 
   private notifyChange(which: 'app' | 'api'): void {

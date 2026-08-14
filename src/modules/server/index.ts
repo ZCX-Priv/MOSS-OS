@@ -151,6 +151,10 @@ class ServerModule implements Module {
     ctx.eventBus.onAction('extension:changed', (data) => {
       this.wsHandler.broadcast({ type: 'extension.changed', payload: data });
     });
+    // 资源文件（skill/spec/tool）热重载事件，转发为 WS resources.changed
+    ctx.eventBus.onAction('resources:changed', (data) => {
+      this.wsHandler.broadcast({ type: 'resources.changed', payload: data });
+    });
 
     ctx.logger.info(t('server.started', { host: this.actualHost, port: this.actualPort }), {
       staticAssets: this.assets.isAvailable(),

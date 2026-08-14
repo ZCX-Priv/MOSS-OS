@@ -4,6 +4,7 @@
 import { useEffect, useCallback } from 'react';
 import { useStore } from '../store';
 import { api } from '../api/http';
+import { wsClient } from '../api/ws';
 
 export function useSkills() {
   const setSkills = useStore((s) => s.setSkills);
@@ -19,6 +20,13 @@ export function useSkills() {
 
   useEffect(() => {
     void load();
+    // 订阅后端资源热重载，自动刷新
+    const unsub = wsClient.onMessage((msg) => {
+      if (msg.type === 'resources.changed') {
+        void load();
+      }
+    });
+    return unsub;
   }, [load]);
 
   return {

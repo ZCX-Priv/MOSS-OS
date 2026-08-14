@@ -9,6 +9,19 @@ export type BackendLocale = 'zh' | 'en';
 const resources: Record<BackendLocale, Record<string, unknown>> = { zh, en };
 let currentLocale: BackendLocale = 'zh';
 
+/**
+ * 运行期就地重载语言资源：带缓存破坏参数动态导入 locale 模块并替换资源表。
+ * 用于开发/代理写入场景下让运行中的 t() 立即反映磁盘文案变更，无需重启进程。
+ */
+export async function reloadBackendResources(): Promise<void> {
+  const [zhMod, enMod] = await Promise.all([
+    import(`./i18n/locales/zh?t=${Date.now()}`),
+    import(`./i18n/locales/en?t=${Date.now()}`),
+  ]);
+  resources.zh = zhMod.zh;
+  resources.en = enMod.en;
+}
+
 export function setBackendLocale(locale: BackendLocale): void {
   currentLocale = locale;
 }

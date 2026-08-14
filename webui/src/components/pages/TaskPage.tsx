@@ -36,7 +36,6 @@ import {
   DndContext,
   closestCenter,
   PointerSensor,
-  KeyboardSensor,
   useSensor,
   useSensors,
   type DragEndEvent,
@@ -96,7 +95,6 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
   // 右侧面板标签页拖拽排序
   const tabSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(KeyboardSensor),
   );
   const handleTabDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
@@ -455,9 +453,8 @@ function SortableTab({ tab, isActive, canShowClose, onSelect, onRemove }: Sortab
       return () => clearTimeout(timer);
     }
   }, [isDragging]);
-  const restrictedTransform = transform ? { ...transform, y: 0 } : null;
   const style = {
-    transform: CSS.Transform.toString(restrictedTransform),
+    transform: CSS.Translate.toString(transform),
     transition,
   };
   return (
@@ -475,7 +472,7 @@ function SortableTab({ tab, isActive, canShowClose, onSelect, onRemove }: Sortab
       }}
       className={cn(
         'group relative flex cursor-grab items-center gap-1.5 rounded-lg border px-3 py-1 text-sm transition-colors',
-        isDragging && 'z-10 opacity-80',
+        isDragging && 'z-10 border-border bg-muted text-foreground shadow-sm',
         isActive
           ? 'border-border bg-muted text-foreground'
           : 'border-transparent text-muted-foreground hover:bg-muted/50 hover:text-foreground',
@@ -488,7 +485,7 @@ function SortableTab({ tab, isActive, canShowClose, onSelect, onRemove }: Sortab
       )}
       <span className="max-w-[120px] truncate">{t(tab.title)}</span>
       {/* hover 时显示 X 关闭按钮（单标签不显示） */}
-      {canShowClose && (
+      {canShowClose && !isDragging && (
         <button
           type="button"
           onClick={(e) => {

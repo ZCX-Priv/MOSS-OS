@@ -7,7 +7,7 @@ import { t } from '../../core/i18n';
 import { stat } from 'node:fs/promises';
 import { watch, type FSWatcher } from 'node:fs';
 import { join } from 'node:path';
-import type { Environment, Logger } from '../../core/types';
+import type { Environment, EventBus, Logger } from '../../core/types';
 import { ServiceNames } from '../../core/types';
 
 /** 旧常量保留，值等于 ServiceNames.SKILL_REGISTRY，向后兼容 */
@@ -137,7 +137,11 @@ function seedBuiltinSkills(builtinDir: string, userDir: string, logger: Logger):
  * 首次启动时从包内 skills/ 播种内置模板到 ~/.moss/skills/。
  * 监听用户目录变更实现热重载。
  */
-export function createSkillRegistry(env: Environment, logger: Logger): SkillRegistry {
+export function createSkillRegistry(
+  env: Environment,
+  logger: Logger,
+  eventBus: EventBus,
+): SkillRegistry {
   const reg = new SkillRegistryImpl();
   const builtinDir = join(env.packageRoot, 'skills');  // 仅作种子源
   const userDir = join(env.dataDir, 'skills');         // 唯一加载源
@@ -149,7 +153,7 @@ export function createSkillRegistry(env: Environment, logger: Logger): SkillRegi
   loadSkillsFromDirSync(reg, userDir, logger);
 
   // 启动热重载监听（异步，不阻塞初始化）
-  startWatch(reg, userDir, logger).catch(err => {
+  startWatch(reg, userDir, logger, eventBus).catch(err => {
     logger.debug(t('tools.skillWatchFailed'), {
       error: err instanceof Error ? err.message : String(err),
     });
@@ -268,7 +272,12 @@ function splitFrontMatter(raw: string): { frontMatter: ParsedFrontMatter; body: 
 }
 
 /** 启动 fs.watch 监听用户 skills 目录，实现热重载 */
-async function startWatch(reg: SkillRegistry, dir: string, logger: Logger): Promise<void> {
+async function startWatch(
+  reg: SkillRegistry,
+  dir: string,
+  logger: Logger,
+  eventBus: EventBus,
+): Promise<void> {
   try {
     await stat(dir);
   } catch {
@@ -283,6 +292,10 @@ async function startWatch(reg: SkillRegistry, dir: string, logger: Logger): Prom
       error: err instanceof Error ? err.message : String(err),
     });
     return;
+  }
+  /** 资源变更通知：广播给订阅方（前端 WS 刷新等） */
+  function notify(name: string): void {
+    void eventBus.broadcast('resources:changed', { kind: 'skill', name });
   }
   watcher.on('change', (eventType: string, filename: string | Buffer | null) => {
     if (filename === null || Buffer.isBuffer(filename)) return;
@@ -300,6 +313,7 @@ async function startWatch(reg: SkillRegistry, dir: string, logger: Logger): Prom
               if (skill) {
                 reg.reloadBySourceFile(full, skill);
                 logger.info(t('tools.skillReloaded', { name: skill.name }), { file: full });
+                notify(skill.name);
               }
             } catch (err) {
               logger.warn(t('tools.reloadSkillFailed', { file: full }), {
@@ -309,12 +323,14 @@ async function startWatch(reg: SkillRegistry, dir: string, logger: Logger): Prom
           } else {
             reg.removeBySourceFile(full);
             logger.info(t('tools.skillRemoved', { file: full }));
+            notify(name.replace(/\.md$/i, ''));
           }
         })
         .catch(() => {
           // 文件已不存在
           reg.removeBySourceFile(full);
           logger.info(t('tools.skillRemoved', { file: full }));
+          notify(name.replace(/\.md$/i, ''));
         });
     } else if (eventType === 'change') {
       // 文件内容变更
@@ -323,6 +339,7 @@ async function startWatch(reg: SkillRegistry, dir: string, logger: Logger): Prom
         if (skill) {
           reg.reloadBySourceFile(full, skill);
           logger.info(t('tools.skillReloaded', { name: skill.name }), { file: full });
+          notify(skill.name);
         }
       } catch (err) {
         logger.warn(t('tools.reloadSkillFailed', { file: full }), {

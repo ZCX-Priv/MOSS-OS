@@ -2,8 +2,10 @@
 // Microkernel 主类：组装所有内核服务，编排模组/插件生命周期。
 // 模组（modules）拥有高权限，先加载；插件（plugins）权限较低，后加载。
 
-import { setBackendLocale, t } from './i18n';
+import { reloadBackendResources, setBackendLocale, t } from './i18n';
 import { detectEnvironment } from './env';
+import { watch, existsSync, type FSWatcher } from 'node:fs';
+import { join } from 'node:path';
 import { createRootLogger } from './logger';
 import { createEventBus } from './event-bus';
 import { createServiceRegistry } from './service-registry';
@@ -37,6 +39,7 @@ export class Microkernel {
   private services: ServiceRegistry | null = null;
   private config: ConfigService | null = null;
   private extensionManager: ExtensionManager | null = null;
+  private i18nWatcher?: FSWatcher;
   private started = false;
 
   async start(options: KernelStartOptions = {}): Promise<KernelContext> {
@@ -63,6 +66,8 @@ export class Microkernel {
     try {
       await this.config.load();
       setBackendLocale(this.config.getAppConfig().server.locale === 'en' ? 'en' : 'zh');
+      // 启动 i18n 资源目录 watcher，实现运行期文案就地热重载
+      this.startBackendI18nWatcher();
       // 应用配置中的日志级别
       const cfgLevel = this.config.getAppConfig().daemon.logLevel;
       this.logger.setLevel(cfgLevel);
@@ -136,12 +141,46 @@ export class Microkernel {
     if (this.extensionManager) {
       await this.extensionManager.destroyAll();
     }
+    this.i18nWatcher?.close();
+    this.i18nWatcher = undefined;
     this.started = false;
     this.logger?.info(t('kernel.stopped'));
   }
 
   isStarted(): boolean {
     return this.started;
+  }
+
+  /**
+   * 启动对后端 i18n 资源目录（src/core/i18n/locales/）的防抖 watcher。
+   * 变更时调用 reloadBackendResources() 就地重载，让运行中的 t() 立即反映磁盘文案改动。
+   * 仅当目录存在（开发/未打包场景）时生效；失败仅记日志，不阻断启动。
+   */
+  private startBackendI18nWatcher(): void {
+    if (!this.env || !this.logger) return;
+    const dir = join(this.env.packageRoot, 'src', 'core', 'i18n', 'locales');
+    if (!existsSync(dir)) {
+      this.logger.debug('i18n locale dir not found, skipping watcher', { dir });
+      return;
+    }
+    let debounce: ReturnType<typeof setTimeout> | null = null;
+    try {
+      this.i18nWatcher = watch(dir, { recursive: true }, () => {
+        if (debounce) clearTimeout(debounce);
+        debounce = setTimeout(() => {
+          reloadBackendResources().catch(err => {
+            this.logger?.warn('i18n reload failed', {
+              error: err instanceof Error ? err.message : String(err),
+            });
+          });
+        }, 300);
+      });
+      this.logger.debug('i18n locale watcher started', { dir });
+    } catch (err) {
+      this.logger.warn('i18n locale watcher start failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   private makeContext(): KernelContext {

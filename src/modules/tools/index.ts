@@ -28,8 +28,8 @@ class ToolsModule implements Module {
   async initialize(ctx: ModuleContext): Promise<void> {
     this.ctx = ctx;
     this.registry = new ToolRegistryImpl(ctx.logger, ctx.config);
-    const skillRegistry = createSkillRegistry(ctx.env, ctx.logger);
-    const specRegistry = createSpecRegistry(ctx.env, ctx.logger);
+    const skillRegistry = createSkillRegistry(ctx.env, ctx.logger, ctx.eventBus);
+    const specRegistry = createSpecRegistry(ctx.env, ctx.logger, ctx.eventBus);
 
     // 1. 加载并注册内置工具（从 builtin 目录，按 config 过滤）
     await this.loadAndRegisterBuiltinTools(ctx);
@@ -195,6 +195,7 @@ class ToolsModule implements Module {
       // 工具目录被删除，移除
       this.registry.removeBySourceDir(toolDir);
       ctx.logger.info(t('tools.toolRemovedDirDeleted', { name: toolName }), { dir: toolDir });
+      this.notifyToolChanged(ctx, toolName);
       return;
     }
 
@@ -204,6 +205,7 @@ class ToolsModule implements Module {
       // 加载失败（如 tool.json 无效），移除旧的
       this.registry.removeBySourceDir(toolDir);
       ctx.logger.warn(t('tools.reloadFailedRemoved', { name: toolName }), { dir: toolDir });
+      this.notifyToolChanged(ctx, toolName);
       return;
     }
 
@@ -211,12 +213,14 @@ class ToolsModule implements Module {
     if (source === 'custom' && BUILTIN_TOOL_NAMES.has(tool.name)) {
       this.registry.removeBySourceDir(toolDir);
       ctx.logger.warn(t('tools.customConflictsBuiltinRemoved', { name: tool.name }), { dir: toolDir });
+      this.notifyToolChanged(ctx, tool.name);
       return;
     }
 
     // 注册（含 disabled 工具）：启用状态由 registry.isEnabled 实时读取 config
     this.registry.reloadBySourceDir(toolDir, tool);
     ctx.logger.info(t('tools.toolReloaded', { name: tool.name }), { dir: toolDir });
+    this.notifyToolChanged(ctx, tool.name);
 
     // 如果是内置工具热重载，同步更新 loadedBuiltinTools 缓存
     if (source === 'builtin') {
@@ -227,6 +231,11 @@ class ToolsModule implements Module {
         this.loadedBuiltinTools.push(tool);
       }
     }
+  }
+
+  /** 工具热重载后广播变更事件，通知前端刷新工具列表 */
+  private notifyToolChanged(ctx: ModuleContext, name: string): void {
+    void ctx.eventBus.broadcast('resources:changed', { kind: 'tool', name });
   }
 
   /** 全量重载某个来源的所有工具（回退方案） */
@@ -246,6 +255,7 @@ class ToolsModule implements Module {
         this.registry.register(tool);
       }
       ctx.logger.info(t('tools.builtinFullReloaded'));
+      this.notifyToolChanged(ctx, '*');
     } else {
       // 移除所有自定义工具
       for (const tool of this.registry.list()) {
@@ -255,6 +265,7 @@ class ToolsModule implements Module {
       }
       await this.loadCustomToolsFromDir(rootDir, ctx);
       ctx.logger.info(t('tools.customFullReloaded'));
+      this.notifyToolChanged(ctx, '*');
     }
   }
 

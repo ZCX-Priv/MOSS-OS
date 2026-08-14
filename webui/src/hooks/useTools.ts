@@ -31,7 +31,7 @@ export function useTools() {
     void load();
     // 订阅 extension.changed 自动刷新（工具模组属 extension 范畴）
     const unsub = wsClient.onMessage((msg) => {
-      if (msg.type === 'extension.changed') {
+      if (msg.type === 'extension.changed' || msg.type === 'resources.changed') {
         void load();
       }
     });
