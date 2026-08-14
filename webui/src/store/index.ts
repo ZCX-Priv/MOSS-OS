@@ -10,6 +10,7 @@ import type {
   ApiConfig,
   TaskMessage,
   PendingAsk,
+  PendingConfirm,
   Session,
   McpServer,
   McpTool,
@@ -43,6 +44,9 @@ interface UIState {
   generatingBySession: Record<string, boolean>;
   /** 工具发起的、等待用户回复的提问列表 */
   pendingAsks: PendingAsk[];
+
+  /** 工具发起的、等待用户确认的请求列表 */
+  pendingConfirms: PendingConfirm[];
 
   // --- 输入 / 工作目录 ---
   input: string;
@@ -221,6 +225,11 @@ interface UIActions {
   /** 仅清除指定 session 的 pendingAsks */
   clearPendingAsksBySession: (sessionId: string) => void;
 
+  // PendingConfirm
+  addPendingConfirm: (confirm: PendingConfirm) => void;
+  removePendingConfirm: (toolCallId: string) => void;
+  clearPendingConfirmsBySession: (sessionId: string) => void;
+
   // WS
   setWsStatus: (s: UIState['wsStatus']) => void;
 
@@ -281,6 +290,7 @@ export const useStore = create<Store>((set) => ({
   messagesBySession: {},
   generatingBySession: {},
   pendingAsks: [],
+  pendingConfirms: [],
 
   // --- 输入 / 工作目录 ---
   input: '',
@@ -553,6 +563,23 @@ export const useStore = create<Store>((set) => ({
   clearPendingAsksBySession: (sessionId) =>
     set((state) => ({
       pendingAsks: state.pendingAsks.filter((a) => a.sessionId !== sessionId),
+    })),
+
+  // --- Actions: PendingConfirm ---
+  addPendingConfirm: (confirm) =>
+    set((state) => ({
+      pendingConfirms: [
+        ...state.pendingConfirms.filter((c) => c.toolCallId !== confirm.toolCallId),
+        confirm,
+      ],
+    })),
+  removePendingConfirm: (toolCallId) =>
+    set((state) => ({
+      pendingConfirms: state.pendingConfirms.filter((c) => c.toolCallId !== toolCallId),
+    })),
+  clearPendingConfirmsBySession: (sessionId) =>
+    set((state) => ({
+      pendingConfirms: state.pendingConfirms.filter((c) => c.sessionId !== sessionId),
     })),
 
   // --- Actions: WS ---

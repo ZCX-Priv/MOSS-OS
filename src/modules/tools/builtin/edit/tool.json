@@ -1,6 +1,6 @@
 {
   "name": "edit",
-  "description": "通过将特定字符串替换为新字符串来编辑文件。除非 replaceAll 为 true，否则 oldString 必须在文件中唯一。强制 read-before-overwrite：编辑已存在文件前必须先调用 read 工具。自动原子写入（防损坏）+ 哈希备份（支持 undo）+ diff 返回。",
+  "description": "通过精确字符串替换编辑文件。支持三种模式：单次替换（path+oldString+newString，向后兼容）、单文件批量（path+edits 数组，顺序应用，预校验全通过才原子写入）、多文件批量（files 数组，文件级独立原子：失败文件跳过，其余照常）。多级模糊容错（CRLF/tab/行尾空白）+ sha256 乐观锁（expectHash 防并发覆盖）+ dryRun 预览。强制 read-before-overwrite + 哈希备份 + diff 返回。",
   "icon": "file-pen",
   "annotations": {
     "destructiveHint": true
@@ -10,22 +10,77 @@
     "properties": {
       "path": {
         "type": "string",
-        "description": "要编辑的文件的绝对或相对路径"
+        "description": "单文件路径（模式 A/B 用，与 files 互斥）"
       },
       "oldString": {
         "type": "string",
-        "description": "要在文件中查找的精确字符串"
+        "description": "模式 A：要在文件中查找的精确字符串"
       },
       "newString": {
         "type": "string",
-        "description": "用于替换 oldString 的字符串"
+        "description": "模式 A：用于替换 oldString 的字符串"
       },
       "replaceAll": {
         "type": "boolean",
-        "description": "如果为 true，替换所有出现的 oldString（默认 false）"
+        "description": "模式 A：替换全部出现（默认 false，此时 oldString 必须唯一）"
+      },
+      "edits": {
+        "type": "array",
+        "description": "模式 B：单文件多编辑，顺序应用（edit[N] 在 edit[N-1] 修改后的内容上查找）。预校验全通过才原子写入一次，任一失败则整体不写入",
+        "items": {
+          "type": "object",
+          "properties": {
+            "oldString": { "type": "string", "description": "要查找的精确字符串" },
+            "newString": { "type": "string", "description": "替换字符串" },
+            "replaceAll": { "type": "boolean", "description": "替换全部出现（默认 false）" }
+          },
+          "required": ["oldString", "newString"],
+          "additionalProperties": false
+        },
+        "maxItems": 50
+      },
+      "files": {
+        "type": "array",
+        "description": "模式 C：多文件批量。文件级独立原子：每个文件独立预校验+原子写入，某文件失败只跳过该文件，其他成功的照常生效",
+        "items": {
+          "type": "object",
+          "properties": {
+            "path": { "type": "string", "description": "文件绝对或相对路径" },
+            "edits": {
+              "type": "array",
+              "description": "该文件的多编辑（同 edits 结构）",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "oldString": { "type": "string" },
+                  "newString": { "type": "string" },
+                  "replaceAll": { "type": "boolean" }
+                },
+                "required": ["oldString", "newString"],
+                "additionalProperties": false
+              },
+              "maxItems": 50
+            }
+          },
+          "required": ["path", "edits"],
+          "additionalProperties": false
+        },
+        "maxItems": 20
+      },
+      "expectHash": {
+        "type": "string",
+        "description": "sha256 乐观锁：来自最近一次 read 返回的 sha256。提供则校验，若文件已被外部修改（哈希不匹配）则拒绝写入并提示重新 read"
+      },
+      "dryRun": {
+        "type": "boolean",
+        "description": "true=只返回 diff 预览不写入文件（默认 false）"
       }
     },
-    "required": ["path", "oldString", "newString"],
+    "anyOf": [
+      { "required": ["path", "oldString", "newString"] },
+      { "required": ["path", "edits"] },
+      { "required": ["files"] }
+    ],
     "additionalProperties": false
   },
   "config": {
@@ -33,11 +88,19 @@
       "enabled": true,
       "requireConfirmation": false,
       "trackHistory": true,
-      "requireReadBeforeOverwrite": true
+      "requireReadBeforeOverwrite": true,
+      "requireHashMatch": true,
+      "fuzzyMatch": true,
+      "maxEditsPerFile": 50,
+      "maxFiles": 20
     },
     "schema": {
       "trackHistory": { "type": "boolean" },
-      "requireReadBeforeOverwrite": { "type": "boolean" }
+      "requireReadBeforeOverwrite": { "type": "boolean" },
+      "requireHashMatch": { "type": "boolean" },
+      "fuzzyMatch": { "type": "boolean" },
+      "maxEditsPerFile": { "type": "integer", "min": 1, "max": 500 },
+      "maxFiles": { "type": "integer", "min": 1, "max": 100 }
     }
   }
 }

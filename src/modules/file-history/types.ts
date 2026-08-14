@@ -41,22 +41,26 @@ export interface FileHistoryEntry {
   bytesAfter: number;
   /** unified diff 文本（仅 overwrite/edit，可选） */
   diff?: string;
+  /** 是否为目录操作（新增：true 时 backupPath 指向 .tar.gz，restoreEntry 走 extractArchive） */
+  isDirectory?: boolean;
 }
 
 /** trackEdit 返回结果 */
 export interface TrackEditResult {
   /** 是否实际备份了（文件不存在或已在快照中则 false） */
   backedUp: boolean;
-  /** 备份路径（~/.moss/backups/<hash>.bak） */
+  /** 备份路径（~/.moss/backups/<hash>.bak 文件 或 ~/.moss/backups/<entryId>.tar.gz 目录） */
   backupPath: string | null;
-  /** 原内容 sha256（新文件为空字符串） */
+  /** 原内容 sha256（新文件为空字符串；目录归档为空字符串） */
   hash: string;
-  /** 原文件大小（字节，新文件为 0） */
+  /** 原文件大小（字节，新文件为 0；目录为归档后 tar.gz 字节数） */
   bytesBefore: number;
   /** 历史条目 ID（用于 restore） */
   entryId: string;
   /** 变更操作类型 */
   operation: FileOperation;
+  /** 是否为目录操作（新增：true 时 backupPath 指向 .tar.gz，restoreEntry 走 extractArchive） */
+  isDirectory?: boolean;
 }
 
 /** undo 返回结果 */

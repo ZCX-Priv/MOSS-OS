@@ -30,6 +30,15 @@ export class AgentEngineImpl implements AgentEngine {
     question: string;
   }>();
 
+  /** pending confirm 调用：toolCallId -> { resolve, reject, timer, sessionId, question } */
+  private readonly pendingConfirms = new Map<string, {
+    resolve: (ok: boolean) => void;
+    reject: (err: Error) => void;
+    timer: ReturnType<typeof setTimeout>;
+    sessionId: string;
+    question: string;
+  }>();
+
   constructor(deps: {
     services: ServiceRegistry;
     config: ConfigService;
@@ -601,6 +610,15 @@ export class AgentEngineImpl implements AgentEngine {
             toolCallId: ctx.toolCallId,
             args: event.message,
           });
+        } else if (event.type === 'confirm-required') {
+          ctx.onEvent({
+            type: 'confirm-required',
+            sessionId: ctx.sessionId,
+            toolCallId: ctx.toolCallId,
+            toolName: name,
+            question: event.message,
+            details: event.details,
+          });
         }
       },
       logger: this.logger,
@@ -641,6 +659,42 @@ export class AgentEngineImpl implements AgentEngine {
           });
         });
       },
+      confirm: (question: string) => {
+        return new Promise<boolean>((resolve, reject) => {
+          const timer = setTimeout(() => {
+            this.pendingConfirms.delete(ctx.toolCallId);
+            resolve(false);
+          }, 5 * 60 * 1000);
+          this.pendingConfirms.set(ctx.toolCallId, {
+            resolve,
+            reject,
+            timer,
+            sessionId: ctx.sessionId,
+            question,
+          });
+          if (ctx.signal) {
+            ctx.signal.addEventListener(
+              'abort',
+              () => {
+                if (this.pendingConfirms.has(ctx.toolCallId)) {
+                  clearTimeout(timer);
+                  this.pendingConfirms.delete(ctx.toolCallId);
+                  reject(new Error('aborted'));
+                }
+              },
+              { once: true },
+            );
+          }
+          ctx.onEvent({
+            type: 'confirm-required',
+            sessionId: ctx.sessionId,
+            toolCallId: ctx.toolCallId,
+            toolName: name,
+            question,
+            details: args,
+          });
+        });
+      },
     });
 
     // tool:after hook
@@ -675,13 +729,39 @@ export class AgentEngineImpl implements AgentEngine {
     return out;
   }
 
-  /** 清理所有未完成的 pending ask（run 结束时兜底）。 */
+  /** 前端回复 confirm 确认。匹配到 pending 则 resolve 并返回 true。 */
+  resolveConfirm(toolCallId: string, ok: boolean): boolean {
+    const pending = this.pendingConfirms.get(toolCallId);
+    if (!pending) return false;
+    clearTimeout(pending.timer);
+    this.pendingConfirms.delete(toolCallId);
+    pending.resolve(ok);
+    return true;
+  }
+
+  /** 列出某 session 的待确认 confirm（供 WS 重连恢复 pending confirms）。 */
+  getPendingConfirms(sessionId: string): Array<{ toolCallId: string; sessionId: string; question: string }> {
+    const out: Array<{ toolCallId: string; sessionId: string; question: string }> = [];
+    for (const [toolCallId, pending] of this.pendingConfirms) {
+      if (pending.sessionId === sessionId) {
+        out.push({ toolCallId, sessionId: pending.sessionId, question: pending.question });
+      }
+    }
+    return out;
+  }
+
+  /** 清理所有未完成的 pending ask 与 confirm（run 结束时兜底）。 */
   private cleanupPendingAsks(): void {
     for (const [, pending] of this.pendingAsks) {
       clearTimeout(pending.timer);
       pending.reject(new Error('session ended'));
     }
     this.pendingAsks.clear();
+    for (const [, pending] of this.pendingConfirms) {
+      clearTimeout(pending.timer);
+      pending.resolve(false);
+    }
+    this.pendingConfirms.clear();
   }
 
   private async executeMcpTool(

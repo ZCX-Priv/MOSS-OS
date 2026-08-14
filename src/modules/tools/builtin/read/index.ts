@@ -64,14 +64,17 @@ export default {
       const result = await processSingleFile(rawPath, p, ctx.cwd);
 
       // 读取成功后，注册到 read ledger（支持 write/edit 的 read-before-overwrite 校验）
-      if (fileHistory && !result.isError) {
+      let sha: string | null = null;
+      if (!result.isError) {
         const absPath = resolveWithinCwd(rawPath, ctx.cwd);
         if (absPath) {
           try {
             // 计算文件内容 sha256 并 markRead（文件已在 OS cache，开销小）
             const buf = readFileSync(absPath);
-            const sha = createHash('sha256').update(buf).digest('hex');
-            fileHistory.markRead(ctx.sessionId, absPath, sha);
+            sha = createHash('sha256').update(buf).digest('hex');
+            if (fileHistory) {
+              fileHistory.markRead(ctx.sessionId, absPath, sha);
+            }
           } catch {
             // 读取失败忽略（不影响 read 工具主流程）
           }
@@ -79,7 +82,12 @@ export default {
       }
 
       contents.push(...result.content);
-      metadatas.push(result.metadata ?? {});
+      // 暴露 sha256 到返回 metadata，供 edit 工具 expectHash 乐观锁使用
+      const md = result.metadata ?? {};
+      if (sha !== null) {
+        (md as Record<string, unknown>).sha256 = sha;
+      }
+      metadatas.push(md);
     }
 
     // 3. 单文件直接返回，多文件拼接

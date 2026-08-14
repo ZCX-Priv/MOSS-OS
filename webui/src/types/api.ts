@@ -364,6 +364,20 @@ export interface PendingAsk {
   createdAt: number;
 }
 
+/** 工具发起的、待用户确认的请求（requireConfirmation 工具执行前触发） */
+export interface PendingConfirm {
+  toolCallId: string;
+  sessionId: string;
+  /** 发起确认的工具名（如 shell/write/delete/undo） */
+  toolName: string;
+  /** 确认提示文案 */
+  question: string;
+  /** 工具调用参数（供前端展示具体将执行什么） */
+  details?: unknown;
+  /** 收到时间，用于排序 */
+  createdAt: number;
+}
+
 // ============================================================================
 // 文件系统（浏览器端文件夹选择：后端桥接绝对路径解析）
 // ============================================================================

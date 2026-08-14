@@ -1,93 +1,76 @@
 // builtin/write/index.ts
-// write 工具 execute 逻辑：原子写入 + 哈希备份 + read-before-overwrite + diff 返回。
-// 元数据见同目录 tool.json。
+// write 工具调度层：参数校验 → 路径安全 → read-before-overwrite → trackEdit → 分派到 handler → 组装结果。
+// 元数据（name/description/icon/annotations/inputSchema/config）见同目录 tool.json。
+// handlers/ 子目录执行实际写入（流式原子写入 + diff + 哈希），shared/ 子目录提供流式写入/diff守卫等公共能力。
 //
 // 强化点（对标 Claude Code / avifenesh 最佳实践）：
-// 1. 原子写入（tmp+fsync+rename，防中断损坏）
+// 1. 流式原子写入（createWriteStream 分块 + tmp+fsync+rename，防中断损坏，支持大文件）
 // 2. 改前哈希备份（同内容去重，支持 undo）
 // 3. read-before-overwrite（覆盖已存在文件前强制校验本会话已 read）
-// 4. 大小限制（默认 10MB，防 LLM 注入超大内容）
-// 5. 路径类型预检查（拒绝写入目录，友好错误）
-// 6. BOM 保留（原子写入层自动处理）
-// 7. 返回 unified diff（供 LLM 审视改动）
+// 4. 无大小限制（write 不需要，LLM 协议层已约束；read 的限制是为了防止 ai 吃不下，与 write 场景不同）
+// 5. 大文件跳过 diff 且不读 oldContent（防爆内存，避免 O(n*m) 矩阵和 oldContent 全量读取）
+// 6. BOM 保留 + 权限保留（流式写入层自动处理）
+// 7. 返回 unified diff（供 LLM 审视改动；大文件跳过时返回写入摘要）
 
 import { t } from '../../../../core/i18n';
 import { ServiceNames } from '../../../../core/types';
-import { existsSync, statSync, readFileSync, mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
-import { createHash } from 'node:crypto';
+import { existsSync, statSync } from 'node:fs';
 import { resolveWithinCwd } from '../../../../utils/fs';
-import { atomicWriteFile } from '../../../file-history/atomic-write';
-import { computeLineDiff } from '../../../file-history/diff';
 import type { FileHistoryService } from '../../../contracts';
 import type { ToolContext, ToolResult } from '../../types';
+import { writeText, type WriteTextResult } from './handlers/text';
 
-/** 从 ctx.services 解析 FileHistoryService（可能未加载，返回 null） */
+interface WriteParams {
+  path: string;
+  content: string;
+  createDirs?: boolean;
+}
+
 function getFileHistory(ctx: ToolContext): FileHistoryService | null {
   return ctx.services.tryResolve<FileHistoryService>(ServiceNames.FILE_HISTORY);
 }
 
-/** 计算字符串 sha256 */
-function sha256(text: string): string {
-  return createHash('sha256').update(text, 'utf8').digest('hex');
+function errorResult(message: string): ToolResult {
+  return { content: [{ type: 'text', text: `Error: ${message}` }], isError: true };
 }
 
 export default {
   async execute(params: unknown, ctx: ToolContext): Promise<ToolResult> {
-    const p = params as { path: string; content: string; createDirs?: boolean };
+    const p = params as WriteParams;
 
     // 1. 基础参数校验
     if (!p.path) {
-      return { content: [{ type: 'text', text: 'Error: path is required' }], isError: true };
+      return errorResult('path is required');
     }
     if (typeof p.content !== 'string') {
-      return { content: [{ type: 'text', text: 'Error: content must be a string' }], isError: true };
+      return errorResult('content must be a string');
     }
 
-    // 2. 从 toolConfig 读取配置
-    const toolConfig = (ctx.toolConfig ?? {}) as {
-      maxFileSize?: number;
-      trackHistory?: boolean;
-      requireReadBeforeOverwrite?: boolean;
-    };
-    const maxFileSize = toolConfig.maxFileSize ?? 10 * 1024 * 1024;
-    const trackHistory = toolConfig.trackHistory ?? true;
-    const requireReadBeforeOverwrite = toolConfig.requireReadBeforeOverwrite ?? true;
-
-    // 3. 大小限制（用字节长度，正确处理多字节字符）
-    const contentBytes = Buffer.byteLength(p.content, 'utf8');
-    if (contentBytes > maxFileSize) {
-      return {
-        content: [{ type: 'text', text: `Error: ${t('tools.fileSizeExceeded', { size: contentBytes, max: maxFileSize })}` }],
-        isError: true,
-      };
-    }
-
-    // 4. 路径解析与越权检测
+    // 2. 路径解析与越权检测
     const absPath = resolveWithinCwd(p.path, ctx.cwd);
     if (!absPath) {
-      return {
-        content: [{ type: 'text', text: `Error: path "${p.path}" escapes working directory` }],
-        isError: true,
-      };
+      return errorResult(`path "${p.path}" escapes working directory`);
     }
 
-    // 5. 路径类型预检查：若已存在且是目录则拒绝
+    // 3. 路径类型预检查：若已存在且是目录则拒绝
     const fileExists = existsSync(absPath);
     if (fileExists) {
       try {
         if (statSync(absPath).isDirectory()) {
-          return {
-            content: [{ type: 'text', text: `Error: ${t('tools.pathIsDirectory', { path: absPath })}` }],
-            isError: true,
-          };
+          return { content: [{ type: 'text', text: `Error: ${t('tools.pathIsDirectory', { path: absPath })}` }], isError: true };
         }
-      } catch {
-        // stat 失败不阻断，后续写入会抛错
-      }
+      } catch { /* stat 失败不阻断 */ }
     }
 
-    // 6. read-before-overwrite 强制校验
+    // 4. 从 toolConfig 读取配置（无大小限制，write 不需要）
+    const toolConfig = (ctx.toolConfig ?? {}) as {
+      trackHistory?: boolean;
+      requireReadBeforeOverwrite?: boolean;
+    };
+    const trackHistory = toolConfig.trackHistory ?? true;
+    const requireReadBeforeOverwrite = toolConfig.requireReadBeforeOverwrite ?? true;
+
+    // 5. read-before-overwrite 强制校验
     const fileHistory = getFileHistory(ctx);
     if (fileExists && requireReadBeforeOverwrite && fileHistory) {
       if (!fileHistory.isRead(ctx.sessionId, absPath)) {
@@ -101,98 +84,57 @@ export default {
       }
     }
 
-    // 7. Track Edit：改前备份（同步阻塞，必须在写入前完成）
+    // 6. Track Edit：改前备份（同步阻塞，必须在写入前完成）
     const createDirs = p.createDirs ?? true;
     let trackResult: Awaited<ReturnType<FileHistoryService['trackEdit']>> | null = null;
     if (trackHistory && fileHistory) {
       try {
         trackResult = await fileHistory.trackEdit(ctx.sessionId, absPath, ctx.toolCallId, 'write');
       } catch (err) {
-        // 备份失败不阻断写入，仅记录日志（undo 不可用）
         ctx.logger.warn('write: trackEdit failed, undo will be unavailable', {
-          path: absPath,
-          error: err instanceof Error ? err.message : String(err),
+          path: absPath, error: err instanceof Error ? err.message : String(err),
         });
       }
     }
 
-    // 8. 读取原内容（用于 diff）
-    let oldContent = '';
-    if (fileExists) {
-      try {
-        oldContent = readFileSync(absPath, 'utf8');
-      } catch {
-        // 读取失败忽略，diff 将为空
-      }
-    }
-
-    // 9. 创建父目录（若需要）
-    if (createDirs) {
-      try {
-        mkdirSync(dirname(absPath), { recursive: true });
-      } catch (err) {
-        return {
-          content: [{ type: 'text', text: `Error creating directory: ${err instanceof Error ? err.message : err}` }],
-          isError: true,
-        };
-      }
-    }
-
-    // 10. 原子写入
+    // 7. 分派到 handler 执行流式写入 + diff + 哈希
+    let writeResult: WriteTextResult;
     try {
-      atomicWriteFile(absPath, p.content, { fsync: true, preserveBom: true, preserveMode: true });
+      writeResult = await writeText({ absPath, content: p.content, fileExists, createDirs });
     } catch (err) {
-      return {
-        content: [{ type: 'text', text: `Error writing file: ${err instanceof Error ? err.message : err}` }],
-        isError: true,
-      };
+      const msg = err instanceof Error ? err.message : String(err);
+      return errorResult(`Error writing file: ${msg}`);
     }
 
-    // 11. 计算 diff（原文件存在时）
-    const diff = fileExists && oldContent !== p.content
-      ? computeLineDiff(oldContent, p.content)
-      : '';
-
-    // 12. 记录历史条目（写入 transcript）
+    // 8. 记录历史条目（写入 transcript）
     if (trackResult && fileHistory) {
       try {
-        const hashAfter = sha256(p.content);
         fileHistory.recordChange(
-          ctx.sessionId,
-          absPath,
-          trackResult,
-          hashAfter,
-          contentBytes,
-          diff || undefined,
+          ctx.sessionId, absPath, trackResult, writeResult.hash, writeResult.bytes,
+          writeResult.diff ?? undefined,
         );
       } catch (err) {
-        ctx.logger.warn('write: recordChange failed', {
-          path: absPath,
-          error: err instanceof Error ? err.message : String(err),
-        });
+        ctx.logger.warn('write: recordChange failed', { path: absPath, error: err instanceof Error ? err.message : String(err) });
       }
     }
 
-    // 13. 返回丰富结果
-    const operation = fileExists ? 'overwrite' : 'create';
-    ctx.logger.info(t('tools.fileWritten', { path: absPath }), { bytes: contentBytes, operation });
+    // 9. 返回丰富结果
+    ctx.logger.info(t('tools.fileWritten', { path: absPath }), { bytes: writeResult.bytes, operation: writeResult.operation });
 
-    const summary = `Successfully ${operation === 'create' ? 'created' : 'overwrote'} ${absPath} (${contentBytes} bytes)`;
-    const diffSection = diff ? `\n\n--- unified diff ---\n${diff}` : '';
-    const backupNote = trackResult?.backedUp
-      ? `\n[backup created: ${trackResult.backupPath}]`
-      : '';
+    const summary = `Successfully ${writeResult.operation === 'create' ? 'created' : 'overwrote'} ${absPath} (${writeResult.bytes} bytes)`;
+    const diffSection = writeResult.diff ? `\n\n--- unified diff ---\n${writeResult.diff}` : '';
+    const backupNote = trackResult?.backedUp ? `\n[backup created: ${trackResult.backupPath}]` : '';
 
     return {
       content: [{ type: 'text', text: summary + diffSection + backupNote }],
       metadata: {
         path: absPath,
-        bytes: contentBytes,
-        operation,
+        bytes: writeResult.bytes,
+        operation: writeResult.operation,
         createdDirs: createDirs,
-        diff: diff || undefined,
+        diff: writeResult.diff || undefined,
         hashBefore: trackResult?.hash || null,
-        hashAfter: sha256(p.content),
+        hashAfter: writeResult.hash,
         entryId: trackResult?.entryId || null,
         backedUp: trackResult?.backedUp ?? false,
       },

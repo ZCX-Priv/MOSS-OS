@@ -28,6 +28,9 @@
     "update": "bun src/main.ts update",
     "version": "bun src/main.ts version",
     "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "test:shell": "bun test src/modules/tools/builtin/shell",
+    "test:watch": "bun test --watch",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
@@ -37,6 +40,7 @@
     "mammoth": "^1.12.1",
     "nativefiledialog-for-bun": "^0.3.2",
     "pdf-parse": "^2.4.5",
+    "tar": "^7.5.22",
     "xlsx": "^0.18.5",
     "zod": "^3.23.8"
   },
@@ -51,6 +55,7 @@
     "remark-gfm": "^4.0.0",
     "typescript": "^5.6.3",
     "vite": "^5.4.11",
+    "vitest": "^2.1.9",
     "zustand": "^4.5.5"
   },
   "engines": {

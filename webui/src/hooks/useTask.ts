@@ -33,6 +33,7 @@ export function useTask() {
   const finalizeStreamingMessages = useStore((s) => s.finalizeStreamingMessages);
   const addTask = useStore((s) => s.addTask);
   const removePendingAsk = useStore((s) => s.removePendingAsk);
+  const removePendingConfirm = useStore((s) => s.removePendingConfirm);
 
   const sendMessage = useCallback(
     async (text: string, opts?: { taskId?: string; sessionId?: string }): Promise<string | undefined> => {
@@ -134,5 +135,19 @@ export function useTask() {
     [removePendingAsk],
   );
 
-  return { sendMessage, abort, replyAsk };
+  const replyConfirm = useCallback(
+    (toolCallId: string, ok: boolean) => {
+      const cf = useStore.getState().pendingConfirms.find((c) => c.toolCallId === toolCallId);
+      if (!cf) return;
+      wsClient.send({
+        type: 'tool.confirm.reply',
+        sessionId: cf.sessionId,
+        payload: { toolCallId, ok },
+      });
+      removePendingConfirm(toolCallId);
+    },
+    [removePendingConfirm],
+  );
+
+  return { sendMessage, abort, replyAsk, replyConfirm };
 }

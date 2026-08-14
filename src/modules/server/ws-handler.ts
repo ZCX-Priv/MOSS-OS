@@ -84,6 +84,8 @@ export class WsHandler {
         return this.handleSessionSubscribe(state, msg);
       case 'tool.ask.reply':
         return this.handleAskReply(state, msg);
+      case 'tool.confirm.reply':
+        return this.handleConfirmReply(state, msg);
       case 'task.create':
         return this.handleTaskCreate(state, msg);
       case 'task.switch':
@@ -217,6 +219,11 @@ export class WsHandler {
           sessionId: string;
           question: string;
         }>;
+        getPendingConfirms?: (sessionId: string) => Array<{
+          toolCallId: string;
+          sessionId: string;
+          question: string;
+        }>;
       }>('agent.engine');
       const asks = agent?.getPendingAsks?.(msg.sessionId) ?? [];
       for (const ask of asks) {
@@ -228,6 +235,21 @@ export class WsHandler {
             sessionId: ask.sessionId,
             toolCallId: ask.toolCallId,
             question: ask.question,
+          },
+        });
+      }
+      // WS 重连恢复 pending confirms：查询该 session 的待确认列表，逐条发送 confirm-required 事件
+      const confirms = agent?.getPendingConfirms?.(msg.sessionId) ?? [];
+      for (const cf of confirms) {
+        state.conn.send({
+          type: 'confirm-required',
+          sessionId: cf.sessionId,
+          payload: {
+            type: 'confirm-required',
+            sessionId: cf.sessionId,
+            toolCallId: cf.toolCallId,
+            toolName: '',
+            question: cf.question,
           },
         });
       }
@@ -255,6 +277,29 @@ export class WsHandler {
       return;
     }
     state.conn.send({ type: 'tool.ask.accepted', toolCallId: payload.toolCallId });
+  }
+
+  /** 处理前端对 confirm 确认的回复 */
+  private handleConfirmReply(state: ConnectionState, msg: WSMessage): void {
+    const agent = this.services.tryResolve<AgentEngine>('agent.engine');
+    if (!agent) {
+      state.conn.send({ type: 'error', payload: { message: ErrorCode.WS_AGENT_ENGINE_UNAVAILABLE } });
+      return;
+    }
+    const payload = (msg.payload ?? {}) as { toolCallId?: string; ok?: boolean };
+    if (!payload.toolCallId || typeof payload.ok !== 'boolean') {
+      state.conn.send({ type: 'error', payload: { message: ErrorCode.WS_TOOLCALLID_ANSWER_REQUIRED } });
+      return;
+    }
+    const ok = agent.resolveConfirm(payload.toolCallId, payload.ok);
+    if (!ok) {
+      state.conn.send({
+        type: 'error',
+        payload: { message: ErrorCode.WS_NO_PENDING_ASK },
+      });
+      return;
+    }
+    state.conn.send({ type: 'tool.confirm.accepted', toolCallId: payload.toolCallId });
   }
 
   /**

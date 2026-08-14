@@ -6,8 +6,8 @@
 //   Layer 3 (Transcript)：recordChange 写 JSONL，undo 读 JSONL 恢复
 
 import { randomUUID } from 'node:crypto';
-import { join } from 'node:path';
-import { existsSync, unlinkSync, statSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { existsSync, unlinkSync, statSync, rmSync } from 'node:fs';
 import type { Logger, Environment } from '../../core/types';
 import type { FileHistoryService } from '../contracts';
 import type {
@@ -21,11 +21,14 @@ import { backupByHash, readBackup } from './backup';
 import { ReadLedger } from './ledger';
 import { appendEntry, readEntries, removeLastNEntries, removeEntryById } from './transcript';
 import { atomicWriteFile } from './atomic-write';
+import { archiveDirectory, extractArchive } from './archive';
+import { cleanupExpiredTrash, TRASH_RETENTION_DAYS } from './trash';
 
 export class FileHistoryServiceImpl implements FileHistoryService {
   private readonly ledger = new ReadLedger();
   private readonly backupDir: string;
   private readonly transcriptDir: string;
+  private readonly trashDir: string;
 
   constructor(
     private readonly env: Environment,
@@ -34,6 +37,7 @@ export class FileHistoryServiceImpl implements FileHistoryService {
   ) {
     this.backupDir = join(env.dataDir, 'backups');
     this.transcriptDir = join(env.dataDir, 'file-history');
+    this.trashDir = join(env.dataDir, 'trash');
   }
 
   /** 全局开关：config.fileHistory.enabled 为 false 时所有行为降级为 no-op */
@@ -68,7 +72,7 @@ export class FileHistoryServiceImpl implements FileHistoryService {
 
     const entryId = randomUUID();
 
-    // 文件不存在 → create 操作，无需备份
+    // 文件/目录不存在 → create 操作，无需备份
     if (!existsSync(absPath)) {
       return {
         backedUp: false,
@@ -80,7 +84,48 @@ export class FileHistoryServiceImpl implements FileHistoryService {
       };
     }
 
-    // 文件存在 → overwrite/edit/delete 操作，按内容哈希备份
+    const stat = statSync(absPath);
+    const operation: FileOperation = toolName === 'delete' ? 'delete' : toolName === 'edit' ? 'edit' : 'overwrite';
+
+    // 目录 → tar.gz 整体归档备份（支持 undo 解包恢复）
+    if (stat.isDirectory()) {
+      const archivePath = join(this.backupDir, `${entryId}.tar.gz`);
+      try {
+        const result = await archiveDirectory(absPath, archivePath);
+        this.logger.debug('file-history: trackEdit directory archived', {
+          sessionId,
+          absPath,
+          operation,
+          archivePath: result.archivePath,
+          bytes: result.bytes,
+        });
+        return {
+          backedUp: true,
+          backupPath: result.archivePath,
+          hash: '', // 目录归档无内容哈希
+          bytesBefore: result.bytes,
+          entryId,
+          operation,
+          isDirectory: true,
+        };
+      } catch (err) {
+        this.logger.warn('file-history: directory archive failed', {
+          absPath,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return {
+          backedUp: false,
+          backupPath: null,
+          hash: '',
+          bytesBefore: 0,
+          entryId,
+          operation,
+          isDirectory: true,
+        };
+      }
+    }
+
+    // 文件 → 按内容哈希备份（同内容去重）
     let backup;
     try {
       backup = backupByHash(absPath, this.backupDir);
@@ -90,19 +135,15 @@ export class FileHistoryServiceImpl implements FileHistoryService {
         absPath,
         error: err instanceof Error ? err.message : String(err),
       });
-      // 仍生成 entry，但 backupPath 为 null（undo 时会失败）
-      const stat = statSync(absPath);
       return {
         backedUp: false,
         backupPath: null,
         hash: '',
         bytesBefore: stat.size,
         entryId,
-        operation: toolName === 'delete' ? 'delete' : 'overwrite',
+        operation,
       };
     }
-
-    const operation: FileOperation = toolName === 'delete' ? 'delete' : toolName === 'edit' ? 'edit' : 'overwrite';
 
     this.logger.debug('file-history: trackEdit', {
       sessionId,
@@ -141,7 +182,8 @@ export class FileHistoryServiceImpl implements FileHistoryService {
       sessionId,
       absPath,
       toolCallId: '', // 调用方可覆盖，此处简化
-      toolName: 'write', // 默认，调用方应通过 trackResult.operation 推断
+      // 从 trackResult.operation 推断 toolName：delete 操作记 delete，否则按 hashAfter 判断 create/overwrite
+      toolName: trackResult.operation === 'delete' ? 'delete' : 'write',
       timestamp: new Date().toISOString(),
       operation: trackResult.operation,
       hashBefore: trackResult.hash || null,
@@ -149,6 +191,7 @@ export class FileHistoryServiceImpl implements FileHistoryService {
       backupPath: trackResult.backupPath,
       bytesBefore: trackResult.bytesBefore,
       bytesAfter,
+      isDirectory: trackResult.isDirectory,
       ...(diff ? { diff } : {}),
     };
 
@@ -206,7 +249,7 @@ export class FileHistoryServiceImpl implements FileHistoryService {
     // 注意：removeLastNEntries 返回 reverse() 后的结果，索引 0 是最近一次
     for (const entry of removed) {
       try {
-        this.restoreEntry(entry);
+        await this.restoreEntry(entry);
         restored.push(entry.absPath);
         this.logger.info('file-history: undo restored', {
           sessionId,
@@ -255,7 +298,7 @@ export class FileHistoryServiceImpl implements FileHistoryService {
     }
 
     try {
-      this.restoreEntry(entry);
+      await this.restoreEntry(entry);
       return { restored: [entry.absPath], remaining: readEntries(path).length, failed: [] };
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
@@ -273,15 +316,20 @@ export class FileHistoryServiceImpl implements FileHistoryService {
 
   /**
    * 恢复单个历史条目（内部方法）。
-   * - create：删除文件（撤销创建）
-   * - overwrite/edit：从备份原子写回原内容
-   * - delete：从备份原子写回原路径（恢复被删除的文件）
+   * - create：删除文件/目录（撤销创建）
+   * - overwrite/edit/delete 文件：从备份原子写回原内容
+   * - delete 目录：从 tar.gz 归档解包到原路径父目录
    */
-  private restoreEntry(entry: FileHistoryEntry): void {
+  private async restoreEntry(entry: FileHistoryEntry): Promise<void> {
     if (entry.operation === 'create') {
-      // 撤销创建：删除文件
+      // 撤销创建：删除文件或目录
       if (existsSync(entry.absPath)) {
-        unlinkSync(entry.absPath);
+        const stat = statSync(entry.absPath);
+        if (stat.isDirectory()) {
+          rmSync(entry.absPath, { recursive: true, force: true });
+        } else {
+          unlinkSync(entry.absPath);
+        }
       }
       return;
     }
@@ -295,6 +343,23 @@ export class FileHistoryServiceImpl implements FileHistoryService {
       throw new Error(`backup file not found: ${entry.backupPath}`);
     }
 
+    // 目录归档 → tar.gz 解包恢复
+    if (entry.isDirectory || entry.backupPath.endsWith('.tar.gz')) {
+      const parentDir = dirname(entry.absPath);
+      // 若原路径已被占用，先移除（覆盖语义）
+      if (existsSync(entry.absPath)) {
+        const stat = statSync(entry.absPath);
+        if (stat.isDirectory()) {
+          rmSync(entry.absPath, { recursive: true, force: true });
+        } else {
+          unlinkSync(entry.absPath);
+        }
+      }
+      await extractArchive(entry.backupPath, parentDir);
+      return;
+    }
+
+    // 文件 → 从 .bak 哈希备份恢复
     const content = readBackup(entry.backupPath);
     // 原子写回原路径（不保留 BOM，因为备份的是原始完整内容）
     atomicWriteFile(entry.absPath, content, {
@@ -338,5 +403,22 @@ export class FileHistoryServiceImpl implements FileHistoryService {
     if (cleaned > 0) {
       this.logger.info('file-history: cleaned expired backups', { count: cleaned });
     }
+
+    // 同时清理过期 trash 项（保留 TRASH_RETENTION_DAYS 天）
+    try {
+      const trashedRemoved = cleanupExpiredTrash(this.trashDir, TRASH_RETENTION_DAYS);
+      if (trashedRemoved > 0) {
+        this.logger.info('file-history: cleaned expired trash entries', { count: trashedRemoved });
+      }
+    } catch (err) {
+      this.logger.warn('file-history: trash cleanup failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /** 暴露 trashDir 路径，供 delete 工具调用 moveToTrash */
+  getTrashDir(): string {
+    return this.trashDir;
   }
 }

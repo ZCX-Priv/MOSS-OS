@@ -18,6 +18,7 @@ import {
   realpathSync,
   chmodSync,
   openSync,
+  readSync,
   fsyncSync,
   closeSync,
 } from 'node:fs';
@@ -56,20 +57,10 @@ export function atomicWriteFile(
   } = options;
 
   // 1. 解析 symlink：写入真实目标，避免 rename 替换 symlink 本身
-  let realPath: string;
-  try {
-    realPath = realpathSync(filePath);
-  } catch {
-    // 文件不存在（新建场景），realpathSync 会抛 ENOENT，直接用原路径
-    realPath = filePath;
-  }
-
-  const dir = dirname(realPath);
-  const base = basename(realPath);
+  const realPath = resolveRealPath(filePath);
 
   // 2. 构造 tmp 文件路径（同目录，保证 rename 同文件系统）
-  //    前缀 . 隐藏，后缀 .tmp.<pid>.<random> 避免并发冲突
-  const tmpPath = join(dir, `.${base}.tmp.${process.pid}.${Math.random().toString(36).slice(2, 10)}`);
+  const tmpPath = buildTmpPath(realPath);
 
   // 3. 准备写入内容（BOM 保留逻辑）
   let contentToWrite: string | Buffer = data;
@@ -89,14 +80,7 @@ export function atomicWriteFile(
   }
 
   // 4. 保留原文件权限
-  let originalMode: number | null = null;
-  if (preserveMode && existsSync(realPath)) {
-    try {
-      originalMode = statSync(realPath).mode & 0o777;
-    } catch {
-      // 忽略 stat 失败
-    }
-  }
+  const originalMode = preserveMode ? getOriginalMode(realPath) : null;
 
   try {
     // 5. 写入 tmp 文件
@@ -142,16 +126,54 @@ export function atomicWriteFile(
   }
 }
 
+// ============================================================================
+// 导出辅助函数：供 atomicWriteFile 内部及 write/shared/streaming.ts 复用
+// 抽取自 atomicWriteFile，保持行为一致，提升可复用性
+// ============================================================================
+
+/**
+ * 解析真实路径（处理 symlink）。
+ * 文件不存在时（新建场景，realpathSync 抛 ENOENT）回退到原路径。
+ */
+export function resolveRealPath(filePath: string): string {
+  try {
+    return realpathSync(filePath);
+  } catch {
+    return filePath;
+  }
+}
+
+/**
+ * 构造 tmp 文件路径（同目录，保证 rename 同文件系统）。
+ * 前缀 . 隐藏，后缀 .tmp.<pid>.<random> 避免并发冲突。
+ */
+export function buildTmpPath(realPath: string): string {
+  const dir = dirname(realPath);
+  const base = basename(realPath);
+  return join(dir, `.${base}.tmp.${process.pid}.${Math.random().toString(36).slice(2, 10)}`);
+}
+
+/**
+ * 获取原文件权限（POSIX mode 低 9 位）。
+ * 文件不存在或 stat 失败时返回 null。
+ */
+export function getOriginalMode(realPath: string): number | null {
+  if (!existsSync(realPath)) return null;
+  try {
+    return statSync(realPath).mode & 0o777;
+  } catch {
+    return null;
+  }
+}
+
 /** 读取文件头部 N 字节（用于 BOM 检测，避免全量读取大文件） */
-function readHeadBytes(path: string, n: number): Buffer {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const fs = require('node:fs');
-  const fd = fs.openSync(path, 'r');
+export function readHeadBytes(path: string, n: number): Buffer {
+  const fd = openSync(path, 'r');
   try {
     const buf = Buffer.alloc(n);
-    const bytesRead = fs.readSync(fd, buf, 0, n, 0);
+    const bytesRead = readSync(fd, buf, 0, n, 0);
     return buf.subarray(0, bytesRead);
   } finally {
-    fs.closeSync(fd);
+    closeSync(fd);
   }
 }

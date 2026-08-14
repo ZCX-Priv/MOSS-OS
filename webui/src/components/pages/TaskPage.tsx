@@ -50,6 +50,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { TaskInput } from '../shared/TaskInput';
 import { TodoProgressCard } from '../shared/TodoProgressCard';
 import { AskPromptCard } from '../shared/AskPromptCard';
+import { ConfirmPromptCard } from '../shared/ConfirmPromptCard';
 import { TerminalView } from '../shared/TerminalView';
 import { useStore } from '../../store';
 import { useTask } from '../../hooks/useTask';
@@ -107,6 +108,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
   const task = useStore((s) => s.tasks.find((tk) => tk.id === taskId));
   const todos = useStore((s) => s.todosBySession[taskId] ?? EMPTY_TODOS);
   const pendingAsks = useStore((s) => s.pendingAsks);
+  const pendingConfirms = useStore((s) => s.pendingConfirms);
   const context = useStore((s) => s.contextBySession[taskId]);
   const sidebarTabs = useStore((s) => s.sidebarTabs);
   const activeSidebarTabId = useStore((s) => s.activeSidebarTabId);
@@ -381,6 +383,9 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
             )}
             {pendingAsks.filter((a) => a.sessionId === taskId).map((ask) => (
               <AskPromptCard key={ask.toolCallId} ask={ask} />
+            ))}
+            {pendingConfirms.filter((c) => c.sessionId === taskId).map((cf) => (
+              <ConfirmPromptCard key={cf.toolCallId} confirm={cf} />
             ))}
           </div>
         </div>

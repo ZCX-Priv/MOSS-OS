@@ -2,8 +2,8 @@
 // 安全文件操作：路径解析、防越权、二进制检测。
 
 import { t } from '../core/i18n';
-import { resolve, normalize, isAbsolute, relative, sep } from 'node:path';
-import { existsSync, statSync, readFileSync } from 'node:fs';
+import { resolve, normalize, isAbsolute, relative, sep, parse, dirname, join } from 'node:path';
+import { existsSync, statSync, readFileSync, realpathSync } from 'node:fs';
 import { isValidUtf8, stripBom } from './encoding';
 
 /**
@@ -23,7 +23,7 @@ export function resolvePath(path: string, cwd: string): string {
  */
 export function isPathInside(path: string, base: string): boolean {
   const rel = relative(base, path);
-  return rel === '' || (!rel.startsWith('..' + sep) && !rel.startsWith('..' + sep) && !isAbsolute(rel));
+  return rel === '' || (!rel.startsWith('..' + sep) && !isAbsolute(rel));
 }
 
 /**
@@ -89,6 +89,51 @@ export function readLinesWithNumbers(
     })
     .join('\n');
   return { text, totalLines, returnedLines: slice.length };
+}
+
+/**
+ * 解析 symlink 到真实路径；解析失败（如目标已删除）回退到原路径。
+ * 用于 symlink 遍历防护：cwd 内 symlink 若指向 cwd 外，realpath 会暴露真实位置。
+ */
+export function realpathSafe(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return p;
+  }
+}
+
+/**
+ * 检测路径是否为驱动器根或文件系统根。
+ * Windows 如 C:\、D:\；POSIX 如 /。
+ * 用于 Windows 路径折叠防护：拒绝删除根级路径，防止 rmdir /s /q 灾难。
+ */
+export function isRootPath(p: string): boolean {
+  const normalized = normalize(p);
+  // POSIX 根
+  if (normalized === sep) return true;
+  // Windows 驱动器根：C:\、D:\ 等（parse 后 dir === root 且 base 为空）
+  const { root, dir, base } = parse(normalized);
+  return root !== '' && dir === root && base === '';
+}
+
+const VCS_MARKERS = ['.git', '.svn', '.hg'];
+
+/**
+ * 检测路径本身或其任一祖先目录是否含 VCS 标记目录（.git/.svn/.hg）。
+ * 用于 dev vault 防护：拒绝删除版本控制仓库根目录，防止误删项目仓库。
+ */
+export function containsVcsMarker(absPath: string): boolean {
+  let current = normalize(absPath);
+  let prev = '';
+  while (current !== prev) {
+    for (const marker of VCS_MARKERS) {
+      if (existsSync(join(current, marker))) return true;
+    }
+    prev = current;
+    current = dirname(current);
+  }
+  return false;
 }
 
 export function fileStats(path: string): { size: number; isDir: boolean; mtime: Date } | null {

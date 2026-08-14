@@ -280,6 +280,19 @@ export function useWebSocket(): void {
         });
         break;
       }
+      case 'confirm-required': {
+        if (!sessionId) return;
+        const event = msg.payload as Extract<AgentEvent, { type: 'confirm-required' }>;
+        s.addPendingConfirm({
+          toolCallId: event.toolCallId,
+          sessionId,
+          toolName: event.toolName,
+          question: event.question,
+          details: event.details,
+          createdAt: Date.now(),
+        });
+        break;
+      }
       case 'error': {
         flushPending(); // 确保流式文本在终止前全部写入
         const event = (msg.payload ?? {}) as { message?: string };
@@ -312,8 +325,9 @@ export function useWebSocket(): void {
             pendingAssistant.delete(sessionId);
           }
           s.setGenerating(sessionId, false);
-          // agent.run 结束，后端兜底 reject 未完成的 ask；前端清空该 session 的待答提问
+          // agent.run 结束，后端兜底 reject 未完成的 ask/confirm；前端清空该 session 的待答提问与待确认请求
           useStore.getState().clearPendingAsksBySession(sessionId);
+          useStore.getState().clearPendingConfirmsBySession(sessionId);
         }
         break;
       }
@@ -361,6 +375,11 @@ export function useWebSocket(): void {
       case 'tool.ask.accepted': {
         const toolCallId = (msg as { toolCallId?: string }).toolCallId;
         if (toolCallId) useStore.getState().removePendingAsk(toolCallId);
+        break;
+      }
+      case 'tool.confirm.accepted': {
+        const toolCallId = (msg as { toolCallId?: string }).toolCallId;
+        if (toolCallId) useStore.getState().removePendingConfirm(toolCallId);
         break;
       }
 

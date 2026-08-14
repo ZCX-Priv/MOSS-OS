@@ -79,6 +79,12 @@ export interface AgentEngine {
    * @returns true 表示匹配到 pending ask 并已 resolve；false 表示无匹配（可能已超时或不存在）。
    */
   resolveAsk(toolCallId: string, answer: string): boolean;
+
+  /**
+   * 前端回复 confirm 确认。
+   * @returns true 表示匹配到 pending confirm 并已 resolve；false 表示无匹配（可能已超时或不存在）。
+   */
+  resolveConfirm(toolCallId: string, ok: boolean): boolean;
 }
 
 export interface AgentRunInput {
@@ -107,6 +113,7 @@ export type AgentEvent =
   | { type: 'tool-call-executing'; sessionId: string; toolName: string; toolCallId: string; runId?: string }
   | { type: 'tool-call-end'; sessionId: string; toolName: string; toolCallId: string; result: ToolResult; runId?: string }
   | { type: 'ask'; sessionId: string; toolCallId: string; question: string; runId?: string }
+  | { type: 'confirm-required'; sessionId: string; toolCallId: string; toolName: string; question: string; details?: unknown; runId?: string }
   | { type: 'error'; sessionId: string; message: string; runId?: string }
   | { type: 'done'; sessionId: string; finishReason: string; runId?: string };
 
@@ -230,4 +237,7 @@ export interface FileHistoryService {
 
   /** 清理会话资源（会话结束时调用，清空内存 ledger） */
   clearSession(sessionId: string): void;
+
+  /** 获取回收站目录路径（供 delete 工具 trash 模式调用 moveToTrash） */
+  getTrashDir(): string;
 }

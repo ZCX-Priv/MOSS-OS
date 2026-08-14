@@ -1,6 +1,6 @@
 {
   "name": "shell",
-  "description": "执行 shell 命令并返回 stdout、stderr 和退出码。默认超时 30 秒。使用 cwd 设置工作目录。警告：此工具以用户权限执行任意命令。",
+  "description": "执行 shell 命令并返回 stdout、stderr 和退出码。默认超时 30 秒。使用 cwd 设置工作目录，shell 指定 shell 类型（Windows 默认 cmd 可选 powershell，POSIX 默认 bash）。警告：此工具以用户权限执行任意命令。",
   "icon": "terminal",
   "annotations": {
     "destructiveHint": true,
@@ -27,6 +27,11 @@
         "type": "object",
         "description": "额外的环境变量（与 process.env 合并）。",
         "additionalProperties": { "type": "string" }
+      },
+      "shell": {
+        "type": "string",
+        "enum": ["cmd", "powershell", "bash"],
+        "description": "指定使用的 shell。Windows 默认 cmd（可选 powershell），macOS/Linux 默认 bash。"
       }
     },
     "required": ["command"],
