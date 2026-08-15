@@ -1,5 +1,5 @@
 // builtin/list_mcp/index.ts
-// list_mcp 工具 execute 逻辑：列出所有已连接 MCP 服务器及工具清单。
+// list_mcp 工具 execute 逻辑：列出所有 MCP 服务器（含启用状态）及工具清单。
 // 元数据见同目录 tool.json。
 
 import type { ToolContext, ToolResult } from '../../types';
@@ -13,8 +13,8 @@ export default {
     const mgr = ctx.services.tryResolve<MCPManager>(ServiceNames.MCP_MANAGER);
     if (!mgr) {
       return {
-        content: [{ type: 'text', text: 'MCP manager not available. Is the MCP plugin loaded?' }],
-        isError: false,
+        content: [{ type: 'text', text: 'Error: MCP manager not available. Is the MCP plugin loaded?' }],
+        isError: true,
       };
     }
 
@@ -25,10 +25,11 @@ export default {
       const lines: string[] = [];
       lines.push('=== MCP Servers ===');
       if (servers.length === 0) {
-        lines.push('(no servers connected)');
+        lines.push('(no servers defined)');
       } else {
         for (const s of servers) {
-          lines.push(`- ${s.name} [${s.status}] (${s.toolCount} tools)`);
+          const flag = s.enabled ? '' : ' [disabled]';
+          lines.push(`- ${s.name} [${s.status}${flag}] (${s.toolCount} tools)`);
         }
       }
       lines.push('');
@@ -45,7 +46,9 @@ export default {
         for (const [serverName, serverTools] of grouped) {
           lines.push(`[${serverName}]`);
           for (const t of serverTools) {
-            lines.push(`  - ${t.name}: ${t.description ?? '(no description)'}`);
+            const title = t.title ? ` "${t.title}"` : '';
+            const destructive = t.annotations?.destructiveHint === true ? ' [destructive]' : '';
+            lines.push(`  - ${t.name}${title}${destructive}: ${t.description ?? '(no description)'}`);
           }
         }
       }

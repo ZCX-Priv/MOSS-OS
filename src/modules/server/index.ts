@@ -27,9 +27,12 @@ import {
   createCallMcpToolHandler,
   createConnectMcpServerHandler,
   createDisconnectMcpServerHandler,
+  createCreateMcpServerHandler,
+  createUpdateMcpServerHandler,
+  createDeleteMcpServerHandler,
 } from './routes/mcp';
-import { createListSkillsHandler, createGetSkillHandler } from './routes/skills';
-import { createSpecsHandler } from './routes/specs';
+import { createListSkillsHandler, createGetSkillHandler, createUpdateSkillHandler } from './routes/skills';
+import { createSpecsHandler, createUpdateSpecHandler } from './routes/specs';
 import { createListToolsHandler, createUpdateToolHandler } from './routes/tools';
 import { createVersionHandler } from './routes/version';
 import {
@@ -42,6 +45,7 @@ import {
   createReorderModelsHandler,
 } from './routes/models';
 import { createListTodosHandler, createReplaceTodosHandler } from './routes/todos';
+import { createTruncatePreviewHandler, createTruncateHandler, createTruncateRestoreHandler } from './routes/truncate';
 import {
   createListFileHistoryHandler,
   createUndoFileHistoryHandler,
@@ -90,6 +94,7 @@ import {
   createSuggestPathsHandler,
   createPickDirectoryHandler,
 } from './routes/filesystem';
+import { McpExpose } from '../mcp/expose';
 
 interface BunServer {
   stop(): void | Promise<void>;
@@ -114,6 +119,7 @@ class ServerModule implements Module {
   private router!: HttpRouter;
   private wsHandler!: WsHandler;
   private assets!: StaticAssets;
+  private mcpExpose!: McpExpose;
   private server: BunServer | null = null;
   private actualPort = 0;
   private actualHost = '127.0.0.1';
@@ -123,6 +129,7 @@ class ServerModule implements Module {
     this.assets = new StaticAssets(ctx.env);
     this.router = new HttpRouter(ctx.config, ctx.logger, this.assets);
     this.wsHandler = new WsHandler(ctx.services, ctx.logger);
+    this.mcpExpose = new McpExpose({ config: ctx.config, services: ctx.services, logger: ctx.logger });
 
     this.registerRoutes();
 
@@ -191,16 +198,28 @@ class ServerModule implements Module {
     this.router.addRoute({ method: 'GET', pattern: '/api/session/:id', handler: createSessionHistoryHandler(services), auth: true });
     this.router.addRoute({ method: 'GET', pattern: '/api/sessions/:id/context', handler: createSessionContextHandler(services, config), auth: true });
 
+    // 消息撤回（截断）：预览 + 执行 + 恢复（redo）
+    this.router.addRoute({ method: 'GET', pattern: '/api/sessions/:id/truncate-preview', handler: createTruncatePreviewHandler(services), auth: true });
+    this.router.addRoute({ method: 'POST', pattern: '/api/sessions/:id/truncate', handler: createTruncateHandler(services), auth: true });
+    this.router.addRoute({ method: 'POST', pattern: '/api/sessions/:id/truncate-restore', handler: createTruncateRestoreHandler(services), auth: true });
+
     this.router.addRoute({ method: 'GET', pattern: '/api/mcp/servers', handler: createListMcpServersHandler(services), auth: true });
     this.router.addRoute({ method: 'GET', pattern: '/api/mcp/tools', handler: createListMcpToolsHandler(services), auth: true });
     this.router.addRoute({ method: 'POST', pattern: '/api/mcp/call', handler: createCallMcpToolHandler(services), auth: true });
     this.router.addRoute({ method: 'POST', pattern: '/api/mcp/connect', handler: createConnectMcpServerHandler(services), auth: true });
     this.router.addRoute({ method: 'POST', pattern: '/api/mcp/disconnect', handler: createDisconnectMcpServerHandler(services), auth: true });
+    // MCP 服务器定义 CRUD（含 enabled 启停切换）
+    this.router.addRoute({ method: 'POST', pattern: '/api/mcp/servers', handler: createCreateMcpServerHandler(services), auth: true });
+    this.router.addRoute({ method: 'PUT', pattern: '/api/mcp/servers/:name', handler: createUpdateMcpServerHandler(services), auth: true });
+    this.router.addRoute({ method: 'DELETE', pattern: '/api/mcp/servers/:name', handler: createDeleteMcpServerHandler(services), auth: true });
 
     // skills / specs
     this.router.addRoute({ method: 'GET', pattern: '/api/skills', handler: createListSkillsHandler(services), auth: true });
     this.router.addRoute({ method: 'GET', pattern: '/api/skills/:name', handler: createGetSkillHandler(services), auth: true });
+    this.router.addRoute({ method: 'PATCH', pattern: '/api/skills/:name', handler: createUpdateSkillHandler(services, config), auth: true });
     this.router.addRoute({ method: 'GET', pattern: '/api/specs', handler: createSpecsHandler(services), auth: true });
+    // specs 保存（写回 ~/.moss/agent/prompts/main/spec/ 下文件）
+    this.router.addRoute({ method: 'PUT', pattern: '/api/specs', handler: createUpdateSpecHandler(services, env), auth: true });
 
     // tools（工具元信息：name + icon，供前端渲染工具调用卡片图标）
     this.router.addRoute({ method: 'GET', pattern: '/api/tools', handler: createListToolsHandler(services), auth: true });
@@ -287,6 +306,7 @@ class ServerModule implements Module {
     const router = this.router;
     const wsHandler = this.wsHandler;
     const logger = this.ctx.logger;
+    const mcpExpose = this.mcpExpose;
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const BunAny = Bun as any;
@@ -306,6 +326,9 @@ class ServerModule implements Module {
           if (success) return new Response(null, { status: 101 });
           return new Response('Upgrade failed', { status: 400 });
         }
+        // MCP 对外暴露端点（/mcp）：在 router 之前拦截，绕过 body 限制与 SPA fallback
+        const mcpResp = await mcpExpose.handleRequest(req);
+        if (mcpResp) return mcpResp;
         // 普通 HTTP 请求
         return handleHttp(req, router, logger);
       },

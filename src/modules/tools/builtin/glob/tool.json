@@ -1,6 +1,6 @@
 {
   "name": "glob",
-  "description": "按 glob 模式查找文件。支持 *（非分隔符）、**（任意深度）、?（单字符）、[abc]（字符类）。返回排序后的匹配文件路径列表。默认跳过 node_modules/.git/dist/build。",
+  "description": "按 glob 模式查找文件。支持多 pattern 合并（数组）、{a,b} 大括号展开、! 否定模式、** 任意深度、? 单字符、[abc] 字符类；支持按文件类型过滤（type）、mtime 降序排序（最近修改优先）、offset 分页。默认尊重 .gitignore/.ignore 并跳过隐藏文件与 node_modules/dist/build 等目录。",
   "icon": "folder-search",
   "annotations": {
     "readOnlyHint": true,
@@ -10,25 +10,64 @@
     "type": "object",
     "properties": {
       "pattern": {
-        "type": "string",
-        "description": "glob 模式，如 \"**/*.ts\"、\"src/**/*.json\"、\"*.md\"。使用 \"/\" 作为路径分隔符"
+        "anyOf": [
+          { "type": "string", "description": "glob 模式，如 \"**/*.ts\"、\"src/**/*.{json,md}\"、\"!**/*.test.ts\"（! 开头为排除过滤）" },
+          {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "多个 glob 模式，正模式取并集、! 开头负模式从并集中排除，如 [\"**/*.ts\",\"**/*.tsx\",\"!**/*.test.*\"]"
+          }
+        ]
       },
       "path": {
         "type": "string",
         "description": "搜索的根目录（默认：agent 工作目录）。绝对或相对路径"
+      },
+      "type": {
+        "type": "string",
+        "description": "按文件类型过滤（等价 rg --type）：ts/js/py/rust/go/java/kotlin/c/cpp/cs/rb/php/swift/md/json/yaml/toml/css/scss/less/html/vue/svelte/sh/bat/sql/xml/astro/graphql。比手写 glob 更不易漏扩展名"
       },
       "maxResults": {
         "type": "integer",
         "description": "最多返回的结果数（默认 200，最大 1000）。",
         "minimum": 1,
         "maximum": 1000
+      },
+      "offset": {
+        "type": "integer",
+        "description": "分页偏移量（默认 0）。结果截断时配合使用可翻页",
+        "minimum": 0
+      },
+      "includeDirs": {
+        "type": "boolean",
+        "description": "结果中包含匹配的目录（默认 false，仅文件）"
+      },
+      "noIgnore": {
+        "type": "boolean",
+        "description": "不尊重 .gitignore/.ignore 且不跳过 node_modules/dist/build 等默认忽略目录（默认 false）。查找构建产物/依赖时使用"
+      },
+      "dot": {
+        "type": "boolean",
+        "description": "包含隐藏文件/目录（. 开头，默认 false）"
+      },
+      "sortBy": {
+        "type": "string",
+        "enum": ["mtime", "path"],
+        "description": "排序方式：mtime=修改时间降序（默认，最近修改优先）；path=字典序"
       }
     },
     "required": ["pattern"],
     "additionalProperties": false
   },
   "config": {
-    "defaults": { "enabled": true },
-    "schema": {}
+    "defaults": {
+      "enabled": true,
+      "respectGitignore": true,
+      "maxResults": 200
+    },
+    "schema": {
+      "respectGitignore": { "type": "boolean", "description": "是否默认尊重 .gitignore（false 等同全局 noIgnore）" },
+      "maxResults": { "type": "integer", "description": "默认返回结果数上限（1-1000）" }
+    }
   }
 }

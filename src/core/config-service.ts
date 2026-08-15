@@ -76,6 +76,22 @@ const appConfigSchema = z.object({
   // tools schema 从 manifest 自动构建（单一真相源），新增工具无需手动改此文件
   tools: buildToolsSchema(),
   mcpServers: z.record(z.string(), z.unknown()),
+  // MCP 客户端配置（可选，向后兼容旧配置）
+  mcp: z
+    .object({
+      callTimeoutMs: z.number().int().positive().optional(),
+      allowSampling: z.boolean().optional(),
+    })
+    .optional(),
+  // 对外 MCP Server 暴露（/mcp 端点，可选）
+  mcpServer: z
+    .object({
+      enabled: z.boolean(),
+      allowedTools: z.array(z.string()),
+    })
+    .optional(),
+  // Skill 启停（可选）
+  skills: z.record(z.string(), z.object({ enabled: z.boolean().optional() })).optional(),
   security: z.object({
     authToken: z.string(),
     bindLocalhostOnly: z.boolean(),
@@ -108,6 +124,9 @@ export function defaultAppConfig(): AppConfig {
     // tools 默认值从 manifest 自动构建（单一真相源）
     tools: buildToolsDefaults() as AppConfig['tools'],
     mcpServers: {},
+    mcp: { callTimeoutMs: 120000, allowSampling: true },
+    mcpServer: { enabled: false, allowedTools: [] },
+    skills: {},
     security: { authToken: '', bindLocalhostOnly: true },
     fileHistory: { ...DEFAULT_FILE_HISTORY_CONFIG },
   };

@@ -3,15 +3,28 @@
 
 import { t } from '../../core/i18n';
 import { buildSystemPrompt, buildTools } from './context';
-import { SessionStore, type ContextFile } from './session';
+import { SessionStore, type ContextFile, type Session } from './session';
 import { TaskStore, type TaskItem, type TaskGroup } from './task-store';
 import { LLMError, type UnifiedRequest } from '../llm/types';
-import type { AgentMessage, AgentEngine, AgentEvent, AgentRunInput, AgentRunResult } from '../contracts';
-import type { LLMRouter, ToolRegistry, MCPManager } from '../contracts';
+import type {
+  AgentMessage,
+  AgentEngine,
+  AgentEvent,
+  AgentRunInput,
+  AgentRunResult,
+  TruncatePreview,
+  TruncateResult,
+  TruncateRestoreResult,
+} from '../contracts';
+import type { LLMRouter, ToolRegistry, MCPManager, FileHistoryService } from '../contracts';
 import type { ConfigService, EventBus, Logger, ServiceRegistry, Environment, ApiConfig } from '../../core/types';
 import { ServiceNames } from '../../core/types';
-import type { ToolResult } from '../tools/types';
-import { getTodoStorePath, readTodoStore } from '../tools/todo';
+import type { AskOutcome, AskPayload, ToolResult } from '../tools/types';
+import type { SkillRegistry } from '../tools/skills';
+import { readSessionTodoStore, getSessionTodoPath } from '../tools/builtin/todo/shared/store';
+
+/** ask 超时兜底上限（即使配置异常也不会让 Promise 永久悬挂） */
+const ASK_TIMEOUT_CEILING_MS = 24 * 60 * 60 * 1000; // 24h
 
 export class AgentEngineImpl implements AgentEngine {
   private readonly sessions: SessionStore;
@@ -21,13 +34,13 @@ export class AgentEngineImpl implements AgentEngine {
   private readonly eventBus: EventBus;
   private readonly logger: Logger;
   private readonly env: Environment;
-  /** pending ask 调用：toolCallId -> { resolve, reject, timer, sessionId, question } */
+  /** pending ask 调用：toolCallId -> { resolve, reject, timer?, sessionId, payload } */
   private readonly pendingAsks = new Map<string, {
-    resolve: (answer: string) => void;
+    resolve: (outcome: AskOutcome) => void;
     reject: (err: Error) => void;
-    timer: ReturnType<typeof setTimeout>;
+    timer: ReturnType<typeof setTimeout> | null;
     sessionId: string;
-    question: string;
+    payload: AskPayload;
   }>();
 
   /** pending confirm 调用：toolCallId -> { resolve, reject, timer, sessionId, question } */
@@ -84,6 +97,13 @@ export class AgentEngineImpl implements AgentEngine {
     const systemPrompt = buildSystemPrompt(this.env, cwd, model, modelDisplayName);
     const session = this.sessions.getOrCreate(sessionId, systemPrompt);
     this.sessions.addUserMessage(session, userMessage);
+    // 活跃置顶：task.id 即 sessionId；无对应任务时静默返回 null
+    this.tasks.touchTask(sessionId);
+
+    // skill 模式处理（/ 菜单触发：payload.skill 非空=激活/切换；null=退出）
+    if (input.skill !== undefined) {
+      this.applySkillMode(session, input.skill, onEvent, sessionId);
+    }
 
     // 工具集（含 MCP 工具）
     let mcpTools: Array<{ server: string; name: string; description?: string; inputSchema?: unknown }> = [];
@@ -323,9 +343,176 @@ export class AgentEngineImpl implements AgentEngine {
     }));
   }
 
-  /** 获取会话历史 */
+  /** 获取会话历史（不含已撤回的软删除消息） */
   getHistory(sessionId: string): AgentMessage[] {
-    return this.sessions.get(sessionId)?.messages ?? [];
+    return (this.sessions.get(sessionId)?.messages ?? []).filter(m => !m.deletedAt);
+  }
+
+  // ========================================================================
+  // 消息撤回（截断）与恢复（redo）
+  // ========================================================================
+
+  previewTruncate(sessionId: string, messageTimestamp: string, content: string): TruncatePreview | null {
+    const session = this.sessions.get(sessionId);
+    if (!session) return null;
+    this.sessions.purgeDeletedMessages(session);
+    const idx = this.sessions.locateUserMessage(session, messageTimestamp, content);
+    if (idx === -1) return null;
+
+    const messagesToRemove = session.messages.slice(idx)
+      .filter(m => !m.deletedAt)
+      .map((m, i) => ({
+        index: idx + i,
+        role: m.role,
+        content: m.content.length > 120 ? `${m.content.slice(0, 120)}…` : m.content,
+        ...(m.timestamp ? { timestamp: m.timestamp } : {}),
+      }));
+
+    // 文件回滚区间：目标消息 timestamp → 最后一条消息 timestamp（旧消息无 timestamp 时跳过回滚）
+    const from = session.messages[idx]?.timestamp;
+    let to: string | undefined;
+    for (let i = session.messages.length - 1; i >= 0; i--) {
+      if (session.messages[i].timestamp && !session.messages[i].deletedAt) {
+        to = session.messages[i].timestamp;
+        break;
+      }
+    }
+    const fileChanges: TruncatePreview['fileChanges'] = [];
+    if (from && to) {
+      const fh = this.resolveFileHistory();
+      if (fh) {
+        const fromMs = Date.parse(from);
+        const toMs = Date.parse(to);
+        for (const e of fh.listHistory(sessionId)) {
+          if (e.toolName === 'rollback') continue;
+          const ts = Date.parse(e.timestamp);
+          if (Number.isNaN(ts) || ts < fromMs || ts > toMs) continue;
+          fileChanges.push({ absPath: e.absPath, operation: e.operation, toolName: e.toolName, timestamp: e.timestamp });
+        }
+      }
+    }
+    return { messagesToRemove, fileChanges };
+  }
+
+  async truncateFrom(sessionId: string, messageTimestamp: string, content: string): Promise<TruncateResult | null> {
+    const session = this.sessions.get(sessionId);
+    if (!session) return null;
+    // 新截断覆盖旧恢复窗口：物理清除旧软删除
+    this.sessions.purgeDeletedMessages(session);
+    const idx = this.sessions.locateUserMessage(session, messageTimestamp, content);
+    if (idx === -1) return null;
+    const targetMsg = session.messages[idx];
+    const truncatedBeforeTimestamp = targetMsg.timestamp ?? messageTimestamp;
+
+    // 先做文件回滚（基于截断前完整区间），再做消息软删除
+    const rollbackFailed: TruncateResult['rollbackFailed'] = [];
+    let rollbackEntryIds: string[] = [];
+    let fileRollbackPerformed = false;
+    const from = targetMsg.timestamp;
+    let to: string | undefined;
+    for (let i = session.messages.length - 1; i >= idx; i--) {
+      if (session.messages[i].timestamp) {
+        to = session.messages[i].timestamp;
+        break;
+      }
+    }
+    if (from && to) {
+      const fh = this.resolveFileHistory();
+      if (fh) {
+        fileRollbackPerformed = true;
+        try {
+          const rb = await fh.rollbackRange(sessionId, from, to);
+          rollbackEntryIds = rb.rollbackIds;
+          rollbackFailed.push(...rb.failed);
+        } catch (err) {
+          rollbackFailed.push({
+            absPath: '',
+            error: `rollbackRange threw: ${err instanceof Error ? err.message : String(err)}`,
+          });
+        }
+      }
+    }
+
+    // 消息软删除
+    const removedCount = this.sessions.truncateFrom(session, idx);
+
+    // 记录 lastTruncation（redo 用）
+    session.lastTruncation = {
+      truncatedBeforeTimestamp,
+      deletedIndexes: [],
+      rollbackEntryIds,
+    };
+    // 直接落盘（saveSession 是私有方法，通过再次触发软删除持久化路径覆盖）
+    this.sessions.persistSession(session);
+
+    // 通知前端
+    const server = this.services.tryResolve<{ sendToSession: (sid: string, msg: unknown) => void }>(ServiceNames.SERVER_INSTANCE);
+    server?.sendToSession(sessionId, {
+      type: 'session-truncated',
+      sessionId,
+      payload: {
+        messageTimestamp: truncatedBeforeTimestamp,
+        removedCount,
+      },
+    });
+
+    this.logger.info('agent: session truncated', {
+      sessionId,
+      removedCount,
+      rollbackEntries: rollbackEntryIds.length,
+      rollbackFailed: rollbackFailed.length,
+    });
+
+    return {
+      removedCount,
+      rolledBackFiles: Math.max(rollbackEntryIds.length - rollbackFailed.length, 0),
+      rollbackFailed,
+      truncatedBeforeTimestamp,
+      fileRollbackPerformed,
+    };
+  }
+
+  async restoreTruncate(sessionId: string): Promise<TruncateRestoreResult | null> {
+    const session = this.sessions.get(sessionId);
+    if (!session) return null;
+    const info = session.lastTruncation;
+    if (!info) return null;
+
+    // 先恢复文件（redo rollback），再恢复消息
+    const restoreFailed: TruncateRestoreResult['restoreFailed'] = [];
+    let restoredFiles = 0;
+    if (info.rollbackEntryIds.length > 0) {
+      const fh = this.resolveFileHistory();
+      if (fh) {
+        try {
+          const rr = await fh.redoRollback(sessionId, info.rollbackEntryIds);
+          restoreFailed.push(...rr.failed);
+          restoredFiles = info.rollbackEntryIds.length - rr.failed.length;
+        } catch (err) {
+          restoreFailed.push({
+            absPath: '',
+            error: `redoRollback threw: ${err instanceof Error ? err.message : String(err)}`,
+          });
+        }
+      }
+    }
+
+    const restoredCount = this.sessions.restoreTruncated(session);
+
+    const server = this.services.tryResolve<{ sendToSession: (sid: string, msg: unknown) => void }>(ServiceNames.SERVER_INSTANCE);
+    server?.sendToSession(sessionId, {
+      type: 'session-restored',
+      sessionId,
+      payload: { restoredCount, restoredFiles },
+    });
+
+    this.logger.info('agent: session truncation restored', { sessionId, restoredCount, restoredFiles });
+
+    return { restoredCount, restoredFiles, restoreFailed };
+  }
+
+  private resolveFileHistory(): FileHistoryService | null {
+    return this.services.tryResolve<FileHistoryService>(ServiceNames.FILE_HISTORY);
   }
 
   /** 获取会话上下文文件轨迹（阶段5.1：供 session-context 路由回填） */
@@ -398,6 +585,7 @@ export class AgentEngineImpl implements AgentEngine {
     const messages: Array<{ sessionId: string; messageId: string; text: string }> = [];
     for (const session of this.sessions.list()) {
       for (const msg of session.messages) {
+        if (msg.deletedAt) continue;
         if (msg.role === 'user' || msg.role === 'assistant') {
           if (msg.content.toLowerCase().includes(q)) {
             messages.push({
@@ -473,7 +661,7 @@ export class AgentEngineImpl implements AgentEngine {
     // 记录工具结果到会话
     // resultText 计算包进 try/catch：运行时 content 数据异常（如 source 缺失）不应
     // 阻止 addToolMessage 执行，否则 assistant 的 tool_use 会缺少对应 tool_result，
-    // session 复用时触发 Anthropic HTTP 400。
+    // session 复用时会触发 HTTP 400。
     let resultText: string;
     try {
       resultText = result.content
@@ -503,7 +691,7 @@ export class AgentEngineImpl implements AgentEngine {
 
   /**
    * 工具执行后的副作用 WS 推送（阶段5.1）：
-   * - todo 工具：推送 todo-updated
+   * - todo 工具：推送 todo-updated（会话级存储，读该 session 的文件）
    * - read/edit/write/grep/glob：更新 contextFiles 轨迹并推送 context-updated
    * - write：额外推送 file-created
    * - edit：额外推送 file-edited
@@ -518,8 +706,9 @@ export class AgentEngineImpl implements AgentEngine {
     try {
       switch (toolName) {
         case 'todo': {
-          const store = readTodoStore(getTodoStorePath(this.env));
-          const todos = store.items.filter((it) => it.sessionId === sessionId);
+          // 会话级存储：直接读该 session 的文件（天然隔离）
+          const store = readSessionTodoStore(getSessionTodoPath(this.env, sessionId));
+          const todos = store.items;
           // 持久化快照到 assistant 消息（刷新后可恢复）
           const session = this.sessions.get(sessionId);
           if (session) this.sessions.attachTodoSnapshot(session, toolCallId, todos);
@@ -624,26 +813,39 @@ export class AgentEngineImpl implements AgentEngine {
       logger: this.logger,
       services: this.services,
       signal: ctx.signal,
-      askUser: (question: string) => {
-        return new Promise<string>((resolve, reject) => {
-          const timer = setTimeout(() => {
-            this.pendingAsks.delete(ctx.toolCallId);
-            reject(new Error('ask timeout (5min)'));
-          }, 5 * 60 * 1000);
+      askUser: (payload: AskPayload) => {
+        return new Promise<AskOutcome>((resolve, reject) => {
+          // 超时从 config.tools.ask.timeoutMinutes 读取（0/缺省 = 永不超时），兜底上限 24h
+          let timeoutMs = 0;
+          try {
+            const askCfg = (this.config.getAppConfig().tools as Record<string, Record<string, unknown>>)?.['ask'];
+            const raw = askCfg?.timeoutMinutes;
+            if (typeof raw === 'number' && raw > 0) timeoutMs = raw * 60 * 1000;
+          } catch {
+            // config 不可用：永不超时
+          }
+          const timer = timeoutMs > 0 ? setTimeout(() => {
+            if (this.pendingAsks.delete(ctx.toolCallId)) {
+              reject(new Error(`ask timeout after ${Math.round(timeoutMs / 60000)}min`));
+              // 通知前端移除残留卡片
+              ctx.onEvent({ type: 'ask-timeout', sessionId: ctx.sessionId, toolCallId: ctx.toolCallId });
+            }
+          }, Math.min(timeoutMs, ASK_TIMEOUT_CEILING_MS)) : null;
           this.pendingAsks.set(ctx.toolCallId, {
             resolve,
             reject,
             timer,
             sessionId: ctx.sessionId,
-            question,
+            payload,
           });
           // 中断时立即 reject
           if (ctx.signal) {
             ctx.signal.addEventListener(
               'abort',
               () => {
-                if (this.pendingAsks.has(ctx.toolCallId)) {
-                  clearTimeout(timer);
+                const pending = this.pendingAsks.get(ctx.toolCallId);
+                if (pending) {
+                  if (pending.timer) clearTimeout(pending.timer);
                   this.pendingAsks.delete(ctx.toolCallId);
                   reject(new Error('aborted'));
                 }
@@ -655,7 +857,10 @@ export class AgentEngineImpl implements AgentEngine {
             type: 'ask',
             sessionId: ctx.sessionId,
             toolCallId: ctx.toolCallId,
-            question,
+            question: payload.question,
+            answerType: payload.answerType,
+            options: payload.options,
+            defaultAnswer: payload.defaultAnswer,
           });
         });
       },
@@ -708,22 +913,22 @@ export class AgentEngineImpl implements AgentEngine {
     return result;
   }
 
-  /** 前端回复 ask 提问。匹配到 pending 则 resolve 并返回 true。 */
-  resolveAsk(toolCallId: string, answer: string): boolean {
+  /** 前端回复 ask 提问（accept/cancel）。匹配到 pending 则 resolve 并返回 true。 */
+  resolveAsk(toolCallId: string, outcome: AskOutcome): boolean {
     const pending = this.pendingAsks.get(toolCallId);
     if (!pending) return false;
-    clearTimeout(pending.timer);
+    if (pending.timer) clearTimeout(pending.timer);
     this.pendingAsks.delete(toolCallId);
-    pending.resolve(answer);
+    pending.resolve(outcome);
     return true;
   }
 
-  /** 列出某 session 的待答 ask（供 WS 重连恢复 pending asks）。 */
-  getPendingAsks(sessionId: string): Array<{ toolCallId: string; sessionId: string; question: string }> {
-    const out: Array<{ toolCallId: string; sessionId: string; question: string }> = [];
+  /** 列出某 session 的待答 ask（供 WS 重连恢复 pending asks，携带完整提问载荷）。 */
+  getPendingAsks(sessionId: string): Array<{ toolCallId: string; sessionId: string; payload: AskPayload }> {
+    const out: Array<{ toolCallId: string; sessionId: string; payload: AskPayload }> = [];
     for (const [toolCallId, pending] of this.pendingAsks) {
       if (pending.sessionId === sessionId) {
-        out.push({ toolCallId, sessionId: pending.sessionId, question: pending.question });
+        out.push({ toolCallId, sessionId: pending.sessionId, payload: pending.payload });
       }
     }
     return out;
@@ -753,7 +958,7 @@ export class AgentEngineImpl implements AgentEngine {
   /** 清理所有未完成的 pending ask 与 confirm（run 结束时兜底）。 */
   private cleanupPendingAsks(): void {
     for (const [, pending] of this.pendingAsks) {
-      clearTimeout(pending.timer);
+      if (pending.timer) clearTimeout(pending.timer);
       pending.reject(new Error('session ended'));
     }
     this.pendingAsks.clear();
@@ -764,13 +969,102 @@ export class AgentEngineImpl implements AgentEngine {
     this.pendingConfirms.clear();
   }
 
+  /**
+   * skill 模式处理（/ 菜单触发，会话级持久）。
+   * 规则（用户确认的设计）：
+   *   - 首次激活：skill 内容（不含元数据）注入系统提示词后（activeSkill.mode='system'）
+   *   - 切换 skill：卸载旧注入（system 模式=不再拼接；message 模式=物理删除 skill-inject 消息），
+   *     新 skill 内容作为 skill-inject system 消息锚定在本次用户消息后（activeSkill.mode='message'）
+   *   - 退出（null）：卸载全部注入
+   * 注入/卸载结果通过 skill-mode AgentEvent 推送前端（greet 欢迎语 + icon；不写入 session.messages）。
+   */
+  private applySkillMode(
+    session: Session,
+    skillName: string | null,
+    onEvent: (event: AgentEvent) => void,
+    sessionId: string,
+  ): void {
+    const prev = session.activeSkill;
+
+    // 1. 卸载旧注入
+    if (prev?.mode === 'message') {
+      // 物理删除 skill-inject 消息（role=system 且 name=skill-inject）
+      session.messages = session.messages.filter(
+        m => !(m.role === 'system' && m.name === 'skill-inject'),
+      );
+    }
+    // system 模式的卸载 = activeSkill 置空后 toUnifiedMessages 不再拼接
+    session.activeSkill = undefined;
+
+    // 2. 退出模式
+    if (skillName === null) {
+      onEvent({
+        type: 'skill-mode',
+        sessionId,
+        action: 'exit',
+        ...(prev ? { name: prev.name } : {}),
+      });
+      return;
+    }
+
+    // 3. 激活/切换
+    const registry = this.services.tryResolve<SkillRegistry>(ServiceNames.SKILL_REGISTRY);
+    const skill = registry?.get(skillName);
+    if (!registry || !skill || !registry.isEnabled(skillName)) {
+      onEvent({
+        type: 'skill-mode',
+        sessionId,
+        action: 'error',
+        name: skillName,
+        message: `skill "${skillName}" not found or disabled`,
+      });
+      return;
+    }
+
+    if (!prev) {
+      // 首次激活：注入系统提示词后
+      session.activeSkill = { name: skill.name, mode: 'system', content: skill.prompt };
+    } else {
+      // 切换：锚定到本次用户消息后（addUserMessage 已执行，append 即紧跟其后）
+      session.activeSkill = { name: skill.name, mode: 'message', content: skill.prompt };
+      session.messages.push({
+        role: 'system',
+        content: `# Active Skill: ${skill.name}\n\n${skill.prompt}`,
+        name: 'skill-inject',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    onEvent({
+      type: 'skill-mode',
+      sessionId,
+      action: prev ? 'switch' : 'enter',
+      name: skill.name,
+      ...(skill.greet ? { greet: skill.greet } : {}),
+      ...(skill.icon ? { icon: skill.icon } : {}),
+    });
+  }
+
+  /**
+   * MCP 工具执行（mcp__server__tool 前缀路径）。
+   * 与 executeBuiltinTool 对齐的权限链：
+   *   1. server 启用检查（disabled / 未定义 → 拒绝）
+   *   2. MCP 工具 annotations 透传：destructiveHint → 用户确认（pendingConfirms）
+   *   3. tool:before / tool:after hook
+   *   4. 超时保护（config.mcp.callTimeoutMs，默认 120s）
+   *   5. elicitation 桥：MCP 服务器向用户请求输入 → ask 机制（answerType=form）
+   * structured output 与 resource 完整数据放 metadata（前端可渲染）。
+   */
   private async executeMcpTool(
     serverName: string,
     toolName: string,
     args: unknown,
     ctx: {
       sessionId: string;
+      cwd: string;
+      toolCallId: string;
       onEvent: (event: AgentEvent) => void;
+      signal?: AbortSignal;
     },
   ): Promise<ToolResult> {
     const mcpManager = this.services.tryResolve<MCPManager>(ServiceNames.MCP_MANAGER);
@@ -781,23 +1075,145 @@ export class AgentEngineImpl implements AgentEngine {
       };
     }
 
-    try {
-      const result = await mcpManager.callTool(serverName, toolName, args);
+    // 1. server 启用检查（null=未定义，false=禁用）
+    if (mcpManager.isServerEnabled(serverName) !== true) {
       return {
-        content: result.content.map(c => {
-          if (c.type === 'text') return { type: 'text' as const, text: c.text };
-          if (c.type === 'image') {
-            return { type: 'image' as const, source: { data: c.data, mimeType: c.mimeType } };
-          }
-          // resource: 优先用 text 字段，否则生成占位符（无法映射为 image source 结构）
-          const resText = c.text ?? `[resource: ${c.uri} (${c.mimeType ?? 'unknown'})]`;
-          return { type: 'text' as const, text: resText };
-        }),
-        isError: result.isError,
-        metadata: { server: serverName, tool: toolName },
+        content: [{ type: 'text', text: `Error: MCP server "${serverName}" is disabled or not found` }],
+        isError: true,
       };
+    }
+
+    const fullToolName = `mcp__${serverName}__${toolName}`;
+
+    // 2. destructiveHint → 用户确认（与 builtin 工具的 confirm 链一致）
+    const annotations = mcpManager.getToolAnnotations(serverName, toolName);
+    if (annotations?.destructiveHint === true) {
+      const ok = await new Promise<boolean>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          this.pendingConfirms.delete(ctx.toolCallId);
+          resolve(false);
+        }, 5 * 60 * 1000);
+        this.pendingConfirms.set(ctx.toolCallId, {
+          resolve,
+          reject,
+          timer,
+          sessionId: ctx.sessionId,
+          question: `[MCP:${serverName}] ${toolName}`,
+        });
+        if (ctx.signal) {
+          ctx.signal.addEventListener(
+            'abort',
+            () => {
+              if (this.pendingConfirms.has(ctx.toolCallId)) {
+                clearTimeout(timer);
+                this.pendingConfirms.delete(ctx.toolCallId);
+                reject(new Error('aborted'));
+              }
+            },
+            { once: true },
+          );
+        }
+        ctx.onEvent({
+          type: 'confirm-required',
+          sessionId: ctx.sessionId,
+          toolCallId: ctx.toolCallId,
+          toolName: fullToolName,
+          question: t('agent.mcpDestructiveConfirm', { server: serverName, tool: toolName }),
+          details: args,
+        });
+      });
+      if (!ok) {
+        return {
+          content: [{ type: 'text', text: 'Canceled: user declined the destructive MCP tool call' }],
+          isError: true,
+          metadata: { server: serverName, tool: toolName, canceled: true },
+        };
+      }
+    }
+
+    // 3. tool:before hook
+    await this.eventBus.emit('tool:before', {
+      name: fullToolName,
+      args,
+      sessionId: ctx.sessionId,
+    });
+
+    // 4. elicitation 桥：MCP 服务器向用户请求输入 → ask 事件（answerType=form + JSON Schema）→ 前端 ElicitationCard
+    const elicit = (req: { message: string; requestedSchema?: Record<string, unknown> }) => {
+      const question = `[MCP:${serverName}] ${req.message}`;
+      const formSchema =
+        req.requestedSchema ??
+        ({
+          type: 'object',
+          properties: { message: { type: 'string', description: req.message } },
+          required: ['message'],
+        } as Record<string, unknown>);
+      return new Promise<{ action: 'accept'; content: Record<string, string | number | boolean> } | { action: 'decline' }>(
+        (resolve, reject) => {
+          // 超时与 ask 工具一致（config.tools.ask.timeoutMinutes；0=永不，兜底 24h ceiling）
+          let askTimeoutMs = 0;
+          try {
+            const askCfg = (this.config.getAppConfig().tools as Record<string, Record<string, unknown>>)?.['ask'];
+            const raw = askCfg?.timeoutMinutes;
+            if (typeof raw === 'number' && raw > 0) askTimeoutMs = raw * 60 * 1000;
+          } catch {
+            // config 不可用：永不超时
+          }
+          const timer = askTimeoutMs > 0 ? setTimeout(() => {
+            if (this.pendingAsks.delete(ctx.toolCallId)) {
+              resolve({ action: 'decline' });
+              ctx.onEvent({ type: 'ask-timeout', sessionId: ctx.sessionId, toolCallId: ctx.toolCallId });
+            }
+          }, Math.min(askTimeoutMs, ASK_TIMEOUT_CEILING_MS)) : null;
+          this.pendingAsks.set(ctx.toolCallId, {
+            resolve: outcome => {
+              if (outcome.action === 'accept' && outcome.answer?.form) {
+                resolve({ action: 'accept', content: outcome.answer.form });
+              } else {
+                resolve({ action: 'decline' });
+              }
+            },
+            reject,
+            timer,
+            sessionId: ctx.sessionId,
+            payload: { question, answerType: 'form', formSchema },
+          });
+          if (ctx.signal) {
+            ctx.signal.addEventListener(
+              'abort',
+              () => {
+                if (this.pendingAsks.has(ctx.toolCallId)) {
+                  if (timer) clearTimeout(timer);
+                  this.pendingAsks.delete(ctx.toolCallId);
+                  reject(new Error('aborted'));
+                }
+              },
+              { once: true },
+            );
+          }
+          ctx.onEvent({
+            type: 'ask',
+            sessionId: ctx.sessionId,
+            toolCallId: ctx.toolCallId,
+            question,
+            answerType: 'form',
+            formSchema,
+          });
+        },
+      );
+    };
+
+    // 5. 调用（超时保护：config.mcp.callTimeoutMs，默认 120s）
+    const timeoutMs = this.config.getAppConfig().mcp?.callTimeoutMs ?? 120000;
+    let result: Awaited<ReturnType<MCPManager['callTool']>>;
+    try {
+      result = await mcpManager.callTool(serverName, toolName, args, {
+        timeoutMs,
+        signal: ctx.signal,
+        elicit,
+      });
     } catch (err) {
-      return {
+      const errorResult: ToolResult = {
         content: [
           {
             type: 'text',
@@ -805,8 +1221,50 @@ export class AgentEngineImpl implements AgentEngine {
           },
         ],
         isError: true,
+        metadata: { server: serverName, tool: toolName },
       };
+      await this.eventBus.broadcast('tool:after', {
+        name: fullToolName,
+        args,
+        sessionId: ctx.sessionId,
+        result: errorResult,
+      });
+      return errorResult;
     }
+
+    // resource 完整数据收集（metadata 供前端渲染引用卡片）
+    const resources = result.content
+      .filter((c): c is Extract<typeof c, { type: 'resource' }> => c.type === 'resource')
+      .map(c => ({ uri: c.uri, mimeType: c.mimeType, text: c.text, blob: c.blob }));
+
+    const toolResult: ToolResult = {
+      content: result.content.map(c => {
+        if (c.type === 'text') return { type: 'text' as const, text: c.text };
+        if (c.type === 'image') {
+          return { type: 'image' as const, source: { data: c.data, mimeType: c.mimeType } };
+        }
+        // resource：正文给可读摘要（优先 text 内容），完整数据在 metadata.resources
+        const resText = c.text ?? `[resource: ${c.uri} (${c.mimeType ?? 'unknown'})]`;
+        return { type: 'text' as const, text: resText };
+      }),
+      isError: result.isError,
+      metadata: {
+        server: serverName,
+        tool: toolName,
+        ...(result.structured !== undefined ? { structured: result.structured } : {}),
+        ...(resources.length > 0 ? { resources } : {}),
+      },
+    };
+
+    // tool:after hook
+    await this.eventBus.broadcast('tool:after', {
+      name: fullToolName,
+      args,
+      sessionId: ctx.sessionId,
+      result: toolResult,
+    });
+
+    return toolResult;
   }
 }
 

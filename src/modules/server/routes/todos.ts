@@ -1,17 +1,18 @@
 // src/modules/server/routes/todos.ts
-// GET /api/todos/:sessionId  —— 列出某 session 的 todos
+// GET /api/todos/:sessionId  —— 列出某 session 的 todos（会话级存储）
 // PUT /api/todos/:sessionId  —— 整体替换某 session 的 todos
 
 import type { HttpRequest, HttpResponse, RouteHandler } from '../types';
 import type { Environment } from '../../../core/types';
 import {
-  getTodoStorePath,
-  readTodoStore,
-  writeTodoStore,
+  getSessionTodoPath,
+  readSessionTodoStore,
+  writeSessionTodoStore,
+  bumpNextId,
   type TodoItem,
   type TodoStatus,
   type TodoPriority,
-} from '../../tools/todo';
+} from '../../tools/builtin/todo/shared/store';
 import { ErrorCode } from '../../../core/error-codes';
 
 /** 入参可能缺 id/createdAt/updatedAt，由后端补齐。兼容旧字段 content。 */
@@ -25,20 +26,17 @@ interface TodoInput {
 }
 
 export function createListTodosHandler(env: Environment): RouteHandler {
-  const storePath = getTodoStorePath(env);
   return async (_req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
     const sessionId = params?.sessionId;
     if (!sessionId) {
       return { status: 400, body: { error: ErrorCode.TODOS_SESSION_ID_REQUIRED } };
     }
-    const store = readTodoStore(storePath);
-    const todos = store.items.filter(it => it.sessionId === sessionId);
-    return { status: 200, body: { sessionId, todos } };
+    const store = readSessionTodoStore(getSessionTodoPath(env, sessionId));
+    return { status: 200, body: { sessionId, todos: store.items } };
   };
 }
 
 export function createReplaceTodosHandler(env: Environment): RouteHandler {
-  const storePath = getTodoStorePath(env);
   return async (req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
     const sessionId = params?.sessionId;
     if (!sessionId) {
@@ -49,34 +47,23 @@ export function createReplaceTodosHandler(env: Environment): RouteHandler {
       return { status: 400, body: { error: ErrorCode.TODOS_MUST_BE_ARRAY } };
     }
 
-    const store = readTodoStore(storePath);
-    // 移除该 session 的旧 todos，保留其他 session / 全局的
-    store.items = store.items.filter(it => it.sessionId !== sessionId);
+    const storePath = getSessionTodoPath(env, sessionId);
+    const store = readSessionTodoStore(storePath);
 
-    // 追加新 todos，补齐 id/时间戳
+    // 整体替换该会话的 todos，补齐 id/时间戳
     const now = new Date().toISOString();
-    const newItems: TodoItem[] = body.todos.map((t, idx) => {
-      const id = t.id ?? String(store.nextId + idx);
-      return {
-        id,
-        text: t.text,
-        status: t.status,
-        priority: t.priority,
-        createdAt: t.createdAt ?? now,
-        updatedAt: t.updatedAt ?? now,
-        sessionId,
-      };
-    });
+    const newItems: TodoItem[] = body.todos.map((t, idx) => ({
+      id: t.id ?? String(store.nextId + idx),
+      text: t.text,
+      status: t.status,
+      priority: t.priority,
+      createdAt: t.createdAt ?? now,
+      updatedAt: t.updatedAt ?? now,
+    }));
 
-    // 更新 nextId（取最大数字 id + 1）
-    const maxNumericId = newItems
-      .map(it => parseInt(it.id, 10))
-      .filter(n => !Number.isNaN(n))
-      .reduce((max, n) => Math.max(max, n), store.nextId - 1);
-    store.nextId = maxNumericId + 1;
-
-    store.items.push(...newItems);
-    writeTodoStore(storePath, store);
+    store.items = newItems;
+    bumpNextId(store);
+    writeSessionTodoStore(storePath, store);
 
     return { status: 200, body: { sessionId, todos: newItems } };
   };

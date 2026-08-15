@@ -30,7 +30,21 @@ export interface ToolResult {
     stderrLength?: number;
     truncated?: boolean;
     timedOut?: boolean;
+    /** MCP 工具来源（mcp__server__tool） */
+    server?: string;
+    tool?: string;
+    /** MCP structuredContent（结构化输出，JSON 直显） */
+    structuredContent?: Record<string, unknown>;
+    /** MCP resource 引用（uri/mimeType/text 完整数据） */
+    resources?: Array<{ uri: string; mimeType?: string; text?: string }>;
   };
+}
+
+/** 会话当前激活的 skill 模式（skill-mode 事件维护） */
+export interface ActiveSkillState {
+  name: string;
+  icon?: string;
+  greet?: string;
 }
 
 /** 右侧边栏标签页类型 */
@@ -117,6 +131,17 @@ export interface McpServer {
   name: string;
   status: 'connected' | 'disconnected' | 'error';
   toolCount: number;
+  /** 服务器定义（stdio=command+args+env；http/sse=url+headers） */
+  transport?: 'stdio' | 'http' | 'sse';
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+  headers?: Record<string, string>;
+  /** 启停（config.mcpServers[name].enabled，缺省 true） */
+  enabled?: boolean;
+  /** 最近一次错误信息（status=error 时） */
+  lastError?: string;
 }
 
 export interface McpTool {
@@ -124,6 +149,14 @@ export interface McpTool {
   name: string;
   description?: string;
   inputSchema?: unknown;
+  /** MCP 工具注解（readOnlyHint/destructiveHint 等，驱动确认与展示） */
+  annotations?: {
+    title?: string;
+    readOnlyHint?: boolean;
+    destructiveHint?: boolean;
+    idempotentHint?: boolean;
+    openWorldHint?: boolean;
+  };
 }
 
 // ============================================================================
@@ -154,6 +187,7 @@ export interface TodoItem {
   id: string;
   text: string;
   status: 'pending' | 'in_progress' | 'completed';
+  priority?: 'low' | 'medium' | 'high';
   sessionId?: string;
 }
 
@@ -255,11 +289,23 @@ export interface SkillItem {
   name: string;
   description: string;
   source: 'user';
+  /** 启停（config.skills[name].enabled，缺省 true） */
+  enabled?: boolean;
+  /** Lucide 图标名（kebab-case） */
+  icon?: string;
+  /** 切入模式欢迎语 */
+  greet?: string;
+  /** 目录式 skill 的附属文件清单（references/scripts/assets 相对路径） */
+  files?: string[];
+  /** 目录式 skill 根目录 */
+  dir?: string;
 }
 
 export interface SkillDetail extends SkillItem {
   prompt: string;
   sourceFile?: string;
+  /** 自定义 svg 图标内容（icon 以 .svg 结尾时后端返回） */
+  iconSvg?: string;
 }
 
 export interface SpecItem {
@@ -272,6 +318,8 @@ export interface SpecItem {
 export interface SpecDetail extends SpecItem {
   content: string;
   sourceFile?: string;
+  /** 是否可通过 PUT /api/specs 编辑（仅用户目录内的 spec） */
+  editable?: boolean;
 }
 
 // ============================================================================
@@ -351,15 +399,49 @@ export type AgentEvent =
   | { type: 'tool-call-delta'; sessionId: string; toolCallId: string; argumentsDelta: string; runId?: string }
   | { type: 'tool-call-executing'; sessionId: string; toolName: string; toolCallId: string; runId?: string }
   | { type: 'tool-call-end'; sessionId: string; toolName: string; toolCallId: string; result: ToolResult; runId?: string }
-  | { type: 'ask'; sessionId: string; toolCallId: string; question: string; runId?: string }
+  | { type: 'ask'; sessionId: string; toolCallId: string; question: string; answerType?: PendingAsk['answerType']; options?: AskOption[]; defaultAnswer?: string; formSchema?: Record<string, unknown>; runId?: string }
+  | { type: 'ask-timeout'; sessionId: string; toolCallId: string; runId?: string }
+  | { type: 'confirm-required'; sessionId: string; toolCallId: string; toolName: string; question: string; details?: unknown; runId?: string }
+  | { type: 'skill-mode'; sessionId: string; action: 'enter' | 'switch' | 'exit' | 'error'; name?: string; greet?: string; icon?: string; message?: string; runId?: string }
   | { type: 'error'; sessionId: string; message: string; runId?: string }
   | { type: 'done'; sessionId: string; finishReason: string; runId?: string };
+
+/** ask 工具候选项 */
+export interface AskOption {
+  value: string;
+  label: string;
+}
+
+/** ask 工具用户回答（结构化） */
+export interface AskAnswer {
+  selectedValues?: string[];
+  selectedLabels?: string[];
+  editedLabels?: Record<string, string>;
+  otherText?: string;
+  text?: string;
+  /** form 模式（elicitation）：字段名 → 值 */
+  form?: Record<string, string | number | boolean>;
+}
+
+/** ask 工具结局 */
+export interface AskOutcome {
+  action: 'accept' | 'cancel';
+  answer?: AskAnswer;
+}
 
 /** 工具发起的、待用户回复的提问 */
 export interface PendingAsk {
   toolCallId: string;
   sessionId: string;
   question: string;
+  /** 回答类型：text（缺省）/single/multi/boolean/form（elicitation） */
+  answerType?: 'text' | 'single' | 'multi' | 'boolean' | 'form';
+  /** single/multi 类型的候选项 */
+  options?: AskOption[];
+  /** text 类型预填文本 */
+  defaultAnswer?: string;
+  /** form 类型：JSON Schema（elicitation requestedSchema） */
+  formSchema?: Record<string, unknown>;
   /** 收到时间，用于排序 */
   createdAt: number;
 }

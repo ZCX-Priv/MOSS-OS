@@ -83,19 +83,21 @@ function loadToolConfigsFromDir(dir: string): Map<string, ToolConfigSpec> {
  * 从 tool.json 的 config 段构建 ToolConfigSpec。
  * - enabled 字段自动识别为 boolean（所有工具都有）
  * - 其他字段从 config.schema 获取约束，或从 defaults 值类型推断
+ * - 所有内层字段带 .default(默认值)：旧 config.json 缺新增字段时自动补全，
+ *   避免整体校验失败回退默认配置（升级兼容）
  */
 function buildConfigSpec(config: ToolConfigManifest): ToolConfigSpec {
   const shape: z.ZodRawShape = {};
-  // enabled 自动注入（所有工具都有）
-  shape.enabled = z.boolean();
+  // enabled 自动注入（所有工具都有；缺省视为启用）
+  shape.enabled = z.boolean().default(true);
 
   for (const [key, val] of Object.entries(config.defaults)) {
     if (key === 'enabled') continue;
     const fieldSchema = config.schema?.[key];
     if (fieldSchema) {
-      shape[key] = buildZodField(fieldSchema);
+      shape[key] = buildZodField(fieldSchema).default(val);
     } else {
-      shape[key] = inferZodFromValue(val);
+      shape[key] = inferZodFromValue(val).default(val);
     }
   }
 

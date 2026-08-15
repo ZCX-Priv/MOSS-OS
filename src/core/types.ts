@@ -190,6 +190,22 @@ export interface AppConfig {
   // tools 类型从 manifest 自动推导（单一真相源），新增工具无需手动改此文件
   tools: ToolsConfig;
   mcpServers: Record<string, unknown>;
+  /** MCP 客户端配置（调用超时 / sampling 授权） */
+  mcp?: {
+    /** 单次 MCP 工具调用超时（毫秒），默认 120000 */
+    callTimeoutMs?: number;
+    /** 是否允许 MCP 服务器借用本地 LLM（sampling），默认 true */
+    allowSampling?: boolean;
+  };
+  /** 对外 MCP Server 暴露配置（/mcp 端点） */
+  mcpServer?: {
+    /** 是否启用对外暴露，默认 false */
+    enabled: boolean;
+    /** 暴露的工具白名单；空数组 = 全部内置工具（requireConfirmation 工具除外） */
+    allowedTools: string[];
+  };
+  /** Skill 启停（name → { enabled }，缺省视为启用） */
+  skills?: Record<string, { enabled?: boolean }>;
   security: {
     authToken: string;
     bindLocalhostOnly: boolean;

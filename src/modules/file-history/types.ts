@@ -7,8 +7,8 @@
 /** 文件变更操作类型 */
 export type FileOperation = 'create' | 'overwrite' | 'edit' | 'delete';
 
-/** 触发变更的工具名 */
-export type HistoryToolName = 'write' | 'edit' | 'delete';
+/** 触发变更的工具名（rollback = 消息撤回联动回滚的 redo 备份条目） */
+export type HistoryToolName = 'write' | 'edit' | 'delete' | 'rollback';
 
 /**
  * 文件历史条目（JSONL 中每行一个）。
@@ -61,6 +61,10 @@ export interface TrackEditResult {
   operation: FileOperation;
   /** 是否为目录操作（新增：true 时 backupPath 指向 .tar.gz，restoreEntry 走 extractArchive） */
   isDirectory?: boolean;
+  /** 触发变更的工具调用 ID（recordChange 写入 transcript 用） */
+  toolCallId?: string;
+  /** 触发变更的工具名（recordChange 写入 transcript 用） */
+  toolName?: HistoryToolName;
 }
 
 /** undo 返回结果 */

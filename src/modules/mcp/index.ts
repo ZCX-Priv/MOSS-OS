@@ -18,6 +18,7 @@ class McpModule implements Module {
       eventBus: ctx.eventBus,
       logger: ctx.logger,
       env: ctx.env,
+      services: ctx.services,
     });
     ctx.services.register(ServiceNames.MCP_MANAGER, this.manager, {
       scope: 'mcp',

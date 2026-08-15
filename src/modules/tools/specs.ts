@@ -1,8 +1,7 @@
 // src/modules/tools/specs.ts
-// Spec 注册表：从 agent/prompts/main/spec/ 目录递归加载 .md 文件
+// Spec 注册表：从 ~/.moss/agent/prompts/main/spec/ 目录递归加载 .md 文件
 // （YAML front-matter + Markdown body），支持子目录组织。
-// 加载顺序：包内模板 agent/prompts/main/spec/ → 用户目录
-// ~/.moss/agent/prompts/main/spec/（同 id 覆盖）。
+// 首次启动时从包内 agent/ 播种到 ~/.moss/agent/（幂等），之后只读用户目录。
 // 支持热重载：递归监听用户 spec 目录变更，自动增删 spec。
 
 import { t } from '../../core/i18n';
@@ -11,6 +10,8 @@ import { watch, type FSWatcher } from 'node:fs';
 import { join, relative } from 'node:path';
 import type { Environment, EventBus, Logger } from '../../core/types';
 import { ServiceNames } from '../../core/types';
+import { splitFrontMatter } from './shared/frontmatter';
+import { seedBuiltinAgentPrompts } from './shared/agent-seed';
 
 /** 旧常量保留，值等于 ServiceNames.SPEC_REGISTRY，向后兼容 */
 export const SPEC_REGISTRY_SERVICE = ServiceNames.SPEC_REGISTRY;
@@ -22,8 +23,10 @@ export interface Spec {
   description: string;
   /** Markdown body（front-matter 已剥离），由 get_spec 返回 */
   content: string;
-  /** 来源文件绝对路径（用于热重载定位） */
+  /** 来源文件绝对路径（用于热重载定位与编辑写回） */
   sourceFile: string;
+  /** 来源：播种后全部在用户目录，恒为 'user'（保留字段供前端展示） */
+  source: 'user';
 }
 
 export interface SpecRegistry {
@@ -33,7 +36,7 @@ export interface SpecRegistry {
   list(): Spec[];
   /**
    * 替换某个来源文件对应的 spec（热重载用）。
-   * 若新 spec 的 id 与已注册的同 id spec 冲突但 sourceFile 不同，则跳过（旧优先）。
+   * 同 id 冲突但 sourceFile 不同时跳过（先注册者优先；仅剩用户目录单一来源后该场景实际不存在）。
    */
   reloadBySourceFile(sourceFile: string, spec: Spec): void;
   /** 移除指定来源文件对应的 spec（文件删除时调用） */
@@ -99,9 +102,8 @@ class SpecRegistryImpl implements SpecRegistry {
 }
 
 /**
- * 创建 Spec 注册表：从包内 agent/prompts/main/spec/ 与用户
- * ~/.moss/agent/prompts/main/spec/ 递归加载 .md 文件。
- * 用户目录同 id 覆盖包内模板。监听用户目录变更实现热重载。
+ * 创建 Spec 注册表：播种后仅从 ~/.moss/agent/prompts/main/spec/ 递归加载 .md 文件。
+ * 监听用户目录变更实现热重载。
  */
 export function createSpecRegistry(
   env: Environment,
@@ -109,13 +111,11 @@ export function createSpecRegistry(
   eventBus: EventBus,
 ): SpecRegistry {
   const reg = new SpecRegistryImpl();
-  const builtinDir = join(env.packageRoot, 'agent', 'prompts', 'main', 'spec');
+  // 首次启动播种 agent/ 提示词目录（幂等；目录已存在则跳过）
+  seedBuiltinAgentPrompts(env);
   const userDir = join(env.dataDir, 'agent', 'prompts', 'main', 'spec');
 
   // 同步加载（注册表在 tools 模组 initialize 时立即需要）
-  // 包内模板先加载
-  loadSpecsFromDirSync(reg, builtinDir, builtinDir, logger);
-  // 用户目录后加载（覆盖同 id）
   loadSpecsFromDirSync(reg, userDir, userDir, logger);
 
   // 启动热重载监听（异步，不阻塞初始化）
@@ -189,70 +189,8 @@ function parseSpecFile(filePath: string, specRootDir: string): Spec | null {
     description,
     content: body.trim(),
     sourceFile: filePath,
+    source: 'user',
   };
-}
-
-interface ParsedFrontMatter {
-  name?: string;
-  description?: string;
-  [key: string]: unknown;
-}
-
-/**
- * 简易 YAML front-matter 解析：支持 `key: value` 与 `key: >`（折叠多行）。
- * 与 skills.ts 中的实现一致，不引入额外依赖。
- */
-function splitFrontMatter(raw: string): { frontMatter: ParsedFrontMatter; body: string } {
-  const fmMatch = raw.match(/^---\s*\n([\s\S]*?)\n---\s*\n?([\s\S]*)$/);
-  if (!fmMatch) {
-    return { frontMatter: {}, body: raw };
-  }
-  const fmText = fmMatch[1];
-  const body = fmMatch[2] ?? '';
-  const fm: ParsedFrontMatter = {};
-  const lines = fmText.split('\n');
-  let i = 0;
-  while (i < lines.length) {
-    const line = lines[i];
-    // 跳过空行与注释
-    if (!line.trim() || line.trim().startsWith('#')) {
-      i++;
-      continue;
-    }
-    const m = line.match(/^([a-zA-Z_][a-zA-Z0-9_-]*)\s*:\s*(.*)$/);
-    if (!m) {
-      i++;
-      continue;
-    }
-    const key = m[1];
-    let value = m[2];
-    // 折叠多行 `key: >`
-    if (value.trim() === '>' || value.trim() === '|') {
-      const folded: string[] = [];
-      i++;
-      while (i < lines.length) {
-        const next = lines[i];
-        // 缩进 2 空格视为续行
-        if (next.startsWith('  ') || next.startsWith('\t')) {
-          folded.push(next.replace(/^  /, ''));
-          i++;
-        } else {
-          break;
-        }
-      }
-      value = folded.join(' ').trim();
-    } else {
-      i++;
-    }
-    // 去除字符串两端引号
-    if (value.startsWith('"') && value.endsWith('"')) {
-      value = value.slice(1, -1);
-    } else if (value.startsWith("'") && value.endsWith("'")) {
-      value = value.slice(1, -1);
-    }
-    fm[key] = value;
-  }
-  return { frontMatter: fm, body };
 }
 
 /** 启动 fs.watch 递归监听用户 spec 目录，实现热重载 */

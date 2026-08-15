@@ -15,7 +15,7 @@ import { useStore } from '../store';
 import { wsClient } from '../api/ws';
 import { api } from '../api/http';
 import { pendingAssistant, pendingRunId } from '../lib/pending-assistant';
-import type { TaskMessage } from '../types/api';
+import type { AskOutcome, TaskMessage } from '../types/api';
 
 function genId(): string {
   return `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -25,6 +25,27 @@ function genRunId(): string {
   return `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/**
+ * 解析消息开头的 skill 模式指令：
+ *   /skill:<name> <正文> → { skill: name, message: 正文 }（正文空时用默认占位）
+ *   /skill:exit          → { skill: null, message: 原文 }（退出模式；原文保留供 LLM 记录）
+ *   其他                  → { skill: undefined, message: 原文 }
+ */
+function parseSkillPrefix(text: string): { skill: string | null | undefined; message: string } {
+  const m = text.match(/^\/skill:([a-z0-9-]+)\s*([\s\S]*)$/i);
+  if (!m) return { skill: undefined, message: text };
+  const [, name, rest] = m;
+  if (name.toLowerCase() === 'exit') {
+    return { skill: null, message: text };
+  }
+  const body = rest.trim();
+  return {
+    skill: name,
+    // 独占指令时给一句自然语言占位，LLM 立即按 skill 模式响应
+    message: body || `（进入 ${name} 技能模式）`,
+  };
+}
+
 export function useTask() {
   const addMessage = useStore((s) => s.addMessage);
   const setActiveSession = useStore((s) => s.setActiveSession);
@@ -32,13 +53,16 @@ export function useTask() {
   const setGenerating = useStore((s) => s.setGenerating);
   const finalizeStreamingMessages = useStore((s) => s.finalizeStreamingMessages);
   const addTask = useStore((s) => s.addTask);
+  const touchTask = useStore((s) => s.touchTask);
   const removePendingAsk = useStore((s) => s.removePendingAsk);
   const removePendingConfirm = useStore((s) => s.removePendingConfirm);
 
   const sendMessage = useCallback(
     async (text: string, opts?: { taskId?: string; sessionId?: string }): Promise<string | undefined> => {
-      const content = text.trim();
-      if (!content) return undefined;
+      if (!text.trim()) return undefined;
+      // /skill:<name> 前缀解析（激活/切换/退出技能模式）
+      const { skill, message: parsed } = parseSkillPrefix(text.trim());
+      const content = parsed;
 
       const state = useStore.getState();
 
@@ -66,6 +90,9 @@ export function useTask() {
         }
       }
 
+      // 活跃置顶：已有任务发送消息时乐观置顶（新建走 addTask 已置顶；后端 touchTask 持久化）
+      if (taskId) touchTask(taskId);
+
       // 3. 若该 session 正在生成，立即中断旧流并清理前端状态
       //    不依赖后端异步 task.aborted 事件，避免旧流事件污染新流
       if (state.generatingBySession[sessionId]) {
@@ -92,7 +119,7 @@ export function useTask() {
       addMessage(sessionId, userMsg);
       setGenerating(sessionId, true);
 
-      // 6. 通过 WS 发送流式任务请求（带 runId + agentId）
+      // 6. 通过 WS 发送流式任务请求（带 runId + agentId + skill 模式参数）
       wsClient.send({
         type: 'task.stream',
         sessionId,
@@ -102,12 +129,14 @@ export function useTask() {
           agentId: state.currentAgent || undefined,
           cwd: state.workingDirectory || undefined,
           runId,
+          // skill 模式：undefined=不涉及；string=激活/切换；null=退出
+          ...(skill !== undefined ? { skill } : {}),
         },
       });
 
       return taskId;
     },
-    [addMessage, setActiveSession, setActiveTaskId, setGenerating, finalizeStreamingMessages, addTask],
+    [addMessage, setActiveSession, setActiveTaskId, setGenerating, finalizeStreamingMessages, addTask, touchTask],
   );
 
   const abort = useCallback((sessionIdOverride?: string) => {
@@ -122,13 +151,13 @@ export function useTask() {
   }, [setGenerating, finalizeStreamingMessages]);
 
   const replyAsk = useCallback(
-    (toolCallId: string, answer: string) => {
+    (toolCallId: string, outcome: AskOutcome) => {
       const ask = useStore.getState().pendingAsks.find((a) => a.toolCallId === toolCallId);
       if (!ask) return;
       wsClient.send({
         type: 'tool.ask.reply',
         sessionId: ask.sessionId,
-        payload: { toolCallId, answer },
+        payload: { toolCallId, action: outcome.action, answer: outcome.answer },
       });
       removePendingAsk(toolCallId);
     },

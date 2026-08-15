@@ -66,6 +66,8 @@ function createMockFileHistory(trashDir: string): FileHistoryService {
     undo: async (): Promise<UndoResult> => ({ restored: [], remaining: 0, failed: [] }),
     listHistory: (): FileHistoryEntry[] => [],
     restore: async (): Promise<UndoResult> => ({ restored: [], remaining: 0, failed: [] }),
+    rollbackRange: async () => ({ rollbackIds: [], failed: [] }),
+    redoRollback: async () => ({ failed: [] }),
     clearSession: () => {},
   };
   return svc;

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, memo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams, useNavigate } from 'react-router-dom';
+import { toast } from 'sonner';
 import {
   ChevronRight,
   FileText,
@@ -13,7 +14,19 @@ import {
   Atom,
   Terminal,
   X,
+  Copy,
+  Undo2,
+  FileWarning,
+  Sparkles,
 } from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { resolveToolIcon } from '@/lib/tool-icons';
 import type { OverlayType } from '../../types';
 import { cn } from '@/lib/utils';
@@ -109,6 +122,21 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
   const todos = useStore((s) => s.todosBySession[taskId] ?? EMPTY_TODOS);
   const pendingAsks = useStore((s) => s.pendingAsks);
   const pendingConfirms = useStore((s) => s.pendingConfirms);
+  // 当前会话激活的 skill 模式（Badge 展示 + 一键退出）
+  const activeSkill = useStore((s) => s.activeSkillBySession[taskId]);
+
+  // ===== 消息撤回（截断）状态机 =====
+  /** 待确认的撤回目标（用户消息） */
+  const [truncateTarget, setTruncateTarget] = useState<TaskMessage | null>(null);
+  /** 预览加载中 */
+  const [truncateLoading, setTruncateLoading] = useState(false);
+  /** 预览结果 */
+  const [truncatePreview, setTruncatePreview] = useState<{
+    messagesToRemove: Array<{ index: number; role: string; content: string }>;
+    fileChanges: Array<{ absPath: string; operation: string; toolName: string; timestamp: string }>;
+  } | null>(null);
+  /** 执行中 */
+  const [truncating, setTruncating] = useState(false);
   const context = useStore((s) => s.contextBySession[taskId]);
   const sidebarTabs = useStore((s) => s.sidebarTabs);
   const activeSidebarTabId = useStore((s) => s.activeSidebarTabId);
@@ -135,6 +163,10 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
         .then((resp) => {
           if (resp.messages && resp.messages.length > 0) {
             useStore.getState().setMessages(taskId, resp.messages);
+          }
+          // 刷新后恢复 skill 模式 Badge（greet 不重复注入）
+          if (resp.activeSkill) {
+            useStore.getState().setActiveSkill(taskId, { name: resp.activeSkill.name });
           }
         })
         .catch(() => {
@@ -195,6 +227,65 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
     },
     [taskId, sendMessage, navigate],
   );
+
+  // ===== 消息撤回流程 =====
+  /** 点击撤回按钮：拉取预览并弹确认框 */
+  const handleTruncateClick = useCallback(
+    async (message: TaskMessage) => {
+      if (!taskId || isGenerating) return;
+      setTruncateTarget(message);
+      setTruncatePreview(null);
+      setTruncateLoading(true);
+      try {
+        const resp = await api.previewTruncate(taskId, message.timestamp, message.content);
+        setTruncatePreview({ messagesToRemove: resp.messagesToRemove, fileChanges: resp.fileChanges });
+      } catch {
+        // 预览失败（后端未就绪/旧消息无时间戳）：仍允许执行（只删消息）
+        setTruncatePreview({ messagesToRemove: [], fileChanges: [] });
+      } finally {
+        setTruncateLoading(false);
+      }
+    },
+    [taskId, isGenerating],
+  );
+
+  /** 确认撤回：执行截断（软删除 + 文件回滚），toast 提供恢复入口 */
+  const handleTruncateConfirm = useCallback(async () => {
+    if (!taskId || !truncateTarget) return;
+    setTruncating(true);
+    try {
+      const resp = await api.truncateSession(taskId, truncateTarget.timestamp, truncateTarget.content);
+      const hasFiles = resp.rolledBackFiles > 0;
+      toast(t('task.truncateDone', { count: resp.removedCount, files: resp.rolledBackFiles }), {
+        description: hasFiles ? t('task.truncateFilesRolled', { files: resp.rolledBackFiles }) : undefined,
+        action: {
+          label: t('task.truncateRestore'),
+          onClick: async () => {
+            try {
+              await api.restoreTruncate(taskId);
+            } catch {
+              toast.error(t('task.truncateRestoreFailed'));
+            }
+          },
+        },
+        duration: 15000,
+      });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t('task.truncateFailed'));
+    } finally {
+      setTruncating(false);
+      setTruncateTarget(null);
+      setTruncatePreview(null);
+    }
+  }, [taskId, truncateTarget, t]);
+
+  /** 复制消息文本 */
+  const handleCopyMessage = useCallback((content: string) => {
+    void navigator.clipboard.writeText(content).then(
+      () => toast.success(t('task.messageCopied')),
+      () => toast.error(t('task.messageCopyFailed')),
+    );
+  }, [t]);
 
   // 右侧面板内容（移动端 Sheet 与桌面端 aside 共用，避免重复 JSX）
   const rightPanelContent = (
@@ -373,7 +464,15 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
               </div>
             )}
             {messages.map((msg) => (
-              <MessageBubble key={msg.id} message={msg} todos={todos} toolIconMap={toolIconMap} />
+              <MessageBubble
+                key={msg.id}
+                message={msg}
+                todos={todos}
+                toolIconMap={toolIconMap}
+                truncateDisabled={isGenerating}
+                onTruncate={handleTruncateClick}
+                onCopy={handleCopyMessage}
+              />
             ))}
             {isGenerating && messages[messages.length - 1]?.role !== 'assistant' && (
               <div className="flex items-center gap-2 text-muted-foreground">
@@ -390,8 +489,117 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
           </div>
         </div>
 
+        {/* 消息撤回确认弹窗（预览卡片：将删除的消息 + 将回滚的文件变更） */}
+        <Dialog
+          open={truncateTarget !== null}
+          onOpenChange={(open) => {
+            if (!open && !truncating) {
+              setTruncateTarget(null);
+              setTruncatePreview(null);
+            }
+          }}
+        >
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>{t('task.truncateTitle')}</DialogTitle>
+              <DialogDescription>
+                {t('task.truncateDescription')}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="flex flex-col gap-3 text-sm">
+              {truncateLoading ? (
+                <div className="flex items-center justify-center gap-2 py-4 text-muted-foreground">
+                  <Loader2 className="size-4 animate-spin" />
+                  <span className="text-xs">{t('task.truncateLoading')}</span>
+                </div>
+              ) : (
+                <>
+                  {/* 将删除的消息 */}
+                  <div>
+                    <div className="mb-1 text-xs font-medium text-foreground">
+                      {t('task.truncateMessages', { count: truncatePreview?.messagesToRemove.length ?? 0 })}
+                    </div>
+                    <div className="max-h-32 overflow-y-auto rounded-md border border-border p-2">
+                      {truncatePreview && truncatePreview.messagesToRemove.length > 0 ? (
+                        truncatePreview.messagesToRemove.map((m) => (
+                          <div key={m.index} className="truncate py-0.5 text-xs text-muted-foreground">
+                            <span className="mr-1 opacity-60">[{m.role}]</span>
+                            {m.content}
+                          </div>
+                        ))
+                      ) : (
+                        <span className="text-xs text-muted-foreground">{t('task.truncateNoPreview')}</span>
+                      )}
+                    </div>
+                  </div>
+                  {/* 将回滚的文件变更 */}
+                  <div>
+                    <div className="mb-1 flex items-center gap-1 text-xs font-medium text-foreground">
+                      <FileWarning className="size-3.5 text-amber-500" />
+                      {t('task.truncateFiles', { count: truncatePreview?.fileChanges.length ?? 0 })}
+                    </div>
+                    <div className="max-h-32 overflow-y-auto rounded-md border border-border p-2">
+                      {truncatePreview && truncatePreview.fileChanges.length > 0 ? (
+                        truncatePreview.fileChanges.map((f) => (
+                          <div key={`${f.absPath}-${f.timestamp}`} className="truncate py-0.5 text-xs text-muted-foreground">
+                            <span className="mr-1 rounded bg-muted px-1 py-px text-[10px]">{f.operation}</span>
+                            {f.absPath}
+                          </div>
+                        ))
+                      ) : (
+                        <span className="text-xs text-muted-foreground">{t('task.truncateNoFiles')}</span>
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setTruncateTarget(null);
+                  setTruncatePreview(null);
+                }}
+                disabled={truncating}
+              >
+                {t('task.truncateCancel')}
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={handleTruncateConfirm}
+                disabled={truncateLoading || truncating}
+              >
+                {truncating ? <Loader2 className="size-3.5 animate-spin" /> : <Undo2 className="size-3.5" />}
+                {t('task.truncateConfirm')}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
         {/* Task Input */}
         <div className="shrink-0 p-3">
+          {/* 当前 skill 模式 Badge（点击 ✕ 发送 /skill:exit 退出） */}
+          {activeSkill && (
+            <div className="mb-2 flex items-center gap-1.5">
+              <span className="inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700 dark:border-blue-500/40 dark:bg-blue-500/10 dark:text-blue-300">
+                <Sparkles className="size-3" />
+                {t('task.skillModeActive', { name: activeSkill.name })}
+              </span>
+              <button
+                type="button"
+                title={t('task.skillModeExit')}
+                aria-label={t('task.skillModeExit')}
+                disabled={isGenerating}
+                onClick={() => void handleSend('/skill:exit')}
+                className="flex size-5 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
+              >
+                <X className="size-3" />
+              </button>
+            </div>
+          )}
           <TaskInput
             variant="task"
             isGenerating={isGenerating}
@@ -511,17 +719,54 @@ interface MessageBubbleProps {
   message: TaskMessage;
   todos: TodoItem[];
   toolIconMap: Record<string, string>;
+  /** 流式生成中禁用撤回（防竞态） */
+  truncateDisabled?: boolean;
+  onTruncate?: (message: TaskMessage) => void;
+  onCopy?: (content: string) => void;
 }
-const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap }: MessageBubbleProps) {
+const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap, truncateDisabled, onTruncate, onCopy }: MessageBubbleProps) {
   const { t } = useTranslation();
 
-  // 防御：system 已被后端物理隔离、tool 已被适配层合并进 assistant；此处不应出现
-  if (message.role === 'system' || message.role === 'tool') return null;
+  // skill-mode greet：居中系统提示气泡
+  if (message.role === 'system') {
+    return (
+      <div className="flex justify-center">
+        <div className="flex items-center gap-1.5 rounded-full border border-border bg-muted px-3 py-1 text-xs text-muted-foreground">
+          <Sparkles className="size-3 shrink-0" />
+          <span className="max-w-md truncate">{message.content}</span>
+        </div>
+      </div>
+    );
+  }
+  // 防御：tool 已被适配层合并进 assistant；此处不应出现
+  if (message.role === 'tool') return null;
   if (message.role === 'user') {
     return (
-      <div className="flex justify-end">
+      <div className="group flex flex-col items-end gap-1">
         <div className="max-w-[80%] rounded-2xl border border-border bg-indigo-100 px-3 py-2 text-sm text-foreground shadow-sm dark:bg-blue-600 dark:text-white dark:shadow-[0_2px_14px_rgba(37,99,235,0.35)]">
           {message.content}
+        </div>
+        {/* 操作行：复制 + 撤回（hover 显示；触屏常显；生成中撤回禁用） */}
+        <div className="flex items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100 max-md:opacity-100">
+          <button
+            type="button"
+            title={t('task.messageCopy')}
+            aria-label={t('task.messageCopy')}
+            onClick={() => onCopy?.(message.content)}
+            className="flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <Copy className="size-3.5" />
+          </button>
+          <button
+            type="button"
+            title={truncateDisabled ? t('task.truncateDisabled') : t('task.truncateMessage')}
+            aria-label={t('task.truncateMessage')}
+            disabled={truncateDisabled}
+            onClick={() => onTruncate?.(message)}
+            className="flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <Undo2 className="size-3.5" />
+          </button>
         </div>
       </div>
     );
@@ -564,10 +809,16 @@ const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap 
       {message.toolCalls?.filter((tc) => tc.name === 'ask').map((tc) => {
         const matchedResult = message.toolResults?.find((tr) => tr.toolCallId === tc.id);
         if (!matchedResult) return null; // 只渲染已完成的 ask
-        const replyText = matchedResult.result.content
+        const fullText = matchedResult.result.content
           .filter((c) => c.type === 'text')
           .map((c) => (c.type === 'text' ? c.text : ''))
           .join('\n');
+        // 工具返回固定格式「问题：X\n用户回答：Y」；问题优先取 arguments，回答取"用户回答："之后的部分
+        let replyText = fullText;
+        const answerMarker = fullText.indexOf('用户回答：');
+        if (answerMarker !== -1) {
+          replyText = fullText.slice(answerMarker + '用户回答：'.length);
+        }
         let questionText = '';
         try {
           questionText = (JSON.parse(tc.arguments || '{}') as { question?: string }).question ?? '';
@@ -606,6 +857,9 @@ const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap 
               .map((c) => (c.type === 'text' ? c.text : ''))
               .join('\n');
             const isError = matchedResult?.result.isError;
+            // MCP 扩展：structuredContent（结构化输出）/ resources（资源引用）
+            const structured = matchedResult?.result.metadata?.structuredContent;
+            const resources = matchedResult?.result.metadata?.resources;
             let prettyArgs = tc.arguments;
             try {
               prettyArgs = JSON.stringify(JSON.parse(tc.arguments || '{}'), null, 2);
@@ -652,6 +906,40 @@ const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap 
                       )}>
                         {resultText}
                       </pre>
+                    </div>
+                  )}
+                  {/* MCP structuredContent：结构化输出 JSON */}
+                  {structured && (
+                    <div>
+                      <div className="text-muted-foreground/70">{t('task.structuredOutput')}</div>
+                      <pre className="mono mt-0.5 whitespace-pre-wrap break-all text-foreground">
+                        {JSON.stringify(structured, null, 2)}
+                      </pre>
+                    </div>
+                  )}
+                  {/* MCP resources：资源引用卡片（uri + mimeType + 可展开 text） */}
+                  {resources && resources.length > 0 && (
+                    <div>
+                      <div className="text-muted-foreground/70">{t('task.resourceRefs', { count: resources.length })}</div>
+                      <div className="mt-0.5 flex flex-col gap-1">
+                        {resources.map((r) => (
+                          <details key={r.uri} className="group/res rounded border border-border px-1.5 py-1">
+                            <summary className="flex cursor-pointer items-center gap-1.5 text-muted-foreground">
+                              <ChevronRight className="size-3 transition-transform group-open/res:rotate-90" />
+                              <FileText className="size-3 shrink-0" />
+                              <span className="truncate">{r.uri}</span>
+                              {r.mimeType && (
+                                <span className="ml-auto shrink-0 rounded bg-muted px-1 py-px text-[10px]">{r.mimeType}</span>
+                              )}
+                            </summary>
+                            {r.text && (
+                              <pre className="mono mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all text-foreground">
+                                {r.text}
+                              </pre>
+                            )}
+                          </details>
+                        ))}
+                      </div>
                     </div>
                   )}
                 </div>

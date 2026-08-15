@@ -23,6 +23,8 @@ import type { EventBus, Logger } from '../../core/types';
 export interface ServerConfig {
   /** 传输类型：stdio | http | sse */
   transport: 'stdio' | 'http' | 'sse';
+  /** 是否启用（缺省 true；禁用的服务器不连接、不注入 LLM 工具集） */
+  enabled?: boolean;
   /** stdio: 命令；http/sse: URL */
   command?: string;
   args?: string[];
@@ -34,8 +36,16 @@ export interface ServerConfig {
 
 export interface McpToolInfo {
   name: string;
+  title?: string;
   description?: string;
   inputSchema?: unknown;
+  annotations?: {
+    title?: string;
+    readOnlyHint?: boolean;
+    destructiveHint?: boolean;
+    idempotentHint?: boolean;
+    openWorldHint?: boolean;
+  };
 }
 
 export interface McpToolResult {
@@ -45,12 +55,45 @@ export interface McpToolResult {
     | { type: 'resource'; uri: string; mimeType?: string; text?: string; blob?: string }
   >;
   isError?: boolean;
+  /** MCP structured output（2025-06-18 规范 structuredContent），存在时优先解析 */
+  structured?: unknown;
 }
 
 export interface McpClientEntry {
   client: McpClient;
   config: ServerConfig;
   status: 'connected' | 'disconnected' | 'error';
+}
+
+/** MCP elicitation 请求（Form 模式） */
+export interface McpElicitRequest {
+  message: string;
+  /** JSON Schema（默认 { message: string } 形式） */
+  requestedSchema?: Record<string, unknown>;
+}
+
+/** MCP elicitation 结果（SDK ElicitResult 兼容） */
+export type McpElicitOutcome =
+  | { action: 'accept'; content: Record<string, string | number | boolean> }
+  | { action: 'decline' }
+  | { action: 'cancel' };
+
+/** MCP sampling 请求（SDK CreateMessageRequest 兼容） */
+export interface McpSamplingRequest {
+  messages: Array<{ role: 'user' | 'assistant'; content: unknown }>;
+  model?: string;
+  maxTokens: number;
+  systemPrompt?: string;
+  temperature?: number;
+  includeContext?: string;
+}
+
+/** MCP sampling 结果（SDK CreateMessageResult 兼容） */
+export interface McpSamplingResult {
+  role: 'assistant';
+  model: string;
+  content: { type: 'text'; text: string };
+  stopReason: 'endturn' | 'max_tokens' | 'stop_sequence' | 'other';
 }
 
 // ============================================================================
@@ -62,10 +105,30 @@ export interface McpClientEntry {
 interface McpSdkClient {
   connect(transport: unknown): Promise<void>;
   close(): Promise<void>;
-  listTools(): Promise<{ tools: Array<{ name: string; description?: string; inputSchema?: unknown }> }>;
-  callTool(req: { name: string; arguments?: Record<string, unknown> }): Promise<{
+  setElicitationHandler?(handler: (req: McpElicitRequest) => Promise<McpElicitOutcome>): void;
+  setSamplingHandler?(handler: (req: McpSamplingRequest) => Promise<McpSamplingResult>): void;
+  listTools(): Promise<{
+    tools: Array<{
+      name: string;
+      title?: string;
+      description?: string;
+      inputSchema?: unknown;
+      annotations?: {
+        title?: string;
+        readOnlyHint?: boolean;
+        destructiveHint?: boolean;
+        idempotentHint?: boolean;
+        openWorldHint?: boolean;
+      };
+    }>;
+  }>;
+  callTool(
+    req: { name: string; arguments?: Record<string, unknown> },
+    options?: { timeout?: number; signal?: AbortSignal; resetTimeoutOnProgress?: boolean },
+  ): Promise<{
     content?: Array<{ type: string; text?: string; data?: string; mimeType?: string; uri?: string; blob?: string }>;
     isError?: boolean;
+    structuredContent?: unknown;
   }>;
 }
 
@@ -94,6 +157,11 @@ interface McpSdkModule {
 // McpClient
 // ============================================================================
 
+export interface McpClientHooks {
+  /** sampling：MCP 服务器借用本地 LLM 生成（config.mcp.allowSampling 控制是否注入） */
+  onSampling?: (req: McpSamplingRequest) => Promise<McpSamplingResult>;
+}
+
 export class McpClient {
   private sdkClient: McpSdkClient | null = null;
   private tools: McpToolInfo[] = [];
@@ -103,12 +171,17 @@ export class McpClient {
   private readonly eventBus: EventBus;
   /** 实际使用的传输（http 可能回退为 sse） */
   private effectiveTransport: 'stdio' | 'http' | 'sse' | null = null;
+  /** 模组级钩子（sampling 全局；由 manager 创建时注入） */
+  private readonly hooks?: McpClientHooks;
+  /** 当前 callTool 的 elicitation 桥（动态槽位；callTool 开始设置、结束清理） */
+  private elicitationBridge: ((req: McpElicitRequest) => Promise<McpElicitOutcome>) | null = null;
 
-  constructor(name: string, config: ServerConfig, logger: Logger, eventBus: EventBus) {
+  constructor(name: string, config: ServerConfig, logger: Logger, eventBus: EventBus, hooks?: McpClientHooks) {
     this.name = name;
     this.config = config;
     this.logger = logger;
     this.eventBus = eventBus;
+    this.hooks = hooks;
   }
 
   async connect(): Promise<void> {
@@ -142,11 +215,12 @@ export class McpClient {
       throw new Error(t('mcp.unknownTransport', { transport: this.config.transport }));
     }
 
-    // 创建 client 实例
+    // 创建 client 实例（elicitation 始终声明——agent 通道支持，无桥时 decline；sampling 按钩子注入声明）
     this.sdkClient = new Client(
       { name: 'moss', version: '1.0.0' },
-      { capabilities: {} },
+      { capabilities: this.buildCapabilities() },
     );
+    this.registerClientHandlers();
 
     // 连接（http 若失败也尝试回退 SSE）
     try {
@@ -163,8 +237,9 @@ export class McpClient {
         this.effectiveTransport = 'sse';
         this.sdkClient = new Client(
           { name: 'moss', version: '1.0.0' },
-          { capabilities: {} },
+          { capabilities: this.buildCapabilities() },
         );
+        this.registerClientHandlers();
         await this.sdkClient.connect(transport);
       } else {
         throw err;
@@ -209,10 +284,12 @@ export class McpClient {
     if (!this.sdkClient) return;
     try {
       const result = await this.sdkClient.listTools();
-      this.tools = (result.tools ?? []).map(t => ({
-        name: t.name,
-        description: t.description,
-        inputSchema: t.inputSchema,
+      this.tools = (result.tools ?? []).map(tool => ({
+        name: tool.name,
+        title: tool.title,
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+        annotations: tool.annotations,
       }));
       this.logger.debug(t('mcp.toolsRefreshed', { name: this.name }), { count: this.tools.length });
     } catch (err) {
@@ -223,14 +300,30 @@ export class McpClient {
     }
   }
 
-  async callTool(toolName: string, args: unknown): Promise<McpToolResult> {
+  /** 查询单个工具信息（含 annotations；未连接或不存在返回 null） */
+  getTool(toolName: string): McpToolInfo | null {
+    return this.tools.find(tool => tool.name === toolName) ?? null;
+  }
+
+  async callTool(
+    toolName: string,
+    args: unknown,
+    opts?: { timeoutMs?: number; signal?: AbortSignal },
+  ): Promise<McpToolResult> {
     if (!this.sdkClient) {
       throw new Error(t('mcp.clientNotConnected', { name: this.name }));
     }
-    const result = await this.sdkClient.callTool({
-      name: toolName,
-      arguments: args as Record<string, unknown>,
-    });
+    const result = await this.sdkClient.callTool(
+      {
+        name: toolName,
+        arguments: args as Record<string, unknown>,
+      },
+      {
+        timeout: opts?.timeoutMs,
+        signal: opts?.signal,
+        resetTimeoutOnProgress: true,
+      },
+    );
 
     // 归一化结果
     const content: McpToolResult['content'] = [];
@@ -245,7 +338,7 @@ export class McpClient {
             mimeType: part.mimeType ?? 'image/png',
           });
         } else if (part.type === 'resource') {
-          // MCP resource 类型：保留 uri/mimeType/text/blob 字段，不再静默丢弃
+          // MCP resource 类型：完整保留 uri/mimeType/text/blob（resource links）
           content.push({
             type: 'resource',
             uri: part.uri ?? '',
@@ -259,7 +352,52 @@ export class McpClient {
     return {
       content,
       isError: result.isError ?? false,
+      // structured output（2025-06-18 规范）：完整透传
+      structured: result.structuredContent,
     };
+  }
+
+  // ========================================================================
+  // elicitation / sampling
+  // ========================================================================
+
+  /** 按钩子注入构造 ClientCapabilities（elicitation 始终声明；sampling 按配置） */
+  private buildCapabilities(): Record<string, unknown> {
+    const capabilities: Record<string, unknown> = { elicitation: {} };
+    if (this.hooks?.onSampling) capabilities.sampling = {};
+    return capabilities;
+  }
+
+  /** 在 SDK client 上注册 elicitation / sampling handler（每次 new Client 后调用） */
+  private registerClientHandlers(): void {
+    if (!this.sdkClient) return;
+    // elicitation：动态桥（callTool 期间设置；无桥时 decline）
+    if (this.sdkClient.setElicitationHandler) {
+      this.sdkClient.setElicitationHandler(async req => {
+        if (this.elicitationBridge) {
+          return await this.elicitationBridge(req);
+        }
+        return { action: 'decline' as const };
+      });
+    }
+    // sampling：全局钩子（manager 注入；内部含 allowSampling 检查）
+    if (this.hooks?.onSampling && this.sdkClient.setSamplingHandler) {
+      this.sdkClient.setSamplingHandler(async req => {
+        try {
+          return await this.hooks!.onSampling!(req);
+        } catch (err) {
+          this.logger.warn(t('mcp.samplingFailed', { name: this.name }), {
+            error: err instanceof Error ? err.message : String(err),
+          });
+          throw err;
+        }
+      });
+    }
+  }
+
+  /** 设置当前 callTool 的 elicitation 桥（callTool 开始设置、finally 清理） */
+  setElicitationBridge(bridge: ((req: McpElicitRequest) => Promise<McpElicitOutcome>) | null): void {
+    this.elicitationBridge = bridge;
   }
 
   // ========================================================================

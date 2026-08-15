@@ -3,6 +3,9 @@ name: explain
 description: >
   清晰地解释代码或概念，假设读者聪明但不熟悉该领域。
   接受 prompt body 中的 {{topic}} 占位符，由调用方替换。
+greet: >
+  已进入解释模式。先讲核心思想，再用具体例子展开。
+icon: book-open
 ---
 
 清晰地解释 {{topic}}：

@@ -271,13 +271,31 @@ export function useWebSocket(): void {
       }
       case 'ask': {
         if (!sessionId) return;
-        const event = msg.payload as Extract<AgentEvent, { type: 'ask' }>;
+        const event = (msg.payload ?? {}) as {
+          toolCallId?: string;
+          question?: string;
+          answerType?: 'text' | 'single' | 'multi' | 'boolean' | 'form';
+          options?: Array<{ value: string; label: string }>;
+          defaultAnswer?: string;
+          formSchema?: Record<string, unknown>;
+        };
+        if (!event.toolCallId || !event.question) break;
         s.addPendingAsk({
           toolCallId: event.toolCallId,
           sessionId,
           question: event.question,
+          answerType: event.answerType,
+          options: event.options,
+          defaultAnswer: event.defaultAnswer,
+          formSchema: event.formSchema,
           createdAt: Date.now(),
         });
+        break;
+      }
+      case 'ask-timeout': {
+        // ask 超时（后端已 reject）：移除残留卡片
+        const event = (msg.payload ?? {}) as { toolCallId?: string };
+        if (event.toolCallId) useStore.getState().removePendingAsk(event.toolCallId);
         break;
       }
       case 'confirm-required': {
@@ -291,6 +309,37 @@ export function useWebSocket(): void {
           details: event.details,
           createdAt: Date.now(),
         });
+        break;
+      }
+      case 'skill-mode': {
+        if (!sessionId) return;
+        const event = (msg.payload ?? {}) as {
+          action?: 'enter' | 'switch' | 'exit' | 'error';
+          name?: string;
+          greet?: string;
+          icon?: string;
+          message?: string;
+        };
+        if (event.action === 'enter' || event.action === 'switch') {
+          s.setActiveSkill(sessionId, {
+            name: event.name ?? '',
+            ...(event.icon ? { icon: event.icon } : {}),
+            ...(event.greet ? { greet: event.greet } : {}),
+          });
+          // greet 欢迎语写入消息流（居中系统提示样式）
+          if (event.greet) {
+            s.addMessage(sessionId, {
+              id: genId(),
+              role: 'system',
+              content: event.greet,
+              timestamp: new Date().toISOString(),
+            });
+          }
+        } else if (event.action === 'exit') {
+          s.setActiveSkill(sessionId, undefined);
+        } else if (event.action === 'error') {
+          toast.error(i18n.t('task.skillModeError', { name: event.name ?? '', message: event.message ?? '' }));
+        }
         break;
       }
       case 'error': {
@@ -370,6 +419,37 @@ export function useWebSocket(): void {
       // ====================================================================
       case 'session.subscribed': {
         if (sessionId) useStore.getState().setActiveSession(sessionId);
+        break;
+      }
+      case 'session-truncated': {
+        // 消息撤回已执行：删除 timestamp >= 截断起点的本地消息（含 1s 容差）
+        if (!sessionId) break;
+        const payload = (msg.payload ?? {}) as { messageTimestamp?: string };
+        if (!payload.messageTimestamp) break;
+        const cutoff = Date.parse(payload.messageTimestamp) - 1000;
+        const msgs = useStore.getState().messagesBySession[sessionId] ?? [];
+        const removed = msgs.filter((m) => Date.parse(m.timestamp) >= cutoff);
+        const kept = msgs.filter((m) => Date.parse(m.timestamp) < cutoff);
+        if (removed.length > 0) {
+          useStore.getState().setMessages(sessionId, kept);
+          useStore.getState().setTruncateBackup(sessionId, {
+            messageTimestamp: payload.messageTimestamp,
+            messages: removed,
+          });
+        }
+        break;
+      }
+      case 'session-restored': {
+        // 撤回恢复（redo）：把备份消息按原顺序插回
+        if (!sessionId) break;
+        const backup = useStore.getState().truncateBackups[sessionId];
+        if (!backup) break;
+        const msgs = useStore.getState().messagesBySession[sessionId] ?? [];
+        const cutoff = Date.parse(backup.messageTimestamp);
+        const before = msgs.filter((m) => Date.parse(m.timestamp) < cutoff);
+        const after = msgs.filter((m) => Date.parse(m.timestamp) >= cutoff);
+        useStore.getState().setMessages(sessionId, [...before, ...backup.messages, ...after]);
+        useStore.getState().setTruncateBackup(sessionId, undefined);
         break;
       }
       case 'tool.ask.accepted': {

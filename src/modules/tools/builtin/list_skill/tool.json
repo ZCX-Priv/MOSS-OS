@@ -1,0 +1,19 @@
+{
+  "name": "list_skill",
+  "description": "列出所有可用的 skill（渐进式披露第一级：仅 name + description，消耗极少 token）。先用本工具发现可用技能，再用 use_skill 激活。",
+  "icon": "list",
+  "annotations": {
+    "readOnlyHint": true,
+    "idempotentHint": true
+  },
+  "inputSchema": {
+    "type": "object",
+    "properties": {}
+  },
+  "config": {
+    "defaults": {
+      "enabled": true
+    },
+    "schema": {}
+  }
+}

@@ -26,6 +26,7 @@ import type {
   SkillItem,
   SpecItem,
   ToolItem,
+  ActiveSkillState,
   SidebarTab,
   SidebarTabType,
   PermissionMode,
@@ -47,6 +48,14 @@ interface UIState {
 
   /** 工具发起的、等待用户确认的请求列表 */
   pendingConfirms: PendingConfirm[];
+
+  /** 消息撤回备份（redo 用）：sessionId → 被删消息快照与截断起点 */
+  truncateBackups: Record<string, {
+    /** 截断起点时间戳（恢复定位用） */
+    messageTimestamp: string;
+    /** 被删除的前端消息（按原顺序） */
+    messages: TaskMessage[];
+  } | undefined>;
 
   // --- 输入 / 工作目录 ---
   input: string;
@@ -93,6 +102,9 @@ interface UIState {
   // --- MCP ---
   mcpServers: McpServer[];
   mcpTools: McpTool[];
+
+  // --- Skill 模式（会话级；skill-mode 事件维护） ---
+  activeSkillBySession: Record<string, ActiveSkillState | undefined>;
 
   // --- 工具图标映射（toolName → icon 字符串，由 /api/tools 拉取） ---
   toolIconMap: Record<string, string>;
@@ -174,6 +186,7 @@ interface UIActions {
   setTasks: (tasks: TaskItem[]) => void;
   setTaskGroups: (groups: TaskGroup[]) => void;
   addTask: (task: TaskItem) => void;
+  touchTask: (id: string) => void;
   updateTask: (id: string, patch: Partial<TaskItem>) => void;
   removeTask: (id: string) => void;
   setActiveTaskId: (id: string | null) => void;
@@ -215,6 +228,9 @@ interface UIActions {
   setMcpServers: (s: McpServer[]) => void;
   setMcpTools: (t: McpTool[]) => void;
 
+  // Skill 模式（skill-mode 事件：enter/switch 设置，exit/error 清除）
+  setActiveSkill: (sessionId: string, skill: ActiveSkillState | undefined) => void;
+
   // 工具图标映射
   setToolIconMap: (map: Record<string, string>) => void;
 
@@ -224,6 +240,9 @@ interface UIActions {
   clearPendingAsks: () => void;
   /** 仅清除指定 session 的 pendingAsks */
   clearPendingAsksBySession: (sessionId: string) => void;
+
+  // 消息撤回备份
+  setTruncateBackup: (sessionId: string, backup: { messageTimestamp: string; messages: TaskMessage[] } | undefined) => void;
 
   // PendingConfirm
   addPendingConfirm: (confirm: PendingConfirm) => void;
@@ -291,6 +310,7 @@ export const useStore = create<Store>((set) => ({
   generatingBySession: {},
   pendingAsks: [],
   pendingConfirms: [],
+  truncateBackups: {},
 
   // --- 输入 / 工作目录 ---
   input: '',
@@ -333,6 +353,7 @@ export const useStore = create<Store>((set) => ({
   // --- MCP ---
   mcpServers: [],
   mcpTools: [],
+  activeSkillBySession: {},
 
   // --- 工具图标映射 ---
   toolIconMap: {},
@@ -462,6 +483,18 @@ export const useStore = create<Store>((set) => ({
   setTasks: (tasks) => set({ tasks }),
   setTaskGroups: (taskGroups) => set({ taskGroups }),
   addTask: (task) => set((state) => ({ tasks: [task, ...state.tasks] })),
+  // 活跃置顶（乐观更新）：移到该分组第一个任务之前（tasks 为跨分组扁平数组，Sidebar 按组保序渲染）
+  touchTask: (id) =>
+    set((state) => {
+      const task = state.tasks.find((t) => t.id === id);
+      if (!task) return state;
+      const rest = state.tasks.filter((t) => t.id !== id);
+      const firstInGroup = rest.findIndex((t) => t.groupId === task.groupId);
+      const insertIdx = firstInGroup === -1 ? rest.length : firstInGroup;
+      const next = [...rest];
+      next.splice(insertIdx, 0, { ...task, updatedAt: new Date().toISOString() });
+      return { tasks: next };
+    }),
   updateTask: (id, patch) =>
     set((state) => ({
       tasks: state.tasks.map((t) => (t.id === id ? { ...t, ...patch } : t)),
@@ -544,6 +577,12 @@ export const useStore = create<Store>((set) => ({
   setMcpServers: (mcpServers) => set({ mcpServers }),
   setMcpTools: (mcpTools) => set({ mcpTools }),
 
+  // --- Actions: Skill 模式 ---
+  setActiveSkill: (sessionId, skill) =>
+    set((state) => ({
+      activeSkillBySession: { ...state.activeSkillBySession, [sessionId]: skill },
+    })),
+
   // --- Actions: 工具图标映射 ---
   setToolIconMap: (toolIconMap) => set({ toolIconMap }),
 
@@ -563,6 +602,12 @@ export const useStore = create<Store>((set) => ({
   clearPendingAsksBySession: (sessionId) =>
     set((state) => ({
       pendingAsks: state.pendingAsks.filter((a) => a.sessionId !== sessionId),
+    })),
+
+  // --- Actions: 消息撤回备份 ---
+  setTruncateBackup: (sessionId, backup) =>
+    set((state) => ({
+      truncateBackups: { ...state.truncateBackups, [sessionId]: backup },
     })),
 
   // --- Actions: PendingConfirm ---

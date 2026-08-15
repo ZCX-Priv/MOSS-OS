@@ -5,9 +5,9 @@
 
 import { useTranslation } from 'react-i18next';
 import {
+  Hand,
   Shield,
-  RefreshCw,
-  TriangleAlert,
+  ShieldAlert,
   ChevronDown,
   CheckCircle2,
 } from 'lucide-react';
@@ -39,28 +39,25 @@ interface ModeConfig {
 const MODE_CONFIG: ModeConfig[] = [
   {
     id: 'ask',
-    icon: Shield,
+    icon: Hand,
     labelKey: 'permissionMode.ask.label',
     descKey: 'permissionMode.ask.desc',
   },
   {
     id: 'auto',
-    icon: RefreshCw,
+    icon: Shield,
     labelKey: 'permissionMode.auto.label',
     descKey: 'permissionMode.auto.desc',
-    badgeKey: 'permissionMode.auto.badge',
-    badgeClass:
-      'bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30',
   },
   {
     id: 'skip',
-    icon: TriangleAlert,
+    icon: ShieldAlert,
     labelKey: 'permissionMode.skip.label',
     descKey: 'permissionMode.skip.desc',
     badgeKey: 'permissionMode.skip.badge',
     badgeClass:
       'bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30',
-    iconClass: 'text-orange-600 dark:text-orange-500',
+    iconClass: 'text-red-600 dark:text-red-500',
   },
 ];
 
@@ -81,8 +78,8 @@ export function PermissionModeSelector() {
           className="min-w-0 shrink gap-1 h-7 rounded-[min(var(--radius-md),12px)] border border-border bg-transparent px-3 py-1 font-normal cursor-pointer [&>svg]:size-3.5"
           title={t('permissionMode.title')}
         >
-          <CurrentIcon className="size-3 shrink-0" />
-          <span className="min-w-0 flex-1 truncate hidden sm:inline whitespace-nowrap">
+          <CurrentIcon className={cn('size-3 shrink-0', currentConfig.iconClass)} />
+          <span className={cn('min-w-0 flex-1 truncate hidden sm:inline whitespace-nowrap', currentConfig.iconClass)}>
             {t(currentConfig.labelKey)}
           </span>
           <ChevronDown className="size-3 shrink-0 opacity-70" />

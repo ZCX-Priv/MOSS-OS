@@ -1,6 +1,6 @@
 {
   "name": "grep",
-  "description": "按正则表达式搜索文件内容。返回匹配行及文件路径和行号。支持搜索文件或目录、可选的 glob 文件名过滤器和忽略大小写模式。跳过二进制文件和 node_modules/.git/dist/build。",
+  "description": "按正则表达式搜索文件内容。三种输出模式：content（匹配行+可选上下文，默认）、files_with_matches（仅文件路径，省 token）、count（每文件匹配计数）。支持 glob/type 文件过滤、上下文行、smartCase、fixedStrings 字面量、multiline 跨行匹配、offset 分页。默认尊重 .gitignore/.ignore 并跳过二进制文件与 node_modules/.git/dist/build。",
   "icon": "search",
   "annotations": {
     "readOnlyHint": true,
@@ -11,7 +11,7 @@
     "properties": {
       "pattern": {
         "type": "string",
-        "description": "要搜索的正则表达式模式（如 \"function\\s+\\w+\"、\"TODO|FIXME\"）。"
+        "description": "要搜索的正则表达式模式（如 \"function\\s+\\w+\"、\"TODO|FIXME\"）；fixedStrings=true 时按字面量搜索无需转义"
       },
       "path": {
         "type": "string",
@@ -19,24 +19,79 @@
       },
       "glob": {
         "type": "string",
-        "description": "可选的文件名 glob 过滤器，如 \"*.ts\"、\"**/*.json\"。仅搜索匹配的文件"
+        "description": "可选的文件名 glob 过滤器，如 \"*.ts\"、\"**/*.json\"、\"*.{vue,svelte}\"。仅搜索匹配的文件"
+      },
+      "type": {
+        "type": "string",
+        "description": "按文件类型过滤（等价 rg --type）：ts/js/py/rust/go/java/kotlin/c/cpp/cs/rb/php/swift/md/json/yaml/toml/css/scss/less/html/vue/svelte/sh/bat/sql/xml/astro/graphql"
+      },
+      "outputMode": {
+        "type": "string",
+        "enum": ["content", "files_with_matches", "count"],
+        "description": "输出模式：content=匹配行带行号（默认）；files_with_matches=仅含匹配的文件路径（按修改时间降序，定位文件时用，最省 token）；count=每文件匹配行数（file:N 格式）"
       },
       "caseInsensitive": {
         "type": "boolean",
         "description": "忽略大小写匹配（默认 false）"
       },
+      "smartCase": {
+        "type": "boolean",
+        "description": "智能大小写（默认 false）：pattern 不含大写字母时自动忽略大小写，含大写则精确匹配。与 caseInsensitive 同 true 时以 caseInsensitive 为准"
+      },
+      "fixedStrings": {
+        "type": "boolean",
+        "description": "按字面量搜索 pattern（默认 false），正则元字符自动转义。搜含 . ( [ * 等字符的字符串时无需手动转义"
+      },
+      "contextBefore": {
+        "type": "integer",
+        "description": "匹配行前输出的上下文行数（默认 0，最大 10）。仅 content 模式生效",
+        "minimum": 0,
+        "maximum": 10
+      },
+      "contextAfter": {
+        "type": "integer",
+        "description": "匹配行后输出的上下文行数（默认 0，最大 10）。仅 content 模式生效",
+        "minimum": 0,
+        "maximum": 10
+      },
+      "multiline": {
+        "type": "boolean",
+        "description": "跨行匹配模式（默认 false）：pattern 可用 [\\s\\S] 或 . 匹配换行（此模式下 . 自动跨行）。行号取匹配起始行；超过 1MB 的文件自动跳过"
+      },
       "maxResults": {
         "type": "integer",
-        "description": "最多返回的匹配行数（默认 100，最大 500）。",
+        "description": "最多返回的结果条数（默认 100，最大 500）。content 按匹配行、files_with_matches/count 按文件计",
         "minimum": 1,
         "maximum": 500
+      },
+      "offset": {
+        "type": "integer",
+        "description": "分页偏移量（默认 0）。结果截断时配合使用可翻页",
+        "minimum": 0
+      },
+      "noIgnore": {
+        "type": "boolean",
+        "description": "不尊重 .gitignore/.ignore 且不跳过 node_modules/dist/build 等默认忽略目录（默认 false）"
+      },
+      "dot": {
+        "type": "boolean",
+        "description": "包含隐藏文件（. 开头，默认 false）"
       }
     },
     "required": ["pattern"],
     "additionalProperties": false
   },
   "config": {
-    "defaults": { "enabled": true },
-    "schema": {}
+    "defaults": {
+      "enabled": true,
+      "respectGitignore": true,
+      "maxResults": 100,
+      "maxContextLines": 10
+    },
+    "schema": {
+      "respectGitignore": { "type": "boolean", "description": "是否默认尊重 .gitignore（false 等同全局 noIgnore）" },
+      "maxResults": { "type": "integer", "description": "默认结果条数上限（1-500）" },
+      "maxContextLines": { "type": "integer", "description": "contextBefore/contextAfter 允许的最大值（默认 10）" }
+    }
   }
 }

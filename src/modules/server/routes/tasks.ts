@@ -13,7 +13,7 @@
 import type { HttpRequest, HttpResponse, RouteHandler } from '../types';
 import type { ServiceRegistry, Environment } from '../../../core/types';
 import type { AgentEngine } from '../../contracts';
-import { getTodoStorePath, readTodoStore } from '../../tools/todo';
+import { getSessionTodoPath, readSessionTodoStore } from '../../tools/builtin/todo/shared/store';
 import { ErrorCode } from '../../../core/error-codes';
 
 type AgentEngineWithTasks = AgentEngine & {
@@ -75,6 +75,7 @@ type AgentEngineWithTasks = AgentEngine & {
   } | null;
   deleteTaskGroup?: (id: string, moveTasksTo?: string) => boolean;
   getHistory?: (id: string) => unknown[];
+  getActiveSkill?: (id: string) => { name: string; mode: 'system' | 'message'; content: string } | undefined;
   deleteSession?: (id: string) => void;
 };
 
@@ -131,12 +132,15 @@ export function createGetTaskHandler(services: ServiceRegistry, env: Environment
     // 消息历史
     const history = engine.getHistory?.(id) ?? [];
 
-    // todos（从 todos.json 按 sessionId 过滤）
-    const todoStore = readTodoStore(getTodoStorePath(env));
-    const todos = todoStore.items.filter(it => it.sessionId === id);
+    // todos（会话级存储：读该 session 的独立文件）
+    const todoStore = readSessionTodoStore(getSessionTodoPath(env, id));
+    const todos = todoStore.items;
 
     // contextFiles（暂为空，阶段 5.1 由工具执行轨迹回填）
     const contextFiles: Array<{ path: string; tokens?: number; reason?: string }> = [];
+
+    // 当前激活的 skill 模式（前端刷新后恢复 Badge）
+    const activeSkill = engine.getActiveSkill?.(id) ?? undefined;
 
     return {
       status: 200,
@@ -145,6 +149,7 @@ export function createGetTaskHandler(services: ServiceRegistry, env: Environment
         messages: history,
         todos,
         contextFiles,
+        ...(activeSkill ? { activeSkill } : {}),
       },
     };
   };

@@ -28,7 +28,7 @@ class ToolsModule implements Module {
   async initialize(ctx: ModuleContext): Promise<void> {
     this.ctx = ctx;
     this.registry = new ToolRegistryImpl(ctx.logger, ctx.config);
-    const skillRegistry = createSkillRegistry(ctx.env, ctx.logger, ctx.eventBus);
+    const skillRegistry = createSkillRegistry(ctx.env, ctx.logger, ctx.eventBus, ctx.config);
     const specRegistry = createSpecRegistry(ctx.env, ctx.logger, ctx.eventBus);
 
     // 1. 加载并注册内置工具（从 builtin 目录，按 config 过滤）

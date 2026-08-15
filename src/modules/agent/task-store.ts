@@ -29,6 +29,8 @@ export interface TaskGroup {
 }
 
 interface TaskStoreData {
+  /** 数据版本：2 = 已执行"最近活跃在上"顺序迁移 */
+  version?: number;
   groups: TaskGroup[];
   tasks: TaskItem[];
 }
@@ -50,6 +52,7 @@ export class TaskStore {
     this.storePath = join(env.dataDir, 'tasks.json');
     this.logger = logger;
     this.data = this.load();
+    this.migrateIfNeeded();
   }
 
   // ==========================================================================
@@ -77,11 +80,11 @@ export class TaskStore {
     const now = new Date().toISOString();
     const id = crypto.randomUUID();
     const gid = groupId ?? DEFAULT_GROUP_ID;
-    // 新任务置于分组末尾：取分组内现有最大 order + 1（无任务时 0）
+    // 新任务置于分组顶部：取分组内现有最小 order - 1（无任务时 0）
     const groupOrders = this.data.tasks
       .filter(t => t.groupId === gid)
-      .map(t => t.order ?? -1);
-    const nextOrder = groupOrders.length ? Math.max(...groupOrders) + 1 : 0;
+      .map(t => t.order ?? Number.MAX_SAFE_INTEGER);
+    const nextOrder = groupOrders.length ? Math.min(...groupOrders) - 1 : 0;
     const task: TaskItem = {
       id,
       title: title || '新任务',
@@ -103,6 +106,24 @@ export class TaskStore {
     if (patch.title !== undefined) task.title = patch.title;
     if (patch.groupId !== undefined) task.groupId = patch.groupId;
     task.updatedAt = new Date().toISOString();
+    this.save();
+    return { ...task };
+  }
+
+  /**
+   * 任务活跃置顶：更新 updatedAt；若非组内最前，将 order 改为组内（除自身）最小 order - 1。
+   * task.id 即 sessionId，engine 在每次用户消息时调用。任务不存在返回 null。
+   */
+  touchTask(id: string): TaskItem | null {
+    const task = this.data.tasks.find(t => t.id === id);
+    if (!task) return null;
+    task.updatedAt = new Date().toISOString();
+    const minOther = this.data.tasks
+      .filter(t => t.groupId === task.groupId && t.id !== id)
+      .reduce((min, t) => Math.min(min, t.order ?? Number.MAX_SAFE_INTEGER), Number.MAX_SAFE_INTEGER);
+    if (task.order === undefined || task.order >= minOther) {
+      task.order = minOther - 1;
+    }
     this.save();
     return { ...task };
   }
@@ -198,6 +219,37 @@ export class TaskStore {
   // ==========================================================================
   // 持久化
   // ==========================================================================
+
+  /**
+   * 一次性数据迁移（version 2）：旧数据"新任务 order 最大（沉底）"反转为"最近在上"。
+   * 每组内按 (order 升序, createdAt 升序) 得到 [旧→新]，反转赋 order（最新 = 0）。
+   */
+  private migrateIfNeeded(): void {
+    if (this.data.version === 2) return;
+    if (this.data.tasks.length === 0) {
+      // 空数据直接标记已迁移（内存标记即可，下次写盘随 save 持久化），
+      // 避免后续新建任务（置顶 order）后重启被本迁移反转回沉底
+      this.data.version = 2;
+      return;
+    }
+    const byGroup = new Map<string, TaskItem[]>();
+    for (const t of this.data.tasks) {
+      const list = byGroup.get(t.groupId) ?? [];
+      list.push(t);
+      byGroup.set(t.groupId, list);
+    }
+    for (const list of byGroup.values()) {
+      list.sort((a, b) => {
+        const oa = a.order ?? Number.MAX_SAFE_INTEGER;
+        const ob = b.order ?? Number.MAX_SAFE_INTEGER;
+        if (oa !== ob) return oa - ob;
+        return a.createdAt.localeCompare(b.createdAt); // 升序：旧的在前
+      });
+      list.forEach((t, idx) => { t.order = list.length - 1 - idx; });
+    }
+    this.data.version = 2;
+    this.save();
+  }
 
   private load(): TaskStoreData {
     try {

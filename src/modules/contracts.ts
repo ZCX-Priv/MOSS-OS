@@ -8,8 +8,8 @@ import type {
   UnifiedResponse,
   StreamDelta,
 } from './llm/types';
-import type { Tool, ToolContext, ToolResult } from './tools/types';
-import type { TodoItem } from './tools/todo';
+import type { Tool, ToolContext, ToolResult, AskPayload, AskOutcome } from './tools/types';
+import type { TodoItem } from './tools/builtin/todo/shared/store';
 import type {
   FileHistoryEntry,
   TrackEditResult,
@@ -75,16 +75,41 @@ export interface AgentEngine {
   run(input: AgentRunInput): Promise<AgentRunResult>;
 
   /**
-   * 前端回复 ask 工具的提问。
+   * 前端回复 ask 工具的提问（accept=已回答 / cancel=取消）。
    * @returns true 表示匹配到 pending ask 并已 resolve；false 表示无匹配（可能已超时或不存在）。
    */
-  resolveAsk(toolCallId: string, answer: string): boolean;
+  resolveAsk(toolCallId: string, outcome: AskOutcome): boolean;
 
   /**
    * 前端回复 confirm 确认。
    * @returns true 表示匹配到 pending confirm 并已 resolve；false 表示无匹配（可能已超时或不存在）。
    */
   resolveConfirm(toolCallId: string, ok: boolean): boolean;
+
+  /**
+   * 消息撤回预览（dryRun）：定位目标用户消息，列出将被删除的消息与将被回滚的文件变更。
+   * @param sessionId 会话 ID
+   * @param messageTimestamp 前端用户消息的 timestamp（定位依据；找不到时回退 content 匹配）
+   * @param content 用户消息文本（timestamp 定位失败时的回退依据）
+   */
+  previewTruncate(
+    sessionId: string,
+    messageTimestamp: string,
+    content: string,
+  ): TruncatePreview | null;
+
+  /**
+   * 执行消息撤回（截断）：软删除目标用户消息及其后全部消息，
+   * 并联动 file-history 回滚该区间内 AI 产生的文件变更（回滚前自动备份，支持 redo）。
+   * 成功后向该 session 推送 session-truncated WS 事件。
+   */
+  truncateFrom(sessionId: string, messageTimestamp: string, content: string): Promise<TruncateResult | null>;
+
+  /**
+   * 恢复最近一次消息撤回（redo）：清除软删除标记 + 从回滚备份恢复文件。
+   * 成功后向该 session 推送 session-restored WS 事件。
+   */
+  restoreTruncate(sessionId: string): Promise<TruncateRestoreResult | null>;
 }
 
 export interface AgentRunInput {
@@ -93,8 +118,15 @@ export interface AgentRunInput {
   userMessage: string;
   /** 模型名（可选，默认从配置） */
   model?: string;
-  /** Agent 配置 ID（可选；指定后按该 Agent 的 systemPrompt/model/tools/maxTurns/maxTokens 执行） */
+  /** Agent 配置 ID（可选；指定后按该 Agent 的 systemPrompt/model/tools/maxTurns/maxTokens/maxTokens 执行） */
   agentId?: string;
+  /**
+   * Skill 模式切换（/ 菜单触发）：
+   *   - 非空字符串：激活/切换到该 skill（首次=注入系统提示词后；切换=卸载旧注入并锚定到本次用户消息后）
+   *   - null：退出模式（卸载全部注入）
+   *   - undefined：不涉及模式操作
+   */
+  skill?: string | null;
   /** 工作目录 */
   cwd: string;
   /** 流式事件回调 */
@@ -112,8 +144,10 @@ export type AgentEvent =
   | { type: 'tool-call-delta'; sessionId: string; toolCallId: string; argumentsDelta: string; runId?: string }
   | { type: 'tool-call-executing'; sessionId: string; toolName: string; toolCallId: string; runId?: string }
   | { type: 'tool-call-end'; sessionId: string; toolName: string; toolCallId: string; result: ToolResult; runId?: string }
-  | { type: 'ask'; sessionId: string; toolCallId: string; question: string; runId?: string }
+  | { type: 'ask'; sessionId: string; toolCallId: string; question: string; answerType?: AskPayload['answerType']; options?: AskPayload['options']; defaultAnswer?: string; formSchema?: Record<string, unknown>; runId?: string }
+  | { type: 'ask-timeout'; sessionId: string; toolCallId: string; runId?: string }
   | { type: 'confirm-required'; sessionId: string; toolCallId: string; toolName: string; question: string; details?: unknown; runId?: string }
+  | { type: 'skill-mode'; sessionId: string; action: 'enter' | 'switch' | 'exit' | 'error'; name?: string; greet?: string; icon?: string; message?: string; runId?: string }
   | { type: 'error'; sessionId: string; message: string; runId?: string }
   | { type: 'done'; sessionId: string; finishReason: string; runId?: string };
 
@@ -140,30 +174,106 @@ export interface AgentMessage {
   name?: string;
   /** 该 assistant 消息内 todo 工具调用完成时的 todos 快照（用于前端按调用时刻渲染） */
   todoSnapshot?: TodoItem[];
+  /** 消息创建时间（ISO 8601；旧数据可能缺失）。消息撤回的时间区间定位依据 */
+  timestamp?: string;
+  /** 软删除时间（ISO 8601）。非空表示已被消息撤回截断，构建 LLM 上下文时过滤 */
+  deletedAt?: string;
+}
+
+/** 消息撤回（截断）预览结果 */
+export interface TruncatePreview {
+  /** 将被删除的消息（含目标用户消息及其后全部） */
+  messagesToRemove: Array<{ index: number; role: string; content: string; timestamp?: string }>;
+  /** 将被回滚的文件变更（来自 file-history transcript 时间区间） */
+  fileChanges: Array<{ absPath: string; operation: string; toolName: string; timestamp: string }>;
+}
+
+/** 消息撤回（截断）执行结果 */
+export interface TruncateResult {
+  /** 被软删除的消息数 */
+  removedCount: number;
+  /** 成功回滚的文件数 */
+  rolledBackFiles: number;
+  /** 回滚失败的条目 */
+  rollbackFailed: Array<{ absPath: string; error: string }>;
+  /** 截断起点时间戳（前端据此删除本地消息） */
+  truncatedBeforeTimestamp: string;
+  /** 是否回滚了文件变更 */
+  fileRollbackPerformed: boolean;
+}
+
+/** 消息撤回恢复（redo）结果 */
+export interface TruncateRestoreResult {
+  /** 恢复的消息数 */
+  restoredCount: number;
+  /** 成功恢复的文件数 */
+  restoredFiles: number;
+  /** 恢复失败的条目 */
+  restoreFailed: Array<{ absPath: string; error: string }>;
 }
 
 // ============================================================================
 // MCP Manager（由 MCP 插件注册，ServiceNames.MCP_MANAGER）
 // ============================================================================
 
+/** MCP 工具注解（从 MCP 服务器透传） */
+export interface McpToolAnnotations {
+  title?: string;
+  readOnlyHint?: boolean;
+  destructiveHint?: boolean;
+  idempotentHint?: boolean;
+  openWorldHint?: boolean;
+}
+
 export interface MCPManager {
-  /** 列出所有已连接 MCP 服务器 */
-  listServers(): Array<{ name: string; status: 'connected' | 'disconnected' | 'error'; toolCount: number }>;
-  /** 列出指定服务器的工具 */
+  /** 列出所有已定义 MCP 服务器（含未连接与禁用） */
+  listServers(): Array<{
+    name: string;
+    status: 'connected' | 'disconnected' | 'error';
+    toolCount: number;
+    enabled: boolean;
+    transport?: string;
+  }>;
+  /** 列出指定服务器的工具（仅已连接且启用的服务器；透传 annotations/title） */
   listTools(serverName?: string): Array<{
     server: string;
     name: string;
+    title?: string;
     description?: string;
     inputSchema?: unknown;
+    annotations?: McpToolAnnotations;
   }>;
-  /** 调用 MCP 工具 */
-  callTool(serverName: string, toolName: string, args: unknown): Promise<{
+  /** 查询某服务器定义的启用状态（未定义返回 null） */
+  isServerEnabled(serverName: string): boolean | null;
+  /** 查询某 MCP 工具的注解（server 未连接或工具不存在返回 null） */
+  getToolAnnotations(serverName: string, toolName: string): McpToolAnnotations | null;
+  /** 调用 MCP 工具（structured 输出与 resource 完整保留；opts 控制超时/中断/elicitation） */
+  callTool(
+    serverName: string,
+    toolName: string,
+    args: unknown,
+    opts?: {
+      timeoutMs?: number;
+      signal?: AbortSignal;
+      /** elicitation 桥：MCP 服务器向用户请求输入（缺省时 decline） */
+      elicit?: (req: {
+        message: string;
+        requestedSchema?: Record<string, unknown>;
+      }) => Promise<
+        | { action: 'accept'; content: Record<string, string | number | boolean> }
+        | { action: 'decline' }
+        | { action: 'cancel' }
+      >;
+    },
+  ): Promise<{
     content: Array<
       | { type: 'text'; text: string }
       | { type: 'image'; data: string; mimeType: string }
       | { type: 'resource'; uri: string; mimeType?: string; text?: string; blob?: string }
     >;
     isError?: boolean;
+    /** MCP structured output（2025-06-18 规范），存在时优先于 text 解析 */
+    structured?: unknown;
   }>;
   /** 启动/重启指定服务器 */
   connect(serverName: string): Promise<void>;
@@ -171,6 +281,12 @@ export interface MCPManager {
   disconnect(serverName: string): Promise<void>;
   /** 重载所有服务器（配置变更后） */
   reloadAll(): Promise<void>;
+  /** 新建服务器定义（写 ~/.moss/mcps/<name>.json 并尝试连接） */
+  createServer(name: string, def: unknown): Promise<void>;
+  /** 更新服务器定义（写回文件，目录 watch 自动 reload） */
+  updateServer(name: string, def: unknown): Promise<void>;
+  /** 删除服务器定义（先断开，再删 ~/.moss/mcps/<name>.json） */
+  deleteServer(name: string): Promise<void>;
 }
 
 // ============================================================================
@@ -231,6 +347,24 @@ export interface FileHistoryService {
 
   /** 列出某会话的文件历史（前端 UI 用） */
   listHistory(sessionId: string): FileHistoryEntry[];
+
+  /**
+   * 回滚时间区间内的全部文件变更（消息撤回联动）。
+   * 逆序恢复每条 entry；恢复前对当前状态做 redo 备份并写入 toolName='rollback' 的新 entry，
+   * 随后从 transcript 移除被回滚的 entry。
+   * @returns rollback entry id 列表（供 redoRollback）
+   */
+  rollbackRange(sessionId: string, fromTs: string, toTs: string): Promise<{
+    rollbackIds: string[];
+    failed: Array<{ absPath: string; error: string }>;
+  }>;
+
+  /**
+   * 恢复一次回滚（redo）：把文件恢复到回滚前状态，随后移除这些 rollback entries。
+   */
+  redoRollback(sessionId: string, rollbackIds: string[]): Promise<{
+    failed: Array<{ absPath: string; error: string }>;
+  }>;
 
   /** 恢复到指定历史条目（前端 UI 用，撤销该条目对应的变更） */
   restore(sessionId: string, entryId: string): Promise<UndoResult>;

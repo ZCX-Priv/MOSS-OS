@@ -1,6 +1,6 @@
 {
   "name": "use_skill",
-  "description": "调用已注册的技能。技能是从 skills/ 目录加载的提示词模板。返回技能提示词文本（通过 args 替换 {{placeholder}}）。可用内置技能：brainstorming、code-review、tdd、explain。",
+  "description": "激活指定的 skill，返回其完整指令模板（渐进式披露第二级；目录式 skill 附带附属资源清单供按需读取）。先用 list_skill 发现可用技能；args 替换模板中的 {{placeholder}} 占位符。",
   "icon": "sparkles",
   "annotations": {
     "readOnlyHint": true,

@@ -118,6 +118,38 @@ function copyBuiltinTools() {
 }
 
 // ============================================================================
+// 步骤 3b: 复制工具共享模块（builtin 工具通过 ../../shared/search-core 引用）
+// ============================================================================
+function copySharedModules() {
+  log('Copying tools shared modules...');
+  const src = resolve(ROOT, 'src', 'modules', 'tools', 'shared');
+  const dest = resolve(DIST, 'modules', 'tools', 'shared');
+  if (!existsSync(src)) {
+    error(`Tools shared modules source not found: ${src}`);
+    process.exit(1);
+  }
+  mkdirSync(resolve(DIST, 'modules', 'tools'), { recursive: true });
+  cpSync(src, dest, { recursive: true });
+  log(`Tools shared modules copied: ${dest}`);
+}
+
+// ============================================================================
+// 步骤 3c: 复制 agent/ 提示词目录到 dist（播种源：首次运行复制到 ~/.moss/agent/，
+// 运行时只读用户目录，但种子模板必须随包分发）
+// ============================================================================
+function copyAgentPrompts() {
+  log('Copying agent prompts...');
+  const src = resolve(ROOT, 'agent');
+  const dest = resolve(DIST, 'agent');
+  if (!existsSync(src)) {
+    error(`Agent prompts source not found: ${src}`);
+    process.exit(1);
+  }
+  cpSync(src, dest, { recursive: true });
+  log(`Agent prompts copied: ${dest}`);
+}
+
+// ============================================================================
 // 步骤 4: 构建前端 (Vite build -> dist/webui/)
 // ============================================================================
 function buildFrontend() {
@@ -169,6 +201,8 @@ function main() {
   cleanDist();
   buildBackend();
   copyBuiltinTools();
+  copySharedModules();
+  copyAgentPrompts();
   buildFrontend();
   verifyArtifacts();
   const elapsed = ((Date.now() - startedAt) / 1000).toFixed(2);

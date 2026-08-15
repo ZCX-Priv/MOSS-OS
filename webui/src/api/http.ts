@@ -87,6 +87,7 @@ function adaptAgentMessages(raw: unknown[]): TaskMessage[] {
       name?: string;
       thinking?: string;
       todoSnapshot?: TaskMessage['todoSnapshot'];
+      timestamp?: string;
     } | null;
     if (!m) continue;
     if (m.role === 'system') continue;
@@ -112,7 +113,7 @@ function adaptAgentMessages(raw: unknown[]): TaskMessage[] {
       thinking: m.thinking,
       toolCalls: m.toolCalls,
       todoSnapshot: m.todoSnapshot,
-      timestamp: new Date().toISOString(),
+      timestamp: m.timestamp ?? new Date().toISOString(),
     });
   }
   return result;
@@ -147,14 +148,52 @@ export const api = {
   // ==========================================================================
   listSessions: () => request<{ sessions: Session[] }>('GET', '/api/session'),
   getSessionHistory: async (id: string) => {
-    const resp = await request<{ sessionId: string; messages: unknown[] }>('GET', `/api/session/${id}`);
-    return { sessionId: resp.sessionId, messages: adaptAgentMessages(resp.messages) };
+    const resp = await request<{
+      sessionId: string;
+      messages: unknown[];
+      activeSkill?: { name: string; mode: 'system' | 'message'; content: string };
+    }>('GET', `/api/session/${id}`);
+    return {
+      sessionId: resp.sessionId,
+      messages: adaptAgentMessages(resp.messages),
+      ...(resp.activeSkill ? { activeSkill: resp.activeSkill } : {}),
+    };
   },
   deleteSession: (id: string) => request<{ deleted: boolean }>('DELETE', `/api/session/${id}`),
   getSessionContext: (id: string) =>
     request<{ files: ContextFile[]; totalTokens: number; maxTokens: number }>(
       'GET',
       `/api/sessions/${id}/context`,
+    ),
+  /** preview truncate: messages to remove + file changes to roll back */
+  previewTruncate: (id: string, messageTimestamp: string, content: string) =>
+    request<{
+      sessionId: string;
+      messagesToRemove: Array<{ index: number; role: string; content: string; timestamp?: string }>;
+      fileChanges: Array<{ absPath: string; operation: string; toolName: string; timestamp: string }>;
+    }>(
+      'GET',
+      `/api/sessions/${encodeURIComponent(id)}/truncate-preview?messageTimestamp=${encodeURIComponent(messageTimestamp)}&content=${encodeURIComponent(content)}`,
+    ),
+  /** execute truncate (soft delete messages + rollback file changes) */
+  truncateSession: (id: string, messageTimestamp: string, content: string) =>
+    request<{
+      sessionId: string;
+      removedCount: number;
+      rolledBackFiles: number;
+      rollbackFailed: Array<{ absPath: string; error: string }>;
+      truncatedBeforeTimestamp: string;
+      fileRollbackPerformed: boolean;
+    }>(
+      'POST',
+      `/api/sessions/${encodeURIComponent(id)}/truncate`,
+      { messageTimestamp, content },
+    ),
+  /** restore last truncate (redo) */
+  restoreTruncate: (id: string) =>
+    request<{ sessionId: string; restoredCount: number; restoredFiles: number; restoreFailed: Array<{ absPath: string; error: string }> }>(
+      'POST',
+      `/api/sessions/${encodeURIComponent(id)}/truncate-restore`,
     ),
 
   // ==========================================================================
@@ -167,6 +206,15 @@ export const api = {
     request<unknown>('POST', '/api/mcp/call', { server, tool, arguments: args }),
   connectMcpServer: (server: string) => request<unknown>('POST', '/api/mcp/connect', { server }),
   disconnectMcpServer: (server: string) => request<unknown>('POST', '/api/mcp/disconnect', { server }),
+  /** Xinjian server definition (body: { name, ...ServerConfig }) */
+  createMcpServer: (def: Omit<McpServer, 'status' | 'toolCount'> & { name: string }) =>
+    request<{ created: boolean; server: string }>('POST', '/api/mcp/servers', def),
+  /** Gengxin server definition (incl. enabled toggle; body: ServerConfig) */
+  updateMcpServer: (name: string, def: Partial<Omit<McpServer, 'name' | 'status' | 'toolCount'>>) =>
+    request<{ updated: boolean; server: string }>('PUT', `/api/mcp/servers/${encodeURIComponent(name)}`, def),
+  /** Shanchu server definition */
+  deleteMcpServer: (name: string) =>
+    request<{ deleted: boolean; server: string }>('DELETE', `/api/mcp/servers/${encodeURIComponent(name)}`),
 
   // ==========================================================================
   // 工具（完整信息 + 启停）
@@ -260,10 +308,16 @@ export const api = {
   // ==========================================================================
   listSkills: () => request<{ skills: SkillItem[] }>('GET', '/api/skills'),
   getSkill: (name: string) => request<{ skill: SkillDetail }>('GET', `/api/skills/${name}`),
+  /** Qiehuan skill enabled state */
+  updateSkill: (name: string, patch: { enabled: boolean }) =>
+    request<{ name: string; enabled: boolean }>('PATCH', `/api/skills/${encodeURIComponent(name)}`, patch),
   listSpecs: () => request<{ specs: SpecItem[] }>('GET', '/api/specs'),
   // detail 用 query 形式规避路径参数含斜杠问题
   getSpec: (id: string) =>
     request<{ spec: SpecDetail }>('GET', `/api/specs?id=${encodeURIComponent(id)}`),
+  /** Baocun spec content (only user-dir specs editable) */
+  updateSpec: (id: string, content: string, description?: string) =>
+    request<{ saved: boolean; id: string }>('PUT', '/api/specs', { id, content, description }),
 
   // ==========================================================================
   // 自动化任务（见文档 3.2.7）

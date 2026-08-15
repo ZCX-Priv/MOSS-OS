@@ -136,6 +136,8 @@ export class WsHandler {
       cwd?: string;
       runId?: string;
       agentId?: string;
+      /** skill 模式（/ 菜单触发）：非空=激活/切换；null=退出；缺省=不涉及 */
+      skill?: string | null;
     };
 
     if (!payload.message) {
@@ -165,6 +167,8 @@ export class WsHandler {
         onEvent,
         signal: abortController.signal,
         runId,
+        // skill 模式透传：undefined=不涉及；string=激活/切换；null=退出
+        skill: payload.skill,
       });
 
       if (abortController.signal.aborted) {
@@ -211,13 +215,13 @@ export class WsHandler {
       state.sessionId = msg.sessionId;
       state.conn.send({ type: 'session.subscribed', sessionId: msg.sessionId });
 
-      // WS 重连恢复 pending asks：查询该 session 的待答列表，逐条发送 ask 事件，
+      // WS 重连恢复 pending asks：查询该 session 的待答列表，逐条发送 ask 事件（携带完整提问载荷），
       // 前端 useWebSocket 的 ask 处理器会将其加入 store.pendingAsks。
       const agent = this.services.tryResolve<AgentEngine & {
         getPendingAsks?: (sessionId: string) => Array<{
           toolCallId: string;
           sessionId: string;
-          question: string;
+          payload: { question: string; answerType?: string; options?: Array<{ value: string; label: string }>; defaultAnswer?: string };
         }>;
         getPendingConfirms?: (sessionId: string) => Array<{
           toolCallId: string;
@@ -234,7 +238,10 @@ export class WsHandler {
             type: 'ask',
             sessionId: ask.sessionId,
             toolCallId: ask.toolCallId,
-            question: ask.question,
+            question: ask.payload.question,
+            answerType: ask.payload.answerType,
+            options: ask.payload.options,
+            defaultAnswer: ask.payload.defaultAnswer,
           },
         });
       }
@@ -256,19 +263,36 @@ export class WsHandler {
     }
   }
 
-  /** 处理前端对 ask 工具的回复 */
+  /** 处理前端对 ask 工具的回复（accept=结构化回答 / cancel=取消提问） */
   private handleAskReply(state: ConnectionState, msg: WSMessage): void {
     const agent = this.services.tryResolve<AgentEngine>('agent.engine');
     if (!agent) {
       state.conn.send({ type: 'error', payload: { message: ErrorCode.WS_AGENT_ENGINE_UNAVAILABLE } });
       return;
     }
-    const payload = (msg.payload ?? {}) as { toolCallId?: string; answer?: string };
-    if (!payload.toolCallId || typeof payload.answer !== 'string') {
+    const payload = (msg.payload ?? {}) as {
+      toolCallId?: string;
+      action?: 'accept' | 'cancel';
+      answer?: {
+        selectedValues?: string[];
+        selectedLabels?: string[];
+        editedLabels?: Record<string, string>;
+        otherText?: string;
+        text?: string;
+      };
+    };
+    if (!payload.toolCallId || (payload.action !== 'accept' && payload.action !== 'cancel')) {
       state.conn.send({ type: 'error', payload: { message: ErrorCode.WS_TOOLCALLID_ANSWER_REQUIRED } });
       return;
     }
-    const ok = agent.resolveAsk(payload.toolCallId, payload.answer);
+    if (payload.action === 'accept' && !payload.answer) {
+      state.conn.send({ type: 'error', payload: { message: ErrorCode.WS_TOOLCALLID_ANSWER_REQUIRED } });
+      return;
+    }
+    const ok = agent.resolveAsk(payload.toolCallId, {
+      action: payload.action,
+      ...(payload.action === 'accept' && payload.answer ? { answer: payload.answer } : {}),
+    });
     if (!ok) {
       state.conn.send({
         type: 'error',

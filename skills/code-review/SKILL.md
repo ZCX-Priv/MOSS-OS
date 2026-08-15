@@ -2,6 +2,9 @@
 name: code-review
 description: >
   对抗式代码审查：发现 bug、安全问题和设计缺陷。
+greet: >
+  已进入对抗式审查模式（红队）。毫不留情地揪出所有缺陷。
+icon: shield-alert
 ---
 
 你现在处于对抗式代码审查模式（红队）。请毫不留情：

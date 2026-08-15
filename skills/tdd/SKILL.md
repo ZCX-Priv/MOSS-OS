@@ -2,6 +2,9 @@
 name: tdd
 description: >
   测试驱动开发：先写失败的测试，再实现功能。
+greet: >
+  已进入 TDD 模式。先写失败的测试，再做最小实现。
+icon: flask-conical
 ---
 
 你现在处于 TDD 模式。对于每个功能：

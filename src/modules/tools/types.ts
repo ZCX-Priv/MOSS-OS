@@ -37,6 +37,49 @@ export interface Tool {
   source?: 'builtin' | 'custom';
 }
 
+/** ask 工具候选项 */
+export interface AskOption {
+  /** 选项标识（LLM 生成，如 "a"/"postgres"） */
+  value: string;
+  /** 选项显示文本 */
+  label: string;
+}
+
+/** ask 工具提问载荷 */
+export interface AskPayload {
+  question: string;
+  /** 回答类型：text=自由文本（缺省）、single=单选、multi=多选、boolean=是/否、form=动态表单 */
+  answerType?: 'text' | 'single' | 'multi' | 'boolean' | 'form';
+  /** answerType 为 single/multi 时的候选项（2-6 个） */
+  options?: AskOption[];
+  /** 预填文本（可选） */
+  defaultAnswer?: string;
+  /** answerType=form 时的 JSON Schema（MCP elicitation Form 模式：string/number/boolean/enum） */
+  formSchema?: Record<string, unknown>;
+}
+
+/** ask 工具用户回答结果 */
+export interface AskAnswer {
+  /** 选中的选项 value 列表（single 为 0/1 个，multi 为 0-N 个） */
+  selectedValues?: string[];
+  /** 选中的选项显示文本列表（含用户编辑后的文本） */
+  selectedLabels?: string[];
+  /** 用户编辑过的选项：value → 编辑后的 label */
+  editedLabels?: Record<string, string>;
+  /** 「其他」自由输入文本 */
+  otherText?: string;
+  /** text 类型的自由回答文本 */
+  text?: string;
+  /** form 类型的表单回答（字段名 → 值；MCP elicitation） */
+  form?: Record<string, string | number | boolean>;
+}
+
+/** ask 工具结局：accept=用户已回答，cancel=用户取消提问 */
+export interface AskOutcome {
+  action: 'accept' | 'cancel';
+  answer?: AskAnswer;
+}
+
 export interface ToolContext {
   sessionId: string;
   cwd: string;
@@ -50,7 +93,7 @@ export interface ToolContext {
   /** 中断信号 */
   signal?: AbortSignal;
   /** 向用户提问并阻塞等待回复（若运行环境不支持交互则 undefined） */
-  askUser?: (question: string) => Promise<string>;
+  askUser?: (payload: AskPayload) => Promise<AskOutcome>;
   /** 请求用户确认（返回 boolean）。requireConfirmation 工具执行前会调用；未提供且需确认时保守拒绝。 */
   confirm?: (question: string) => Promise<boolean>;
   /** 当前工具的配置（从 config.tools[name] 读取，供工具消费如 timeout/requireConfirmation） */

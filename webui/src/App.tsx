@@ -10,6 +10,8 @@ import {
   PluginsTab,
   SkillsTab,
   ToolsTab,
+  McpTab,
+  SpecsTab,
 } from './components/pages/PluginMarketPage';
 import {
   AutomationPage,
@@ -105,6 +107,8 @@ export default function App() {
               <Route index element={<PluginsTab />} />
               <Route path="skills" element={<SkillsTab />} />
               <Route path="tools" element={<ToolsTab />} />
+              <Route path="mcp" element={<McpTab />} />
+              <Route path="specs" element={<SpecsTab />} />
               <Route path="*" element={<Navigate to="." replace />} />
             </Route>
             <Route path="/automation" element={<AutomationPage />}>

@@ -12,7 +12,8 @@
     "bin/",
     "modules/",
     "skills/",
-    "mcps/"
+    "mcps/",
+    "agent/"
   ],
   "scripts": {
     "dev": "node scripts/dev.mjs",

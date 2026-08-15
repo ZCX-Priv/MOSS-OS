@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next';
-import { FileText, ListChecks, Sparkles, FileCode, Puzzle } from 'lucide-react';
+import { FileText, ListChecks, Sparkles, FileCode, Puzzle, LogOut } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -59,6 +59,13 @@ export function SlashCommandMenu({ open, onClose, onSelect }: SlashCommandMenuPr
       icon: ListChecks,
       command: '/plan',
     },
+    {
+      id: 'skill-exit',
+      name: 'Skill Exit',
+      desc: t('slashCommand.skillExitDesc'),
+      icon: LogOut,
+      command: '/skill:exit',
+    },
   ];
 
   const recentCommands: SlashCommand[] = [
@@ -71,14 +78,16 @@ export function SlashCommandMenu({ open, onClose, onSelect }: SlashCommandMenuPr
     },
   ];
 
-  // 从 skills 聚合：/skill:<name>
-  const skillCommands: SlashCommand[] = skills.map((s) => ({
-    id: `skill:${s.name}`,
-    name: `Skill: ${s.name}`,
-    desc: s.description,
-    icon: Sparkles,
-    command: `/skill:${s.name}`,
-  }));
+  // 从 skills 聚合：/skill:<name>（仅启用的）
+  const skillCommands: SlashCommand[] = skills
+    .filter((s) => s.enabled !== false)
+    .map((s) => ({
+      id: `skill:${s.name}`,
+      name: `Skill: ${s.name}`,
+      desc: s.description,
+      icon: Sparkles,
+      command: `/skill:${s.name}`,
+    }));
 
   // 从 specs 聚合：/spec:<id>
   const specCommands: SlashCommand[] = specs.map((s) => ({

@@ -104,8 +104,20 @@ export function TodoProgressCard({
   );
 }
 
-/** 单个任务行 */
+/** 单个任务行（含 priority 色点） */
 function TodoRow({ item }: { item: TodoItem }) {
+  const { t } = useTranslation();
+  const priorityDot =
+    item.priority === 'high'
+      ? 'bg-red-500'
+      : item.priority === 'medium'
+        ? 'bg-amber-500'
+        : item.priority === 'low'
+          ? 'bg-blue-400'
+          : null;
+  const priorityTitle = item.priority
+    ? t(`task.todoPriority.${item.priority}`)
+    : undefined;
   return (
     <div className="flex min-w-0 items-start gap-2">
       {item.status === 'completed' && (
@@ -125,6 +137,13 @@ function TodoRow({ item }: { item: TodoItem }) {
           item.status === 'pending' && 'text-muted-foreground',
         )}
       >
+        {priorityDot && (
+          <span
+            title={priorityTitle}
+            aria-label={priorityTitle}
+            className={cn('mr-1.5 inline-block size-1.5 translate-y-[-1px] rounded-full align-middle', priorityDot)}
+          />
+        )}
         {item.text}
       </span>
     </div>

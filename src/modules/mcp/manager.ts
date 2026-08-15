@@ -7,9 +7,11 @@
 //   3. config.json.mcpServers   （已 deprecated，仅为向后兼容保留；非空时 warn）
 
 import { t } from '../../core/i18n';
-import { McpClient, type McpClientEntry, type McpToolResult, type ServerConfig } from './client';
-import type { MCPManager } from '../contracts';
-import type { ConfigService, EventBus, Environment, Logger } from '../../core/types';
+import { McpClient, type McpClientEntry, type McpClientHooks, type McpElicitOutcome, type McpElicitRequest, type McpToolInfo, type McpToolResult, type ServerConfig } from './client';
+import type { MCPManager, McpToolAnnotations, LLMRouter } from '../contracts';
+import type { ConfigService, EventBus, Environment, Logger, ServiceRegistry } from '../../core/types';
+import { ServiceNames } from '../../core/types';
+import type { UnifiedMessage } from '../llm/types';
 import { readdir, readFile, stat, mkdir, copyFile } from 'node:fs/promises';
 import { watch, type FSWatcher } from 'node:fs';
 import { join } from 'node:path';
@@ -20,6 +22,7 @@ export class MCPManagerImpl implements MCPManager {
   private readonly eventBus: EventBus;
   private readonly logger: Logger;
   private readonly env: Environment;
+  private readonly services: ServiceRegistry;
   /** 当前合并后的服务器定义（按 name 索引） */
   private serverDefs: Map<string, ServerConfig> = new Map();
   private mcpsWatcher?: FSWatcher;
@@ -30,22 +33,82 @@ export class MCPManagerImpl implements MCPManager {
     eventBus: EventBus;
     logger: Logger;
     env: Environment;
+    services: ServiceRegistry;
   }) {
     this.config = deps.config;
     this.eventBus = deps.eventBus;
     this.logger = deps.logger;
     this.env = deps.env;
+    this.services = deps.services;
   }
 
-  /** 初始化：从 mcps/ 目录与 config.json 加载所有 MCP 服务器并连接 */
+  /**
+   * sampling 钩子：MCP 服务器借用本地 LLM 生成。
+   * config.mcp.allowSampling=false 时不注入（能力不声明，server 不会发起）。
+   * 模型：请求带 model 时按 id/model 解析，否则用 agent.defaultModel。
+   */
+  private buildSamplingHook(): McpClientHooks {
+    return {
+      onSampling: async req => {
+        const cfg = this.config.getAppConfig();
+        if (cfg.mcp?.allowSampling === false) {
+          throw new Error('sampling is disabled by config (mcp.allowSampling=false)');
+        }
+        const llm = this.services.tryResolve<LLMRouter>(ServiceNames.LLM_ROUTER);
+        if (!llm) {
+          throw new Error('LLM router not available');
+        }
+        // 映射 sampling 消息（content 可能是 string 或 content block 数组）
+        const messages: UnifiedMessage[] = [];
+        if (req.systemPrompt) {
+          messages.push({ role: 'system', content: req.systemPrompt });
+        }
+        for (const m of req.messages) {
+          let text = '';
+          if (typeof m.content === 'string') {
+            text = m.content;
+          } else if (Array.isArray(m.content)) {
+            text = (m.content as Array<{ type: string; text?: string }>)
+              .filter(p => p.type === 'text')
+              .map(p => p.text ?? '')
+              .join('\n');
+          }
+          messages.push({ role: m.role, content: text });
+        }
+        const model =
+          req.model && req.model !== '?'
+            ? req.model
+            : this.config.getAppConfig().agent.defaultModel;
+        const result = await llm.complete({
+          model,
+          messages,
+          max_tokens: Math.min(req.maxTokens || 1024, 8192),
+          stream: false,
+        });
+        return {
+          role: 'assistant' as const,
+          model,
+          content: { type: 'text' as const, text: result.content },
+          stopReason:
+            result.finish_reason === 'length' ? ('max_tokens' as const) : ('endturn' as const),
+        };
+      },
+    };
+  }
+
+  /** 初始化：从 mcps/ 目录与 config.json 加载所有 MCP 服务器并连接（disabled 的跳过） */
   async initialize(): Promise<void> {
     this.serverDefs = await this.loadServerDefs();
     const names = Array.from(this.serverDefs.keys());
     this.logger.info(t('mcp.managerInitializing'), { serverCount: names.length, names });
 
-    // 并行连接（单服务器失败不影响其他）
+    // 并行连接（单服务器失败不影响其他；禁用的跳过）
     await Promise.allSettled(
       names.map(async name => {
+        if (this.serverDefs.get(name)?.enabled === false) {
+          this.logger.info(t('mcp.serverDisabledSkip', { name }));
+          return;
+        }
         try {
           await this.connect(name);
         } catch (err) {
@@ -163,6 +226,9 @@ export class MCPManagerImpl implements MCPManager {
         `MCP server "${serverName}" not found. Check ~/.moss/mcps/${serverName}.json or config.json.mcpServers.`,
       );
     }
+    if (serverCfg.enabled === false) {
+      throw new Error(t('mcp.serverDisabled', { name: serverName }));
+    }
 
     // 若已存在，先断开
     const existing = this.entries.get(serverName);
@@ -171,7 +237,15 @@ export class MCPManagerImpl implements MCPManager {
       this.entries.delete(serverName);
     }
 
-    const client = new McpClient(serverName, serverCfg, this.logger, this.eventBus);
+    // sampling 钩子按配置注入（allowSampling=false 时不声明能力）
+    const samplingEnabled = this.config.getAppConfig().mcp?.allowSampling !== false;
+    const client = new McpClient(
+      serverName,
+      serverCfg,
+      this.logger,
+      this.eventBus,
+      samplingEnabled ? this.buildSamplingHook() : undefined,
+    );
     await client.connect();
     this.entries.set(serverName, {
       client,
@@ -234,20 +308,40 @@ export class MCPManagerImpl implements MCPManager {
     }
   }
 
-  listServers(): Array<{ name: string; status: 'connected' | 'disconnected' | 'error'; toolCount: number }> {
-    const result: Array<{ name: string; status: 'connected' | 'disconnected' | 'error'; toolCount: number }> = [];
+  listServers(): Array<{
+    name: string;
+    status: 'connected' | 'disconnected' | 'error';
+    toolCount: number;
+    enabled: boolean;
+    transport?: string;
+  }> {
+    const result: Array<{
+      name: string;
+      status: 'connected' | 'disconnected' | 'error';
+      toolCount: number;
+      enabled: boolean;
+      transport?: string;
+    }> = [];
     // 已连接的
     for (const [name, entry] of this.entries) {
       result.push({
         name,
         status: entry.status,
         toolCount: entry.client.getToolCount(),
+        enabled: entry.config.enabled !== false,
+        transport: entry.config.transport,
       });
     }
     // 已定义但未连接的
-    for (const name of this.serverDefs.keys()) {
+    for (const [name, def] of this.serverDefs.entries()) {
       if (!this.entries.has(name)) {
-        result.push({ name, status: 'disconnected', toolCount: 0 });
+        result.push({
+          name,
+          status: 'disconnected',
+          toolCount: 0,
+          enabled: def.enabled !== false,
+          transport: def.transport,
+        });
       }
     }
     return result;
@@ -256,38 +350,170 @@ export class MCPManagerImpl implements MCPManager {
   listTools(serverName?: string): Array<{
     server: string;
     name: string;
+    title?: string;
     description?: string;
     inputSchema?: unknown;
+    annotations?: McpToolInfo['annotations'];
   }> {
-    const result: Array<{ server: string; name: string; description?: string; inputSchema?: unknown }> = [];
+    const result: Array<{
+      server: string;
+      name: string;
+      title?: string;
+      description?: string;
+      inputSchema?: unknown;
+      annotations?: McpToolInfo['annotations'];
+    }> = [];
     const entries = serverName
       ? [[serverName, this.entries.get(serverName)] as const].filter(([, e]) => e !== undefined)
       : Array.from(this.entries.entries());
 
     for (const [name, entry] of entries) {
       if (!entry || entry.status !== 'connected') continue;
+      // 禁用的服务器不注入工具
+      if (entry.config.enabled === false) continue;
       for (const tool of entry.client.getTools()) {
         result.push({
           server: name,
           name: tool.name,
+          title: tool.title ?? tool.annotations?.title,
           description: tool.description,
           inputSchema: tool.inputSchema,
+          annotations: tool.annotations,
         });
       }
     }
     return result;
   }
 
+  isServerEnabled(serverName: string): boolean | null {
+    const def = this.serverDefs.get(serverName);
+    if (!def) return null;
+    return def.enabled !== false;
+  }
+
+  getToolAnnotations(serverName: string, toolName: string): McpToolAnnotations | null {
+    const entry = this.entries.get(serverName);
+    if (!entry || entry.status !== 'connected') return null;
+    const annotations = entry.client.getTool(toolName)?.annotations;
+    return annotations ?? null;
+  }
+
   async callTool(
     serverName: string,
     toolName: string,
     args: unknown,
+    opts?: {
+      timeoutMs?: number;
+      signal?: AbortSignal;
+      /** elicitation 桥：MCP 服务器向用户请求输入（agent 通道注入；缺省时 decline） */
+      elicit?: (req: McpElicitRequest) => Promise<McpElicitOutcome>;
+    },
   ): Promise<McpToolResult> {
     const entry = this.entries.get(serverName);
     if (!entry || entry.status !== 'connected') {
       throw new Error(t('mcp.serverNotConnected', { name: serverName }));
     }
-    return await entry.client.callTool(toolName, args);
+    if (opts?.elicit) {
+      entry.client.setElicitationBridge(opts.elicit);
+    }
+    try {
+      return await entry.client.callTool(toolName, args, {
+        timeoutMs: opts?.timeoutMs,
+        signal: opts?.signal,
+      });
+    } finally {
+      if (opts?.elicit) {
+        entry.client.setElicitationBridge(null);
+      }
+    }
+  }
+
+  // ========================================================================
+  // 服务器定义 CRUD（写 ~/.moss/mcps/<name>.json；目录 watch 自动热重载）
+  // ========================================================================
+
+  /** 校验服务器定义（transport 必填；stdio 需 command；http/sse 需 url） */
+  private validateServerDef(def: unknown): def is ServerConfig {
+    if (!def || typeof def !== 'object') return false;
+    const d = def as Partial<ServerConfig>;
+    if (d.transport !== 'stdio' && d.transport !== 'http' && d.transport !== 'sse') {
+      return false;
+    }
+    if (d.transport === 'stdio' && !d.command) return false;
+    if (d.transport !== 'stdio' && !d.url) return false;
+    return true;
+  }
+
+  /** 服务器定义文件路径（~/.moss/mcps/<name>.json） */
+  private serverDefPath(serverName: string): string {
+    return join(this.env.dataDir, 'mcps', `${serverName}.json`);
+  }
+
+  async createServer(name: string, def: unknown): Promise<void> {
+    if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
+      throw new Error(t('mcp.invalidServerName', { name }));
+    }
+    if (!this.validateServerDef(def)) {
+      throw new Error(t('mcp.invalidServerDef'));
+    }
+    if (this.serverDefs.has(name) || this.defFileExists(this.serverDefPath(name))) {
+      throw new Error(t('mcp.serverAlreadyExists', { name }));
+    }
+    const { writeFile, mkdir } = await import('node:fs/promises');
+    await mkdir(join(this.env.dataDir, 'mcps'), { recursive: true });
+    const payload = { ...(def as ServerConfig), name };
+    await writeFile(this.serverDefPath(name), JSON.stringify(payload, null, 2), 'utf8');
+    // watch 会自动 reload；此处同步本地定义并即时连接（disabled 的跳过）
+    this.serverDefs.set(name, payload);
+    if (payload.enabled !== false) {
+      await this.connect(name);
+    }
+  }
+
+  async updateServer(name: string, def: unknown): Promise<void> {
+    const filePath = this.serverDefPath(name);
+    if (!this.defFileExists(filePath)) {
+      throw new Error(t('mcp.serverNotFound', { name }));
+    }
+    if (!this.validateServerDef(def)) {
+      throw new Error(t('mcp.invalidServerDef'));
+    }
+    const { writeFile } = await import('node:fs/promises');
+    const payload = { ...(def as ServerConfig), name };
+    await writeFile(filePath, JSON.stringify(payload, null, 2), 'utf8');
+    // watch 会自动 reload 全量；此处主动断开旧连接（若禁用），启用则立即连接
+    if (this.entries.has(name)) {
+      if (payload.enabled === false) {
+        await this.disconnect(name);
+      } else {
+        await this.connect(name).catch(() => {});
+      }
+    } else if (payload.enabled !== false) {
+      this.serverDefs.set(name, payload);
+      await this.connect(name).catch(() => {});
+    }
+  }
+
+  async deleteServer(name: string): Promise<void> {
+    const filePath = this.serverDefPath(name);
+    if (!this.defFileExists(filePath)) {
+      throw new Error(t('mcp.serverNotFound', { name }));
+    }
+    await this.disconnect(name).catch(() => {});
+    const { rm } = await import('node:fs/promises');
+    await rm(filePath, { force: true });
+    this.serverDefs.delete(name);
+    await this.eventBus.broadcast('mcp:server:deleted', { server: name });
+  }
+
+  private defFileExists(path: string): boolean {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const fs = require('node:fs');
+      return fs.existsSync(path);
+    } catch {
+      return false;
+    }
   }
 
   /** 关闭所有连接（模组销毁时调用） */

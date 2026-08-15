@@ -1,11 +1,13 @@
 // src/modules/file-history/transcript.ts
 // JSONL append-only 持久化：每行一个 FileHistoryEntry。
 // 路径：~/.moss/file-history/<sessionId>.jsonl
-// 支持：追加、读取全部、移除最后 N 条（用于 undo）。
+// 支持：追加、读取全部、移除最后 N 条（undo）、按 id 单条/批量移除。
+// 重写统一走 atomicWriteFile（tmp + fsync + rename），中断不损坏。
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync } from 'node:fs';
+import { existsSync, readFileSync, mkdirSync, appendFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { FileHistoryEntry } from './types';
+import { atomicWriteFile } from './atomic-write';
 
 /**
  * 追加一条历史记录到 transcript。
@@ -54,6 +56,23 @@ export function readEntries(transcriptPath: string): FileHistoryEntry[] {
   return entries;
 }
 
+/** 原子重写 transcript（剩余条目） */
+function rewriteEntries(transcriptPath: string, remaining: FileHistoryEntry[]): void {
+  try {
+    if (remaining.length === 0) {
+      // 全部移除：写空文件（保留文件存在，避免下次 append 时 mkdir）
+      atomicWriteFile(transcriptPath, '', { fsync: true });
+    } else {
+      const lines = remaining
+        .map(e => JSON.stringify(e).replace(/\n/g, '\\n'))
+        .join('\n') + '\n';
+      atomicWriteFile(transcriptPath, lines, { fsync: true });
+    }
+  } catch (err) {
+    throw new Error(`transcript: failed to rewrite ${transcriptPath}: ${err instanceof Error ? err.message : err}`);
+  }
+}
+
 /**
  * 移除最后 N 条记录，返回被移除的条目（按时间倒序，最近的在前）。
  * 用于 undo：取出后由 service 层从备份恢复文件内容。
@@ -72,21 +91,7 @@ export function removeLastNEntries(
   const removed = entries.slice(entries.length - removeCount).reverse();
   const remaining = entries.slice(0, entries.length - removeCount);
 
-  // 重写 transcript（剩余条目）
-  try {
-    if (remaining.length === 0) {
-      // 全部移除：写空文件（保留文件存在，避免下次 append 时 mkdir）
-      writeFileSync(transcriptPath, '', 'utf8');
-    } else {
-      const lines = remaining
-        .map(e => JSON.stringify(e).replace(/\n/g, '\\n'))
-        .join('\n') + '\n';
-      writeFileSync(transcriptPath, lines, 'utf8');
-    }
-  } catch (err) {
-    throw new Error(`transcript: failed to rewrite ${transcriptPath}: ${err instanceof Error ? err.message : err}`);
-  }
-
+  rewriteEntries(transcriptPath, remaining);
   return removed;
 }
 
@@ -104,19 +109,22 @@ export function removeEntryById(
 
   const removed = entries[idx];
   const remaining = entries.filter(e => e.id !== entryId);
+  rewriteEntries(transcriptPath, remaining);
+  return removed;
+}
 
-  try {
-    if (remaining.length === 0) {
-      writeFileSync(transcriptPath, '', 'utf8');
-    } else {
-      const lines = remaining
-        .map(e => JSON.stringify(e).replace(/\n/g, '\\n'))
-        .join('\n') + '\n';
-      writeFileSync(transcriptPath, lines, 'utf8');
-    }
-  } catch (err) {
-    throw new Error(`transcript: failed to rewrite ${transcriptPath}: ${err instanceof Error ? err.message : err}`);
-  }
-
+/**
+ * 批量移除指定 ID 集合的记录，返回被移除的条目（保持原时间顺序）。
+ * 用于 rollbackRange（移除被回滚 entries）与 redoRollback（移除 rollback entries）。
+ */
+export function removeEntriesByIds(
+  transcriptPath: string,
+  entryIds: Set<string>,
+): FileHistoryEntry[] {
+  if (entryIds.size === 0) return [];
+  const entries = readEntries(transcriptPath);
+  const removed = entries.filter(e => entryIds.has(e.id));
+  const remaining = entries.filter(e => !entryIds.has(e.id));
+  rewriteEntries(transcriptPath, remaining);
   return removed;
 }

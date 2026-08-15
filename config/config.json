@@ -28,6 +28,7 @@
     "delete":    { "enabled": true, "requireConfirmation": true },
     "shell":     { "enabled": true, "timeout": 30000, "requireConfirmation": true },
     "use_skill": { "enabled": true },
+    "list_skill": { "enabled": true },
     "use_mcp":   { "enabled": true },
     "list_mcp":  { "enabled": true },
     "list_spec": { "enabled": true },
@@ -38,6 +39,15 @@
     "ask":       { "enabled": true }
   },
   "mcpServers": {},
+  "mcp": {
+    "callTimeoutMs": 120000,
+    "allowSampling": true
+  },
+  "mcpServer": {
+    "enabled": false,
+    "allowedTools": []
+  },
+  "skills": {},
   "security": {
     "authToken": "",
     "bindLocalhostOnly": true

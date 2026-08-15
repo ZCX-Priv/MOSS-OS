@@ -1,5 +1,5 @@
 // UI/src/hooks/useSkills.ts
-// Skills 查询 hook：只读，挂载时拉取 skills 列表写入 store。
+// Skills 查询 hook：挂载时拉取 skills 列表写入 store；toggleSkill 启停（乐观更新）。
 
 import { useEffect, useCallback } from 'react';
 import { useStore } from '../store';
@@ -29,8 +29,25 @@ export function useSkills() {
     return unsub;
   }, [load]);
 
+  const toggleSkill = useCallback(
+    async (name: string, enabled: boolean) => {
+      // 乐观更新，失败回滚
+      const prev = useStore.getState().skills;
+      setSkills(prev.map((s) => (s.name === name ? { ...s, enabled } : s)));
+      try {
+        await api.updateSkill(name, { enabled });
+      } catch (err) {
+        setSkills(prev);
+        console.warn('toggleSkill failed:', err);
+        throw err;
+      }
+    },
+    [setSkills],
+  );
+
   return {
     skills: useStore((s) => s.skills),
     reload: load,
+    toggleSkill,
   };
 }

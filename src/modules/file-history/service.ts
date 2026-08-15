@@ -19,7 +19,7 @@ import type {
 } from './types';
 import { backupByHash, readBackup } from './backup';
 import { ReadLedger } from './ledger';
-import { appendEntry, readEntries, removeLastNEntries, removeEntryById } from './transcript';
+import { appendEntry, readEntries, removeLastNEntries, removeEntryById, removeEntriesByIds } from './transcript';
 import { atomicWriteFile } from './atomic-write';
 import { archiveDirectory, extractArchive } from './archive';
 import { cleanupExpiredTrash, TRASH_RETENTION_DAYS } from './trash';
@@ -71,6 +71,8 @@ export class FileHistoryServiceImpl implements FileHistoryService {
     }
 
     const entryId = randomUUID();
+    // 记录调用方信息（recordChange 写入 transcript 用）
+    const callerInfo = { toolCallId, toolName };
 
     // 文件/目录不存在 → create 操作，无需备份
     if (!existsSync(absPath)) {
@@ -81,6 +83,7 @@ export class FileHistoryServiceImpl implements FileHistoryService {
         bytesBefore: 0,
         entryId,
         operation: 'create',
+        ...callerInfo,
       };
     }
 
@@ -107,6 +110,7 @@ export class FileHistoryServiceImpl implements FileHistoryService {
           entryId,
           operation,
           isDirectory: true,
+          ...callerInfo,
         };
       } catch (err) {
         this.logger.warn('file-history: directory archive failed', {
@@ -121,6 +125,7 @@ export class FileHistoryServiceImpl implements FileHistoryService {
           entryId,
           operation,
           isDirectory: true,
+          ...callerInfo,
         };
       }
     }
@@ -142,6 +147,7 @@ export class FileHistoryServiceImpl implements FileHistoryService {
         bytesBefore: stat.size,
         entryId,
         operation,
+        ...callerInfo,
       };
     }
 
@@ -161,6 +167,7 @@ export class FileHistoryServiceImpl implements FileHistoryService {
       bytesBefore: backup.bytes,
       entryId,
       operation,
+      ...callerInfo,
     };
   }
 
@@ -181,9 +188,9 @@ export class FileHistoryServiceImpl implements FileHistoryService {
       id: trackResult.entryId,
       sessionId,
       absPath,
-      toolCallId: '', // 调用方可覆盖，此处简化
-      // 从 trackResult.operation 推断 toolName：delete 操作记 delete，否则按 hashAfter 判断 create/overwrite
-      toolName: trackResult.operation === 'delete' ? 'delete' : 'write',
+      toolCallId: trackResult.toolCallId ?? '',
+      toolName: trackResult.toolName
+        ?? (trackResult.operation === 'delete' ? 'delete' : trackResult.operation === 'edit' ? 'edit' : 'write'),
       timestamp: new Date().toISOString(),
       operation: trackResult.operation,
       hashBefore: trackResult.hash || null,
@@ -273,6 +280,164 @@ export class FileHistoryServiceImpl implements FileHistoryService {
 
   listHistory(sessionId: string): FileHistoryEntry[] {
     return readEntries(this.transcriptPath(sessionId));
+  }
+
+  async rollbackRange(
+    sessionId: string,
+    fromTs: string,
+    toTs: string,
+  ): Promise<{ rollbackIds: string[]; failed: Array<{ absPath: string; error: string }> }> {
+    if (!this.enabled) return { rollbackIds: [], failed: [] };
+    const path = this.transcriptPath(sessionId);
+    const fromMs = Date.parse(fromTs);
+    const toMs = Date.parse(toTs);
+    if (Number.isNaN(fromMs) || Number.isNaN(toMs)) {
+      return { rollbackIds: [], failed: [] };
+    }
+    // 区间内的原始变更 entries（排除 rollback 备份条目，避免二次回滚误伤 redo 备份）
+    const targets = readEntries(path).filter(e => {
+      if (e.toolName === 'rollback') return false;
+      const ts = Date.parse(e.timestamp);
+      return !Number.isNaN(ts) && ts >= fromMs && ts <= toMs;
+    });
+
+    const rollbackIds: string[] = [];
+    const failed: Array<{ absPath: string; error: string }> = [];
+    if (targets.length === 0) return { rollbackIds, failed };
+
+    // 先为每个目标做 redo 备份（在动任何文件前完成全部备份，避免中途失败导致备份缺失）
+    for (const entry of targets) {
+      try {
+        const rbEntry = await this.createRollbackBackup(sessionId, entry);
+        if (rbEntry) {
+          appendEntry(path, rbEntry);
+          rollbackIds.push(rbEntry.id);
+        }
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        failed.push({ absPath: entry.absPath, error: `redo backup failed: ${errMsg}` });
+      }
+    }
+
+    // 逆序恢复（最近的最先恢复），随后从 transcript 移除该 entry
+    for (let i = targets.length - 1; i >= 0; i--) {
+      const entry = targets[i];
+      try {
+        await this.restoreEntry(entry);
+        removeEntryById(path, entry.id);
+        this.logger.info('file-history: rollbackRange restored', {
+          sessionId,
+          absPath: entry.absPath,
+          operation: entry.operation,
+        });
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        failed.push({ absPath: entry.absPath, error: errMsg });
+        this.logger.warn('file-history: rollbackRange failed for entry', {
+          sessionId,
+          absPath: entry.absPath,
+          error: errMsg,
+        });
+      }
+    }
+
+    return { rollbackIds, failed };
+  }
+
+  async redoRollback(
+    sessionId: string,
+    rollbackIds: string[],
+  ): Promise<{ failed: Array<{ absPath: string; error: string }> }> {
+    if (!this.enabled) return { failed: [] };
+    const path = this.transcriptPath(sessionId);
+    if (rollbackIds.length === 0) return { failed: [] };
+    const idSet = new Set(rollbackIds);
+    const entries = readEntries(path).filter(e => idSet.has(e.id));
+    const failed: Array<{ absPath: string; error: string }> = [];
+
+    // 逆序恢复（与回滚顺序相反的逆序 = 回到回滚前状态）
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const entry = entries[i];
+      try {
+        await this.restoreEntry(entry);
+        this.logger.info('file-history: redoRollback restored', {
+          sessionId,
+          absPath: entry.absPath,
+        });
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        failed.push({ absPath: entry.absPath, error: errMsg });
+      }
+    }
+    // 无论个别失败与否，这批 rollback entries 一次性移除（redo 窗口单次）
+    removeEntriesByIds(path, idSet);
+    return { failed };
+  }
+
+  /**
+   * 为将被回滚的 entry 创建 redo 备份条目（记录回滚前该路径的当前状态）。
+   * redo = 对该备份条目执行 restoreEntry：
+   * - 当前路径存在（文件/目录）→ operation='overwrite' + 当前内容/归档备份 → redo 写回当前状态
+   * - 当前路径不存在 → operation='create' → redo 删除该路径
+   */
+  private async createRollbackBackup(
+    sessionId: string,
+    original: FileHistoryEntry,
+  ): Promise<FileHistoryEntry | null> {
+    const now = new Date().toISOString();
+    if (existsSync(original.absPath)) {
+      const stat = statSync(original.absPath);
+      if (stat.isDirectory()) {
+        const entryId = randomUUID();
+        const archivePath = join(this.backupDir, `${entryId}.tar.gz`);
+        const result = await archiveDirectory(original.absPath, archivePath);
+        return {
+          id: entryId,
+          sessionId,
+          absPath: original.absPath,
+          toolCallId: original.toolCallId,
+          toolName: 'rollback',
+          timestamp: now,
+          operation: 'overwrite',
+          hashBefore: null,
+          hashAfter: null,
+          backupPath: result.archivePath,
+          bytesBefore: result.bytes,
+          bytesAfter: result.bytes,
+          isDirectory: true,
+        };
+      }
+      const backup = backupByHash(original.absPath, this.backupDir);
+      return {
+        id: randomUUID(),
+        sessionId,
+        absPath: original.absPath,
+        toolCallId: original.toolCallId,
+        toolName: 'rollback',
+        timestamp: now,
+        operation: 'overwrite',
+        hashBefore: null,
+        hashAfter: null,
+        backupPath: backup.backupPath,
+        bytesBefore: backup.bytes,
+        bytesAfter: backup.bytes,
+      };
+    }
+    // 当前路径不存在：redo = 删除该路径
+    return {
+      id: randomUUID(),
+      sessionId,
+      absPath: original.absPath,
+      toolCallId: original.toolCallId,
+      toolName: 'rollback',
+      timestamp: now,
+      operation: 'create',
+      hashBefore: null,
+      hashAfter: null,
+      backupPath: null,
+      bytesBefore: 0,
+      bytesAfter: 0,
+    };
   }
 
   async restore(sessionId: string, entryId: string): Promise<UndoResult> {

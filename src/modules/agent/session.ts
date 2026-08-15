@@ -7,7 +7,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, unlink
 import { join } from 'node:path';
 import type { AgentMessage } from '../contracts';
 import type { UnifiedMessage } from '../llm/types';
-import type { TodoItem } from '../tools/todo';
+import type { TodoItem } from '../tools/builtin/todo/shared/store';
 import type { Environment, Logger } from '../../core/types';
 
 /** 上下文文件轨迹（与前端 ContextFile 对齐） */
@@ -17,11 +17,24 @@ export interface ContextFile {
   reason?: 'read' | 'edit' | 'write' | 'grep' | 'glob';
 }
 
+export interface ActiveSkill {
+  /** skill 名称 */
+  name: string;
+  /**
+   * 注入位置：
+   *   - system：内容拼接在系统提示词后（首次激活）
+   *   - message：内容作为 skill-inject system 消息锚定在切换消息后（切换激活）
+   */
+  mode: 'system' | 'message';
+  /** skill 指令内容（激活时刻固化；不含元数据） */
+  content: string;
+}
+
 export interface Session {
   id: string;
   /** 系统提示词（独立存储，不混入任务历史） */
   systemPrompt: string;
-  /** 任务历史（不含系统提示，仅 user/assistant/tool） */
+  /** 任务历史（不含系统提示，仅 user/assistant/tool；可含 skill-inject 的 system 消息） */
   messages: AgentMessage[];
   /** 创建时间 */
   createdAt: string;
@@ -31,6 +44,17 @@ export interface Session {
   totalTokens: number;
   /** 上下文文件轨迹（read/edit/write/grep/glob 工具累积），随 session 持久化 */
   contextFiles: ContextFile[];
+  /** 当前激活的 skill 模式（会话级持久；/ 菜单触发） */
+  activeSkill?: ActiveSkill;
+  /** 最近一次消息撤回（截断）的恢复信息（redo 用；新撤回覆盖旧的） */
+  lastTruncation?: {
+    /** 截断起点时间戳（目标用户消息的 timestamp） */
+    truncatedBeforeTimestamp: string;
+    /** 被软删除的消息在 messages 中的索引列表 */
+    deletedIndexes: number[];
+    /** 文件回滚产生的 rollback entry id 列表（file-history redo 备份） */
+    rollbackEntryIds: string[];
+  };
 }
 
 export class SessionStore {
@@ -69,6 +93,7 @@ export class SessionStore {
               updatedAt: parsed.updatedAt ?? new Date().toISOString(),
               totalTokens: parsed.totalTokens ?? 0,
               contextFiles: Array.isArray(parsed.contextFiles) ? parsed.contextFiles : [],
+              ...(parsed.lastTruncation ? { lastTruncation: parsed.lastTruncation } : {}),
             };
             this.sessions.set(session.id, session);
           }
@@ -122,6 +147,7 @@ export class SessionStore {
           updatedAt: parsed.updatedAt ?? new Date().toISOString(),
           totalTokens: parsed.totalTokens ?? 0,
           contextFiles: Array.isArray(parsed.contextFiles) ? parsed.contextFiles : [],
+          ...(parsed.lastTruncation ? { lastTruncation: parsed.lastTruncation } : {}),
         };
         this.sessions.set(session.id, session);
         return session;
@@ -220,7 +246,7 @@ export class SessionStore {
 
   /** 添加用户消息 */
   addUserMessage(session: Session, content: string): void {
-    session.messages.push({ role: 'user', content });
+    session.messages.push({ role: 'user', content, timestamp: new Date().toISOString() });
     session.updatedAt = new Date().toISOString();
     this.saveSession(session);
   }
@@ -237,6 +263,7 @@ export class SessionStore {
       content,
       toolCalls,
       thinking,
+      timestamp: new Date().toISOString(),
     });
     session.updatedAt = new Date().toISOString();
     this.saveSession(session);
@@ -249,8 +276,101 @@ export class SessionStore {
       content,
       toolCallId,
       name,
+      timestamp: new Date().toISOString(),
     });
     session.updatedAt = new Date().toISOString();
+    this.saveSession(session);
+  }
+
+  // ========================================================================
+  // 消息撤回（截断）与恢复（redo）
+  // ========================================================================
+
+  /**
+   * 定位目标用户消息索引：
+   * 1) timestamp 最接近 messageTimestamp（±5 分钟内）的未删除 user 消息；
+   * 2) 回退：从后往前第一条 content 完全匹配的未删除 user 消息。
+   * 找不到返回 -1。
+   */
+  locateUserMessage(session: Session, messageTimestamp: string, content: string): number {
+    const target = Date.parse(messageTimestamp);
+    let bestIdx = -1;
+    let bestDelta = Number.POSITIVE_INFINITY;
+    if (!Number.isNaN(target)) {
+      for (let i = 0; i < session.messages.length; i++) {
+        const m = session.messages[i];
+        if (m.role !== 'user' || m.deletedAt) continue;
+        if (!m.timestamp) continue;
+        const delta = Math.abs(Date.parse(m.timestamp) - target);
+        if (delta < bestDelta) {
+          bestDelta = delta;
+          bestIdx = i;
+        }
+      }
+      if (bestIdx !== -1 && bestDelta <= 5 * 60 * 1000) return bestIdx;
+    }
+    // 回退：从后往前 content 精确匹配
+    for (let i = session.messages.length - 1; i >= 0; i--) {
+      const m = session.messages[i];
+      if (m.role !== 'user' || m.deletedAt) continue;
+      if (m.content === content) return i;
+    }
+    return bestIdx !== -1 && bestDelta <= 5 * 60 * 1000 ? bestIdx : -1;
+  }
+
+  /**
+   * 物理移除所有软删除消息（新截断覆盖旧截断时调用：旧恢复窗口已被覆盖，彻底清理）。
+   * 调用后 messages 中不再有 deletedAt 标记，方可进行 locate + truncate。
+   */
+  purgeDeletedMessages(session: Session): void {
+    const before = session.messages.length;
+    session.messages = session.messages.filter(m => !m.deletedAt);
+    if (session.messages.length !== before) {
+      session.lastTruncation = undefined;
+      this.saveSession(session);
+    }
+  }
+
+  /**
+   * 从目标用户消息起（含其后全部）标记软删除（索引基于 session.messages 全数组）。
+   * @returns 被标记的消息数量（0 表示目标索引无效或无可删）
+   */
+  truncateFrom(session: Session, targetIndex: number): number {
+    if (targetIndex < 0 || targetIndex >= session.messages.length) return 0;
+    const now = new Date().toISOString();
+    let count = 0;
+    for (let i = targetIndex; i < session.messages.length; i++) {
+      if (!session.messages[i].deletedAt) {
+        session.messages[i].deletedAt = now;
+        count++;
+      }
+    }
+    if (count > 0) {
+      session.updatedAt = now;
+      this.saveSession(session);
+    }
+    return count;
+  }
+
+  /** 恢复最近一次截断：清除全部软删除标记（恢复窗口仅保留最近一步）并返回恢复数量 */
+  restoreTruncated(session: Session): number {
+    let restored = 0;
+    for (const m of session.messages) {
+      if (m.deletedAt) {
+        m.deletedAt = undefined;
+        restored++;
+      }
+    }
+    session.lastTruncation = undefined;
+    if (restored > 0) {
+      session.updatedAt = new Date().toISOString();
+      this.saveSession(session);
+    }
+    return restored;
+  }
+
+  /** 公共持久化入口（供 engine 在截断后写入 lastTruncation） */
+  persistSession(session: Session): void {
     this.saveSession(session);
   }
 
@@ -269,6 +389,7 @@ export class SessionStore {
 
   /**
    * 上下文窗口裁剪：超限时保留系统提示 + 最近 N 轮。
+   * 已软删除（deletedAt）的消息不参与上下文（消息撤回后即从 LLM 视野移除）。
    * @param maxTokens 最大 token 数（粗略估算：1 char ≈ 0.5 token）
    */
   trimContext(session: Session, maxTokens: number): void {
@@ -280,6 +401,7 @@ export class SessionStore {
 
     let totalTokens = systemTokens;
     for (const m of session.messages) {
+      if (m.deletedAt) continue;
       totalTokens += estimateTokens(m.content);
       if (m.toolCalls) {
         for (const tc of m.toolCalls) {
@@ -293,7 +415,8 @@ export class SessionStore {
       return;
     }
 
-    // 裁剪：保留 systemPrompt + 最后 N 条任务消息
+    // 裁剪：保留 systemPrompt + 最后 N 条任务消息。
+    // 软删除消息不占预算但按原位保留（保序，供 redo 恢复）；只物理裁剪头部活跃消息。
     const rest = session.messages;
 
     // 从后往前保留，直到不超过预算（系统提示预留）
@@ -302,6 +425,11 @@ export class SessionStore {
     let used = 0;
     for (let i = rest.length - 1; i >= 0; i--) {
       const m = rest[i];
+      if (m.deletedAt) {
+        // 软删除消息：无条件按位保留，不占预算
+        kept.unshift(m);
+        continue;
+      }
       const t = estimateTokens(m.content) + (m.toolCalls?.reduce((s, tc) => s + estimateTokens(tc.arguments), 0) ?? 0);
       if (used + t > budget) break;
       kept.unshift(m);
@@ -343,11 +471,12 @@ export class SessionStore {
     this.saveSession(session);
   }
 
-  /** 把 AgentMessage 转为 LLM UnifiedMessage（头部拼接系统提示词） */
+  /** 把 AgentMessage 转为 LLM UnifiedMessage（头部拼接系统提示词）。软删除消息被过滤。
+   *  activeSkill(mode='system') 的 skill 内容拼接在系统提示词后。 */
   toUnifiedMessages(session: Session): UnifiedMessage[] {
     // 发送前自愈：保证 tool_use / tool_result 配对完整，避免历史脏数据触发
     // Anthropic HTTP 400（tool_use without tool_result）。不修改 session.messages。
-    const sanitized = sanitizeMessages(session.messages);
+    const sanitized = sanitizeMessages(session.messages.filter(m => !m.deletedAt));
     const conversation = sanitized.map(m => ({
       role: m.role,
       content: m.content,
@@ -359,7 +488,15 @@ export class SessionStore {
       })),
       name: m.name,
     }));
-    return [{ role: 'system', content: session.systemPrompt }, ...conversation];
+    // skill 模式（system 注入）：内容拼接在系统提示词后
+    const skillSuffix =
+      session.activeSkill?.mode === 'system'
+        ? `\n\n---\n\n# Active Skill: ${session.activeSkill.name}\n\n${session.activeSkill.content}`
+        : '';
+    return [
+      { role: 'system', content: session.systemPrompt + skillSuffix },
+      ...conversation,
+    ];
   }
 }
 

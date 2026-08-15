@@ -1,8 +1,8 @@
 // src/modules/agent/context.ts
 // 系统提示词构建 + 工具描述注入。
-// 系统提示词从 agent/prompts/main/ 下的 md 文件按序拼接：
+// 系统提示词从 ~/.moss/agent/prompts/main/ 下的 md 文件按序拼接（动态读取）：
 //   system/soul → base/identity → rule/rules → 其他 *.md（字母序）
-// 用户目录（~/.moss/agent/prompts/main/）同名覆盖包内。
+// 首次运行时从包内 agent/ 播种到 ~/.moss/agent/（幂等），之后不依赖包内目录。
 // 全部缺失则回退 FALLBACK_SYSTEM_PROMPT。
 // 末尾追加规范引导段落，告知 agent 可用 list_spec/get_spec 按需读取规范。
 
@@ -12,6 +12,7 @@ import { release, hostname, arch, cpus } from 'node:os';
 import type { UnifiedTool } from '../llm/types';
 import type { ToolRegistry } from '../contracts';
 import type { Environment, Platform } from '../../core/types';
+import { seedBuiltinAgentPrompts } from '../tools/shared/agent-seed';
 
 /** 兜底系统提示词：当 agent/prompts/main/ 下无任何基本设定文件时使用 */
 const FALLBACK_SYSTEM_PROMPT = `你是 MOSS，一个运行在真实环境中的交互式 AI 智能体。
@@ -62,26 +63,31 @@ const CANDIDATE_NAMES: ReadonlySet<string> = new Set<string>(
 );
 
 /**
- * 从 agent/prompts/main/ 加载基本设定并按序拼接。
+ * 从 ~/.moss/agent/prompts/main/ 加载基本设定并按序拼接（动态读取，不依赖包内）。
+ * 首次调用时播种包内 agent/ 到用户目录（幂等）。
  * 顺序：system/soul → base/identity → rule/rules → 其他 *.md（字母序）。
- * 用户目录同名覆盖包内。全部缺失则返回 FALLBACK_SYSTEM_PROMPT。
+ * 全部缺失则返回 FALLBACK_SYSTEM_PROMPT。
  */
 function loadBasePrompt(env: Environment): string {
-  const builtinDir = join(env.packageRoot, 'agent', 'prompts', 'main');
+  // 首次启动播种 agent/ 提示词目录（幂等；目录已存在则跳过）
+  seedBuiltinAgentPrompts(env);
   const userDir = join(env.dataDir, 'agent', 'prompts', 'main');
 
   const segments: string[] = [];
 
   // 1. 按候选顺序加载每个位置
   for (const candidates of BASE_PROMPT_CANDIDATES) {
-    const content = readFirstExisting(candidates, builtinDir, userDir);
-    if (content !== null) {
-      segments.push(content.trim());
+    for (const name of candidates) {
+      const file = join(userDir, `${name}.md`);
+      if (fileExists(file)) {
+        segments.push(readFile(file).trim());
+        break;
+      }
     }
   }
 
   // 2. 收集「其他」*.md（不在候选名中），按字母序
-  const others = collectOtherFiles(builtinDir, userDir);
+  const others = collectOtherFiles(userDir);
   for (const content of others) {
     segments.push(content.trim());
   }
@@ -92,60 +98,25 @@ function loadBasePrompt(env: Environment): string {
   return segments.join('\n\n---\n\n');
 }
 
-/** 在候选名中查找第一个存在的文件，用户目录优先覆盖包内 */
-function readFirstExisting(
-  candidates: ReadonlyArray<string>,
-  builtinDir: string,
-  userDir: string,
-): string | null {
-  for (const name of candidates) {
-    const userFile = join(userDir, `${name}.md`);
-    if (fileExists(userFile)) {
-      return readFile(userFile);
-    }
-    const builtinFile = join(builtinDir, `${name}.md`);
-    if (fileExists(builtinFile)) {
-      return readFile(builtinFile);
-    }
+/** 收集用户目录下不在候选名中的 *.md，按字母序返回内容 */
+function collectOtherFiles(userDir: string): string[] {
+  let entries: string[];
+  try {
+    entries = readdirSync(userDir);
+  } catch {
+    return [];
   }
-  return null;
-}
-
-/** 收集两个目录下不在候选名中的 *.md（用户目录优先覆盖同名），按字母序返回内容 */
-function collectOtherFiles(builtinDir: string, userDir: string): string[] {
-  const seen = new Set<string>();
-  const names: string[] = [];
-
-  // 先扫描用户目录，再扫描包内；同名只取先出现的（用户优先）
-  for (const dir of [userDir, builtinDir]) {
-    let entries: string[];
-    try {
-      entries = readdirSync(dir);
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      if (!entry.endsWith('.md')) continue;
-      const baseName = entry.replace(/\.md$/i, '');
-      if (CANDIDATE_NAMES.has(baseName)) continue;
-      if (seen.has(baseName)) continue;
-      seen.add(baseName);
-      names.push(entry);
-    }
-  }
-
-  names.sort((a, b) => a.localeCompare(b));
+  const others = entries
+    .filter(e => e.endsWith('.md'))
+    .map(e => e.replace(/\.md$/i, ''))
+    .filter(baseName => !CANDIDATE_NAMES.has(baseName))
+    .sort((a, b) => a.localeCompare(b));
 
   const result: string[] = [];
-  for (const entry of names) {
-    const userFile = join(userDir, entry);
-    if (fileExists(userFile)) {
-      result.push(readFile(userFile));
-      continue;
-    }
-    const builtinFile = join(builtinDir, entry);
-    if (fileExists(builtinFile)) {
-      result.push(readFile(builtinFile));
+  for (const baseName of others) {
+    const file = join(userDir, `${baseName}.md`);
+    if (fileExists(file)) {
+      result.push(readFile(file));
     }
   }
   return result;
@@ -254,7 +225,13 @@ export function buildSystemPrompt(
  */
 export function buildTools(
   toolRegistry: ToolRegistry | null,
-  mcpTools?: Array<{ server: string; name: string; description?: string; inputSchema?: unknown }>,
+  mcpTools?: Array<{
+    server: string;
+    name: string;
+    title?: string;
+    description?: string;
+    inputSchema?: unknown;
+  }>,
 ): UnifiedTool[] {
   const tools: UnifiedTool[] = [];
 
@@ -272,15 +249,16 @@ export function buildTools(
     }
   }
 
-  // MCP 工具（用 mcp__server__tool 前缀，避免命名冲突）
+  // MCP 工具（用 mcp__server__tool 前缀，避免命名冲突；title 附加到描述）
   if (mcpTools) {
     for (const t of mcpTools) {
       const toolName = `mcp__${t.server}__${t.name}`;
+      const titleSuffix = t.title && t.title !== t.name ? ` "${t.title}"` : '';
       tools.push({
         type: 'function',
         function: {
           name: toolName,
-          description: `[MCP:${t.server}] ${t.description ?? t.name}`,
+          description: `[MCP:${t.server}${titleSuffix}] ${t.description ?? t.name}`,
           parameters: t.inputSchema ?? { type: 'object', properties: {}, additionalProperties: true },
         },
       });

@@ -34,11 +34,21 @@ export function createSessionHistoryHandler(services: ServiceRegistry): RouteHan
     if (!sessionId) {
       return { status: 400, body: { error: ErrorCode.SESSION_ID_REQUIRED } };
     }
-    const agent = services.tryResolve<AgentEngine & { getHistory?: (id: string) => unknown }>('agent.engine');
+    const agent = services.tryResolve<
+      AgentEngine & {
+        getHistory?: (id: string) => unknown;
+        getActiveSkill?: (id: string) => { name: string; mode: 'system' | 'message'; content: string } | undefined;
+      }
+    >('agent.engine');
     if (!agent?.getHistory) {
       return { status: 200, body: { sessionId, messages: [] } };
     }
     const history = agent.getHistory(sessionId);
-    return { status: 200, body: { sessionId, messages: history } };
+    // 当前激活的 skill 模式（前端刷新后恢复 Badge）
+    const activeSkill = agent.getActiveSkill?.(sessionId) ?? undefined;
+    return {
+      status: 200,
+      body: { sessionId, messages: history, ...(activeSkill ? { activeSkill } : {}) },
+    };
   };
 }
