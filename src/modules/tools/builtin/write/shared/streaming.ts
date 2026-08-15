@@ -1,7 +1,7 @@
 // write/shared/streaming.ts
 // 流式原子写入 + 流式 sha256：createWriteStream 分块写入 tmp，支持超大文件，避免一次性缓冲。
-// 复用 atomic-write.ts 的原子性辅助（resolveRealPath/buildTmpPath/getOriginalMode/readHeadBytes）。
-// 路径：write/shared/streaming.ts → file-history = ../../../../file-history，utils = ../../../../../utils
+// 复用 utils/fs-atomic 的原子性辅助（resolveRealPath/buildTmpPath/getOriginalMode/readHeadBytes）。
+// 路径：write/shared/streaming.ts → utils = ../../../../../utils
 
 import {
   createWriteStream,
@@ -21,7 +21,7 @@ import {
   getOriginalMode,
   readHeadBytes,
   type AtomicWriteOptions,
-} from '../../../../file-history/atomic-write';
+} from '../../../../../utils/fs-atomic';
 import { hasUtf8Bom } from '../../../../../utils/encoding';
 
 /** 流式分块大小（64KB，对齐 Node createWriteStream 默认 highWaterMark） */

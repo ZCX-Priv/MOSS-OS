@@ -15,8 +15,7 @@
 import { t } from '../../../../core/i18n';
 import { ServiceNames } from '../../../../core/types';
 import { existsSync, statSync } from 'node:fs';
-import { resolveWithinCwd } from '../../../../utils/fs';
-import type { FileHistoryService } from '../../../contracts';
+import type { FileHistoryService, FilesysService } from '../../../contracts';
 import type { ToolContext, ToolResult } from '../../types';
 import { writeText, type WriteTextResult } from './handlers/text';
 
@@ -28,6 +27,10 @@ interface WriteParams {
 
 function getFileHistory(ctx: ToolContext): FileHistoryService | null {
   return ctx.services.tryResolve<FileHistoryService>(ServiceNames.FILE_HISTORY);
+}
+
+function getFilesys(ctx: ToolContext): FilesysService | null {
+  return ctx.services.tryResolve<FilesysService>(ServiceNames.FILESYS);
 }
 
 function errorResult(message: string): ToolResult {
@@ -46,10 +49,17 @@ export default {
       return errorResult('content must be a string');
     }
 
-    // 2. 路径解析与越权检测
-    const absPath = resolveWithinCwd(p.path, ctx.cwd);
+    // 2. 路径解析与越权检测（filesys roots 机制）
+    const filesys = getFilesys(ctx);
+    if (!filesys) {
+      return errorResult(t('filesys.serviceUnavailable'));
+    }
+    const absPath = filesys.resolve(p.path, ctx.cwd);
     if (!absPath) {
-      return errorResult(`path "${p.path}" escapes working directory`);
+      return errorResult(t('fs.pathOutsideRoots', {
+        path: p.path,
+        roots: filesys.listRoots().length > 0 ? ` + ${filesys.listRoots().join(', ')}` : '',
+      }));
     }
 
     // 3. 路径类型预检查：若已存在且是目录则拒绝
@@ -97,10 +107,18 @@ export default {
       }
     }
 
-    // 7. 分派到 handler 执行流式写入 + diff + 哈希
+    // 7. 分派到 handler 执行写入（filesys.writeFile 或大文件流式）+ diff + 哈希
     let writeResult: WriteTextResult;
     try {
-      writeResult = await writeText({ absPath, content: p.content, fileExists, createDirs });
+      writeResult = await writeText({
+        absPath,
+        content: p.content,
+        fileExists,
+        createDirs,
+        filesys,
+        sessionId: ctx.sessionId,
+        toolCallId: ctx.toolCallId,
+      });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return errorResult(`Error writing file: ${msg}`);

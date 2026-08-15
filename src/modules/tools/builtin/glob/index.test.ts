@@ -11,13 +11,27 @@ import type { ToolContext } from '../../types';
 let tmpRoot: string;
 
 function makeCtx(cwd?: string): ToolContext {
+  // mock filesys：resolve 等价 resolveWithinCwd（测试目录即唯一 root）
+  const filesys = {
+    resolve: (rawPath: string, base: string): string | null => {
+      const path = require('node:path');
+      const abs = path.isAbsolute(rawPath)
+        ? path.normalize(rawPath)
+        : path.normalize(path.resolve(base, rawPath));
+      const rel = path.relative(base, abs);
+      return rel === '' || (!rel.startsWith('..' + path.sep) && !path.isAbsolute(rel)) ? abs : null;
+    },
+    listRoots: () => [],
+  };
   return {
     sessionId: 'test',
     cwd: cwd ?? tmpRoot,
     toolCallId: 'tc',
     emit: () => {},
     logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
-    services: { tryResolve: () => null } as unknown as ToolContext['services'],
+    services: {
+      tryResolve: (name: string) => (name === 'file.sys' ? filesys : null),
+    } as unknown as ToolContext['services'],
   } as unknown as ToolContext;
 }
 

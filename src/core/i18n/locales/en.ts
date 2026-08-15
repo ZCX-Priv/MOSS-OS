@@ -263,6 +263,14 @@ export const en = {
   },
   fs: {
     pathEscapesBase: 'Path "{{path}}" escapes base directory "{{base}}"',
+    pathOutsideRoots: 'Path "{{path}}" is outside the allowed directories (working directory{{roots}})',
+  },
+  filesys: {
+    moduleInitialized: 'Filesys module initialized (unified filesystem service)',
+    serviceUnavailable: 'Filesystem service unavailable',
+    hashMismatch: 'File has been modified (hash mismatch). Please re-read before editing',
+    shellChangesDetected: 'shell command modified {{count}} file(s)',
+    shellSnapshotSkipped: 'File count exceeds limit, skipping shell change detection',
   },
   cli: {
     unknownCommand: 'Unknown command: {{command}}',

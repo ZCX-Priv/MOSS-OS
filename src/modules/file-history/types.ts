@@ -4,11 +4,11 @@
 // Layer 2: Snapshot（每轮 LLM 响应后异步快照）
 // Layer 3: JSONL Transcript（append-only 持久化，支持 undo）
 
-/** 文件变更操作类型 */
-export type FileOperation = 'create' | 'overwrite' | 'edit' | 'delete';
+/** 文件变更操作类型（move=移动/重命名，undo 为反向 rename；shell-change=shell 检测到的无备份变更） */
+export type FileOperation = 'create' | 'overwrite' | 'edit' | 'delete' | 'move' | 'shell-change';
 
-/** 触发变更的工具名（rollback = 消息撤回联动回滚的 redo 备份条目） */
-export type HistoryToolName = 'write' | 'edit' | 'delete' | 'rollback';
+/** 触发变更的工具名（rollback = 消息撤回联动回滚的 redo 备份条目；shell = shell 快照检测） */
+export type HistoryToolName = 'write' | 'edit' | 'delete' | 'rollback' | 'move' | 'copy' | 'shell';
 
 /**
  * 文件历史条目（JSONL 中每行一个）。
@@ -43,6 +43,8 @@ export interface FileHistoryEntry {
   diff?: string;
   /** 是否为目录操作（新增：true 时 backupPath 指向 .tar.gz，restoreEntry 走 extractArchive） */
   isDirectory?: boolean;
+  /** move 操作的目标路径（operation='move' 时 undo = destPath → absPath 反向 rename） */
+  destPath?: string;
 }
 
 /** trackEdit 返回结果 */

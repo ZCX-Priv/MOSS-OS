@@ -8,17 +8,16 @@
 //   2. sha256 乐观锁（expectHash 防并发覆盖）
 //   3. dryRun 预览
 //   4. read-before-overwrite + trackEdit 哈希备份 + 原子写入 + diff 返回
-// BOM 处理沿用原逻辑（读取时 stripBom，写回时根据 hadBom 决定是否加回）。
+// filesys 统一化：读取/哈希走 filesys.readFile（sha256 对磁盘原始字节，修复 BOM 乐观锁断裂）；
+// 写入走 filesys.writeFile（BOM 单次保留，替代旧双写；缓存更新 + 变更事件）。
 
 import { t } from '../../../../core/i18n';
 import { ServiceNames } from '../../../../core/types';
-import { existsSync, readFileSync, statSync } from 'node:fs';
-import { createHash } from 'node:crypto';
-import { hasUtf8Bom, stripBom } from '../../../../utils/encoding';
-import { resolveWithinCwd } from '../../../../utils/fs';
-import { atomicWriteFile } from '../../../file-history/atomic-write';
+import { existsSync, statSync } from 'node:fs';
+import { stripBom } from '../../../../utils/encoding';
 import { computeLineDiff } from '../../../file-history/diff';
-import type { FileHistoryService } from '../../../contracts';
+import { hashText } from '../../../filesys/hash';
+import type { FileHistoryService, FilesysService } from '../../../contracts';
 import type { TrackEditResult } from '../../../file-history/types';
 import type { ToolContext, ToolResult } from '../../types';
 
@@ -97,8 +96,8 @@ function getFileHistory(ctx: ToolContext): FileHistoryService | null {
   return ctx.services.tryResolve<FileHistoryService>(ServiceNames.FILE_HISTORY);
 }
 
-function sha256(text: string): string {
-  return createHash('sha256').update(text, 'utf8').digest('hex');
+function getFilesys(ctx: ToolContext): FilesysService | null {
+  return ctx.services.tryResolve<FilesysService>(ServiceNames.FILESYS);
 }
 
 function countOccurrences(haystack: string, needle: string): number {
@@ -272,10 +271,18 @@ async function editOneFile(
     fuzzyLevels: [],
   };
 
-  // 1. 路径解析
-  const absPath = resolveWithinCwd(rawPath, ctx.cwd);
+  // 1. 路径解析（filesys roots 机制）
+  const filesys = getFilesys(ctx);
+  if (!filesys) {
+    result.error = t('filesys.serviceUnavailable');
+    return result;
+  }
+  const absPath = filesys.resolve(rawPath, ctx.cwd);
   if (!absPath) {
-    result.error = `path "${rawPath}" escapes working directory`;
+    result.error = t('fs.pathOutsideRoots', {
+      path: rawPath,
+      roots: filesys.listRoots().length > 0 ? ` + ${filesys.listRoots().join(', ')}` : '',
+    });
     return result;
   }
   result.path = absPath;
@@ -305,20 +312,25 @@ async function editOneFile(
     }
   }
 
-  // 5. 读文件（BOM 检测/剥离）
+  // 5. 读文件（filesys 统一读取：缓存命中零 I/O；BOM 剥离在字符串层，写回时 writeFile 按原文件保留）
   let content: string;
-  let hadBom = false;
+  let diskHashBefore: string;
   try {
-    const rawBuf = readFileSync(absPath);
-    hadBom = hasUtf8Bom(rawBuf);
-    content = stripBom(rawBuf.toString('utf8'));
+    const entity = filesys.readFile(absPath);
+    if (!entity) {
+      result.error = `file not found: ${absPath}`;
+      return result;
+    }
+    // 全项目统一哈希规范：sha256 对磁盘原始字节（含 BOM）计算（修复 BOM 文件乐观锁断裂 bug）
+    diskHashBefore = entity.sha256;
+    content = stripBom(entity.rawBuffer.toString('utf8'));
   } catch (err) {
     result.error = `Error reading file: ${err instanceof Error ? err.message : err}`;
     return result;
   }
 
-  // 6. expectHash 乐观锁
-  const actualHashBefore = sha256(content);
+  // 6. expectHash 乐观锁（与 read 返回的 metadata.sha256 同源同规范，BOM 文件不再误报）
+  const actualHashBefore = diskHashBefore;
   result.hashBefore = actualHashBefore;
   result.expectHash = expectHash;
   if (expectHash !== undefined) {
@@ -353,7 +365,7 @@ async function editOneFile(
     result.ok = true;
     result.dryRun = true;
     result.diff = diff || undefined;
-    result.hashAfter = sha256(newContent);
+    result.hashAfter = hashText(newContent);
     return result;
   }
 
@@ -370,21 +382,31 @@ async function editOneFile(
     }
   }
 
-  // 10. 原子写入（保留 BOM，沿用原双写逻辑）
+  // 10. 原子写入（filesys.writeFile：BOM 单次保留 + 缓存更新 + 变更事件；旧双写废弃）
+  //     expectHash 已在步骤 6 校验，此处不再传（避免二次比对）
+  let writeResult: import('../../../filesys/types').WriteFileResult;
   try {
-    atomicWriteFile(absPath, newContent, { fsync: true, preserveBom: false, preserveMode: true });
-    if (hadBom) {
-      atomicWriteFile(absPath, '\uFEFF' + newContent, { fsync: true, preserveBom: false, preserveMode: true });
-    }
+    writeResult = filesys.writeFile(absPath, newContent, {
+      source: 'edit',
+      sessionId: ctx.sessionId,
+      toolCallId: ctx.toolCallId,
+      fsync: true,
+      preserveBom: true,
+      createDirs: false,
+    });
   } catch (err) {
     result.error = `Error writing file: ${err instanceof Error ? err.message : err}`;
     return result;
   }
+  if (!writeResult.ok) {
+    result.error = `Error writing file: ${writeResult.message}`;
+    return result;
+  }
 
-  // 11. diff
+  // 11. diff（hashAfter = 写入后磁盘真实字节哈希，含被保留的 BOM）
   const diff = computeLineDiff(content, newContent);
   result.diff = diff || undefined;
-  result.hashAfter = sha256(newContent);
+  result.hashAfter = writeResult.sha256;
   result.entryId = trackResult?.entryId ?? null;
   result.backedUp = trackResult?.backedUp ?? false;
   result.ok = true;
@@ -397,7 +419,7 @@ async function editOneFile(
         absPath,
         trackResult,
         result.hashAfter,
-        Buffer.byteLength(newContent, 'utf8'),
+        writeResult.bytes,
         diff || undefined,
       );
     } catch (err) {

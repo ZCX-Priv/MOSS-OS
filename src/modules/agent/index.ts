@@ -7,16 +7,17 @@ import { ServiceNames } from '../../core/types';
 import { AgentEngineImpl } from './engine';
 
 class AgentModule implements Module {
+  private engine: AgentEngineImpl | null = null;
 
   async initialize(ctx: ModuleContext): Promise<void> {
-    const engine = new AgentEngineImpl({
+    this.engine = new AgentEngineImpl({
       services: ctx.services,
       config: ctx.config,
       eventBus: ctx.eventBus,
       logger: ctx.logger,
       env: ctx.env,
     });
-    ctx.services.register(ServiceNames.AGENT_ENGINE, engine, {
+    ctx.services.register(ServiceNames.AGENT_ENGINE, this.engine, {
       scope: 'agent',
     });
 
@@ -26,6 +27,12 @@ class AgentModule implements Module {
       maxTurns: cfg.maxTurns,
       maxTokens: cfg.maxTokens,
     });
+  }
+
+  async destroy(): Promise<void> {
+    // 取消 filesys 事件订阅（由 engine.dispose 统一处理）
+    this.engine?.dispose();
+    this.engine = null;
   }
 }
 

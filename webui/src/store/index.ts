@@ -429,7 +429,7 @@ export const useStore = create<Store>((set) => ({
         ...state.messagesBySession,
         [sessionId]: (state.messagesBySession[sessionId] ?? []).map((m) =>
           m.id === messageId
-            ? { ...m, [field]: (m[field] ?? '') + text, thinkingStreaming }
+            ? { ...m, [field]: (m[field] ?? '') + text, thinkingStreaming: m.streaming ? thinkingStreaming : false }
             : m,
         ),
       },
@@ -449,7 +449,8 @@ export const useStore = create<Store>((set) => ({
       messagesBySession: {
         ...state.messagesBySession,
         [sessionId]: (state.messagesBySession[sessionId] ?? []).map((m) => {
-          if (!m.streaming) return m;
+          // 已 finalize（streaming=false）但 thinkingStreaming 被 rAF 迟到写入复活的消息也需清理
+          if (!m.streaming && !m.thinkingStreaming) return m;
           const finalizedToolCalls = m.toolCalls?.map((tc) =>
             tc.status === 'done' ? tc : { ...tc, status: 'done' as const },
           );

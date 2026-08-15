@@ -7,7 +7,7 @@
 import { existsSync, readFileSync, mkdirSync, appendFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { FileHistoryEntry } from './types';
-import { atomicWriteFile } from './atomic-write';
+import { atomicWriteFile } from '../../utils/fs-atomic';
 
 /**
  * 追加一条历史记录到 transcript。

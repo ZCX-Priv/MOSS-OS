@@ -141,6 +141,7 @@ export interface ServiceRegistry {
 // ToolsConfig 从 manifest 的 Zod schema 推导，保持类型与 schema 永远一致
 import type { ToolsConfig } from '../modules/tools/manifest';
 import type { FileHistoryConfig } from '../modules/file-history/types';
+import type { FilesysConfig } from '../modules/filesys/types';
 
 /** 应用配置（config.json）的结构 —— 由 config-service 中 Zod schema 严格校验 */
 export interface AppConfig {
@@ -191,6 +192,8 @@ export interface AppConfig {
   };
   /** 文件历史服务配置（由 file-history 模块消费） */
   fileHistory?: FileHistoryConfig;
+  /** 虚拟文件系统配置（由 filesys 模块消费：roots/缓存/shell 快照检测） */
+  filesys?: FilesysConfig;
 }
 
 export type ApiConfig = {
@@ -298,4 +301,6 @@ export const ServiceNames = {
   AUTOMATION_SERVICE: 'automation.service',
   /** 文件历史服务（由 file-history 模块注册：Track Edit + Snapshot + undo） */
   FILE_HISTORY: 'file.history',
+  /** 虚拟文件系统服务（由 filesys 模块注册：统一文件 IO / 读缓存 / roots / 变更事件） */
+  FILESYS: 'file.sys',
 } as const;

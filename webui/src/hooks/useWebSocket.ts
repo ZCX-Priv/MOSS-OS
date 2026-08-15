@@ -378,6 +378,8 @@ export function useWebSocket(): void {
         const errorCode = event.message ?? '';
         const localizedMessage = i18n.exists(`errors.${errorCode}`) ? i18n.t(`errors.${errorCode}`) : (errorCode || i18n.t('errors.UNKNOWN'));
         if (sessionId) {
+          // 兜底：error 时流不会正常收尾，清理流式残留（含 thinkingStreaming spinner）
+          s.finalizeStreamingMessages(sessionId);
           s.addMessage(sessionId, {
             id: genId(),
             role: 'assistant',
@@ -394,6 +396,8 @@ export function useWebSocket(): void {
       case 'done': {
         flushPending(); // 确保流式文本在终止前全部写入
         if (sessionId) {
+          // 兜底：清理该 session 所有流式残留（pending 丢失/被删时 pending 分支不执行）
+          s.finalizeStreamingMessages(sessionId);
           const pending = pendingAssistant.get(sessionId);
           if (pending) {
             // 兜底：将未完成的 toolCall 标记为 done（abort 场景下 tool-call-end 不会到达）
@@ -413,6 +417,8 @@ export function useWebSocket(): void {
       case 'task.done': {
         flushPending(); // 确保流式文本在终止前全部写入
         if (sessionId) {
+          // 兜底：清理该 session 所有流式残留（pending 丢失/被删时 pending 分支不执行）
+          s.finalizeStreamingMessages(sessionId);
           const pending = pendingAssistant.get(sessionId);
           if (pending) {
             const finalizedToolCalls = pending.toolCalls?.map((tc) =>
@@ -432,6 +438,9 @@ export function useWebSocket(): void {
         // - 停止按钮场景：useTask.abort 已 setGenerating(false)
         // - 打断发送场景：sendMessage 已 setGenerating(true) 启动新流
         if (sessionId) {
+          // 兜底：useTask.abort 已删除 pending（此时下方 pending 分支不执行），
+          // 仍需清理流式残留——含 rAF 迟到写入复活的 thinkingStreaming
+          s.finalizeStreamingMessages(sessionId);
           const pending = pendingAssistant.get(sessionId);
           if (pending) {
             const finalizedToolCalls = pending.toolCalls?.map((tc) =>
@@ -536,6 +545,30 @@ export function useWebSocket(): void {
       case 'file-edited': {
         const payload = (msg.payload ?? {}) as { path?: string };
         if (payload.path) toast.success(`已编辑文件: ${payload.path}`);
+        break;
+      }
+      case 'file-deleted': {
+        const payload = (msg.payload ?? {}) as { path?: string };
+        if (payload.path) toast.info(`已删除文件: ${payload.path}`);
+        break;
+      }
+      case 'file-moved': {
+        const payload = (msg.payload ?? {}) as { path?: string; destPath?: string };
+        if (payload.path && payload.destPath) {
+          toast.success(`已移动: ${payload.path} → ${payload.destPath}`);
+        }
+        break;
+      }
+      case 'shell-changed': {
+        // shell 命令造成的工作区变更（filesys 快照检测）；只提示摘要，明细见 contextFiles
+        const payload = (msg.payload ?? {}) as {
+          report?: { created?: string[]; modified?: string[]; deleted?: string[] };
+        };
+        const r = payload.report;
+        if (r) {
+          const count = (r.created?.length ?? 0) + (r.modified?.length ?? 0) + (r.deleted?.length ?? 0);
+          if (count > 0) toast.info(`shell 命令修改了 ${count} 个文件`);
+        }
         break;
       }
       case 'task.created': {

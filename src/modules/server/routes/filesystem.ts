@@ -12,9 +12,10 @@
 // 取文件夹名再调 resolve-directory 搜索。
 
 import type { HttpRequest, HttpResponse, RouteHandler } from '../types';
-import type { Environment } from '../../../core/types';
+import type { ConfigService, Environment, ServiceRegistry } from '../../../core/types';
+import { ServiceNames } from '../../../core/types';
 import { readdirSync, existsSync, statSync, type Dirent } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join, normalize } from 'node:path';
 import * as nfd from 'nativefiledialog-for-bun';
 import { ErrorCode } from '../../../core/error-codes';
 
@@ -188,5 +189,60 @@ export function createPickDirectoryHandler(env: Environment): RouteHandler {
   return async (): Promise<HttpResponse> => {
     const path = await pickDirectoryNative(env);
     return { status: 200, body: { path } };
+  };
+}
+
+// ============================================================================
+// filesys roots 管理（虚拟文件系统的授权目录边界）
+// GET  /api/filesys/roots — 读取配置的额外授权目录 + 当前实际生效列表
+// PUT  /api/filesys/roots — 设置额外授权目录（写回 config.filesys.roots，热生效）
+// ============================================================================
+
+/** GET /api/filesys/roots */
+export function createGetRootsHandler(
+  services: ServiceRegistry,
+): RouteHandler {
+  return async (): Promise<HttpResponse> => {
+    const filesys = services.tryResolve<{ listRoots(): string[] }>(ServiceNames.FILESYS);
+    return {
+      status: 200,
+      body: {
+        effective: filesys ? filesys.listRoots() : [],
+      },
+    };
+  };
+}
+
+/** PUT /api/filesys/roots — body: { roots: string[] }（绝对路径数组；cwd 始终隐含，无需包含） */
+export function createUpdateRootsHandler(
+  services: ServiceRegistry,
+  config: ConfigService,
+): RouteHandler {
+  return async (req: HttpRequest): Promise<HttpResponse> => {
+    const body = req.body as { roots?: unknown } | undefined;
+    const raw = body?.roots;
+    if (!Array.isArray(raw) || raw.some((r) => typeof r !== 'string')) {
+      return { status: 400, body: { error: 'roots (string[]) is required' } };
+    }
+    // 校验：必须是绝对路径（存在的目录由 filesys.normalizeRoots 在生效时软过滤，这里只挡格式）
+    const roots: string[] = [];
+    for (const item of raw) {
+      const p = String(item).trim();
+      if (!p) continue;
+      if (!isAbsolute(p)) {
+        return { status: 400, body: { error: `root must be an absolute path: ${p}` } };
+      }
+      roots.push(normalize(p));
+    }
+    try {
+      await config.updateAppConfig({ filesys: { roots } } as never);
+      const filesys = services.tryResolve<{ listRoots(): string[] }>(ServiceNames.FILESYS);
+      return { status: 200, body: { roots, effective: filesys ? filesys.listRoots() : [] } };
+    } catch (err) {
+      return {
+        status: 500,
+        body: { error: err instanceof Error ? err.message : String(err) },
+      };
+    }
   };
 }

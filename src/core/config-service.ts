@@ -4,6 +4,7 @@
 import { setBackendLocale, t } from './i18n';
 import { z } from 'zod';
 import { join } from 'node:path';
+import { atomicWriteFile } from '../utils/fs-atomic';
 import type {
   AppConfig,
   ApiConfig,
@@ -17,6 +18,7 @@ import type {
 } from './types';
 import { buildToolsSchema, buildToolsDefaults } from '../modules/tools/manifest';
 import { DEFAULT_FILE_HISTORY_CONFIG } from '../modules/file-history/types';
+import { DEFAULT_FILESYS_CONFIG } from '../modules/filesys/types';
 
 // ============================================================================
 // Zod Schemas
@@ -48,6 +50,21 @@ const fileHistorySchema = z.object({
   maxBackupsPerFile: z.number().int().min(1).max(100),
   transcriptEnabled: z.boolean(),
   backupRetentionDays: z.number().int().min(0).max(365),
+});
+
+// filesys：内层字段全部 .default() —— 旧 config.json 缺失时自动补全而非整体校验失败
+const filesysSchema = z.object({
+  roots: z.array(z.string()).default([]),
+  cacheMaxBytes: z.number().int().positive().default(64 * 1024 * 1024),
+  cacheMaxEntries: z.number().int().positive().default(2048),
+  cacheMaxFileBytes: z.number().int().positive().default(4 * 1024 * 1024),
+  shellWatch: z
+    .object({
+      enabled: z.boolean().default(true),
+      maxFiles: z.number().int().positive().default(20_000),
+      timeoutMs: z.number().int().positive().default(3000),
+    })
+    .default({}),
 });
 
 const appConfigSchema = z.object({
@@ -98,6 +115,8 @@ const appConfigSchema = z.object({
   }),
   // fileHistory 可选，缺失时用默认值（向后兼容旧配置）
   fileHistory: fileHistorySchema.optional(),
+  // filesys 可选，内层全 .default() 自愈补全（向后兼容旧配置）
+  filesys: filesysSchema.optional(),
 });
 
 const apiConfigSchema = z.object({
@@ -129,6 +148,7 @@ export function defaultAppConfig(): AppConfig {
     skills: {},
     security: { authToken: '', bindLocalhostOnly: true },
     fileHistory: { ...DEFAULT_FILE_HISTORY_CONFIG },
+    filesys: { ...DEFAULT_FILESYS_CONFIG },
   };
 }
 
@@ -414,8 +434,9 @@ function createNodeFsOps(): FsOps {
     },
     readText: (p: string) => fs.readFileSync(p, 'utf8'),
     writeText: (p: string, content: string) => {
+      // 原子写（tmp+fsync+rename）：配置文件写一半进程崩溃不再损坏 config.json/api.json
       fs.mkdirSync(path.dirname(p), { recursive: true });
-      fs.writeFileSync(p, content, 'utf8');
+      atomicWriteFile(p, content, { fsync: true });
     },
     mkdirRecursive: (p: string) => fs.mkdirSync(p, { recursive: true }),
     copyFile: (src: string, dest: string) => {

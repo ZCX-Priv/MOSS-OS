@@ -126,7 +126,8 @@ export async function loadToolFromDir(
     inputSchema: manifest.inputSchema,
     annotations: manifest.annotations,
     icon: manifest.icon,
-    execute: impl.execute,
+    // bind(impl)：保留 this 绑定，防止工具实现采用对象方法模式时 this 丢失
+    execute: impl.execute.bind(impl),
     sourceDir: dir,
     source,
   };

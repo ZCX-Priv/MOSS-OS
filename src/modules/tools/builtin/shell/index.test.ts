@@ -8,6 +8,20 @@ import type { ToolContext, ToolResult } from '../../types';
 
 /** 构造 mock ToolContext */
 function makeCtx(overrides?: Partial<ToolContext>): ToolContext {
+  // mock filesys：resolve 等价 resolveWithinCwd；快照检测禁用（begin 返回 null）
+  const filesys = {
+    resolve: (rawPath: string, base: string): string | null => {
+      const path = require('node:path');
+      const abs = path.isAbsolute(rawPath)
+        ? path.normalize(rawPath)
+        : path.normalize(path.resolve(base, rawPath));
+      const rel = path.relative(base, abs);
+      return rel === '' || (!rel.startsWith('..' + path.sep) && !path.isAbsolute(rel)) ? abs : null;
+    },
+    listRoots: () => [],
+    beginShellSnapshot: async () => null,
+    endShellSnapshot: async () => null,
+  };
   return {
     sessionId: 'test-session',
     cwd: process.cwd(),
@@ -19,7 +33,9 @@ function makeCtx(overrides?: Partial<ToolContext>): ToolContext {
       error: () => {},
       debug: () => {},
     },
-    services: { tryResolve: () => null } as unknown as ToolContext['services'],
+    services: {
+      tryResolve: (name: string) => (name === 'file.sys' ? filesys : null),
+    } as unknown as ToolContext['services'],
     ...overrides,
   } as unknown as ToolContext;
 }

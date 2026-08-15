@@ -15,6 +15,7 @@ import type {
   TrackEditResult,
   UndoResult,
 } from './file-history/types';
+export type { FilesysService, ShellChangeReport } from './filesys/types';
 
 // ============================================================================
 // LLM Router（由 LLM 插件注册，ServiceNames.LLM_ROUTER）
@@ -335,6 +336,31 @@ export interface FileHistoryService {
     hashAfter: string,
     bytesAfter: number,
     diff?: string,
+  ): void;
+
+  /**
+   * 记录 move（移动/重命名）条目（filesys move 工具调用）。
+   * undo = destPath → source 反向 rename；move 不改变内容，无需内容备份。
+   */
+  recordMoveEntry(
+    sessionId: string,
+    source: string,
+    dest: string,
+    toolCallId: string,
+    opts?: { bytesBefore?: number; isDirectory?: boolean },
+  ): void;
+
+  /**
+   * shell 快照检测登记（filesys shell-watch 回填调用）：
+   * created → operation='create'（undo=删除）；modified/deleted 且提供执行前 buffer →
+   * 按哈希备份可完整 undo；buffer 为 null 时记无备份条目（undo 时提示不可恢复）。
+   */
+  trackShellFile(
+    sessionId: string,
+    absPath: string,
+    kind: 'created' | 'modified' | 'deleted',
+    beforeBuffer: Buffer | null,
+    toolCallId?: string,
   ): void;
 
   /** 校验本会话是否 read 过该文件（read-before-mutate 约束） */

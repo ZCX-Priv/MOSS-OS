@@ -4,8 +4,9 @@
 // TaskItem.id 即 sessionId（简化模型，1 task ↔ 1 session）
 
 import { t } from '../../core/i18n';
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { readJsonStore, writeJsonStore } from '../filesys/store-io';
 import type { Environment, Logger } from '../../core/types';
 
 export interface TaskItem {
@@ -253,13 +254,13 @@ export class TaskStore {
 
   private load(): TaskStoreData {
     try {
+      const fallback = (): TaskStoreData => ({ ...DEFAULT_STORE, groups: [...DEFAULT_STORE.groups], tasks: [] });
       if (!existsSync(this.storePath)) {
-        return { ...DEFAULT_STORE, groups: [...DEFAULT_STORE.groups], tasks: [] };
+        return fallback();
       }
-      const raw = readFileSync(this.storePath, 'utf8');
-      const parsed = JSON.parse(raw) as Partial<TaskStoreData>;
+      const parsed = readJsonStore<Partial<TaskStoreData>>(this.storePath, {} as Partial<TaskStoreData>, this.logger);
       if (!Array.isArray(parsed.groups) || !Array.isArray(parsed.tasks)) {
-        return { ...DEFAULT_STORE, groups: [...DEFAULT_STORE.groups], tasks: [] };
+        return fallback();
       }
       // 确保默认分组存在
       if (!parsed.groups.find(g => g.id === DEFAULT_GROUP_ID)) {
@@ -273,8 +274,8 @@ export class TaskStore {
 
   private save(): void {
     try {
-      mkdirSync(dirname(this.storePath), { recursive: true });
-      writeFileSync(this.storePath, JSON.stringify(this.data, null, 2), 'utf8');
+      // store-io 统一原子写（tmp+fsync+rename）：修复旧版裸 writeFileSync 写一半崩溃丢全部任务
+      writeJsonStore(this.storePath, this.data);
     } catch (err) {
       this.logger.error(t('agent.saveTasksFailed'), {
         error: err instanceof Error ? err.message : String(err),

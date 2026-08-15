@@ -3,8 +3,9 @@
 // 持久化：每个 session 存为 ~/.moss/sessions/<sessionId>.json，启动时全量加载到内存。
 
 import { t } from '../../core/i18n';
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, unlinkSync, renameSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
+import { safeSessionId, writeJsonStore } from '../filesys/store-io';
 import type { AgentMessage } from '../contracts';
 import type { UnifiedMessage } from '../llm/types';
 import type { TodoItem } from '../tools/builtin/todo/shared/store';
@@ -14,7 +15,7 @@ import type { Environment, Logger } from '../../core/types';
 export interface ContextFile {
   path: string;
   tokens?: number;
-  reason?: 'read' | 'edit' | 'write' | 'grep' | 'glob';
+  reason?: 'read' | 'edit' | 'write' | 'grep' | 'glob' | 'delete' | 'move' | 'copy';
 }
 
 export interface ActiveSkill {
@@ -113,14 +114,10 @@ export class SessionStore {
     }
   }
 
-  /** 把单个 session 持久化到磁盘（原子写：先写临时文件再 rename，防止写盘中断产生截断的 JSON） */
+  /** 把单个 session 持久化到磁盘（store-io 统一原子写：tmp+fsync+rename+EXDEV 回退） */
   private saveSession(session: Session): void {
     try {
-      mkdirSync(this.sessionsDir, { recursive: true });
-      const filePath = join(this.sessionsDir, `${session.id}.json`);
-      const tmpPath = `${filePath}.tmp`;
-      writeFileSync(tmpPath, JSON.stringify(session, null, 2), 'utf8');
-      renameSync(tmpPath, filePath);
+      writeJsonStore(this.sessionFilePath(session.id), session);
     } catch (err) {
       this.logger.error(t('agent.saveSessionFailed'), {
         sessionId: session.id,
@@ -129,10 +126,15 @@ export class SessionStore {
     }
   }
 
+  /** session 文件路径（sessionId 经 safeSessionId 清洗，防 `../` 路径穿越——与 transcript/todo 一致） */
+  private sessionFilePath(sessionId: string): string {
+    return join(this.sessionsDir, `${safeSessionId(sessionId)}.json`);
+  }
+
   /** 从磁盘加载单个 session（冗余保护：eager load 后通常命中） */
   private loadFromDisk(sessionId: string): Session | null {
     try {
-      const filePath = join(this.sessionsDir, `${sessionId}.json`);
+      const filePath = this.sessionFilePath(sessionId);
       if (!existsSync(filePath)) return null;
       const raw = readFileSync(filePath, 'utf8');
       const parsed = JSON.parse(raw) as Partial<Session>;
@@ -200,7 +202,7 @@ export class SessionStore {
   delete(sessionId: string): void {
     this.sessions.delete(sessionId);
     try {
-      const filePath = join(this.sessionsDir, `${sessionId}.json`);
+      const filePath = this.sessionFilePath(sessionId);
       if (existsSync(filePath)) {
         unlinkSync(filePath);
       }

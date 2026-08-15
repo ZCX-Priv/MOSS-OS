@@ -7,7 +7,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { join, dirname } from 'node:path';
-import { existsSync, unlinkSync, statSync, rmSync } from 'node:fs';
+import { existsSync, unlinkSync, statSync, rmSync, mkdirSync, renameSync } from 'node:fs';
 import type { Logger, Environment } from '../../core/types';
 import type { FileHistoryService } from '../contracts';
 import type {
@@ -17,15 +17,15 @@ import type {
   FileHistoryConfig,
   FileOperation,
 } from './types';
-import { backupByHash, readBackup } from './backup';
+import { backupByHash, backupBufferByHash, readBackup } from './backup';
 import { ReadLedger } from './ledger';
 import { appendEntry, readEntries, removeLastNEntries, removeEntryById, removeEntriesByIds } from './transcript';
-import { atomicWriteFile } from './atomic-write';
+import { atomicWriteFile } from '../../utils/fs-atomic';
 import { archiveDirectory, extractArchive } from './archive';
 import { cleanupExpiredTrash, TRASH_RETENTION_DAYS } from './trash';
 
 export class FileHistoryServiceImpl implements FileHistoryService {
-  private readonly ledger = new ReadLedger();
+  private readonly ledger: ReadLedger;
   private readonly backupDir: string;
   private readonly transcriptDir: string;
   private readonly trashDir: string;
@@ -38,6 +38,8 @@ export class FileHistoryServiceImpl implements FileHistoryService {
     this.backupDir = join(env.dataDir, 'backups');
     this.transcriptDir = join(env.dataDir, 'file-history');
     this.trashDir = join(env.dataDir, 'trash');
+    // ledger 持久化：~/.moss/ledger/<sessionId>.json（重启后 read-before-overwrite 仍有效）
+    this.ledger = new ReadLedger(join(env.dataDir, 'ledger'), logger);
   }
 
   /** 全局开关：config.fileHistory.enabled 为 false 时所有行为降级为 no-op */
@@ -206,6 +208,105 @@ export class FileHistoryServiceImpl implements FileHistoryService {
       appendEntry(this.transcriptPath(sessionId), entry);
     } catch (err) {
       this.logger.warn('file-history: recordChange failed', {
+        sessionId,
+        absPath,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /**
+   * 记录 move（移动/重命名）条目：undo = destPath → absPath 反向 rename。
+   * move 不改变内容，无需内容备份；若 undo 时 source 位被占用则先移除占用者。
+   */
+  recordMoveEntry(
+    sessionId: string,
+    source: string,
+    dest: string,
+    toolCallId: string,
+    opts?: { bytesBefore?: number; isDirectory?: boolean },
+  ): void {
+    if (!this.enabled || !this.config.transcriptEnabled) return;
+    const entry: FileHistoryEntry = {
+      id: randomUUID(),
+      sessionId,
+      absPath: source,
+      toolCallId,
+      toolName: 'move',
+      timestamp: new Date().toISOString(),
+      operation: 'move',
+      hashBefore: null,
+      hashAfter: null,
+      backupPath: null,
+      bytesBefore: opts?.bytesBefore ?? 0,
+      bytesAfter: opts?.bytesBefore ?? 0,
+      destPath: dest,
+      ...(opts?.isDirectory ? { isDirectory: true } : {}),
+    };
+    try {
+      appendEntry(this.transcriptPath(sessionId), entry);
+    } catch (err) {
+      this.logger.warn('file-history: recordMoveEntry failed', {
+        sessionId,
+        source,
+        dest,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /**
+   * shell 快照检测登记（filesys shell-watch 回填）：
+   * - created：记 operation='create'（undo = 删除该文件）
+   * - modified/deleted：beforeBuffer（filesys 读缓存的执行前内容）存在时按哈希备份 → 可完整 undo；
+   *   为 null 时记无备份条目（undo 时提示不可恢复）。
+   */
+  trackShellFile(
+    sessionId: string,
+    absPath: string,
+    kind: 'created' | 'modified' | 'deleted',
+    beforeBuffer: Buffer | null,
+    toolCallId?: string,
+  ): void {
+    if (!this.enabled || !this.config.transcriptEnabled) return;
+    const entryId = randomUUID();
+
+    let backupPath: string | null = null;
+    let hashBefore: string | null = null;
+    let bytesBefore = 0;
+
+    if (kind !== 'created' && beforeBuffer) {
+      try {
+        const backup = backupBufferByHash(beforeBuffer, this.backupDir);
+        backupPath = backup.backupPath;
+        hashBefore = backup.hash;
+        bytesBefore = backup.bytes;
+      } catch (err) {
+        this.logger.warn('file-history: shell backup failed', {
+          absPath,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    const entry: FileHistoryEntry = {
+      id: entryId,
+      sessionId,
+      absPath,
+      toolCallId: toolCallId ?? '',
+      toolName: 'shell',
+      timestamp: new Date().toISOString(),
+      operation: kind === 'created' ? 'create' : kind === 'deleted' ? 'delete' : 'edit',
+      hashBefore,
+      hashAfter: null,
+      backupPath,
+      bytesBefore,
+      bytesAfter: 0,
+    };
+    try {
+      appendEntry(this.transcriptPath(sessionId), entry);
+    } catch (err) {
+      this.logger.warn('file-history: trackShellFile failed', {
         sessionId,
         absPath,
         error: err instanceof Error ? err.message : String(err),
@@ -385,6 +486,25 @@ export class FileHistoryServiceImpl implements FileHistoryService {
     original: FileHistoryEntry,
   ): Promise<FileHistoryEntry | null> {
     const now = new Date().toISOString();
+    // move 条目的 redo 备份：undo（dest→source）后 redo 需再移回（source→dest）。
+    // 生成 {absPath: dest, destPath: source} 的 move entry，restoreEntry 会把 destPath 移到 absPath。
+    if (original.operation === 'move' && original.destPath) {
+      return {
+        id: randomUUID(),
+        sessionId,
+        absPath: original.destPath,
+        toolCallId: original.toolCallId,
+        toolName: 'rollback',
+        timestamp: now,
+        operation: 'move',
+        hashBefore: null,
+        hashAfter: null,
+        backupPath: null,
+        bytesBefore: original.bytesBefore,
+        bytesAfter: original.bytesAfter,
+        destPath: original.absPath,
+      };
+    }
     if (existsSync(original.absPath)) {
       const stat = statSync(original.absPath);
       if (stat.isDirectory()) {
@@ -486,6 +606,28 @@ export class FileHistoryServiceImpl implements FileHistoryService {
    * - delete 目录：从 tar.gz 归档解包到原路径父目录
    */
   private async restoreEntry(entry: FileHistoryEntry): Promise<void> {
+    if (entry.operation === 'move') {
+      // 撤销移动：destPath → absPath 反向 rename（内容未变，无需备份）
+      if (!entry.destPath) {
+        throw new Error('move entry missing destPath');
+      }
+      if (!existsSync(entry.destPath)) {
+        throw new Error(`moved destination missing: ${entry.destPath}`);
+      }
+      // source 位被占用时先移除（覆盖语义）
+      if (existsSync(entry.absPath)) {
+        const stat = statSync(entry.absPath);
+        if (stat.isDirectory()) {
+          rmSync(entry.absPath, { recursive: true, force: true });
+        } else {
+          unlinkSync(entry.absPath);
+        }
+      }
+      mkdirSync(dirname(entry.absPath), { recursive: true });
+      renameSync(entry.destPath, entry.absPath);
+      return;
+    }
+
     if (entry.operation === 'create') {
       // 撤销创建：删除文件或目录
       if (existsSync(entry.absPath)) {

@@ -81,13 +81,17 @@ export function createUpdateSpecHandler(
     }
 
     // 路径穿越防护：目标文件必须位于用户 spec 目录内
+    // 统一走 utils 层 isPathInside（relative-based 判定，替代旧版字符串前缀匹配——
+    // 后者在 Windows 下可被路径大小写差异绕过）
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const path = require('node:path');
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const fs = require('node:fs');
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { isPathInside } = require('../../../../utils/fs');
     const specRoot = path.resolve(env.dataDir, 'agent', 'prompts', 'main', 'spec');
     const target = path.resolve(spec.sourceFile);
-    if (!target.startsWith(specRoot + path.sep) && target !== path.join(specRoot, `${id.replace(/\//g, path.sep)}.md`)) {
+    if (!isPathInside(target, specRoot)) {
       return { status: 400, body: { error: 'spec file is outside the user spec directory' } };
     }
 

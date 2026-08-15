@@ -29,6 +29,7 @@ import server from '../modules/server';
 import agents from '../modules/agents';
 import update from '../modules/update';
 import agent from '../modules/agent';
+import filesys from '../modules/filesys';
 import fileHistory from '../modules/file-history';
 import daemon from '../modules/daemon';
 import automation from '../modules/automation';
@@ -39,8 +40,9 @@ const MODULE_DESTROY_TIMEOUT_MS = 10_000;
 /**
  * 静态模块注册表：固定初始化顺序满足依赖关系（被依赖者在前）。
  * - llm / tools / mcp / server / agents / update：无依赖
- * - agent → llm, tools
- * - file-history → tools
+ * - filesys → 无服务依赖（agent 构造时订阅其事件总线，须先于 agent 注册）
+ * - agent → llm, tools, filesys
+ * - file-history → tools, filesys（shell 快照回填运行时 tryResolve）
  * - daemon → server
  * - automation → agent, server
  */
@@ -51,6 +53,7 @@ const MODULE_FACTORIES: Array<{ name: string; create: () => Module }> = [
   { name: 'server', create: server },
   { name: 'agents', create: agents },
   { name: 'update', create: update },
+  { name: 'filesys', create: filesys },
   { name: 'agent', create: agent },
   { name: 'file-history', create: fileHistory },
   { name: 'daemon', create: daemon },

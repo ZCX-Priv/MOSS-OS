@@ -8,7 +8,8 @@ import { stat } from 'node:fs/promises';
 import { statSync } from 'node:fs';
 import { Glob } from 'bun';
 import { t } from '../../../../core/i18n';
-import { resolveWithinCwd } from '../../../../utils/fs';
+import { ServiceNames } from '../../../../core/types';
+import type { FilesysService } from '../../../contracts';
 import {
   walkFiles,
   typeToGlobs,
@@ -84,13 +85,20 @@ export default {
       typeGlobs = globs.map(g => new Glob(g));
     }
 
-    // ---- 路径解析与隔离 ----
+    // ---- 路径解析与隔离（filesys roots 机制）----
+    const filesys = ctx.services.tryResolve<FilesysService>(ServiceNames.FILESYS);
+    if (!filesys) {
+      return {
+        content: [{ type: 'text', text: `Error: ${t('filesys.serviceUnavailable')}` }],
+        isError: true,
+      };
+    }
     let base: string;
     if (p.path) {
-      const confined = resolveWithinCwd(p.path, ctx.cwd);
+      const confined = filesys.resolve(p.path, ctx.cwd);
       if (!confined) {
         return {
-          content: [{ type: 'text', text: `Error: path "${p.path}" escapes working directory` }],
+          content: [{ type: 'text', text: `Error: ${t('fs.pathOutsideRoots', { path: p.path, roots: '' })}` }],
           isError: true,
         };
       }

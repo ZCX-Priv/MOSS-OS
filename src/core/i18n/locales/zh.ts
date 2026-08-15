@@ -263,6 +263,14 @@ export const zh = {
   },
   fs: {
     pathEscapesBase: '路径 "{{path}}" 超出基础目录 "{{base}}"',
+    pathOutsideRoots: '路径 "{{path}}" 超出允许的目录范围（工作目录{{roots}}）',
+  },
+  filesys: {
+    moduleInitialized: 'Filesys 模块已初始化（统一文件系统服务）',
+    serviceUnavailable: '文件系统服务不可用',
+    hashMismatch: '文件已被修改（哈希不匹配），请重新 read 后再操作',
+    shellChangesDetected: 'shell 命令修改了 {{count}} 个文件',
+    shellSnapshotSkipped: '文件数超过上限，跳过本次 shell 变更检测',
   },
   cli: {
     unknownCommand: '未知命令: {{command}}',

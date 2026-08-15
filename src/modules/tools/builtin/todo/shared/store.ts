@@ -7,7 +7,7 @@
 import { existsSync, readFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import type { Environment } from '../../../../../core/types';
-import { atomicWriteFile } from '../../../../file-history/atomic-write';
+import { atomicWriteFile } from '../../../../../utils/fs-atomic';
 
 export type TodoStatus = 'pending' | 'in_progress' | 'completed';
 export type TodoPriority = 'low' | 'medium' | 'high';

@@ -11,7 +11,7 @@ import { open, readdir, readFile } from 'node:fs/promises';
 import type { Dirent } from 'node:fs';
 import { isAbsolute, relative, sep } from 'node:path';
 import { Glob } from 'bun';
-import { isValidUtf8 } from '../../../utils/encoding';
+import { classifyBufferHead } from '../../../utils/fs';
 
 // ============================================================================
 // TYPE_MAP：类型名 → 扩展名数组
@@ -304,11 +304,12 @@ export async function readFileHead(abs: string, bytes = 8192): Promise<Buffer> {
   }
 }
 
-/** 基于前 N 字节 Buffer 判定二进制：NUL 字节或非法 UTF-8 视为二进制（逻辑同 utils/fs.ts isBinaryFile） */
+/**
+ * 基于前 N 字节 Buffer 判定"非 UTF-8 文本"（grep 语义：binary 或 legacy-text 均跳过，
+ * 与旧实现逐字节等价 —— NUL 字节或非法 UTF-8 即 true）。判定逻辑统一走 utils 层 classifyBufferHead。
+ */
 export function isBinaryBufferHead(buf: Buffer): boolean {
-  if (buf.length === 0) return false;
-  if (buf.includes(0)) return true;
-  return !isValidUtf8(buf);
+  return classifyBufferHead(buf) !== 'utf8';
 }
 
 // ============================================================================

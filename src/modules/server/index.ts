@@ -87,6 +87,8 @@ import {
   createResolveDirectoryHandler,
   createSuggestPathsHandler,
   createPickDirectoryHandler,
+  createGetRootsHandler,
+  createUpdateRootsHandler,
 } from './routes/filesystem';
 import { McpExpose } from '../mcp/expose';
 
@@ -270,6 +272,10 @@ class ServerModule implements Module {
     this.router.addRoute({ method: 'POST', pattern: '/api/filesystem/pick-directory', handler: createPickDirectoryHandler(env), auth: true });
     this.router.addRoute({ method: 'POST', pattern: '/api/filesystem/resolve-directory', handler: createResolveDirectoryHandler(env), auth: true });
     this.router.addRoute({ method: 'GET', pattern: '/api/filesystem/suggest-paths', handler: createSuggestPathsHandler(env), auth: true });
+
+    // filesys roots（虚拟文件系统授权目录管理）
+    this.router.addRoute({ method: 'GET', pattern: '/api/filesys/roots', handler: createGetRootsHandler(this.ctx.services), auth: true });
+    this.router.addRoute({ method: 'PUT', pattern: '/api/filesys/roots', handler: createUpdateRootsHandler(this.ctx.services, this.ctx.config), auth: true });
   }
 
   private async startServer(): Promise<void> {

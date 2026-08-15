@@ -1,11 +1,16 @@
 // builtin/shell/index.ts
 // shell 工具 execute 逻辑：执行 shell 命令，捕获 stdout/stderr/exitCode。
+// filesys 统一化：
+//   - cwd 解析走 filesys roots（替代旧版手写 isAbsolute/normalize，统一越权语义）
+//   - 执行前后工作区快照检测（beginShellSnapshot/endShellSnapshot）：
+//     shell 造成的文件变更（mv/rm/重定向）纳入 file-history（缓存命中可 undo）+ shell-changed 事件
 // 元数据见同目录 tool.json。
 
 import { t } from '../../../../core/i18n';
-import { isAbsolute, normalize, resolve } from 'node:path';
+import { ServiceNames } from '../../../../core/types';
 import { statSync } from 'node:fs';
 import { decodeShellOutput } from '../../../../utils/encoding';
+import type { FilesysService, ShellChangeReport } from '../../../contracts';
 import type { ToolContext, ToolResult } from '../../types';
 
 /** shell 工具输入参数 */
@@ -85,10 +90,20 @@ export default {
       }
     }
 
-    // cwd 解析：绝对路径直接用，相对路径基于 ctx.cwd 解析
-    const cwd = p.cwd
-      ? isAbsolute(p.cwd) ? normalize(p.cwd) : normalize(resolve(ctx.cwd, p.cwd))
-      : ctx.cwd || process.cwd();
+    // filesys 服务（统一入口；cwd 越权语义与 read/write/edit 一致）
+    const filesys = ctx.services.tryResolve<FilesysService>(ServiceNames.FILESYS);
+    if (!filesys) {
+      return { content: [{ type: 'text', text: `Error: ${t('filesys.serviceUnavailable')}` }], isError: true };
+    }
+
+    // cwd 解析：filesys roots 机制（相对路径基于 ctx.cwd；必须在 cwd 或授权 roots 内）
+    const cwd = p.cwd ? filesys.resolve(p.cwd, ctx.cwd) : ctx.cwd || process.cwd();
+    if (!cwd) {
+      return {
+        content: [{ type: 'text', text: `Error: ${t('fs.pathOutsideRoots', { path: p.cwd ?? '', roots: '' })}` }],
+        isError: true,
+      };
+    }
 
     // cwd 存在性校验：避免 spawn 失败时错误信息不友好
     try {
@@ -124,6 +139,9 @@ export default {
     ctx.logger.info(t('tools.shellExecute', { command: p.command }), {
       cwd, timeoutMs, shell: shellCfg.bin,
     });
+
+    // 执行前快照：收集工作区 stat 清单（禁用或文件数超限返回 null，静默跳过检测）
+    const snap = await filesys.beginShellSnapshot(cwd);
 
     try {
       const proc = Bun.spawn({
@@ -173,8 +191,29 @@ export default {
         exitCode, durationMs, truncated,
       });
 
+      // 执行后快照：diff 工作区变更 + 缓存回填备份（可 undo 尽力而为）+ shell-changed 事件
+      // 报告摘要拼进工具结果尾部，让模型直接感知自己改了哪些文件（无需额外 read）
+      let shellChanges: ShellChangeReport | null = null;
+      let workspaceNote = '';
+      if (snap) {
+        shellChanges = await filesys.endShellSnapshot(snap, ctx.sessionId, ctx.toolCallId);
+        if (shellChanges) {
+          const count = shellChanges.created.length + shellChanges.modified.length + shellChanges.deleted.length;
+          if (count > 0) {
+            const brief = (items: string[], label: string): string =>
+              items.length === 0 ? '' : `\n  ${label} (${items.length}): ${items.slice(0, 5).join(', ')}${items.length > 5 ? ', ...' : ''}`;
+            workspaceNote =
+              `\n--- workspace changes ---` +
+              brief(shellChanges.created, 'created') +
+              brief(shellChanges.modified, 'modified') +
+              brief(shellChanges.deleted, 'deleted') +
+              `\n  (undoable: ${shellChanges.undone}/${count}${shellChanges.truncated ? ', diff truncated' : ''})`;
+          }
+        }
+      }
+
       return {
-        content: [{ type: 'text', text: output }],
+        content: [{ type: 'text', text: output + workspaceNote }],
         isError: exitCode !== 0,
         metadata: {
           command: p.command,
@@ -188,9 +227,11 @@ export default {
           crashed: exitCode === -3,
           shell: shellCfg.bin,
           durationMs,
+          ...(shellChanges ? { shellChanges } : {}),
         },
       };
     } catch (err) {
+      // spawn 抛错 = 命令未执行，工作区不会变化，无需 end 快照
       return {
         content: [{ type: 'text', text: `Error executing command: ${err instanceof Error ? err.message : err}` }],
         isError: true,

@@ -51,6 +51,12 @@ function createMockFileHistory(trashDir: string): FileHistoryService {
         isDirectory: isDir,
       };
     },
+    recordMoveEntry: () => {
+      // delete 工具测试不涉及 move
+    },
+    trackShellFile: () => {
+      // delete 工具测试不涉及 shell 快照
+    },
     recordChange: (
       _sid: string,
       absPath: string,
@@ -87,6 +93,19 @@ function createMockLogger(): Logger {
 
 /** 创建 mock ToolContext */
 function createMockCtx(cwd: string, fileHistory: FileHistoryService): ToolContext {
+  // mock filesys：resolve 等价 resolveWithinCwd（测试 cwd 即唯一 root）
+  const filesys = {
+    resolve: (rawPath: string, base: string): string | null => {
+      const path = require('node:path');
+      const abs = path.isAbsolute(rawPath)
+        ? path.normalize(rawPath)
+        : path.normalize(path.resolve(base, rawPath));
+      const rel = path.relative(base, abs);
+      return rel === '' || (!rel.startsWith('..' + path.sep) && !path.isAbsolute(rel)) ? abs : null;
+    },
+    listRoots: () => [],
+    emitChange: () => {},
+  };
   return {
     sessionId: 'test-session',
     cwd,
@@ -94,7 +113,10 @@ function createMockCtx(cwd: string, fileHistory: FileHistoryService): ToolContex
     emit: () => {},
     logger: createMockLogger(),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    services: { tryResolve: () => fileHistory } as any,
+    services: {
+      tryResolve: (name: string) =>
+        name === 'file.sys' ? filesys : name === 'file.history' ? fileHistory : null,
+    } as any,
     confirm: async () => true,
     toolConfig: { trackHistory: true },
   };
@@ -275,7 +297,7 @@ describe('delete 工具', () => {
       const result = await runDelete(ctx, { path: '../../../etc/passwd', trash: false, force: true });
       const meta = result.metadata?.results as Array<{ success: boolean; message: string }>;
       expect(meta[0].success).toBe(false);
-      expect(meta[0].message).toContain('escapes working directory');
+      expect(meta[0].message).toContain('escapes allowed roots');
     });
 
     it('路径不存在应拒绝', async () => {
@@ -407,6 +429,21 @@ describe('delete 工具', () => {
       const meta = JSON.parse(readFileSync(metaPath, 'utf-8'));
       expect(meta.originalPath).toBe(filePath);
       expect(meta.trashedAt).toBeDefined();
+    });
+  });
+
+  describe('loader this 绑定回归', () => {
+    it('execute 被剥离 this 上下文后仍可正常工作（复现 this.deleteSingle 崩溃）', async () => {
+      // 复现 loader.ts 构造 tool 对象时 `execute: impl.execute` 的方法剥离场景：
+      // 修复前此处抛 TypeError: this.deleteSingle is not a function
+      const filePath = join(workDir, 'detached.txt');
+      writeFileSync(filePath, 'content');
+      const detached = { execute: deleteTool.execute };
+      const result = await detached.execute({ path: 'detached.txt' }, ctx);
+      expect(result.isError).toBeUndefined();
+      const meta = result.metadata?.results as Array<{ success: boolean }>;
+      expect(meta[0].success).toBe(true);
+      expect(existsSync(filePath)).toBe(false);
     });
   });
 });

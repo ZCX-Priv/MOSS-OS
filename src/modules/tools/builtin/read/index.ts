@@ -1,27 +1,31 @@
 // builtin/read/index.ts
-// read 工具核心调度层：参数校验 → 路径安全 → 大文件策略 → Dedup → 类型分派 → 结果聚合。
+// read 工具核心调度层：参数校验 → 路径安全（filesys roots）→ 大文件策略 → Dedup → 类型分派 → 结果聚合。
 // 元数据（name/description/icon/annotations/inputSchema/config）见同目录 tool.json。
-// handlers/ 子目录按文件类型分派，shared/ 子目录提供检测/去重/minified/流式读取等公共能力。
+// handlers/ 子目录按文件类型分派，shared/ 子目录提供检测/minified/流式读取等公共能力。
+//
+// filesys 统一化改造：
+//   - 路径解析走 FilesysService.resolve（roots 机制，默认等价旧版 resolveWithinCwd）
+//   - sha256/编码分类/内容读取合并走 filesys.readFile（缓存命中零读盘；未命中一次读盘全派生，
+//     旧实现同一文件读 3 次盘：classify 全量读 + handler 读 + sha 再读）
+//   - Dedup 并入 filesys 缓存条目的 lastReadAt（旧 shared/dedup.ts 删除）
 //
 // 路径（read/index.ts → src/）：
-//   ../../../../utils/fs    — resolveWithinCwd
-//   ../../types             — ToolContext, ToolResult, ToolResultContent
-//   ./shared/detector       — detectFileType
-//   ./shared/dedup          — checkDedup
-//   ./handlers/*            — readText/readImage/readPdf/readOffice/readNotebook
+//   ../../../../core/types    — ServiceNames
+//   ../../types               — ToolContext, ToolResult, ToolResultContent
+//   ../../../contracts        — FileHistoryService, FilesysService
+//   ./shared/detector         — detectFileType
+//   ./handlers/*              — readText/readImage/readPdf/readOffice/readNotebook
 
-import { existsSync, statSync, readFileSync, type Stats } from 'node:fs';
-import { createHash } from 'node:crypto';
-import { resolveWithinCwd } from '../../../../utils/fs';
+import { existsSync, statSync, type Stats } from 'node:fs';
 import { ServiceNames } from '../../../../core/types';
+import { t } from '../../../../core/i18n';
 import { detectFileType, type FileType } from './shared/detector';
-import { checkDedup } from './shared/dedup';
-import { readText, type TextParams } from './handlers/text';
+import { readText, type TextParams, type CachedFileEntity } from './handlers/text';
 import { readImage } from './handlers/image';
 import { readPdf } from './handlers/pdf';
 import { readOffice } from './handlers/office';
 import { readNotebook } from './handlers/notebook';
-import type { FileHistoryService } from '../../../contracts';
+import type { FileHistoryService, FilesysService } from '../../../contracts';
 import type { ToolContext, ToolResult, ToolResultContent } from '../../types';
 
 /** read 工具参数结构 */
@@ -53,7 +57,11 @@ export default {
       return errorResult('path or paths is required');
     }
 
-    // 获取 FileHistoryService（可能未加载，返回 null）
+    // filesys 服务必须可用（统一入口，不静默降级回旧路径）
+    const filesys = ctx.services.tryResolve<FilesysService>(ServiceNames.FILESYS);
+    if (!filesys) {
+      return errorResult(t('filesys.serviceUnavailable'));
+    }
     const fileHistory = ctx.services.tryResolve<FileHistoryService>(ServiceNames.FILE_HISTORY);
 
     // 2. 逐文件处理（批量时聚合结果）
@@ -61,33 +69,9 @@ export default {
     const metadatas: Record<string, unknown>[] = [];
 
     for (const rawPath of targets) {
-      const result = await processSingleFile(rawPath, p, ctx.cwd);
-
-      // 读取成功后，注册到 read ledger（支持 write/edit 的 read-before-overwrite 校验）
-      let sha: string | null = null;
-      if (!result.isError) {
-        const absPath = resolveWithinCwd(rawPath, ctx.cwd);
-        if (absPath) {
-          try {
-            // 计算文件内容 sha256 并 markRead（文件已在 OS cache，开销小）
-            const buf = readFileSync(absPath);
-            sha = createHash('sha256').update(buf).digest('hex');
-            if (fileHistory) {
-              fileHistory.markRead(ctx.sessionId, absPath, sha);
-            }
-          } catch {
-            // 读取失败忽略（不影响 read 工具主流程）
-          }
-        }
-      }
-
+      const result = await processSingleFile(rawPath, p, ctx, filesys, fileHistory);
       contents.push(...result.content);
-      // 暴露 sha256 到返回 metadata，供 edit 工具 expectHash 乐观锁使用
-      const md = result.metadata ?? {};
-      if (sha !== null) {
-        (md as Record<string, unknown>).sha256 = sha;
-      }
-      metadatas.push(md);
+      metadatas.push(result.metadata ?? {});
     }
 
     // 3. 单文件直接返回，多文件拼接
@@ -104,56 +88,82 @@ function resolveTargets(p: ReadParams): string[] | null {
   return null;
 }
 
-/** 处理单个文件：安全检测 → 大文件策略 → Dedup → 类型分派 */
+/** 处理单个文件：roots 校验 → 大文件策略 → Dedup → 一次读盘（filesys 缓存）→ 类型分派 */
 async function processSingleFile(
   rawPath: string,
   params: ReadParams,
-  cwd: string,
+  ctx: ToolContext,
+  filesys: FilesysService,
+  fileHistory: FileHistoryService | null,
 ): Promise<ToolResult> {
-  // 路径越权检测
-  const absPath = resolveWithinCwd(rawPath, cwd);
-  if (!absPath) {
-    return errorResult(`path "${rawPath}" escapes working directory`);
+  // 路径越权检测（roots 机制；默认配置等价旧版 cwd 限制）
+  const path = filesys.resolve(rawPath, ctx.cwd);
+  if (!path) {
+    return errorResult(t('fs.pathOutsideRoots', {
+      path: rawPath,
+      roots: filesys.listRoots().length > 0 ? ` + ${filesys.listRoots().join(', ')}` : '',
+    }));
   }
 
   // 存在性检测
-  if (!existsSync(absPath)) {
-    return errorResult(`file not found: ${absPath}`);
+  if (!existsSync(path)) {
+    return errorResult(`file not found: ${path}`);
   }
 
-  const stat = statSync(absPath);
+  const stat = statSync(path);
 
   // 目录拒绝
   if (stat.isDirectory()) {
-    return errorResult(`path is a directory, not a file: ${absPath}`);
+    return errorResult(`path is a directory, not a file: ${path}`);
   }
 
   // 大文件策略：>50MB 返回错误 + 提示
   if (stat.size > MAX_FILE_SIZE) {
-    return largeFileResult(absPath, stat.size);
+    return largeFileResult(path, stat.size);
   }
 
-  // Dedup 去重：相同 mtime 的文件不重复全量返回
-  const dedup = checkDedup(absPath, stat.mtimeMs);
-  if (dedup.unchanged) {
+  // Dedup 去重：自上次 read 后未变（mtime/size 校验）则不重复全量返回
+  if (filesys.isUnchangedSinceRead(path)) {
     return {
-      content: [{ type: 'text', text: `File unchanged since last read: ${absPath}` }],
-      metadata: { path: absPath, unchanged: true, sizeBytes: stat.size },
+      content: [{ type: 'text', text: `File unchanged since last read: ${path}` }],
+      metadata: { path, unchanged: true, sizeBytes: stat.size },
     };
   }
 
-  // 类型分派
-  const fileType = detectFileType(absPath);
-  const result = await dispatchByType(absPath, fileType, params, stat);
+  // 一次读盘全派生：rawBuffer / sha256 / 编码分类（缓存命中则零 I/O）
+  const entity = filesys.readFile(path);
+  if (!entity) {
+    return errorResult(`file not found: ${path}`);
+  }
 
-  // 合并元信息
+  // 注册 read ledger（read-before-overwrite 校验），sha256 来自 filesys 统一哈希（含 BOM 原始字节）
+  if (fileHistory) {
+    try {
+      fileHistory.markRead(ctx.sessionId, path, entity.sha256);
+    } catch {
+      // 不影响 read 工具主流程
+    }
+  }
+
+  // 类型分派（text 场景复用已读 buffer，不再二次读盘）
+  const fileType = detectFileType(path);
+  const result = await dispatchByType(path, fileType, params, stat, {
+    rawBuffer: entity.rawBuffer,
+    kind: entity.kind,
+  });
+
+  // 标记"刚被 read"（dedup 语义，filesys 缓存条目 lastReadAt）
+  filesys.touchRead(path);
+
+  // 合并元信息（sha256 暴露给 edit 工具 expectHash 乐观锁）
   return {
     ...result,
     metadata: {
-      path: absPath,
+      path,
       type: fileType,
       sizeBytes: stat.size,
       mtimeMs: stat.mtimeMs,
+      sha256: entity.sha256,
       ...result.metadata,
     },
   };
@@ -165,6 +175,7 @@ async function dispatchByType(
   fileType: FileType,
   params: ReadParams,
   stat: Stats,
+  cached: CachedFileEntity,
 ): Promise<ToolResult> {
   switch (fileType) {
     case 'image':
@@ -181,7 +192,7 @@ async function dispatchByType(
         mode: params.mode,
         offset: params.offset,
         limit: params.limit,
-      } satisfies TextParams, stat);
+      } satisfies TextParams, stat, cached);
   }
 }
 

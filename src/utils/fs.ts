@@ -5,6 +5,7 @@ import { t } from '../core/i18n';
 import { resolve, normalize, isAbsolute, relative, sep, parse, dirname, join } from 'node:path';
 import { existsSync, statSync, readFileSync, realpathSync } from 'node:fs';
 import { isValidUtf8, stripBom } from './encoding';
+import { readHeadBytes } from './fs-atomic';
 
 /**
  * 解析工作目录下的路径：
@@ -68,11 +69,18 @@ export type FileContentKind = 'utf8' | 'legacy-text' | 'binary';
  * 3. 无 NUL 的非 UTF-8 才有资格做 GBK 回退
  */
 export function classifyFileContent(path: string, sampleSize = 8192): FileContentKind {
-  const buf = readFileSync(path); // Buffer
-  const sample = buf.length > sampleSize ? buf.subarray(0, sampleSize) : buf;
+  // head 采样：避免为分类而全量读取大文件（50MB 文件旧实现整读一次）
+  return classifyBufferHead(readHeadBytes(path, sampleSize));
+}
+
+/**
+ * 对文件头部采样 Buffer 做内容分类（纯函数，统一 read/grep/glob 的二进制判定）。
+ * 与 classifyFileContent 共用同一套判定逻辑，消除"两套二进制检测"的割裂。
+ */
+export function classifyBufferHead(sample: Buffer): FileContentKind {
   if (sample.length === 0) return 'utf8';
   if (sample.includes(0)) return 'binary';
-  return isValidUtf8(sample as Buffer) ? 'utf8' : 'legacy-text';
+  return isValidUtf8(sample) ? 'utf8' : 'legacy-text';
 }
 
 /**

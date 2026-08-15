@@ -4,10 +4,16 @@
 // 路径：read/handlers/text.ts → src/utils = ../../../../../utils
 
 import { readFileSync, type Stats } from 'node:fs';
-import { classifyFileContent } from '../../../../../utils/fs';
+import { classifyFileContent, type FileContentKind } from '../../../../../utils/fs';
 import { decodeShellOutput, stripBom } from '../../../../../utils/encoding';
 import { detectMinified, truncateMinifiedLines } from '../shared/minified';
 import type { ToolResult } from '../../../types';
+
+/** 已由 filesys.readFile 读出的派生数据（复用免二次读盘） */
+export interface CachedFileEntity {
+  rawBuffer: Buffer;
+  kind: FileContentKind;
+}
 
 /** text handler 需要的参数子集 */
 export interface TextParams {
@@ -28,11 +34,12 @@ export async function readText(
   path: string,
   params: TextParams,
   _stat: Stats,
+  cached?: CachedFileEntity,
 ): Promise<ToolResult> {
   // 1. 内容分类（detector 未识别的类型会回退到这里）
   // 含 NUL 字节 → 真二进制，直接拒绝，禁止 GBK 回退
   // （旧逻辑对二进制做 GBK 回退，OLE/ZIP 随机解出汉字被误判为 GBK 文本 → 乱码）
-  const kind = classifyFileContent(path);
+  const kind = cached?.kind ?? classifyFileContent(path);
   if (kind === 'binary') {
     return {
       content: [{
@@ -44,7 +51,8 @@ export async function readText(
   }
 
   // 2. 读取并解码：utf8 正常解码；legacy-text（无 NUL 的非 UTF-8，如 GBK）回退解码
-  const buf = readFileSync(path);
+  // cached 由 filesys.readFile 预读（同一文件一次读盘全派生），未提供时自行读盘
+  const buf = cached?.rawBuffer ?? readFileSync(path);
   if (kind === 'legacy-text') {
     try {
       const decoded = decodeShellOutput(buf);

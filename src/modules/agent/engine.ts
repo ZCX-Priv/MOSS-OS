@@ -16,7 +16,8 @@ import type {
   TruncateResult,
   TruncateRestoreResult,
 } from '../contracts';
-import type { LLMRouter, ToolRegistry, MCPManager, FileHistoryService } from '../contracts';
+import type { LLMRouter, ToolRegistry, MCPManager, FileHistoryService, FilesysService } from '../contracts';
+import type { FileChangeEvent } from '../filesys/types';
 import type { ConfigService, EventBus, Logger, ServiceRegistry, Environment, ApiConfig } from '../../core/types';
 import { ServiceNames } from '../../core/types';
 import type { AskOutcome, AskPayload, ToolResult } from '../tools/types';
@@ -34,6 +35,8 @@ export class AgentEngineImpl implements AgentEngine {
   private readonly eventBus: EventBus;
   private readonly logger: Logger;
   private readonly env: Environment;
+  /** filesys 事件订阅取消函数（destroy 时调用） */
+  private unsubFilesys: (() => void) | null = null;
   /** pending ask 调用：toolCallId -> { resolve, reject, timer?, sessionId, payload } */
   private readonly pendingAsks = new Map<string, {
     resolve: (outcome: AskOutcome) => void;
@@ -66,6 +69,86 @@ export class AgentEngineImpl implements AgentEngine {
     this.env = deps.env;
     this.sessions = new SessionStore(deps.env, deps.logger);
     this.tasks = new TaskStore(deps.env, deps.logger);
+
+    // 订阅 filesys 变更事件总线：file-created/edited/deleted/moved/shell-changed 统一转 WS，
+    // delete/move/copy 的路径进 contextFiles（修复旧版无任何通知的割裂）。
+    // filesys 模块在 kernel 中先于 agent 注册（见 core/kernel.ts 模块顺序）。
+    const filesys = deps.services.tryResolve<FilesysService>(ServiceNames.FILESYS);
+    if (filesys) {
+      this.unsubFilesys = filesys.onFileChange((e) => this.onFilesysChange(e));
+    }
+  }
+
+  /** 释放资源（模块 destroy 时调用）：取消 filesys 事件订阅 */
+  dispose(): void {
+    if (this.unsubFilesys) {
+      this.unsubFilesys();
+      this.unsubFilesys = null;
+    }
+  }
+
+  /** filesys 变更事件 → WS 推送 + contextFiles 轨迹 */
+  private onFilesysChange(e: FileChangeEvent): void {
+    if (!e.sessionId) return;
+    const server = this.services.tryResolve<{
+      sendToSession: (sid: string, msg: unknown) => void;
+    }>(ServiceNames.SERVER_INSTANCE);
+    if (!server) return;
+
+    try {
+      // 变更路径进 contextFiles（moved 记目标路径；delete/move/copy 首次纳入轨迹）
+      const reason = e.source as ContextFile['reason'];
+      if (reason === 'write' || reason === 'edit' || reason === 'delete' || reason === 'move' || reason === 'copy') {
+        this.sessions.addContextFile(e.sessionId, { path: e.destPath ?? e.absPath, reason });
+        const files = this.sessions.getContextFiles(e.sessionId);
+        const totalTokens = this.sessions.estimateContextTokens(e.sessionId);
+        const maxTokens = this.config.getAppConfig().agent.maxTokens * 4;
+        server.sendToSession(e.sessionId, {
+          type: 'context-updated',
+          sessionId: e.sessionId,
+          payload: { files, totalTokens, maxTokens },
+        });
+      }
+
+      switch (e.kind) {
+        case 'created':
+          server.sendToSession(e.sessionId, {
+            type: 'file-created', sessionId: e.sessionId,
+            payload: { path: e.absPath, source: e.source },
+          });
+          break;
+        case 'edited':
+          server.sendToSession(e.sessionId, {
+            type: 'file-edited', sessionId: e.sessionId,
+            payload: { path: e.absPath, source: e.source },
+          });
+          break;
+        case 'deleted':
+          server.sendToSession(e.sessionId, {
+            type: 'file-deleted', sessionId: e.sessionId,
+            payload: { path: e.absPath, source: e.source },
+          });
+          break;
+        case 'moved':
+          server.sendToSession(e.sessionId, {
+            type: 'file-moved', sessionId: e.sessionId,
+            payload: { path: e.absPath, destPath: e.destPath, source: e.source },
+          });
+          break;
+        case 'shell-changed':
+          server.sendToSession(e.sessionId, {
+            type: 'shell-changed', sessionId: e.sessionId,
+            payload: { report: e.report },
+          });
+          break;
+      }
+    } catch (err) {
+      this.logger.warn(t('agent.notifySideEffectsFailed'), {
+        kind: e.kind,
+        path: e.absPath,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   async run(input: AgentRunInput): Promise<AgentRunResult> {
@@ -696,9 +779,9 @@ export class AgentEngineImpl implements AgentEngine {
   /**
    * 工具执行后的副作用 WS 推送（阶段5.1）：
    * - todo 工具：推送 todo-updated（会话级存储，读该 session 的文件）
-   * - read/edit/write/grep/glob：更新 contextFiles 轨迹并推送 context-updated
-   * - write：额外推送 file-created
-   * - edit：额外推送 file-edited
+   * - read/grep/glob：更新 contextFiles 轨迹并推送 context-updated（只读访问，非变更）
+   * - write/edit/delete/move/copy 的 file-* 事件与 contextFiles 由 filesys 变更事件总线驱动
+   *   （onFilesysChange，避免双发且天然覆盖 delete/move 等旧版无通知的工具）
    * server 模块未加载时静默跳过，不阻断工具执行。
    */
   private notifyToolSideEffects(toolName: string, args: unknown, sessionId: string, toolCallId: string): void {
@@ -724,10 +807,9 @@ export class AgentEngineImpl implements AgentEngine {
           break;
         }
         case 'read':
-        case 'edit':
-        case 'write':
         case 'grep':
         case 'glob': {
+          // 只读访问：仅更新 contextFiles 轨迹（file-* 事件由 filesys 变更事件总线驱动，见 onFilesysChange）
           const path = (args as { path?: string } | null)?.path;
           if (!path) break;
           const file: ContextFile = { path, reason: toolName as ContextFile['reason'] };
@@ -740,19 +822,6 @@ export class AgentEngineImpl implements AgentEngine {
             sessionId,
             payload: { files, totalTokens, maxTokens },
           });
-          if (toolName === 'write') {
-            server.sendToSession(sessionId, {
-              type: 'file-created',
-              sessionId,
-              payload: { path },
-            });
-          } else if (toolName === 'edit') {
-            server.sendToSession(sessionId, {
-              type: 'file-edited',
-              sessionId,
-              payload: { path },
-            });
-          }
           break;
         }
         default:
