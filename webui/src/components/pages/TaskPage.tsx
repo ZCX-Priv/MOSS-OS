@@ -75,6 +75,9 @@ import type { TaskMessage, TodoItem, SidebarTab } from '../../types/api';
 const EMPTY_MESSAGES: TaskMessage[] = [];
 const EMPTY_TODOS: TodoItem[] = [];
 
+// 单条消息正文渲染上限：超长内容（如 base64/大文件摘录）截断渲染，防止一次性布局卡死滚动
+const MAX_RENDER_CHARS = 6000;
+
 // 根据当前小时返回问候语 i18n key
 function getGreetingKey(): string {
   const h = new Date().getHours();
@@ -128,6 +131,11 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
   // ===== 消息撤回（截断）状态机 =====
   /** 待确认的撤回目标（用户消息） */
   const [truncateTarget, setTruncateTarget] = useState<TaskMessage | null>(null);
+  // ===== 滚动控制 =====
+  /** 滚动容器 ref（.task-scroll-area） */
+  const scrollRef = useRef<HTMLDivElement>(null);
+  /** 本会话是否已执行过首次滚底（历史加载完成后强制定位最新消息；切会话重置） */
+  const hasAutoScrolledRef = useRef(false);
   /** 预览加载中 */
   const [truncateLoading, setTruncateLoading] = useState(false);
   /** 预览结果 */
@@ -154,25 +162,28 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
   const hasTerminalTab = sidebarTabs.some((tab) => tab.type === 'terminal');
   const allTabTypesOpen = hasSummaryTab && hasTerminalTab;
 
-  // 挂载时加载会话历史（若 store 中无消息）+ todos + context
+  // 挂载/切换会话时加载历史 + todos + context。
+  // 历史总是拉取（切回旧会话时同步后台新产生的消息）；仅当非流式生成中才整体替换，
+  // 防止覆盖流式 UI 状态。store 已有消息时先显示旧值，拉到后替换，无闪烁。
   useEffect(() => {
     if (!taskId) return; // 空 taskId 守卫：避免污染 store 的 activeSessionId/activeTaskId
-    if (messages.length === 0) {
-      void api
-        .getSessionHistory(taskId)
-        .then((resp) => {
-          if (resp.messages && resp.messages.length > 0) {
+    hasAutoScrolledRef.current = false; // 会话切换：重置首次滚底标记
+    void api
+      .getSessionHistory(taskId)
+      .then((resp) => {
+        if (resp.messages && resp.messages.length > 0) {
+          if (!useStore.getState().generatingBySession[taskId]) {
             useStore.getState().setMessages(taskId, resp.messages);
           }
-          // 刷新后恢复 skill 模式 Badge（greet 不重复注入）
-          if (resp.activeSkill) {
-            useStore.getState().setActiveSkill(taskId, { name: resp.activeSkill.name });
-          }
-        })
-        .catch(() => {
-          // 后端未就绪或会话不存在，静默
-        });
-    }
+        }
+        // 刷新后恢复 skill 模式 Badge（greet 不重复注入）
+        if (resp.activeSkill) {
+          useStore.getState().setActiveSkill(taskId, { name: resp.activeSkill.name });
+        }
+      })
+      .catch(() => {
+        // 后端未就绪或会话不存在，静默
+      });
     // 加载 todos（刷新后侧边栏 todo 卡片恢复）
     void api
       .listTodos(taskId)
@@ -209,6 +220,26 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [taskId]);
+
+  // ===== 自动滚动 =====
+  // 首次（历史加载完成）：强制定位到最新消息；此后仅在用户已处于底部附近时跟随滚底
+  // （流式追加/新消息），用户上翻查看历史时不打扰。
+  const lastMessage = messages[messages.length - 1];
+  const lastContentLength = lastMessage?.content.length ?? 0;
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || messages.length === 0) return;
+    if (!hasAutoScrolledRef.current) {
+      el.scrollTop = el.scrollHeight;
+      hasAutoScrolledRef.current = true;
+      return;
+    }
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 160;
+    if (nearBottom) {
+      el.scrollTop = el.scrollHeight;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages.length, lastContentLength, isGenerating]);
 
   const contextFiles = context?.files ?? [];
   const totalTokens = context?.totalTokens ?? 0;
@@ -453,7 +484,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
         </div>
 
         {/* Task Messages */}
-        <div className="min-h-0 flex-1 overflow-y-auto task-scroll-area">
+        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto task-scroll-area">
           <div className="flex min-h-full flex-col gap-4 p-4">
             {messages.length === 0 && !isGenerating && (
               <div className="flex flex-1 flex-col items-center justify-center gap-6">
@@ -464,15 +495,16 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
               </div>
             )}
             {messages.map((msg) => (
-              <MessageBubble
-                key={msg.id}
-                message={msg}
-                todos={todos}
-                toolIconMap={toolIconMap}
-                truncateDisabled={isGenerating}
-                onTruncate={handleTruncateClick}
-                onCopy={handleCopyMessage}
-              />
+              <div className="message-cv" key={msg.id}>
+                <MessageBubble
+                  message={msg}
+                  todos={todos}
+                  toolIconMap={toolIconMap}
+                  truncateDisabled={isGenerating}
+                  onTruncate={handleTruncateClick}
+                  onCopy={handleCopyMessage}
+                />
+              </div>
             ))}
             {isGenerating && messages[messages.length - 1]?.role !== 'assistant' && (
               <div className="flex items-center gap-2 text-muted-foreground">
@@ -726,6 +758,15 @@ interface MessageBubbleProps {
 }
 const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap, truncateDisabled, onTruncate, onCopy }: MessageBubbleProps) {
   const { t } = useTranslation();
+  // 超长正文截断渲染（防止单条巨型文本布局卡死）；展开后完整渲染。
+  // 流式生成中超限时显示尾部（正在生成的内容在末尾），结束后恢复头部截断。
+  const [expanded, setExpanded] = useState(false);
+  const overLimit = message.content.length > MAX_RENDER_CHARS;
+  const displayContent = overLimit && !expanded
+    ? message.streaming
+      ? '…' + message.content.slice(-MAX_RENDER_CHARS)
+      : message.content.slice(0, MAX_RENDER_CHARS) + '…'
+    : message.content;
 
   // skill-mode greet：居中系统提示气泡
   if (message.role === 'system') {
@@ -743,9 +784,19 @@ const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap,
   if (message.role === 'user') {
     return (
       <div className="group flex flex-col items-end gap-1">
-        <div className="max-w-[80%] rounded-2xl border border-border bg-indigo-100 px-3 py-2 text-sm text-foreground shadow-sm dark:bg-blue-600 dark:text-white dark:shadow-[0_2px_14px_rgba(37,99,235,0.35)]">
-          {message.content}
-        </div>
+        <div className="max-w-[80%] rounded-2xl border border-border bg-indigo-100 px-3 py-2 text-sm text-foreground shadow-sm break-words dark:bg-blue-600 dark:text-white dark:shadow-[0_2px_14px_rgba(37,99,235,0.35)]">
+        {displayContent}
+      </div>
+      {overLimit && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="max-w-[80%] self-end rounded-md px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          title={t('task.messageTruncated')}
+        >
+          {expanded ? t('task.todoCollapse') : t('task.messageExpand')}
+        </button>
+      )}
         {/* 操作行：复制 + 撤回（hover 显示；触屏常显；生成中撤回禁用） */}
         <div className="flex items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100 max-md:opacity-100">
           <button
@@ -794,15 +845,26 @@ const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap,
       )}
       {/* 正文 */}
       {message.content && !message.isError && (
-        <div className="whitespace-pre-wrap text-sm text-foreground">
-          {message.content}
+        <div className="whitespace-pre-wrap break-words text-sm text-foreground">
+          {displayContent}
           {message.streaming && (
             <Loader2 className="ml-1 inline size-3 animate-spin" />
           )}
         </div>
       )}
-      {/* todo 工具调用 → 在任务流中渲染 TodoProgressCard（像其他工具一样在调用位置显示） */}
-      {message.toolCalls?.some((tc) => tc.name === 'todo') && todos.length > 0 && (
+      {overLimit && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="self-start rounded-md px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          title={t('task.messageTruncated')}
+        >
+          {expanded ? t('task.todoCollapse') : t('task.messageExpand')}
+        </button>
+      )}
+      {/* todo 工具调用 → 在任务流中渲染 TodoProgressCard（像其他工具一样在调用位置显示）。
+          渲染条件基于消息自身快照（?? 回落到 store）：store 被清空不牵连历史卡片。 */}
+      {message.toolCalls?.some((tc) => tc.name === 'todo') && (message.todoSnapshot ?? todos).length > 0 && (
         <TodoProgressCard todos={message.todoSnapshot ?? todos} variant="inline" />
       )}
       {/* ask 工具调用 → 渲染为问答卡片（仅已完成、有结果时渲染；进行中的由底部 AskPromptCard 处理） */}

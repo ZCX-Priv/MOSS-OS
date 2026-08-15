@@ -1,4 +1,4 @@
-// src/plugins/tools/registry.ts
+// src/modules/tools/registry.ts
 // 工具注册表：注册、查询、执行工具。
 
 import { t } from '../../core/i18n';

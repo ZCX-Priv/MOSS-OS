@@ -22,7 +22,6 @@ import type {
   AgentItem,
   AutomationItem,
   AutomationRun,
-  PluginItem,
   SkillItem,
   SpecItem,
   ToolItem,
@@ -87,8 +86,7 @@ interface UIState {
   automations: AutomationItem[];
   automationHistory: Record<string, AutomationRun[]>;
 
-  // --- 插件 / Skills / Specs ---
-  plugins: PluginItem[];
+  // --- Skills / Specs ---
   skills: SkillItem[];
   specs: SpecItem[];
 
@@ -210,9 +208,7 @@ interface UIActions {
   addAutomationRun: (id: string, run: AutomationRun) => void;
   updateAutomationRun: (id: string, runId: string, patch: Partial<AutomationRun>) => void;
 
-  // 插件 / Skills / Specs
-  setPlugins: (p: PluginItem[]) => void;
-  updatePlugin: (id: string, patch: Partial<PluginItem>) => void;
+  // Skills / Specs
   setSkills: (s: SkillItem[]) => void;
   setSpecs: (s: SpecItem[]) => void;
 
@@ -338,8 +334,7 @@ export const useStore = create<Store>((set) => ({
   automations: [],
   automationHistory: {},
 
-  // --- 插件 / Skills / Specs ---
-  plugins: [],
+  // --- Skills / Specs ---
   skills: [],
   specs: [],
 
@@ -382,10 +377,18 @@ export const useStore = create<Store>((set) => ({
     set((state) => {
       const { [id]: _omit, ...restMessages } = state.messagesBySession;
       const { [id]: _omitGen, ...restGen } = state.generatingBySession;
+      const { [id]: _omitTodos, ...restTodos } = state.todosBySession;
+      const { [id]: _omitCtx, ...restCtx } = state.contextBySession;
+      const { [id]: _omitSkill, ...restSkill } = state.activeSkillBySession;
+      const { [id]: _omitBackup, ...restBackups } = state.truncateBackups;
       return {
         sessions: state.sessions.filter((s) => s.id !== id),
         messagesBySession: restMessages,
         generatingBySession: restGen,
+        todosBySession: restTodos,
+        contextBySession: restCtx,
+        activeSkillBySession: restSkill,
+        truncateBackups: restBackups,
         activeSessionId: state.activeSessionId === id ? null : state.activeSessionId,
       };
     }),
@@ -553,12 +556,7 @@ export const useStore = create<Store>((set) => ({
       },
     })),
 
-  // --- Actions: 插件 / Skills / Specs ---
-  setPlugins: (plugins) => set({ plugins }),
-  updatePlugin: (id, patch) =>
-    set((state) => ({
-      plugins: state.plugins.map((p) => (p.id === id ? { ...p, ...patch } : p)),
-    })),
+  // --- Actions: Skills / Specs ---
   setSkills: (skills) => set({ skills }),
   setSpecs: (specs) => set({ specs }),
 

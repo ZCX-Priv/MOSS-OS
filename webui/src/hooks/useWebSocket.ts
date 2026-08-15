@@ -19,7 +19,6 @@
 //    - task.created / task.updated：更新 tasks
 //    - automation.started / automation.finished：更新 history
 //    - config.changed：标记需刷新配置（由 useConfig 订阅 store 触发重拉）
-//    - extension.changed：标记需刷新插件（由 usePlugins 订阅触发重拉）
 
 import { useEffect } from 'react';
 import { toast } from 'sonner';
@@ -235,7 +234,20 @@ export function useWebSocket(): void {
         const event = msg.payload as Extract<AgentEvent, { type: 'tool-call-executing' }>;
         if (!sessionId) break;
         const pending = pendingAssistant.get(sessionId);
-        if (!pending?.toolCalls) break;
+        if (!pending?.toolCalls) {
+          // 回退：流式中刷新后 pending 丢失，该轮 assistant 消息已由历史接口恢复——
+          // 定位含此 toolCallId 的消息，直接标记 executing（不回填 pendingAssistant，
+          // 后续新一轮事件由 ensurePendingAssistant 正常新建）
+          const target = findMessageByToolCallId(sessionId, event.toolCallId);
+          if (target?.toolCalls) {
+            s.updateMessage(sessionId, target.id, {
+              toolCalls: target.toolCalls.map((tc) =>
+                tc.id === event.toolCallId ? { ...tc, status: 'executing' as const } : tc,
+              ),
+            });
+          }
+          break;
+        }
         const updatedToolCalls = pending.toolCalls.map((tc) =>
           tc.id === event.toolCallId ? { ...tc, status: 'executing' as const } : tc,
         );
@@ -248,7 +260,25 @@ export function useWebSocket(): void {
         const event = msg.payload as Extract<AgentEvent, { type: 'tool-call-end' }>;
         if (!sessionId) break;
         const pending = pendingAssistant.get(sessionId);
-        if (!pending?.toolCalls) break;
+        if (!pending?.toolCalls) {
+          // 回退：同 tool-call-executing——把结果写到已恢复的历史消息上，
+          // 避免流式中刷新导致该工具结果永远缺失（直到再次刷新）
+          const target = findMessageByToolCallId(sessionId, event.toolCallId);
+          if (target?.toolCalls) {
+            s.updateMessage(sessionId, target.id, {
+              toolCalls: target.toolCalls.map((tc) =>
+                tc.id === event.toolCallId
+                  ? { ...tc, name: event.toolName, status: 'done' as const }
+                  : tc,
+              ),
+              toolResults: [
+                ...(target.toolResults ?? []),
+                { toolCallId: event.toolCallId, result: event.result },
+              ],
+            });
+          }
+          break;
+        }
         const updatedToolCalls = pending.toolCalls.map((tc) =>
           tc.id === event.toolCallId
             ? { ...tc, name: event.toolName, status: 'done' as const }
@@ -469,13 +499,15 @@ export function useWebSocket(): void {
       case 'todo-updated': {
         if (!sessionId) break;
         const payload = (msg.payload ?? {}) as { todos?: TodoItem[]; toolCallId?: string };
-        if (payload.todos) {
+        if (Array.isArray(payload.todos)) {
           useStore.getState().setTodos(sessionId, payload.todos);
-          // 回填快照到发起这次 todo 调用的 message，使任务流内卡片按调用时刻渲染
+          // 回填快照到发起这次 todo 调用的 message，使任务流内卡片按调用时刻渲染。
+          // 快照仅首次写入（undefined 时冻结）：后续变更（含清空为 []）不覆盖，
+          // 防止模型清空 todos 后历史消息的 todo 卡片全部消失。
           if (payload.toolCallId) {
             const msgs = useStore.getState().messagesBySession[sessionId] ?? [];
             const target = msgs.find((m) => m.toolCalls?.some((tc) => tc.id === payload.toolCallId));
-            if (target) {
+            if (target && target.todoSnapshot === undefined) {
               useStore.getState().updateMessage(sessionId, target.id, { todoSnapshot: payload.todos });
             }
           }
@@ -550,15 +582,23 @@ export function useWebSocket(): void {
         // 此处不重复处理，避免与 useConfig 的 loadConfig 竞态。
         break;
       }
-      case 'extension.changed': {
-        // 扩展状态已变更；具体重拉由 usePlugins hook 独立订阅 wsClient.onMessage 触发。
-        break;
-      }
 
       default:
         // 未知消息类型忽略
         break;
     }
+  }
+
+  /** pending 丢失（流式中刷新）时回退：定位 store 中最后一条含该 toolCallId 的 assistant 消息 */
+  function findMessageByToolCallId(sid: string, toolCallId: string): TaskMessage | null {
+    const msgs = useStore.getState().messagesBySession[sid] ?? [];
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const m = msgs[i];
+      if (m.role === 'assistant' && m.toolCalls?.some((tc) => tc.id === toolCallId)) {
+        return m;
+      }
+    }
+    return null;
   }
 
   /** 确保当前 session 存在一条流式 assistant 消息，返回该消息 */

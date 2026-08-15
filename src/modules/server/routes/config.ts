@@ -1,4 +1,4 @@
-// src/plugins/server/routes/config.ts
+// src/modules/server/routes/config.ts
 // GET /api/config, PUT /api/config, GET /api/api-config, PUT /api/api-config
 
 import type { HttpRequest, HttpResponse, RouteHandler } from '../types';

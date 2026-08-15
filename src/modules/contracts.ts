@@ -1,7 +1,7 @@
-// src/plugins/contracts.ts
-// 跨插件服务接口契约。
-// 各业务插件实现这些接口，通过 ServiceRegistry 注册；其他插件按需 resolve。
-// 这样避免插件之间的直接依赖，所有跨插件通信都通过接口契约。
+// src/modules/contracts.ts
+// 跨模块服务接口契约。
+// 各业务模块实现这些接口，通过 ServiceRegistry 注册；其他模块按需 resolve。
+// 这样避免模块之间的直接依赖，所有跨模块通信都通过接口契约。
 
 import type {
   UnifiedRequest,
@@ -172,6 +172,10 @@ export interface AgentMessage {
   thinking?: string;
   /** 工具名（role=tool 时，部分 provider 用 name 区分工具来源） */
   name?: string;
+  /** 工具结果是否为错误（role=tool 时；持久化用于前端刷新恢复错误样式） */
+  isError?: boolean;
+  /** 工具结果元信息（role=tool 时；如 command/cwd/exitCode/structuredContent/resources） */
+  metadata?: Record<string, unknown>;
   /** 该 assistant 消息内 todo 工具调用完成时的 todos 快照（用于前端按调用时刻渲染） */
   todoSnapshot?: TodoItem[];
   /** 消息创建时间（ISO 8601；旧数据可能缺失）。消息撤回的时间区间定位依据 */
@@ -302,7 +306,7 @@ export interface ServerInstanceLike {
 }
 
 // ============================================================================
-// File History Service（由 file-history 模组注册，ServiceNames.FILE_HISTORY）
+// File History Service（由 file-history 模块注册，ServiceNames.FILE_HISTORY）
 // 三层文件历史架构：Track Edit（改前备份）+ Snapshot（每轮快照）+ JSONL 持久化
 // ============================================================================
 

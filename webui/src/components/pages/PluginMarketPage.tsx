@@ -1,13 +1,12 @@
 // UI/src/components/pages/PluginMarketPage.tsx
-// 插件中心：五 tab 路由化
-//   /plugins（插件）| /plugins/skills（技能）| /plugins/tools（工具）
-//   | /plugins/mcp（MCP 服务器）| /plugins/specs（Spec 规范）
+// 插件库：两 tab 路由化
+//   /plugins/skills（技能，默认）| /plugins/mcp（MCP 服务器）
 
 import { useState, useCallback } from 'react';
 import { toast } from 'sonner';
 import {
-  Search, Puzzle, WandSparkles, Wrench, Cable, FileCode,
-  Loader2, Plus, RefreshCw, Trash2, Pencil, PlugZap, Unplug,
+  Search, WandSparkles, Wrench, Cable,
+  Loader2, Plus, RefreshCw, Trash2, PlugZap, Unplug,
   BookOpen, ListChecks, Eye, Lightbulb, Sparkles, ShieldAlert, FlaskConical,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -18,7 +17,6 @@ import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
@@ -26,14 +24,10 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import { usePlugins } from '../../hooks/usePlugins';
 import { useSkills } from '../../hooks/useSkills';
-import { useTools } from '../../hooks/useTools';
 import { useMcp } from '../../hooks/useMcp';
-import { useSpecs } from '../../hooks/useSpecs';
 import { api } from '../../api/http';
-import { TOOL_ICON_MAP } from '../../lib/tool-icons';
-import type { McpServer, SpecDetail } from '../../types/api';
+import type { McpServer } from '../../types/api';
 
 // Outlet context 类型：搜索框 query 与 setQuery 共享给子组件
 interface PluginOutletContext {
@@ -58,21 +52,13 @@ export function PluginMarketPage() {
   const { pathname } = useLocation();
   const [query, setQuery] = useState('');
 
-  // 当前 tab：路径后缀映射
-  const tab =
-    pathname === '/plugins/skills' ? 'skills'
-    : pathname === '/plugins/tools' ? 'tools'
-    : pathname === '/plugins/mcp' ? 'mcp'
-    : pathname === '/plugins/specs' ? 'specs'
-    : 'plugins';
+  // 当前 tab：路径后缀映射（技能为默认）
+  const tab = pathname === '/plugins/mcp' ? 'mcp' : 'skills';
   // Badge 计数在布局层拉取
-  const { plugins } = usePlugins();
   const { skills } = useSkills();
-  const { tools } = useTools();
   const { servers } = useMcp();
 
-  const tabPath = (v: string) =>
-    v === 'plugins' ? '/plugins' : `/plugins/${v}`;
+  const tabPath = (v: string) => `/plugins/${v}`;
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
@@ -89,29 +75,15 @@ export function PluginMarketPage() {
       >
         <div className="flex items-center justify-between gap-4 px-6 py-3">
           <TabsList>
-            <TabsTrigger value="plugins" className="gap-1.5">
-              <Puzzle className="size-3.5" />
-              {t('plugins.pluginsTab')}
-              <Badge variant="secondary">{plugins.length}</Badge>
-            </TabsTrigger>
             <TabsTrigger value="skills" className="gap-1.5">
               <WandSparkles className="size-3.5" />
               {t('plugins.skillsTab')}
               <Badge variant="secondary">{skills.length}</Badge>
             </TabsTrigger>
-            <TabsTrigger value="tools" className="gap-1.5">
-              <Wrench className="size-3.5" />
-              {t('plugins.toolsTab')}
-              <Badge variant="secondary">{tools.length}</Badge>
-            </TabsTrigger>
             <TabsTrigger value="mcp" className="gap-1.5">
               <Cable className="size-3.5" />
               {t('plugins.mcpTab')}
               <Badge variant="secondary">{servers.length}</Badge>
-            </TabsTrigger>
-            <TabsTrigger value="specs" className="gap-1.5">
-              <FileCode className="size-3.5" />
-              {t('plugins.specsTab')}
             </TabsTrigger>
           </TabsList>
           <div className="relative w-64">
@@ -130,65 +102,6 @@ export function PluginMarketPage() {
       {/* 子路由内容 */}
       <div className="flex-1 overflow-auto">
         <Outlet context={{ query, setQuery } satisfies PluginOutletContext} />
-      </div>
-    </div>
-  );
-}
-
-/* ===== 插件 tab ===== */
-export function PluginsTab() {
-  const { t } = useTranslation();
-  const { query } = useOutletContext<PluginOutletContext>();
-  const { plugins, togglePlugin } = usePlugins();
-
-  const q = query.trim().toLowerCase();
-  const filteredPlugins = q
-    ? plugins.filter(
-        (p) =>
-          p.name.toLowerCase().includes(q) || p.description.toLowerCase().includes(q),
-      )
-    : plugins;
-
-  return (
-    <div className="p-6">
-      <div className="flex flex-col gap-2">
-        {filteredPlugins.length === 0 && (
-          <div className="py-12 text-center text-sm text-muted-foreground">
-            {t('plugins.noPlugins')}
-          </div>
-        )}
-        {filteredPlugins.map((plugin) => {
-          return (
-            <Card key={plugin.id} className="flex flex-row items-center gap-3 p-3">
-              <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-                <Puzzle className="size-5" />
-              </div>
-              <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                <div className="flex items-center gap-2">
-                  <h3 className="text-sm font-medium text-foreground">{plugin.name}</h3>
-                  {plugin.version && (
-                    <Badge variant="secondary" className="font-normal">
-                      v{plugin.version}
-                    </Badge>
-                  )}
-                  {plugin.type === 'module' && (
-                    <Badge variant="outline" className="font-normal">
-                      {t('plugins.moduleType')}
-                    </Badge>
-                  )}
-                </div>
-                <p className="truncate text-xs text-muted-foreground">
-                  {plugin.description || t('plugins.noDescription')}
-                </p>
-              </div>
-              <Switch
-                checked={plugin.enabled}
-                onCheckedChange={(checked) => void togglePlugin(plugin.id, checked)}
-                aria-label={plugin.enabled ? t('common.close') : t('common.open')}
-              />
-            </Card>
-          );
-        })}
       </div>
     </div>
   );
@@ -249,62 +162,6 @@ export function SkillsTab() {
                   void toggleSkill(skill.name, checked).catch(() => toast.error(t('plugins.skillToggleFailed')))
                 }
                 aria-label={enabled ? t('common.close') : t('common.open')}
-              />
-            </Card>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-/* ===== 工具 tab ===== */
-export function ToolsTab() {
-  const { t } = useTranslation();
-  const { query } = useOutletContext<PluginOutletContext>();
-  const { tools, toggleTool } = useTools();
-
-  const q = query.trim().toLowerCase();
-  const filteredTools = q
-    ? tools.filter(
-        (tool) =>
-          tool.name.toLowerCase().includes(q) || tool.description.toLowerCase().includes(q),
-      )
-    : tools;
-
-  return (
-    <div className="p-6">
-      <div className="flex flex-col gap-2">
-        {filteredTools.length === 0 && (
-          <div className="py-12 text-center text-sm text-muted-foreground">
-            {t('plugins.noTools')}
-          </div>
-        )}
-        {filteredTools.map((tool) => {
-          const Icon = TOOL_ICON_MAP[tool.icon ?? ''] ?? Wrench;
-          return (
-            <Card key={tool.name} className="flex flex-row items-center gap-3 p-3">
-              <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-                <Icon className="size-5" />
-              </div>
-              <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                <div className="flex items-center gap-2">
-                  <h3 className="text-sm font-medium text-foreground">{tool.name}</h3>
-                  <Badge variant="outline" className="font-normal">
-                    {tool.source === 'builtin' ? t('plugins.builtin') : t('plugins.custom')}
-                  </Badge>
-                  {tool.annotations?.destructiveHint && (
-                    <Badge variant="secondary" className="font-normal text-amber-600">
-                      {t('plugins.destructive')}
-                    </Badge>
-                  )}
-                </div>
-                <p className="truncate text-xs text-muted-foreground">{tool.description}</p>
-              </div>
-              <Switch
-                checked={tool.enabled}
-                onCheckedChange={(checked) => void toggleTool(tool.name, checked)}
-                aria-label={tool.enabled ? t('common.close') : t('common.open')}
               />
             </Card>
           );
@@ -587,116 +444,6 @@ export function McpTab() {
             <Button size="sm" onClick={() => void submit()} disabled={saving || !form.name.trim() || (form.transport === 'stdio' ? !form.command.trim() : !form.url.trim())}>
               {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
               {t('common.create')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
-  );
-}
-
-/* ===== Specs tab（查看 + 编辑保存） ===== */
-export function SpecsTab() {
-  const { t } = useTranslation();
-  const { query } = useOutletContext<PluginOutletContext>();
-  const { specs } = useSpecs();
-
-  const [detail, setDetail] = useState<SpecDetail | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [content, setContent] = useState('');
-  const [saving, setSaving] = useState(false);
-
-  const q = query.trim().toLowerCase();
-  const filteredSpecs = q
-    ? specs.filter(
-        (s) => s.id.toLowerCase().includes(q) || s.description.toLowerCase().includes(q),
-      )
-    : specs;
-
-  const openSpec = useCallback(async (id: string) => {
-    setLoading(true);
-    try {
-      const resp = await api.getSpec(id);
-      setDetail(resp.spec);
-      setContent(resp.spec.content);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : t('plugins.specLoadFailed'));
-    } finally {
-      setLoading(false);
-    }
-  }, [t]);
-
-  const save = useCallback(async () => {
-    if (!detail || saving) return;
-    setSaving(true);
-    try {
-      await api.updateSpec(detail.id, content);
-      toast.success(t('plugins.specSaved'));
-      setDetail(null);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : t('plugins.specSaveFailed'));
-    } finally {
-      setSaving(false);
-    }
-  }, [detail, content, saving, t]);
-
-  return (
-    <div className="p-6">
-      <div className="flex flex-col gap-2">
-        {filteredSpecs.length === 0 && (
-          <div className="py-12 text-center text-sm text-muted-foreground">
-            {t('plugins.noSpecs')}
-          </div>
-        )}
-        {filteredSpecs.map((spec) => (
-          <Card
-            key={spec.id}
-            className="flex cursor-pointer flex-row items-center gap-3 p-3 transition-colors hover:bg-muted/40"
-            onClick={() => void openSpec(spec.id)}
-          >
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-              <FileCode className="size-5" />
-            </div>
-            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <div className="flex items-center gap-2">
-                <h3 className="text-sm font-medium text-foreground">{spec.id}</h3>
-                <Badge variant="outline" className="font-normal">
-                  {spec.source === 'builtin' ? t('plugins.builtin') : t('plugins.custom')}
-                </Badge>
-              </div>
-              <p className="truncate text-xs text-muted-foreground">{spec.description}</p>
-            </div>
-            <Pencil className="size-4 shrink-0 text-muted-foreground/50" />
-          </Card>
-        ))}
-      </div>
-
-      {/* 查看/编辑弹窗 */}
-      <Dialog open={detail !== null || loading} onOpenChange={(o) => !o && !saving && setDetail(null)}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>{detail ? detail.id : t('common.loading')}</DialogTitle>
-            <DialogDescription>{detail?.description}</DialogDescription>
-          </DialogHeader>
-          {loading ? (
-            <div className="flex items-center justify-center gap-2 py-8 text-muted-foreground">
-              <Loader2 className="size-4 animate-spin" />
-            </div>
-          ) : detail ? (
-            <Textarea
-              value={content}
-              onChange={(e) => setContent(e.target.value)}
-              disabled={saving}
-              className="min-h-[50vh] font-mono text-xs"
-            />
-          ) : null}
-          <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => setDetail(null)} disabled={saving}>
-              {t('common.cancel')}
-            </Button>
-            <Button size="sm" onClick={() => void save()} disabled={saving || !detail}>
-              {saving ? <Loader2 className="size-3.5 animate-spin" /> : null}
-              {t('common.save')}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -1,15 +1,13 @@
 // src/modules/daemon/index.ts
-// 守护进程模组：运行时维护 PID 文件、监听信号优雅退出。
-// 注意：实际的 detach/fork 在 CLI 命令中完成；此模组负责运行时的 PID 文件维护。
-// 清单来自 module.json，由 ExtensionManager 注入 manifest。
+// 守护进程模块：运行时维护 PID 文件、监听信号优雅退出。
+// 注意：实际的 detach/fork 在 CLI 命令中完成；此模块负责运行时的 PID 文件维护。
 
 import { t } from '../../core/i18n';
-import type { Module, ModuleContext, ModuleManifest } from '../../core/types';
+import type { Module, ModuleContext } from '../../core/types';
 import { writePidFile, removePidFile } from '../../utils/pid';
 import type { ServerInstanceLike } from '../contracts';
 
 class DaemonModule implements Module {
-  manifest!: ModuleManifest; // 由管理器注入
 
   private ctx!: ModuleContext;
   private shutdownHandlersRegistered = false;
@@ -23,7 +21,7 @@ class DaemonModule implements Module {
     }
 
     // 等待 server 启动后写入带端口的 PID 文件
-    // server 模组在 daemon 之前初始化，这里直接 resolve
+    // server 模块在 daemon 之前初始化，这里直接 resolve
     const server = ctx.services.tryResolve<ServerInstanceLike>('server.instance');
     const port = server?.port ?? cfg.server.port;
 
@@ -54,7 +52,7 @@ class DaemonModule implements Module {
   private registerShutdownHandlers(): void {
     const handle = async (signal: string) => {
       this.ctx.logger.info(t('daemon.receivedSignal', { signal }));
-      // 通知其他模组
+      // 通知其他模块
       await this.ctx.eventBus.broadcast('kernel:shutdown', { signal });
       // 清理 PID 文件
       removePidFile(this.ctx.env.pidFile);
@@ -73,8 +71,4 @@ class DaemonModule implements Module {
   }
 }
 
-export default (manifest: ModuleManifest): Module => {
-  const m = new DaemonModule();
-  m.manifest = manifest;
-  return m;
-};
+export default (): Module => new DaemonModule();

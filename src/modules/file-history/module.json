@@ -1,9 +1,0 @@
-{
-  "name": "file-history",
-  "version": "1.0.0",
-  "description": "三层文件历史架构：Track Edit（改前备份）+ Snapshot（每轮快照）+ JSONL 持久化，支持会话级 undo。强化 write/edit/delete 工具的文件安全。",
-  "type": "module",
-  "dependencies": {
-    "tools": "1.0.0"
-  }
-}

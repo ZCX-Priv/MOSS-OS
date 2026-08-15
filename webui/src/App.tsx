@@ -7,11 +7,8 @@ import { Sidebar } from './components/layout/Sidebar';
 import { TaskPage } from './components/pages/TaskPage';
 import {
   PluginMarketPage,
-  PluginsTab,
   SkillsTab,
-  ToolsTab,
   McpTab,
-  SpecsTab,
 } from './components/pages/PluginMarketPage';
 import {
   AutomationPage,
@@ -24,13 +21,14 @@ import {
   GeneralSettings,
   AgentSettings,
   ModelSettings,
+  ToolsSettings,
+  SpecsSettings,
   AboutSettings,
   PlaceholderSection,
 } from './components/pages/SettingsPage';
 import { SearchModal } from './components/overlays/SearchModal';
 import { AgentSwitchMenu } from './components/overlays/AgentSwitchMenu';
 import { FileReferenceMenu } from './components/overlays/FileReferenceMenu';
-import { PluginDropdown } from './components/dialogs/PluginDropdown';
 import { SlashCommandMenu } from './components/dialogs/SlashCommandMenu';
 import { PlanModeInput } from './components/dialogs/PlanModeInput';
 import { SidebarProvider, SidebarInset, SidebarTrigger } from '@/components/ui/sidebar';
@@ -104,12 +102,10 @@ export default function App() {
             <Route path="/" element={<TaskPage onOpenOverlay={openOverlay} />} />
             <Route path="/task/:taskId" element={<TaskPage onOpenOverlay={openOverlay} />} />
             <Route path="/plugins" element={<PluginMarketPage />}>
-              <Route index element={<PluginsTab />} />
+              <Route index element={<Navigate to="skills" replace />} />
               <Route path="skills" element={<SkillsTab />} />
-              <Route path="tools" element={<ToolsTab />} />
               <Route path="mcp" element={<McpTab />} />
-              <Route path="specs" element={<SpecsTab />} />
-              <Route path="*" element={<Navigate to="." replace />} />
+              <Route path="*" element={<Navigate to="skills" replace />} />
             </Route>
             <Route path="/automation" element={<AutomationPage />}>
               <Route index element={<Navigate to="templates" replace />} />
@@ -124,6 +120,8 @@ export default function App() {
               <Route path="appearance" element={<PlaceholderSection section="appearance" />} />
               <Route path="agent" element={<AgentSettings />} />
               <Route path="model" element={<ModelSettings />} />
+              <Route path="tools" element={<ToolsSettings />} />
+              <Route path="specs" element={<SpecsSettings />} />
               <Route path="about" element={<AboutSettings />} />
               <Route path="task" element={<PlaceholderSection section="task" />} />
               <Route path="index" element={<PlaceholderSection section="index" />} />
@@ -142,7 +140,6 @@ export default function App() {
         <SearchModal open={overlay === 'search'} onClose={closeOverlay} />
         <AgentSwitchMenu open={overlay === 'agent-switch'} onClose={closeOverlay} />
         <FileReferenceMenu open={overlay === 'file-reference'} onClose={closeOverlay} />
-        <PluginDropdown open={overlay === 'plugin-dropdown'} onClose={closeOverlay} />
         <SlashCommandMenu open={overlay === 'slash-command'} onClose={closeOverlay} />
         <PlanModeInput open={overlay === 'plan-mode'} onClose={closeOverlay} />
       </SidebarProvider>

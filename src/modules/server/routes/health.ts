@@ -4,20 +4,16 @@
 import type { HttpRequest, HttpResponse, RouteHandler } from '../types';
 import type { ServiceRegistry } from '../../../core/types';
 
-interface ExtensionStateInfo {
-  getStates?: () => {
-    modules: Record<string, string>;
-    plugins: Record<string, string>;
-  };
-  getActiveCount?: () => number;
+interface ModuleStateInfo {
+  getList?: () => Array<{ name: string; state: string }>;
 }
 
 export function createHealthHandler(services: ServiceRegistry): RouteHandler {
   return async (_req: HttpRequest): Promise<HttpResponse> => {
-    const ext = services.tryResolve<ExtensionStateInfo>('kernel.extensions');
-    const states = ext?.getStates?.();
-    const modules = states?.modules ?? {};
-    const plugins = states?.plugins ?? {};
+    const mod = services.tryResolve<ModuleStateInfo>('kernel.modules');
+    const list = mod?.getList?.() ?? [];
+    const moduleStates: Record<string, string> = {};
+    for (const m of list) moduleStates[m.name] = m.state;
     return {
       status: 200,
       body: {
@@ -25,10 +21,8 @@ export function createHealthHandler(services: ServiceRegistry): RouteHandler {
         timestamp: new Date().toISOString(),
         services: services.list(),
         uptime: process.uptime(),
-        modules: Object.keys(modules).length,
-        plugins: Object.keys(plugins).length,
-        moduleStates: modules,
-        pluginStates: plugins,
+        modules: list.length,
+        moduleStates,
       },
     };
   };

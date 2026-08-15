@@ -1,4 +1,4 @@
-// src/plugins/llm/stream.ts
+// src/modules/llm/stream.ts
 // SSE 流式响应统一解析。
 // 把 HTTP 响应的 ReadableStream 解析为 SSE 事件序列。
 

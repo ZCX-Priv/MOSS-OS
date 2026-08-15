@@ -1,4 +1,4 @@
-// src/plugins/agent/engine.ts
+// src/modules/agent/engine.ts
 // Agent ReAct 循环引擎。
 
 import { t } from '../../core/i18n';
@@ -271,6 +271,7 @@ export class AgentEngineImpl implements AgentEngine {
             tc.id,
             'Error: aborted by user',
             tc.name,
+            { isError: true },
           );
           finishReason = 'aborted';
           continue;
@@ -301,6 +302,7 @@ export class AgentEngineImpl implements AgentEngine {
             tc.id,
             `Error: ${err instanceof Error ? err.message : String(err)}`,
             tc.name,
+            { isError: true },
           );
         }
       }
@@ -621,6 +623,7 @@ export class AgentEngineImpl implements AgentEngine {
         toolCallId,
         'Error: aborted by user',
         tc.name,
+        { isError: true },
       );
       return;
     }
@@ -675,6 +678,7 @@ export class AgentEngineImpl implements AgentEngine {
       toolCallId,
       resultText,
       tc.name,
+      { isError: result.isError, metadata: result.metadata },
     );
 
     onEvent({
@@ -695,7 +699,7 @@ export class AgentEngineImpl implements AgentEngine {
    * - read/edit/write/grep/glob：更新 contextFiles 轨迹并推送 context-updated
    * - write：额外推送 file-created
    * - edit：额外推送 file-edited
-   * server 模组未加载时静默跳过，不阻断工具执行。
+   * server 模块未加载时静默跳过，不阻断工具执行。
    */
   private notifyToolSideEffects(toolName: string, args: unknown, sessionId: string, toolCallId: string): void {
     const server = this.services.tryResolve<{

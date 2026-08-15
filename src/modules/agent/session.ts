@@ -1,9 +1,9 @@
-// src/plugins/agent/session.ts
+// src/modules/agent/session.ts
 // 会话状态、历史、上下文裁剪。
 // 持久化：每个 session 存为 ~/.moss/sessions/<sessionId>.json，启动时全量加载到内存。
 
 import { t } from '../../core/i18n';
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, unlinkSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, unlinkSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AgentMessage } from '../contracts';
 import type { UnifiedMessage } from '../llm/types';
@@ -113,12 +113,14 @@ export class SessionStore {
     }
   }
 
-  /** 把单个 session 持久化到磁盘 */
+  /** 把单个 session 持久化到磁盘（原子写：先写临时文件再 rename，防止写盘中断产生截断的 JSON） */
   private saveSession(session: Session): void {
     try {
       mkdirSync(this.sessionsDir, { recursive: true });
       const filePath = join(this.sessionsDir, `${session.id}.json`);
-      writeFileSync(filePath, JSON.stringify(session, null, 2), 'utf8');
+      const tmpPath = `${filePath}.tmp`;
+      writeFileSync(tmpPath, JSON.stringify(session, null, 2), 'utf8');
+      renameSync(tmpPath, filePath);
     } catch (err) {
       this.logger.error(t('agent.saveSessionFailed'), {
         sessionId: session.id,
@@ -270,12 +272,20 @@ export class SessionStore {
   }
 
   /** 添加工具结果消息 */
-  addToolMessage(session: Session, toolCallId: string, content: string, name?: string): void {
+  addToolMessage(
+    session: Session,
+    toolCallId: string,
+    content: string,
+    name?: string,
+    extra?: { isError?: boolean; metadata?: Record<string, unknown> },
+  ): void {
     session.messages.push({
       role: 'tool',
       content,
       toolCallId,
       name,
+      isError: extra?.isError,
+      metadata: extra?.metadata,
       timestamp: new Date().toISOString(),
     });
     session.updatedAt = new Date().toISOString();
@@ -374,31 +384,39 @@ export class SessionStore {
     this.saveSession(session);
   }
 
-  /** 把 todo 快照附加到包含该 toolCallId 的 assistant 消息上（持久化） */
+  /**
+   * 把 todo 快照附加到包含该 toolCallId 的 assistant 消息上（持久化）。
+   * 快照仅首次写入（undefined 时冻结）：保留该消息 todo 调用时刻的状态，
+   * 后续变更（含全部完成后被清空为 []）不再覆盖，防止历史 todo 卡片消失。
+   */
   attachTodoSnapshot(session: Session, toolCallId: string, todos: TodoItem[]): void {
+    let wrote = false;
     for (let i = session.messages.length - 1; i >= 0; i--) {
       const m = session.messages[i];
       if (m.role === 'assistant' && m.toolCalls?.some((tc) => tc.id === toolCallId)) {
-        m.todoSnapshot = todos;
+        if (m.todoSnapshot === undefined) {
+          m.todoSnapshot = todos;
+          wrote = true;
+        }
         break;
       }
     }
-    session.updatedAt = new Date().toISOString();
-    this.saveSession(session);
+    if (wrote) {
+      session.updatedAt = new Date().toISOString();
+      this.saveSession(session);
+    }
   }
 
   /**
-   * 上下文窗口裁剪：超限时保留系统提示 + 最近 N 轮。
-   * 已软删除（deletedAt）的消息不参与上下文（消息撤回后即从 LLM 视野移除）。
-   * @param maxTokens 最大 token 数（粗略估算：1 char ≈ 0.5 token）
+   * 统计会话上下文 token（粗略估算：1 char ≈ 0.5 token），更新内存 totalTokens。
+   * 仅做统计，不修改、不裁剪 session.messages —— 历史消息是用户资产，
+   * LLM 上下文窗口裁剪只应是"发送视图"（见 toUnifiedMessages 的 budgetTokens 参数），
+   * 物理裁剪曾导致持久化历史丢失（首条 user 消息被裁掉后无法恢复）。
    */
   trimContext(session: Session, maxTokens: number): void {
     // 粗略估算：char 数 / 2 ≈ token 数
     const estimateTokens = (text: string): number => Math.ceil(text.length / 2);
-
-    // 系统提示词单独计算（不混入 messages）
     const systemTokens = estimateTokens(session.systemPrompt);
-
     let totalTokens = systemTokens;
     for (const m of session.messages) {
       if (m.deletedAt) continue;
@@ -409,74 +427,19 @@ export class SessionStore {
         }
       }
     }
-
-    if (totalTokens <= maxTokens) {
-      session.totalTokens = totalTokens;
-      return;
-    }
-
-    // 裁剪：保留 systemPrompt + 最后 N 条任务消息。
-    // 软删除消息不占预算但按原位保留（保序，供 redo 恢复）；只物理裁剪头部活跃消息。
-    const rest = session.messages;
-
-    // 从后往前保留，直到不超过预算（系统提示预留）
-    const budget = maxTokens - systemTokens - 500; // 留 500 token 余量
-    const kept: AgentMessage[] = [];
-    let used = 0;
-    for (let i = rest.length - 1; i >= 0; i--) {
-      const m = rest[i];
-      if (m.deletedAt) {
-        // 软删除消息：无条件按位保留，不占预算
-        kept.unshift(m);
-        continue;
-      }
-      const t = estimateTokens(m.content) + (m.toolCalls?.reduce((s, tc) => s + estimateTokens(tc.arguments), 0) ?? 0);
-      if (used + t > budget) break;
-      kept.unshift(m);
-      used += t;
-    }
-
-    // 注意：裁剪时不能切断 tool_calls 和 tool 结果的配对
-    // 1. 丢弃开头孤立的 tool 结果（对应的 assistant 不在 kept 中，无法形成完整配对）
-    while (kept.length > 0 && kept[0].role === 'tool') {
-      kept.shift();
-    }
-
-    // 2. 从后往前扫描，确保每个带 tool_calls 的 assistant 后面紧跟所有对应的 tool 结果
-    //    若有缺失，丢弃该 assistant 及其紧随的 tool 结果（整组丢弃）
-    for (let i = kept.length - 1; i >= 0; i--) {
-      const m = kept[i];
-      if (m.role === 'assistant' && m.toolCalls && m.toolCalls.length > 0) {
-        const expectedIds = new Set(m.toolCalls.map(tc => tc.id));
-        // 收集紧随其后的连续 tool 消息
-        let j = i + 1;
-        while (j < kept.length && kept[j].role === 'tool') {
-          j++;
-        }
-        // kept[i+1..j-1] 是连续的 tool 结果
-        const foundIds = new Set(
-          kept.slice(i + 1, j).map(t => t.toolCallId),
-        );
-        const allCovered = [...expectedIds].every(id => foundIds.has(id));
-        if (!allCovered) {
-          // 不完整，丢弃整组：assistant(i) + tool 结果(i+1..j-1)
-          kept.splice(i, j - i);
-        }
-      }
-    }
-
-    session.messages = kept;
-    session.totalTokens = systemTokens + used;
-    this.logger.debug(t('agent.contextTrimmed', { messages: session.messages.length, tokens: session.totalTokens }));
-    this.saveSession(session);
+    session.totalTokens = totalTokens;
   }
 
   /** 把 AgentMessage 转为 LLM UnifiedMessage（头部拼接系统提示词）。软删除消息被过滤。
-   *  activeSkill(mode='system') 的 skill 内容拼接在系统提示词后。 */
-  toUnifiedMessages(session: Session): UnifiedMessage[] {
+   *  activeSkill(mode='system') 的 skill 内容拼接在系统提示词后。
+   *  budgetTokens（可选）：LLM 上下文窗口预算。超限时只发送尾部窗口（视图裁剪），
+   *  不修改 session.messages。 */
+  toUnifiedMessages(session: Session, budgetTokens?: number): UnifiedMessage[] {
+    const active = session.messages.filter(m => !m.deletedAt);
+    const windowed = budgetTokens === undefined ? active : this.computeContextWindow(session, active, budgetTokens);
     // 发送前自愈：保证 tool_use / tool_result 配对完整，避免历史脏数据触发
     // Anthropic HTTP 400（tool_use without tool_result）。不修改 session.messages。
-    const sanitized = sanitizeMessages(session.messages.filter(m => !m.deletedAt));
+    const sanitized = sanitizeMessages(windowed);
     const conversation = sanitized.map(m => ({
       role: m.role,
       content: m.content,
@@ -497,6 +460,61 @@ export class SessionStore {
       { role: 'system', content: session.systemPrompt + skillSuffix },
       ...conversation,
     ];
+  }
+
+  /**
+   * 计算 LLM 上下文窗口（纯视图，不修改 session.messages）：
+   * 超预算时保留尾部消息，并保证 tool_calls / tool 结果配对完整；
+   * budget <= 0 或全部超限时保底保留最后一条（避免空对话触发 provider 400）。
+   */
+  private computeContextWindow(session: Session, active: AgentMessage[], maxTokens: number): AgentMessage[] {
+    const estimateTokens = (text: string): number => Math.ceil(text.length / 2);
+    const systemTokens = estimateTokens(session.systemPrompt);
+    const budget = maxTokens - systemTokens - 500; // 留 500 token 余量
+
+    // 从后往前保留，直到不超过预算
+    const kept: AgentMessage[] = [];
+    let used = 0;
+    for (let i = active.length - 1; i >= 0; i--) {
+      const m = active[i];
+      const t = estimateTokens(m.content) + (m.toolCalls?.reduce((s, tc) => s + estimateTokens(tc.arguments), 0) ?? 0);
+      if (used + t > budget) break;
+      kept.unshift(m);
+      used += t;
+    }
+
+    // 保底：至少保留最后一条（budget 异常/首条即超限时），sanitizeMessages 会兜底配对
+    if (kept.length === 0 && active.length > 0) {
+      kept.push(active[active.length - 1]);
+    }
+
+    // 配对完整性：
+    // 1. 丢弃开头孤立的 tool 结果（对应的 assistant 不在窗口内）
+    while (kept.length > 1 && kept[0].role === 'tool') {
+      kept.shift();
+    }
+    // 2. 从后往前扫描，带 tool_calls 的 assistant 若缺对应 tool 结果则整组丢弃
+    for (let i = kept.length - 1; i >= 0; i--) {
+      const m = kept[i];
+      if (m.role === 'assistant' && m.toolCalls && m.toolCalls.length > 0) {
+        const expectedIds = new Set(m.toolCalls.map(tc => tc.id));
+        let j = i + 1;
+        while (j < kept.length && kept[j].role === 'tool') {
+          j++;
+        }
+        const foundIds = new Set(kept.slice(i + 1, j).map(t => t.toolCallId));
+        const allCovered = [...expectedIds].every(id => foundIds.has(id));
+        if (!allCovered) {
+          kept.splice(i, j - i);
+        }
+      }
+    }
+    // 整组丢弃后可能再次出现保底丢失，兜底最后一条
+    if (kept.length === 0 && active.length > 0) {
+      kept.push(active[active.length - 1]);
+    }
+    this.logger.debug(t('agent.contextTrimmed', { messages: kept.length, tokens: systemTokens + used }));
+    return kept;
   }
 }
 

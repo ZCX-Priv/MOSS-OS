@@ -1,4 +1,4 @@
-// src/plugins/server/routes/session.ts
+// src/modules/server/routes/session.ts
 // 会话管理路由：POST /api/session（创建）、GET /api/session（列出）、DELETE /api/session/:id
 
 import type { HttpRequest, HttpResponse, RouteHandler } from '../types';

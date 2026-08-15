@@ -1,4 +1,4 @@
-// src/plugins/tools/types.ts
+// src/modules/tools/types.ts
 // 工具系统类型定义。
 
 export interface ToolAnnotations {

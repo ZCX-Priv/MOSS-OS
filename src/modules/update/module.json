@@ -1,7 +1,0 @@
-{
-  "name": "update",
-  "version": "1.0.0",
-  "description": "更新检查器：查询 npm 注册表获取新版本",
-  "type": "module",
-  "dependencies": {}
-}

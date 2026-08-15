@@ -1,4 +1,4 @@
-// src/plugins/llm/client.ts
+// src/modules/llm/client.ts
 // 底层 HTTP 调用：超时、重试、错误归一化。
 
 import { t } from '../../core/i18n';

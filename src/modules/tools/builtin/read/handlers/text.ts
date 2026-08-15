@@ -1,10 +1,10 @@
 // read/handlers/text.ts
 // 文本文件处理：编码检测（UTF-8/GBK）、minified 检测、三种读取模式。
-// 复用 utils/encoding.ts 的 decodeShellOutput（含 GBK 回退）和 utils/fs.ts 的 isBinaryFile。
+// 复用 utils/encoding.ts 的 decodeShellOutput（含 GBK 回退）和 utils/fs.ts 的 classifyFileContent。
 // 路径：read/handlers/text.ts → src/utils = ../../../../../utils
 
 import { readFileSync, type Stats } from 'node:fs';
-import { isBinaryFile } from '../../../../../utils/fs';
+import { classifyFileContent } from '../../../../../utils/fs';
 import { decodeShellOutput, stripBom } from '../../../../../utils/encoding';
 import { detectMinified, truncateMinifiedLines } from '../shared/minified';
 import type { ToolResult } from '../../../types';
@@ -29,14 +29,26 @@ export async function readText(
   params: TextParams,
   _stat: Stats,
 ): Promise<ToolResult> {
-  // 1. 二进制检测（detector 未识别的非文本类型会回退到这里）
-  if (isBinaryFile(path)) {
-    // 尝试编码检测：可能是 GBK 等非 UTF-8 编码
-    // decodeShellOutput 会尝试 GBK 回退解码
-    const buf = readFileSync(path);
+  // 1. 内容分类（detector 未识别的类型会回退到这里）
+  // 含 NUL 字节 → 真二进制，直接拒绝，禁止 GBK 回退
+  // （旧逻辑对二进制做 GBK 回退，OLE/ZIP 随机解出汉字被误判为 GBK 文本 → 乱码）
+  const kind = classifyFileContent(path);
+  if (kind === 'binary') {
+    return {
+      content: [{
+        type: 'text',
+        text: `Error: binary file detected, cannot read as text: ${path}\nHint: if this is a document, check the extension is supported (docx/xlsx/pptx/odt/...). Legacy .ppt is not supported.`,
+      }],
+      isError: true,
+    };
+  }
+
+  // 2. 读取并解码：utf8 正常解码；legacy-text（无 NUL 的非 UTF-8，如 GBK）回退解码
+  const buf = readFileSync(path);
+  if (kind === 'legacy-text') {
     try {
       const decoded = decodeShellOutput(buf);
-      // 检查解码结果是否包含 CJK 字符（确认是非 UTF-8 中文编码）
+      // 解码结果含 CJK 字符才认定为传统中文编码文本，否则按二进制拒绝
       if (decoded && /[\u4e00-\u9fff]/.test(decoded)) {
         return processText(path, stripBom(decoded), params);
       }
@@ -49,9 +61,10 @@ export async function readText(
     };
   }
 
-  // 2. 读取文件并检测编码
-  const buf = readFileSync(path);
-  const content = stripBom(decodeShellOutput(buf));
+  // kind === 'utf8'：整文件已通过严格 UTF-8 验证，直接解码。
+  // 不走 decodeShellOutput 的 GBK 启发式（其为 shell 输出设计，会把合法 UTF-8
+  // 拉丁扩展字符如 é 0xC3 0xA9 按 GBK 碰撞误解码成 CJK 汉字 → 乱码）。
+  const content = stripBom(buf.toString('utf8'));
   return processText(path, content, params);
 }
 

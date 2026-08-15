@@ -1,4 +1,4 @@
-// src/plugins/llm/providers/index.ts
+// src/modules/llm/providers/index.ts
 // Provider 注册表。
 
 import { t } from '../../../core/i18n';

@@ -516,7 +516,7 @@ export class MCPManagerImpl implements MCPManager {
     }
   }
 
-  /** 关闭所有连接（模组销毁时调用） */
+  /** 关闭所有连接（模块销毁时调用） */
   async shutdown(): Promise<void> {
     this.mcpsWatcher?.close();
     this.mcpsWatcher = undefined;

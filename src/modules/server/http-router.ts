@@ -1,4 +1,4 @@
-// src/plugins/server/http-router.ts
+// src/modules/server/http-router.ts
 // HTTP 路由装配：匹配、鉴权、请求体解析、分发。
 
 import { t } from '../../core/i18n';

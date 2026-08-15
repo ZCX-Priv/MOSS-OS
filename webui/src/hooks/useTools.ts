@@ -1,7 +1,7 @@
 // webui/src/hooks/useTools.ts
 // 工具管理 hook：挂载时拉取 /api/tools 完整列表写入 store，并派生 toolIconMap
 // 供工具调用卡片渲染图标；提供 toggleTool 启停工具。
-// 订阅 WS extension.changed 自动刷新（工具模组热重载时同步）。
+// 订阅 WS resources.changed 自动刷新（工具热重载时同步）。
 
 import { useEffect, useCallback } from 'react';
 import { useStore } from '../store';
@@ -29,9 +29,9 @@ export function useTools() {
 
   useEffect(() => {
     void load();
-    // 订阅 extension.changed 自动刷新（工具模组属 extension 范畴）
+    // 订阅资源热重载自动刷新
     const unsub = wsClient.onMessage((msg) => {
-      if (msg.type === 'extension.changed' || msg.type === 'resources.changed') {
+      if (msg.type === 'resources.changed') {
         void load();
       }
     });

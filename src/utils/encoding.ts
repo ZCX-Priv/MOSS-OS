@@ -160,14 +160,16 @@ export function decodeShellOutput(buf: Buffer): string {
 
   // 2. 完全合法但只有 2 字节序列（无 CJK）→ 可能是 GBK 碰撞，优先 GBK
   //    真正的 UTF-8 中文是 3 字节序列；2 字节序列对应拉丁扩展/西里尔等，罕见于 Windows shell 输出
+  //    仅当 GBK 解码出多字中文内容（≥2 个 CJK）才采信 GBK：单字符碰撞
+  //    （如 é = 0xC3 0xA9 在 GBK 中恰为「茅」）应回退 UTF-8
   if (stats.valid && stats.twoByteSeqCount > 0 && stats.cjkSeqCount === 0) {
     try {
       const gbkDecoded = iconv.decode(buf, 'gbk');
-      // 检查 GBK 解码是否产生 CJK 字符（确认是 GBK 中文）
-      if (/[\u4e00-\u9fff]/.test(gbkDecoded)) {
+      const cjkCount = (gbkDecoded.match(/[\u4e00-\u9fff]/g) || []).length;
+      if (cjkCount >= 2) {
         return gbkDecoded;
       }
-      // GBK 也无 CJK，可能是纯拉丁扩展，回退 UTF-8（更通用）
+      // GBK 无多字中文，可能是纯拉丁扩展，回退 UTF-8（更通用）
       return buf.toString('utf8');
     } catch {
       return buf.toString('utf8');

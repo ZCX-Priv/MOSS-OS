@@ -1,4 +1,4 @@
-// src/plugins/server/routes/mcp.ts
+// src/modules/server/routes/mcp.ts
 // MCP 管理路由（列表 / 调用 / 连接 / 服务器定义 CRUD）
 
 import type { HttpRequest, HttpResponse, RouteHandler } from '../types';

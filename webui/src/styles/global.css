@@ -193,6 +193,12 @@ body {
   scrollbar-color: var(--border) transparent;
 }
 
+/* 消息项按需渲染：屏幕外跳过 layout/paint，长会话滚动性能 */
+.message-cv {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 120px;
+}
+
 /* 等宽字体 */
 code,
 pre,

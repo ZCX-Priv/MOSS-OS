@@ -167,7 +167,7 @@ export async function loadToolsFromDir(
 
 /**
  * 探测内置工具目录：优先 src/modules/tools/builtin，回退 dist/modules/tools/builtin。
- * 与 extension-manager 的双路径扫描模式一致。
+ * 双路径扫描（src 优先，dist 回退）。
  */
 export function resolveBuiltinDir(env: Environment): string | null {
   const candidates = [

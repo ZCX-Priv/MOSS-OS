@@ -1,4 +1,4 @@
-// src/plugins/llm/providers/gemini.ts
+// src/modules/llm/providers/gemini.ts
 // Gemini generateContent API provider。
 // 端点：/v1beta/models/{model}:generateContent
 // 鉴权：x-goog-api-key

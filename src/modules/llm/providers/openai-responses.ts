@@ -1,4 +1,4 @@
-// src/plugins/llm/providers/openai-responses.ts
+// src/modules/llm/providers/openai-responses.ts
 // OpenAI Responses API provider（2025 年新格式）。
 // 端点：/v1/responses，使用 input/output 结构，reasoning.effort + reasoning.summary。
 

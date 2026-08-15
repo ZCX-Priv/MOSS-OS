@@ -1,4 +1,4 @@
-// src/plugins/llm/providers/openai-chat.ts
+// src/modules/llm/providers/openai-chat.ts
 // OpenAI Chat Completions provider。
 // 兼容 DeepSeek、通义千问、智谱 GLM、Kimi 等。
 

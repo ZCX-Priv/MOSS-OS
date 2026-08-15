@@ -1,14 +1,12 @@
 // src/modules/mcp/index.ts
-// MCP Client 模组入口：注册 MCPManager 服务。
-// 清单来自 module.json，由 ExtensionManager 注入 manifest。
+// MCP Client 模块入口：注册 MCPManager 服务。
 
 import { t } from '../../core/i18n';
-import type { Module, ModuleContext, ModuleManifest } from '../../core/types';
+import type { Module, ModuleContext } from '../../core/types';
 import { ServiceNames } from '../../core/types';
 import { MCPManagerImpl } from './manager';
 
 class McpModule implements Module {
-  manifest!: ModuleManifest; // 由管理器注入
 
   private manager: MCPManagerImpl | null = null;
 
@@ -22,10 +20,9 @@ class McpModule implements Module {
     });
     ctx.services.register(ServiceNames.MCP_MANAGER, this.manager, {
       scope: 'mcp',
-      registrantType: 'module',
     });
 
-    // 初始化连接（非阻塞，避免单个 MCP 服务器慢导致模组加载超时）
+    // 初始化连接（非阻塞，避免单个 MCP 服务器慢导致模块加载超时）
     this.manager.initialize().catch(err => {
       ctx.logger.error(t('mcp.managerInitFailed'), {
         error: err instanceof Error ? err.message : String(err),
@@ -51,8 +48,4 @@ class McpModule implements Module {
   }
 }
 
-export default (manifest: ModuleManifest): Module => {
-  const m = new McpModule();
-  m.manifest = manifest;
-  return m;
-};
+export default (): Module => new McpModule();

@@ -1,4 +1,4 @@
-// src/plugins/llm/types.ts
+// src/modules/llm/types.ts
 // LLM 统一 canonical 类型 + 思考控制。
 // 所有 provider 适配器把原生格式转换为/自这个统一格式。
 

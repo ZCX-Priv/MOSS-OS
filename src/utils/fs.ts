@@ -50,20 +50,29 @@ export function resolveWithinCwd(path: string, cwd: string): string | null {
 }
 
 /**
- * 检测文件是否为二进制（非文本）。
- * 启发式：读取前 8KB，若包含 NUL 字节或大量非可打印字符则视为二进制。
+ * 文件内容分类（用于 read 工具的编码/二进制判定）。
+ * - 'utf8'：合法 UTF-8 文本（含纯 ASCII、中文等多字节字符）
+ * - 'legacy-text'：非 UTF-8 但不含 NUL 字节 —— GBK 等传统编码文本的候选，
+ *   可安全尝试 GBK 回退解码（真正的 GBK 文本不含 NUL）
+ * - 'binary'：含 NUL 字节的二进制 —— 强信号，禁止任何编码回退解码，
+ *   否则 OLE/ZIP 等二进制经 GBK 随机解出汉字会被误判为文本（乱码根源）
  */
-export function isBinaryFile(path: string, sampleSize = 8192): boolean {
-  const fd = readFileSync(path); // Buffer
-  const sample = fd.length > sampleSize ? fd.subarray(0, sampleSize) : fd;
-  if (sample.length === 0) return false;
-  // NUL 字节是二进制的强信号
-  if (sample.includes(0)) return true;
-  // 合法 UTF-8 视为文本（含中文等多字节字符）。
-  // 旧版用 30% 非可打印比例阈值，会把纯中文 UTF-8 文件误判为二进制
-  // （中文字节全在 0x80-0xff，nonText 比例轻松超 60%）。
-  // 改用严格 UTF-8 字节级验证：合法 UTF-8 即文本，否则视为二进制。
-  return !isValidUtf8(sample as Buffer);
+export type FileContentKind = 'utf8' | 'legacy-text' | 'binary';
+
+/**
+ * 读取文件前 8KB 采样并分类内容类型。
+ * 分类依据（第一性原理）：
+ * 1. NUL 字节是二进制的强信号，任何真实编码的文本文件都不会包含 NUL
+ * 2. 合法 UTF-8 视为文本（旧版 30% 非可打印比例阈值会误判纯中文 UTF-8，
+ *    中文字节全在 0x80-0xff，比例轻松超 60%，故用严格 UTF-8 字节级验证）
+ * 3. 无 NUL 的非 UTF-8 才有资格做 GBK 回退
+ */
+export function classifyFileContent(path: string, sampleSize = 8192): FileContentKind {
+  const buf = readFileSync(path); // Buffer
+  const sample = buf.length > sampleSize ? buf.subarray(0, sampleSize) : buf;
+  if (sample.length === 0) return 'utf8';
+  if (sample.includes(0)) return 'binary';
+  return isValidUtf8(sample as Buffer) ? 'utf8' : 'legacy-text';
 }
 
 /**

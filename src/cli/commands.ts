@@ -240,15 +240,13 @@ async function cmdStatus(): Promise<number> {
   if (info.port) console.log(t('cli.statusPort', { port: info.port }));
   console.log(t('cli.statusDataDir', { dataDir: env.dataDir }));
 
-  // 尝试通过 /api/health 获取运行时信息（模组/插件计数、服务列表）
+  // 尝试通过 /api/health 获取运行时信息（模块计数、服务列表）
   if (info.port) {
     const health = await fetchHealthInfo(info.port).catch(() => null);
     if (health) {
       const moduleCount = typeof health.modules === 'number' ? health.modules : 0;
-      const pluginCount = typeof health.plugins === 'number' ? health.plugins : 0;
       const serviceCount = Array.isArray(health.services) ? health.services.length : 0;
       console.log(t('cli.statusModules', { count: moduleCount }));
-      console.log(t('cli.statusPlugins', { count: pluginCount }));
       console.log(t('cli.statusServices', { count: serviceCount }));
     }
   }
@@ -257,7 +255,6 @@ async function cmdStatus(): Promise<number> {
 
 interface HealthInfo {
   modules?: number;
-  plugins?: number;
   services?: string[];
 }
 

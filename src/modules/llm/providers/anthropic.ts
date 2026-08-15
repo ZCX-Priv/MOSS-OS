@@ -1,4 +1,4 @@
-// src/plugins/llm/providers/anthropic.ts
+// src/modules/llm/providers/anthropic.ts
 // Anthropic Messages API provider。
 // 端点：/v1/messages
 // 鉴权：x-api-key + anthropic-version

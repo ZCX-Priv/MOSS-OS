@@ -1,9 +1,8 @@
 // src/modules/update/index.ts
-// 更新检查模组：定时检查 npm registry 版本，通过事件总线广播更新通知。
-// 清单来自 module.json，由 ExtensionManager 注入 manifest。
+// 更新检查模块：定时检查 npm registry 版本，通过事件总线广播更新通知。
 
 import { t } from '../../core/i18n';
-import type { Module, ModuleContext, ModuleManifest } from '../../core/types';
+import type { Module, ModuleContext } from '../../core/types';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -11,7 +10,6 @@ const NPM_REGISTRY_URL = 'https://registry.npmjs.org';
 const PACKAGE_NAME = 'moss';
 
 class UpdateModule implements Module {
-  manifest!: ModuleManifest; // 由管理器注入
 
   private ctx!: ModuleContext;
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -87,7 +85,7 @@ class UpdateModule implements Module {
           package: PACKAGE_NAME,
         });
 
-        // 通知前端（通过 Server 模组转发 WS）
+        // 通知前端（通过 Server 模块转发 WS）
         const server = this.ctx.services.tryResolve<{ broadcastWS: (msg: unknown) => void }>('server.instance');
         server?.broadcastWS({
           type: 'update:available',
@@ -120,8 +118,4 @@ function isNewerVersion(latest: string, current: string): boolean {
   return lc > cc;
 }
 
-export default (manifest: ModuleManifest): Module => {
-  const m = new UpdateModule();
-  m.manifest = manifest;
-  return m;
-};
+export default (): Module => new UpdateModule();

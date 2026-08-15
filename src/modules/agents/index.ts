@@ -1,11 +1,11 @@
 // src/modules/agents/index.ts
-// Agents 模组入口：实现 AgentRegistry，注册 agents.registry 服务。
+// Agents 模块入口：实现 AgentRegistry，注册 agents.registry 服务。
 // 持久化到 ~/.moss/agents.json，预置 1 个内置 Agent（name:"Agent", builtIn:true, default:true）。
 
 import { t } from '../../core/i18n';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import type { Module, ModuleContext, ModuleManifest, Environment, Logger } from '../../core/types';
+import type { Module, ModuleContext, Environment, Logger } from '../../core/types';
 import { ServiceNames } from '../../core/types';
 
 // ============================================================================
@@ -219,13 +219,11 @@ class AgentRegistryImpl implements AgentRegistry {
 // ============================================================================
 
 class AgentsModule implements Module {
-  manifest!: ModuleManifest;
 
   async initialize(ctx: ModuleContext): Promise<void> {
     const registry = new AgentRegistryImpl(ctx.env, ctx.logger);
     ctx.services.register(ServiceNames.AGENTS_REGISTRY, registry, {
       scope: 'agents',
-      registrantType: 'module',
     });
     ctx.logger.info(t('agents.moduleInitialized'), {
       agentCount: registry.list().length,
@@ -234,8 +232,4 @@ class AgentsModule implements Module {
   }
 }
 
-export default (manifest: ModuleManifest): Module => {
-  const m = new AgentsModule();
-  m.manifest = manifest;
-  return m;
-};
+export default (): Module => new AgentsModule();

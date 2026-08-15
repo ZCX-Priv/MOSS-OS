@@ -1,9 +1,8 @@
 // src/modules/server/index.ts
-// Server 模组入口：基于 Bun.serve 启动 HTTP + WebSocket 服务。
-// 清单来自 module.json，由 ExtensionManager 注入 manifest。
+// Server 模块入口：基于 Bun.serve 启动 HTTP + WebSocket 服务。
 
 import { t } from '../../core/i18n';
-import type { Module, ModuleContext, ModuleManifest } from '../../core/types';
+import type { Module, ModuleContext } from '../../core/types';
 import { ServiceNames } from '../../core/types';
 import { HttpRouter } from './http-router';
 import { WsHandler } from './ws-handler';
@@ -85,11 +84,6 @@ import { createListAutomationsHandler,
   createListAutomationTemplatesHandler,
 } from './routes/automations';
 import {
-  createListPluginsHandler,
-  createGetPluginHandler,
-  createUpdatePluginHandler,
-} from './routes/plugins';
-import {
   createResolveDirectoryHandler,
   createSuggestPathsHandler,
   createPickDirectoryHandler,
@@ -113,7 +107,6 @@ interface BunWebSocket {
 }
 
 class ServerModule implements Module {
-  manifest!: ModuleManifest; // 由管理器注入
 
   private ctx!: ModuleContext;
   private router!: HttpRouter;
@@ -151,17 +144,12 @@ class ServerModule implements Module {
     };
     ctx.services.register(ServiceNames.SERVER_INSTANCE, instance, {
       scope: 'server',
-      registrantType: 'module',
     });
 
     // 阶段5.3：订阅 config:changed 事件，转发为 WS config.changed
-    // 阶段5.4：订阅 extension:changed 事件，转发为 WS extension.changed
     // 通过 EventBus 解耦，避免 config-service / kernel 直接依赖 server.instance（循环依赖）
     ctx.eventBus.onAction('config:changed', (data) => {
       this.wsHandler.broadcast({ type: 'config.changed', payload: data });
-    });
-    ctx.eventBus.onAction('extension:changed', (data) => {
-      this.wsHandler.broadcast({ type: 'extension.changed', payload: data });
     });
     // 资源文件（skill/spec/tool）热重载事件，转发为 WS resources.changed
     ctx.eventBus.onAction('resources:changed', (data) => {
@@ -277,11 +265,6 @@ class ServerModule implements Module {
     this.router.addRoute({ method: 'POST', pattern: '/api/automations/:id/resume', handler: createResumeAutomationHandler(services), auth: true });
     this.router.addRoute({ method: 'GET', pattern: '/api/automations/:id/history', handler: createAutomationHistoryHandler(services), auth: true });
     this.router.addRoute({ method: 'GET', pattern: '/api/automation-templates', handler: createListAutomationTemplatesHandler(services), auth: true });
-
-    // plugins（阶段6.1：复用 kernel.extensions，映射为 PluginItem[]）
-    this.router.addRoute({ method: 'GET', pattern: '/api/plugins', handler: createListPluginsHandler(services), auth: true });
-    this.router.addRoute({ method: 'GET', pattern: '/api/plugins/:id', handler: createGetPluginHandler(services), auth: true });
-    this.router.addRoute({ method: 'PATCH', pattern: '/api/plugins/:id', handler: createUpdatePluginHandler(services), auth: true });
 
     // filesystem（浏览器端文件夹选择：后端原生对话框拿真实绝对路径 + 搜索回退）
     this.router.addRoute({ method: 'POST', pattern: '/api/filesystem/pick-directory', handler: createPickDirectoryHandler(env), auth: true });
@@ -458,8 +441,4 @@ async function handleHttp(
   return new Response(responseBody, { status: result.status, headers: respHeaders });
 }
 
-export default (manifest: ModuleManifest): Module => {
-  const m = new ServerModule();
-  m.manifest = manifest;
-  return m;
-};
+export default (): Module => new ServerModule();

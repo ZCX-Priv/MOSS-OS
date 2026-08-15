@@ -8,7 +8,6 @@ export type OverlayType =
   | 'user-menu'
   | 'agent-switch'
   | 'file-reference'
-  | 'plugin-dropdown'
   | 'slash-command'
   | 'plan-mode'
   | null;
@@ -18,6 +17,8 @@ export type SettingsSection =
   | 'appearance'
   | 'agent'
   | 'model'
+  | 'tools'
+  | 'specs'
   | 'task'
   | 'index'
   | 'docs'

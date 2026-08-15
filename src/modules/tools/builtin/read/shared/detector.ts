@@ -12,9 +12,23 @@ const IMAGE_EXTS = new Set<string>([
   '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg',
 ]);
 
-/** Office 文档扩展名集合 */
+/**
+ * Office/文档扩展名集合。
+ * - Word OOXML：.docx/.docm/.dotx；Word OLE 旧版：.doc（word-extractor 解析）
+ * - Excel OOXML：.xlsx/.xlsm/.xltx/.xltm；Excel OLE 旧版：.xls（SheetJS 原生支持读）
+ * - PPT OOXML：.pptx/.pptm/.potx/.ppsx（officeparser）；PPT OLE 旧版：.ppt（不支持，报错提示转换）
+ * - OpenDocument：.odt/.ods/.odp；RTF（officeparser）
+ * 未列出的扩展名回退 'text'，由 text handler 做二进制兜底检测。
+ */
 const OFFICE_EXTS = new Set<string>([
-  '.docx', '.xlsx', '.xlsm', '.pptx',
+  // Word
+  '.docx', '.docm', '.dotx', '.doc',
+  // Excel
+  '.xlsx', '.xlsm', '.xltx', '.xltm', '.xls',
+  // PowerPoint
+  '.pptx', '.pptm', '.potx', '.ppsx', '.ppt',
+  // OpenDocument / RTF
+  '.odt', '.ods', '.odp', '.rtf',
 ]);
 
 /**

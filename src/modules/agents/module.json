@@ -1,7 +1,0 @@
-{
-  "name": "agents",
-  "version": "1.0.0",
-  "description": "Agent 注册表：管理内置和自定义 Agent，支持持久化",
-  "type": "module",
-  "dependencies": {}
-}

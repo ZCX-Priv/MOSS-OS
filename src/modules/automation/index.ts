@@ -1,5 +1,5 @@
 // src/modules/automation/index.ts
-// Automation 模组入口：实现 AutomationService，注册 automation.service 服务。
+// Automation 模块入口：实现 AutomationService，注册 automation.service 服务。
 // 持久化：~/.moss/automations.json + ~/.moss/automations-history.json
 // 调度：cron-parser 解析 + setTimeout 调度循环
 // 触发：调用 agent.engine.run({临时 sessionId, userMessage: prompt})，通过 server.instance.broadcastWS 推送事件
@@ -8,7 +8,7 @@ import { t } from '../../core/i18n';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import cronParser from 'cron-parser';
-import type { Module, ModuleContext, ModuleManifest, Environment, Logger, ServiceRegistry, EventBus } from '../../core/types';
+import type { Module, ModuleContext, Environment, Logger, ServiceRegistry, EventBus } from '../../core/types';
 import { ServiceNames } from '../../core/types';
 import type { AgentEngine, AgentEvent } from '../contracts';
 import type { ServerInstanceLike } from '../contracts';
@@ -190,7 +190,7 @@ class AutomationServiceImpl implements AutomationService {
     this.history = this.loadHistory();
   }
 
-  /** 启动调度器（在模组 initialize 后调用） */
+  /** 启动调度器（在模块 initialize 后调用） */
   startScheduler(): void {
     for (const a of this.data.automations) {
       this.scheduleNext(a);
@@ -618,7 +618,6 @@ class AutomationServiceImpl implements AutomationService {
 // ============================================================================
 
 class AutomationModule implements Module {
-  manifest!: ModuleManifest;
   private service: AutomationServiceImpl | null = null;
 
   async initialize(ctx: ModuleContext): Promise<void> {
@@ -630,7 +629,6 @@ class AutomationModule implements Module {
     });
     ctx.services.register(ServiceNames.AUTOMATION_SERVICE, this.service, {
       scope: 'automation',
-      registrantType: 'module',
     });
     this.service.startScheduler();
     ctx.logger.info(t('automation.moduleInitialized'), {
@@ -644,8 +642,4 @@ class AutomationModule implements Module {
   }
 }
 
-export default (manifest: ModuleManifest): Module => {
-  const m = new AutomationModule();
-  m.manifest = manifest;
-  return m;
-};
+export default (): Module => new AutomationModule();

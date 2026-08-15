@@ -1,7 +1,7 @@
 {
   "name": "moss",
   "version": "1.0.0",
-  "description": "MOSS - 微内核 + 插件化架构的 AI Agent 应用",
+  "description": "MOSS - 微内核 + 模块化架构的 AI Agent 应用",
   "type": "module",
   "bin": {
     "moss": "bin/moss.js"
@@ -10,7 +10,6 @@
     "dist/",
     "config/",
     "bin/",
-    "modules/",
     "skills/",
     "mcps/",
     "agent/"
@@ -40,8 +39,10 @@
     "iconv-lite": "^0.7.3",
     "mammoth": "^1.12.1",
     "nativefiledialog-for-bun": "^0.3.2",
+    "officeparser": "^7.6.1",
     "pdf-parse": "^2.4.5",
     "tar": "^7.5.22",
+    "word-extractor": "^1.0.4",
     "xlsx": "^0.18.5",
     "zod": "^3.23.8"
   },

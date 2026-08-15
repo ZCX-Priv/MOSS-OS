@@ -1,4 +1,4 @@
-// src/plugins/server/static-assets.ts
+// src/modules/server/static-assets.ts
 // 前端静态资源服务：从 dist/webui 读取，SPA fallback。
 
 import { existsSync, readFileSync, statSync } from 'node:fs';

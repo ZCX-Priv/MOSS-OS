@@ -1,6 +1,6 @@
 // src/core/kernel.ts
-// Microkernel 主类：组装所有内核服务，编排模组/插件生命周期。
-// 模组（modules）拥有高权限，先加载；插件（plugins）权限较低，后加载。
+// Microkernel 主类：组装所有内核服务，静态编排模块生命周期。
+// 模块（modules）由内核直接静态 import，按固定顺序初始化、反向销毁。
 
 import { reloadBackendResources, setBackendLocale, t } from './i18n';
 import { detectEnvironment } from './env';
@@ -10,7 +10,6 @@ import { createRootLogger } from './logger';
 import { createEventBus } from './event-bus';
 import { createServiceRegistry } from './service-registry';
 import { createConfigService } from './config-service';
-import { ExtensionManager, type ExtensionManagerOptions } from './extension-manager';
 import type {
   KernelContext,
   Logger,
@@ -18,16 +17,57 @@ import type {
   ServiceRegistry,
   ConfigService,
   Environment,
+  Module,
   ModuleContext,
-  ExtensionState,
   LogLevel,
 } from './types';
+
+import llm from '../modules/llm';
+import tools from '../modules/tools';
+import mcp from '../modules/mcp';
+import server from '../modules/server';
+import agents from '../modules/agents';
+import update from '../modules/update';
+import agent from '../modules/agent';
+import fileHistory from '../modules/file-history';
+import daemon from '../modules/daemon';
+import automation from '../modules/automation';
+
+const MODULE_INIT_TIMEOUT_MS = 30_000;
+const MODULE_DESTROY_TIMEOUT_MS = 10_000;
+
+/**
+ * 静态模块注册表：固定初始化顺序满足依赖关系（被依赖者在前）。
+ * - llm / tools / mcp / server / agents / update：无依赖
+ * - agent → llm, tools
+ * - file-history → tools
+ * - daemon → server
+ * - automation → agent, server
+ */
+const MODULE_FACTORIES: Array<{ name: string; create: () => Module }> = [
+  { name: 'llm', create: llm },
+  { name: 'tools', create: tools },
+  { name: 'mcp', create: mcp },
+  { name: 'server', create: server },
+  { name: 'agents', create: agents },
+  { name: 'update', create: update },
+  { name: 'agent', create: agent },
+  { name: 'file-history', create: fileHistory },
+  { name: 'daemon', create: daemon },
+  { name: 'automation', create: automation },
+];
+
+type ModuleState = 'loaded' | 'initializing' | 'active' | 'destroying' | 'shutdown' | 'error';
+
+interface ModuleEntry {
+  name: string;
+  instance: Module;
+  state: ModuleState;
+}
 
 export interface KernelStartOptions {
   /** 前台运行（不 detach） */
   foreground?: boolean;
-  /** 扩展管理器选项 */
-  extensions?: ExtensionManagerOptions;
   /** 初始日志级别 */
   logLevel?: LogLevel;
 }
@@ -38,7 +78,7 @@ export class Microkernel {
   private eventBus: EventBus | null = null;
   private services: ServiceRegistry | null = null;
   private config: ConfigService | null = null;
-  private extensionManager: ExtensionManager | null = null;
+  private readonly modules: ModuleEntry[] = [];
   private i18nWatcher?: FSWatcher;
   private started = false;
 
@@ -82,7 +122,7 @@ export class Microkernel {
       this.logger.setLevel(cfgLevel);
     }
 
-    // 3. 构建模组上下文（完整能力）
+    // 3. 构建模块上下文（完整能力）
     const moduleCtx: ModuleContext = {
       logger: this.logger,
       config: this.config,
@@ -91,40 +131,45 @@ export class Microkernel {
       env: this.env,
     };
 
-    // 4. 发现并加载扩展（模组 + 插件）
-    this.extensionManager = new ExtensionManager(moduleCtx, options.extensions ?? {});
-    await this.extensionManager.discoverAndLoad();
+    // 4. 静态实例化并按序初始化模块（失败记日志并继续，与原拓扑编排韧性一致）
+    for (const factory of MODULE_FACTORIES) {
+      this.modules.push({ name: factory.name, instance: factory.create(), state: 'loaded' });
+    }
 
-    // 5. 按序初始化扩展
-    await this.extensionManager.initializeAll();
+    for (const entry of this.modules) {
+      entry.state = 'initializing';
+      try {
+        await this.withTimeout(
+          entry.instance.initialize(moduleCtx),
+          MODULE_INIT_TIMEOUT_MS,
+          `initialize(module:${entry.name})`,
+        );
+        entry.state = 'active';
+        this.logger.info(t('kernel.moduleActivated', { name: entry.name }));
+      } catch (err) {
+        entry.state = 'error';
+        this.logger.error(t('kernel.moduleInitFailed', { name: entry.name }), {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
 
-    // 暴露扩展管理服务（供 extensions 路由使用）
-    // 阶段5.4：enable/disable 后广播 extension:changed，由 server 模组订阅转发为 WS
+    // 暴露模块状态服务（供 health 路由使用）
     this.services.register(
-      'kernel.extensions',
+      'kernel.modules',
       {
-        getStates: () => this.extensionManager!.getExtensionStates(),
-        getActiveCount: () => this.extensionManager!.getActiveExtensionCount(),
-        getList: () => this.extensionManager!.getExtensionList(),
-        enable: (name: string) => {
-          this.extensionManager!.enable(name);
-          void this.eventBus!.broadcast('extension:changed', { name, action: 'enable' });
-        },
-        disable: (name: string) => {
-          this.extensionManager!.disable(name);
-          void this.eventBus!.broadcast('extension:changed', { name, action: 'disable' });
-        },
-        isDisabled: (name: string) => this.extensionManager!.isDisabled(name),
+        getList: (): Array<{ name: string; state: ModuleState }> =>
+          this.modules.map((m) => ({ name: m.name, state: m.state })),
       },
-      { scope: 'kernel', registrantType: 'module' },
+      { scope: 'kernel' },
     );
 
     this.started = true;
     await this.eventBus.broadcast('kernel:ready', { pid: this.env.pid });
 
-    const activeCount = this.extensionManager.getActiveExtensionCount();
+    const activeCount = this.modules.filter((m) => m.state === 'active').length;
     this.logger.info(t('kernel.ready'), {
-      activeExtensions: activeCount,
+      activeModules: activeCount,
       services: this.services.list(),
     });
 
@@ -138,8 +183,28 @@ export class Microkernel {
     this.logger?.info(t('kernel.stopping'));
     await this.eventBus?.broadcast('kernel:shutdown', {});
 
-    if (this.extensionManager) {
-      await this.extensionManager.destroyAll();
+    // 反向顺序销毁
+    for (const entry of [...this.modules].reverse()) {
+      if (entry.state !== 'active') continue;
+      entry.state = 'destroying';
+      try {
+        if (entry.instance.destroy) {
+          await this.withTimeout(
+            entry.instance.destroy(),
+            MODULE_DESTROY_TIMEOUT_MS,
+            `destroy(module:${entry.name})`,
+          );
+        }
+        this.services?.unregisterScope(entry.name);
+        this.eventBus?.offAll(entry.name);
+        entry.state = 'shutdown';
+        this.logger?.info(t('kernel.moduleDestroyed', { name: entry.name }));
+      } catch (err) {
+        entry.state = 'error';
+        this.logger?.error(t('kernel.moduleDestroyFailed', { name: entry.name }), {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
     this.i18nWatcher?.close();
     this.i18nWatcher = undefined;
@@ -183,8 +248,23 @@ export class Microkernel {
     }
   }
 
+  private withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`Operation "${label}" timed out after ${ms}ms`)),
+        ms,
+      );
+    });
+    try {
+      return Promise.race([promise, timeout]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
   private makeContext(): KernelContext {
-    if (!this.logger || !this.config || !this.eventBus || !this.services || !this.env || !this.extensionManager) {
+    if (!this.logger || !this.config || !this.eventBus || !this.services || !this.env) {
       throw new Error(t('kernel.notInitialized'));
     }
     return {
@@ -195,10 +275,6 @@ export class Microkernel {
       env: this.env,
       kernel: {
         stop: () => this.stop(),
-        getExtensionStates: (): {
-          modules: Record<string, ExtensionState>;
-          plugins: Record<string, ExtensionState>;
-        } => this.extensionManager!.getExtensionStates(),
       },
     };
   }

@@ -13,7 +13,7 @@ export default {
     const mgr = ctx.services.tryResolve<MCPManager>(ServiceNames.MCP_MANAGER);
     if (!mgr) {
       return {
-        content: [{ type: 'text', text: 'Error: MCP manager not available. Is the MCP plugin loaded?' }],
+        content: [{ type: 'text', text: 'Error: MCP manager not available. Is the MCP module loaded?' }],
         isError: true,
       };
     }

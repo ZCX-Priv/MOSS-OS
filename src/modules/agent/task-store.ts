@@ -29,7 +29,7 @@ export interface TaskGroup {
 }
 
 interface TaskStoreData {
-  /** 数据版本：2 = 已执行"最近活跃在上"顺序迁移 */
+  /** 数据版本：3 = 已按 updatedAt 倒序规范化 order（修复 v2 反转迁移重复执行导致的顺序污染） */
   version?: number;
   groups: TaskGroup[];
   tasks: TaskItem[];
@@ -146,11 +146,10 @@ export class TaskStore {
     for (const id of taskIds) {
       if (!idToTask.has(id)) return false;
     }
-    const now = new Date().toISOString();
+    // 拖拽只改顺序，不污染 updatedAt（updatedAt 语义 = 最近活跃，由 touchTask 维护）
     taskIds.forEach((id, idx) => {
       const task = idToTask.get(id)!;
       task.order = idx;
-      task.updatedAt = now;
     });
     this.save();
     return true;
@@ -221,15 +220,19 @@ export class TaskStore {
   // ==========================================================================
 
   /**
-   * 一次性数据迁移（version 2）：旧数据"新任务 order 最大（沉底）"反转为"最近在上"。
-   * 每组内按 (order 升序, createdAt 升序) 得到 [旧→新]，反转赋 order（最新 = 0）。
+   * 一次性数据迁移（version 3）：按组内 updatedAt 倒序（缺失回退 createdAt）重排 order = 0,1,2...
+   * 背景：v2 迁移（order 反转）曾因 load() 丢弃 version 字段而每次启动重复执行，
+   * 把 createTask/touchTask 维护的"新/活跃任务 order 小（置顶）"反复翻转为沉底，
+   * 磁盘顺序已被污染且无法从数据推断原始意图。v3 以 updatedAt（touchTask 维护的
+   * 最近活跃时间）为唯一基准一次性规范化，与 touchTask 置顶语义一致；此后手动拖拽
+   * （reorderTasks）与置顶（createTask/touchTask）的 order 被永久尊重。
    */
   private migrateIfNeeded(): void {
-    if (this.data.version === 2) return;
+    if (this.data.version === 3) return;
     if (this.data.tasks.length === 0) {
       // 空数据直接标记已迁移（内存标记即可，下次写盘随 save 持久化），
-      // 避免后续新建任务（置顶 order）后重启被本迁移反转回沉底
-      this.data.version = 2;
+      // 避免后续新建任务（置顶 order）后重启被本迁移覆盖
+      this.data.version = 3;
       return;
     }
     const byGroup = new Map<string, TaskItem[]>();
@@ -239,15 +242,12 @@ export class TaskStore {
       byGroup.set(t.groupId, list);
     }
     for (const list of byGroup.values()) {
-      list.sort((a, b) => {
-        const oa = a.order ?? Number.MAX_SAFE_INTEGER;
-        const ob = b.order ?? Number.MAX_SAFE_INTEGER;
-        if (oa !== ob) return oa - ob;
-        return a.createdAt.localeCompare(b.createdAt); // 升序：旧的在前
-      });
-      list.forEach((t, idx) => { t.order = list.length - 1 - idx; });
+      list.sort((a, b) =>
+        (b.updatedAt ?? b.createdAt).localeCompare(a.updatedAt ?? a.createdAt), // 倒序：最近活跃在前
+      );
+      list.forEach((t, idx) => { t.order = idx; });
     }
-    this.data.version = 2;
+    this.data.version = 3;
     this.save();
   }
 
@@ -265,7 +265,7 @@ export class TaskStore {
       if (!parsed.groups.find(g => g.id === DEFAULT_GROUP_ID)) {
         parsed.groups.unshift({ id: DEFAULT_GROUP_ID, name: DEFAULT_GROUP_NAME, expanded: true });
       }
-      return { groups: parsed.groups, tasks: parsed.tasks };
+      return { groups: parsed.groups, tasks: parsed.tasks, version: parsed.version };
     } catch {
       return { ...DEFAULT_STORE, groups: [...DEFAULT_STORE.groups], tasks: [] };
     }

@@ -1,12 +1,12 @@
 // src/modules/file-history/index.ts
-// FileHistory 模组入口：实现三层文件历史架构（Track Edit + Snapshot + JSONL）。
+// FileHistory 模块入口：实现三层文件历史架构（Track Edit + Snapshot + JSONL）。
 // 注册 FileHistoryService 到 ServiceNames.FILE_HISTORY，供 write/edit/delete/read/undo 工具消费。
 //
-// 依赖 tools 模组（工具在 execute 内通过 ctx.services.tryResolve 获取本服务）。
-// 本模组不依赖 server 模组（前端路由在 server/routes/file-history.ts 中独立实现）。
+// 依赖 tools 模块（工具在 execute 内通过 ctx.services.tryResolve 获取本服务）。
+// 本模块不依赖 server 模块（前端路由在 server/routes/file-history.ts 中独立实现）。
 
 import { t } from '../../core/i18n';
-import type { Module, ModuleContext, ModuleManifest } from '../../core/types';
+import type { Module, ModuleContext, } from '../../core/types';
 import { ServiceNames } from '../../core/types';
 import { FileHistoryServiceImpl } from './service';
 import { DEFAULT_FILE_HISTORY_CONFIG, type FileHistoryConfig } from './types';
@@ -18,7 +18,6 @@ export { archiveDirectory, extractArchive } from './archive';
 export type { ArchiveResult } from './archive';
 
 class FileHistoryModule implements Module {
-  manifest!: ModuleManifest;
   private ctx!: ModuleContext;
   private service!: FileHistoryServiceImpl;
 
@@ -42,7 +41,6 @@ class FileHistoryModule implements Module {
     // 注册服务
     ctx.services.register(ServiceNames.FILE_HISTORY, this.service, {
       scope: 'file-history',
-      registrantType: 'module',
     });
 
     // 监听 config 变更，重建配置（简化：不重建 service 实例，只更新内部 config）
@@ -77,8 +75,4 @@ class FileHistoryModule implements Module {
   }
 }
 
-export default (manifest: ModuleManifest): Module => {
-  const m = new FileHistoryModule();
-  m.manifest = manifest;
-  return m;
-};
+export default (): Module => new FileHistoryModule();

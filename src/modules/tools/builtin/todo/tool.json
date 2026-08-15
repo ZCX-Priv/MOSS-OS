@@ -1,6 +1,6 @@
 {
   "name": "todo",
-  "description": "管理当前会话的待办清单（每会话独立持久化）。action=\"create\" 加 text（可选 priority）新建；action=\"update\" 加 id 与 text/status/priority 至少一项修改；action=\"delete\" 加 id 删除；action=\"list\" 查看当前全部待办（含 id，操作前建议先 list）；action=\"reorder\" 加 orderedIds（全量 id 的新顺序排列）重排；action=\"batch_update\" 加 updates 数组一次批量更新多项（任一 id 无效则整体失败不写入）。开始多步任务时建议创建待办并在每步完成后更新状态。",
+  "description": "管理当前会话的待办清单（每会话独立持久化）。action=\"create\" mode=\"append\"（默认）加 text（可选 priority）新建一条；action=\"create\" mode=\"replace\" 加 items（全量待办数组，至少 1 条，每项可选 id/status/priority）整体覆盖清单；action=\"update\" 加 id 与 text/status/priority 至少一项修改；action=\"list\" 查看当前全部待办（含 id，操作前建议先 list）；action=\"reorder\" 加 orderedIds（全量 id 的新顺序排列）重排；action=\"batch_update\" 加 updates 数组一次批量更新多项（任一 id 无效则整体失败不写入）。开始多步任务时建议创建待办并在每步完成后更新状态。任务全部完成后保留 completed 状态即可，无需重建清单。",
   "icon": "list-checks",
   "annotations": {
     "idempotentHint": false
@@ -10,12 +10,17 @@
     "properties": {
       "action": {
         "type": "string",
-        "enum": ["create", "update", "delete", "list", "reorder", "batch_update"],
+        "enum": ["create", "update", "list", "reorder", "batch_update"],
         "description": "要执行的操作"
+      },
+      "mode": {
+        "type": "string",
+        "enum": ["append", "replace"],
+        "description": "create 的模式：append=新建一条（默认，需 text）；replace=全量覆盖清单（需 items，至少 1 条）"
       },
       "text": {
         "type": "string",
-        "description": "待办文本内容。create 必填；update 可选"
+        "description": "待办文本内容。create(mode=append) 必填；update 可选"
       },
       "priority": {
         "type": "string",
@@ -24,12 +29,28 @@
       },
       "id": {
         "type": "string",
-        "description": "待办 id。update/delete 必填"
+        "description": "待办 id。update 必填"
       },
       "status": {
         "type": "string",
         "enum": ["pending", "in_progress", "completed"],
-        "description": "状态。仅 update/batch_update 使用"
+        "description": "状态。仅 update/batch_update/create(mode=replace 的 items 内) 使用"
+      },
+      "items": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": { "type": "string", "description": "可选，保留原条目身份；不传则自动分配新 id" },
+            "text": { "type": "string", "description": "待办文本内容" },
+            "status": { "type": "string", "enum": ["pending", "in_progress", "completed"] },
+            "priority": { "type": "string", "enum": ["low", "medium", "high"] }
+          },
+          "required": ["text"],
+          "additionalProperties": false
+        },
+        "description": "全量待办列表（整体覆盖现有清单，至少 1 条）。仅 create mode=replace 使用"
       },
       "orderedIds": {
         "type": "array",

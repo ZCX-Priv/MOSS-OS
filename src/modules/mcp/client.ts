@@ -171,7 +171,7 @@ export class McpClient {
   private readonly eventBus: EventBus;
   /** 实际使用的传输（http 可能回退为 sse） */
   private effectiveTransport: 'stdio' | 'http' | 'sse' | null = null;
-  /** 模组级钩子（sampling 全局；由 manager 创建时注入） */
+  /** 模块级钩子（sampling 全局；由 manager 创建时注入） */
   private readonly hooks?: McpClientHooks;
   /** 当前 callTool 的 elicitation 桥（动态槽位；callTool 开始设置、结束清理） */
   private elicitationBridge: ((req: McpElicitRequest) => Promise<McpElicitOutcome>) | null = null;

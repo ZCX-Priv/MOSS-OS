@@ -1,4 +1,4 @@
-// src/plugins/server/ws-handler.ts
+// src/modules/server/ws-handler.ts
 // WebSocket 消息分发：处理前端 WS 消息，转发 Agent 事件到客户端。
 
 import { t } from '../../core/i18n';
@@ -376,7 +376,7 @@ export class WsHandler {
   /**
    * 阶段5.2：处理 automation.run 入站消息。
    * 调 automation.trigger(id)，返回 automation.started。
-   * automation 模组未加载时返回 error。
+   * automation 模块未加载时返回 error。
    */
   private handleAutomationRun(state: ConnectionState, msg: WSMessage): void {
     const automation = this.services.tryResolve<AutomationService>(ServiceNames.AUTOMATION_SERVICE);

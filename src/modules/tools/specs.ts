@@ -115,7 +115,7 @@ export function createSpecRegistry(
   seedBuiltinAgentPrompts(env);
   const userDir = join(env.dataDir, 'agent', 'prompts', 'main', 'spec');
 
-  // 同步加载（注册表在 tools 模组 initialize 时立即需要）
+  // 同步加载（注册表在 tools 模块 initialize 时立即需要）
   loadSpecsFromDirSync(reg, userDir, userDir, logger);
 
   // 启动热重载监听（异步，不阻塞初始化）

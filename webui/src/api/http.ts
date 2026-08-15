@@ -15,7 +15,6 @@ import type {
   ModelItem,
   AgentItem,
   AgentDetail,
-  PluginItem,
   SkillItem,
   SkillDetail,
   SpecItem,
@@ -25,7 +24,6 @@ import type {
   AutomationDetail,
   AutomationRun,
   AutomationTemplate,
-  ExtensionState,
   TodoItem,
   ContextFile,
   ResolveDirectoryResult,
@@ -87,6 +85,8 @@ function adaptAgentMessages(raw: unknown[]): TaskMessage[] {
       name?: string;
       thinking?: string;
       todoSnapshot?: TaskMessage['todoSnapshot'];
+      isError?: boolean;
+      metadata?: Record<string, unknown>;
       timestamp?: string;
     } | null;
     if (!m) continue;
@@ -100,6 +100,8 @@ function adaptAgentMessages(raw: unknown[]): TaskMessage[] {
           toolCallId: m.toolCallId ?? '',
           result: {
             content: [{ type: 'text', text: m.content ?? '' }],
+            ...(m.isError ? { isError: true } : {}),
+            ...(m.metadata ? { metadata: m.metadata } : {}),
           },
         });
       }
@@ -296,28 +298,23 @@ export const api = {
     request<{ default: string }>('PUT', '/api/agents/default', { id }),
 
   // ==========================================================================
-  // 插件管理（见文档 3.2.4）
-  // ==========================================================================
-  listPlugins: () => request<{ plugins: PluginItem[] }>('GET', '/api/plugins'),
-  getPlugin: (id: string) => request<PluginItem>('GET', `/api/plugins/${id}`),
-  updatePlugin: (id: string, patch: { enabled?: boolean }) =>
-    request<PluginItem>('PATCH', `/api/plugins/${id}`, patch),
-
-  // ==========================================================================
   // Skills / Specs（见文档 3.2.5 / 3.2.6）
   // ==========================================================================
   listSkills: () => request<{ skills: SkillItem[] }>('GET', '/api/skills'),
   getSkill: (name: string) => request<{ skill: SkillDetail }>('GET', `/api/skills/${name}`),
-  /** Qiehuan skill enabled state */
   updateSkill: (name: string, patch: { enabled: boolean }) =>
     request<{ name: string; enabled: boolean }>('PATCH', `/api/skills/${encodeURIComponent(name)}`, patch),
   listSpecs: () => request<{ specs: SpecItem[] }>('GET', '/api/specs'),
   // detail 用 query 形式规避路径参数含斜杠问题
   getSpec: (id: string) =>
     request<{ spec: SpecDetail }>('GET', `/api/specs?id=${encodeURIComponent(id)}`),
-  /** Baocun spec content (only user-dir specs editable) */
+  /** 保存 spec 内容（仅用户目录 spec 可编辑；id 走 query 与后端一致） */
   updateSpec: (id: string, content: string, description?: string) =>
-    request<{ saved: boolean; id: string }>('PUT', '/api/specs', { id, content, description }),
+    request<{ saved: boolean; id: string }>(
+      'PUT',
+      `/api/specs?id=${encodeURIComponent(id)}`,
+      { content, description },
+    ),
 
   // ==========================================================================
   // 自动化任务（见文档 3.2.7）
@@ -340,17 +337,6 @@ export const api = {
     request<{ history: AutomationRun[] }>('GET', `/api/automations/${id}/history`),
   listAutomationTemplates: () =>
     request<{ templates: AutomationTemplate[] }>('GET', '/api/automation-templates'),
-
-  // ==========================================================================
-  // 扩展状态（见文档 3.2.8）
-  // ==========================================================================
-  listExtensions: () =>
-    request<{ modules: ExtensionState[]; plugins: ExtensionState[]; activeCount: number }>(
-      'GET',
-      '/api/extensions',
-    ),
-  updateExtension: (name: string, patch: { enabled?: boolean }) =>
-    request<{ name: string; enabled: boolean }>('PATCH', `/api/extensions/${name}`, patch),
 
   // ==========================================================================
   // Todo（见文档 3.2.9）

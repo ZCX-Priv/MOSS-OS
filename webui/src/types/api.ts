@@ -244,22 +244,6 @@ export interface AgentDetail extends AgentItem {
 }
 
 // ============================================================================
-// 插件管理（见文档 3.2.4）
-// ============================================================================
-
-export interface PluginItem {
-  id: string;
-  name: string;
-  description: string;
-  /** 前端展示用渐变色（可由后端配置或前端硬编码） */
-  iconGradient?: string;
-  enabled: boolean;
-  builtIn: boolean;
-  type: 'module' | 'plugin';
-  version?: string;
-}
-
-// ============================================================================
 // 工具（GET /api/tools，PATCH /api/tools/:name）
 // ============================================================================
 
@@ -366,19 +350,6 @@ export interface AutomationTemplate {
   cron?: string;
   /** 含 {{占位符}} 的 prompt 模板 */
   promptTemplate?: string;
-}
-
-// ============================================================================
-// 扩展状态（见文档 3.2.8）
-// ============================================================================
-
-export interface ExtensionState {
-  name: string;
-  version: string;
-  description?: string;
-  type: 'module' | 'plugin';
-  state: 'loaded' | 'initializing' | 'active' | 'destroying' | 'shutdown' | 'error';
-  enabled: boolean;
 }
 
 // ============================================================================

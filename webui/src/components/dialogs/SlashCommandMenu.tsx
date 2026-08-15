@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next';
-import { FileText, ListChecks, Sparkles, FileCode, Puzzle, LogOut } from 'lucide-react';
+import { FileText, ListChecks, Sparkles, FileCode, LogOut } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -14,7 +14,6 @@ import {
 } from '@/components/ui/command';
 import { useSkills } from '@/hooks/useSkills';
 import { useSpecs } from '@/hooks/useSpecs';
-import { usePlugins } from '@/hooks/usePlugins';
 
 interface SlashCommandMenuProps {
   open: boolean;
@@ -36,7 +35,6 @@ export function SlashCommandMenu({ open, onClose, onSelect }: SlashCommandMenuPr
   const { t } = useTranslation();
   const { skills } = useSkills();
   const { specs } = useSpecs();
-  const { plugins } = usePlugins();
 
   const handleSelect = (cmd: SlashCommand): void => {
     onSelect?.(cmd.command);
@@ -98,17 +96,6 @@ export function SlashCommandMenu({ open, onClose, onSelect }: SlashCommandMenuPr
     command: `/spec:${s.id}`,
   }));
 
-  // 从 plugins 聚合
-  const pluginCommands: SlashCommand[] = plugins
-    .filter((p) => p.enabled)
-    .map((p) => ({
-      id: `plugin:${p.id}`,
-      name: p.name,
-      desc: p.description || t('slashCommand.pluginCommand'),
-      icon: Puzzle,
-      command: `/plugin:${p.id}`,
-    }));
-
   const renderCommand = (cmd: SlashCommand) => {
     const Icon = cmd.icon;
     return (
@@ -150,11 +137,6 @@ export function SlashCommandMenu({ open, onClose, onSelect }: SlashCommandMenuPr
             {specCommands.length > 0 && (
               <CommandGroup heading={t('slashCommand.specs')}>
                 {specCommands.map(renderCommand)}
-              </CommandGroup>
-            )}
-            {pluginCommands.length > 0 && (
-              <CommandGroup heading={t('slashCommand.plugins')}>
-                {pluginCommands.map(renderCommand)}
               </CommandGroup>
             )}
           </CommandList>

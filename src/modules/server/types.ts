@@ -1,4 +1,4 @@
-// src/plugins/server/types.ts
+// src/modules/server/types.ts
 // Server 插件类型定义。
 
 import type { Server } from 'node:http';

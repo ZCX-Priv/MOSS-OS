@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Outlet } from 'react-router-dom';
 import type { LucideIcon } from 'lucide-react';
 import {
@@ -26,6 +26,10 @@ import {
   Trash2,
   GripVertical,
   Loader2,
+  Search,
+  Wrench,
+  FileCode,
+  Pencil,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
@@ -57,18 +61,24 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Textarea } from '@/components/ui/textarea';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog';
 import { useModels } from '../../hooks/useModels';
 import { useAgents } from '../../hooks/useAgents';
+import { useTools } from '../../hooks/useTools';
+import { useSpecs } from '../../hooks/useSpecs';
 import { useStore } from '../../store';
-import type { ModelItem, ThinkingEffort } from '../../types/api';
+import { api } from '../../api/http';
+import { TOOL_ICON_MAP } from '../../lib/tool-icons';
+import type { ModelItem, ThinkingEffort, SpecDetail } from '../../types/api';
 
 export interface NavItem {
   id: SettingsSection;
@@ -81,6 +91,8 @@ export const settingsNavItems: NavItem[] = [
   { id: 'appearance', labelKey: 'settings.nav.appearance', Icon: Palette },
   { id: 'agent', labelKey: 'settings.nav.agent', Icon: Bot },
   { id: 'model', labelKey: 'settings.nav.model', Icon: Brain },
+  { id: 'tools', labelKey: 'settings.nav.tools', Icon: Wrench },
+  { id: 'specs', labelKey: 'settings.nav.specs', Icon: FileCode },
   { id: 'task', labelKey: 'settings.nav.task', Icon: MessageSquare },
   { id: 'index', labelKey: 'settings.nav.index', Icon: Layers },
   { id: 'docs', labelKey: 'settings.nav.docs', Icon: FileText },
@@ -103,6 +115,8 @@ export const settingsSearchIndex: SearchableSetting[] = [
   { labelKey: 'settings.nav.appearance', section: 'appearance' },
   { labelKey: 'settings.nav.agent', section: 'agent' },
   { labelKey: 'settings.nav.model', section: 'model' },
+  { labelKey: 'settings.nav.tools', section: 'tools' },
+  { labelKey: 'settings.nav.specs', section: 'specs' },
   { labelKey: 'settings.placeholder.taskTitle', descriptionKey: 'settings.placeholder.taskDesc', section: 'task' },
   { labelKey: 'settings.placeholder.indexTitle', descriptionKey: 'settings.placeholder.indexDesc', section: 'index' },
   { labelKey: 'settings.placeholder.docsTitle', descriptionKey: 'settings.placeholder.docsDesc', section: 'docs' },
@@ -885,6 +899,198 @@ export function AboutSettings() {
       </div>
 
       <div className="text-xs text-muted-foreground">{t('settings.about.copyright')}</div>
+    </div>
+  );
+}
+
+/* ===== 工具设置（内置/自定义工具启停） ===== */
+export function ToolsSettings() {
+  const { t } = useTranslation();
+  const [query, setQuery] = useState('');
+  const { tools, toggleTool } = useTools();
+
+  const q = query.trim().toLowerCase();
+  const filteredTools = q
+    ? tools.filter(
+        (tool) =>
+          tool.name.toLowerCase().includes(q) || tool.description.toLowerCase().includes(q),
+      )
+    : tools;
+
+  return (
+    <div className="flex flex-col gap-4 p-6">
+      <h1 className="text-xl font-semibold text-foreground">{t('settings.nav.tools')}</h1>
+
+      <div className="relative w-64">
+        <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          type="text"
+          placeholder={t('settings.tools.searchPlaceholder')}
+          className="pl-8"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+      </div>
+
+      <div className="flex flex-col gap-2">
+        {filteredTools.length === 0 && (
+          <div className="py-12 text-center text-sm text-muted-foreground">
+            {t('settings.tools.noTools')}
+          </div>
+        )}
+        {filteredTools.map((tool) => {
+          const Icon = TOOL_ICON_MAP[tool.icon ?? ''] ?? Wrench;
+          return (
+            <Card key={tool.name} className="flex flex-row items-center gap-3 p-3">
+              <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                <Icon className="size-5" />
+              </div>
+              <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-medium text-foreground">{tool.name}</h3>
+                  <Badge variant="outline" className="font-normal">
+                    {tool.source === 'builtin' ? t('settings.tools.builtin') : t('settings.tools.custom')}
+                  </Badge>
+                  {tool.annotations?.destructiveHint && (
+                    <Badge variant="secondary" className="font-normal text-amber-600">
+                      {t('settings.tools.destructive')}
+                    </Badge>
+                  )}
+                </div>
+                <p className="truncate text-xs text-muted-foreground">{tool.description}</p>
+              </div>
+              <Switch
+                checked={tool.enabled}
+                onCheckedChange={(checked) => void toggleTool(tool.name, checked)}
+                aria-label={tool.enabled ? t('common.close') : t('common.open')}
+              />
+            </Card>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ===== 规范设置（Spec 查看与编辑） ===== */
+export function SpecsSettings() {
+  const { t } = useTranslation();
+  const [query, setQuery] = useState('');
+  const { specs } = useSpecs();
+
+  const [detail, setDetail] = useState<SpecDetail | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [content, setContent] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const q = query.trim().toLowerCase();
+  const filteredSpecs = q
+    ? specs.filter(
+        (s) => s.id.toLowerCase().includes(q) || s.description.toLowerCase().includes(q),
+      )
+    : specs;
+
+  const openSpec = useCallback(async (id: string) => {
+    setLoading(true);
+    try {
+      const resp = await api.getSpec(id);
+      setDetail(resp.spec);
+      setContent(resp.spec.content);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t('settings.specs.loadFailed'));
+    } finally {
+      setLoading(false);
+    }
+  }, [t]);
+
+  const save = useCallback(async () => {
+    if (!detail || saving) return;
+    setSaving(true);
+    try {
+      await api.updateSpec(detail.id, content);
+      toast.success(t('settings.specs.saved'));
+      setDetail(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t('settings.specs.saveFailed'));
+    } finally {
+      setSaving(false);
+    }
+  }, [detail, content, saving, t]);
+
+  return (
+    <div className="flex flex-col gap-4 p-6">
+      <h1 className="text-xl font-semibold text-foreground">{t('settings.nav.specs')}</h1>
+
+      <div className="relative w-64">
+        <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          type="text"
+          placeholder={t('settings.specs.searchPlaceholder')}
+          className="pl-8"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+      </div>
+
+      <div className="flex flex-col gap-2">
+        {filteredSpecs.length === 0 && (
+          <div className="py-12 text-center text-sm text-muted-foreground">
+            {t('settings.specs.noSpecs')}
+          </div>
+        )}
+        {filteredSpecs.map((spec) => (
+          <Card
+            key={spec.id}
+            className="flex cursor-pointer flex-row items-center gap-3 p-3 transition-colors hover:bg-muted/40"
+            onClick={() => void openSpec(spec.id)}
+          >
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+              <FileCode className="size-5" />
+            </div>
+            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-medium text-foreground">{spec.id}</h3>
+                <Badge variant="outline" className="font-normal">
+                  {spec.source === 'builtin' ? t('settings.tools.builtin') : t('settings.tools.custom')}
+                </Badge>
+              </div>
+              <p className="truncate text-xs text-muted-foreground">{spec.description}</p>
+            </div>
+            <Pencil className="size-4 shrink-0 text-muted-foreground/50" />
+          </Card>
+        ))}
+      </div>
+
+      {/* 查看/编辑弹窗 */}
+      <Dialog open={detail !== null || loading} onOpenChange={(o) => !o && !saving && setDetail(null)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{detail ? detail.id : t('common.loading')}</DialogTitle>
+            <DialogDescription>{detail?.description}</DialogDescription>
+          </DialogHeader>
+          {loading ? (
+            <div className="flex items-center justify-center gap-2 py-8 text-muted-foreground">
+              <Loader2 className="size-4 animate-spin" />
+            </div>
+          ) : detail ? (
+            <Textarea
+              value={content}
+              onChange={(e) => setContent(e.target.value)}
+              disabled={saving}
+              className="min-h-[50vh] font-mono text-xs"
+            />
+          ) : null}
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setDetail(null)} disabled={saving}>
+              {t('common.cancel')}
+            </Button>
+            <Button size="sm" onClick={() => void save()} disabled={saving || !detail}>
+              {saving ? <Loader2 className="size-3.5 animate-spin" /> : null}
+              {t('common.save')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -1,14 +1,12 @@
 // src/modules/agent/index.ts
-// Agent 引擎模组入口：注册 AgentEngine 服务。
-// 清单来自 module.json，由 ExtensionManager 注入 manifest。
+// Agent 引擎模块入口：注册 AgentEngine 服务。
 
 import { t } from '../../core/i18n';
-import type { Module, ModuleContext, ModuleManifest } from '../../core/types';
+import type { Module, ModuleContext } from '../../core/types';
 import { ServiceNames } from '../../core/types';
 import { AgentEngineImpl } from './engine';
 
 class AgentModule implements Module {
-  manifest!: ModuleManifest; // 由管理器注入
 
   async initialize(ctx: ModuleContext): Promise<void> {
     const engine = new AgentEngineImpl({
@@ -20,7 +18,6 @@ class AgentModule implements Module {
     });
     ctx.services.register(ServiceNames.AGENT_ENGINE, engine, {
       scope: 'agent',
-      registrantType: 'module',
     });
 
     const cfg = ctx.config.getAppConfig().agent;
@@ -32,8 +29,4 @@ class AgentModule implements Module {
   }
 }
 
-export default (manifest: ModuleManifest): Module => {
-  const m = new AgentModule();
-  m.manifest = manifest;
-  return m;
-};
+export default (): Module => new AgentModule();

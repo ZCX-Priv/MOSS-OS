@@ -1,10 +1,10 @@
 // src/modules/tools/index.ts
-// Tools 模组入口：注册 ToolRegistry + 内置工具 + SkillRegistry。
+// Tools 模块入口：注册 ToolRegistry + 内置工具 + SkillRegistry。
 // 工具从 builtin 目录的「tool.json + index.ts」结构加载，新增工具只需加目录。
 // 支持配置热重载（enabled 变更即时生效）和文件级增量热重载（tool.json/index.ts 变更即时生效）。
 
 import { t } from '../../core/i18n';
-import type { Module, ModuleContext, ModuleManifest } from '../../core/types';
+import type { Module, ModuleContext, } from '../../core/types';
 import { ServiceNames } from '../../core/types';
 import { join } from 'node:path';
 import { existsSync, statSync, watch, type FSWatcher } from 'node:fs';
@@ -16,7 +16,6 @@ import { loadToolsFromDir, loadToolFromDir, resolveBuiltinDir } from './loader';
 import type { Tool } from './types';
 
 class ToolsModule implements Module {
-  manifest!: ModuleManifest;
 
   private registry: ToolRegistryImpl | null = null;
   private ctx: ModuleContext | null = null;
@@ -37,18 +36,15 @@ class ToolsModule implements Module {
     // 2. 加载自定义工具（~/.moss/tools/）
     await this.loadCustomTools(ctx);
 
-    // 3. 注册服务（受保护服务名，由模组注册）
+    // 3. 注册服务（受保护服务名，由模块注册）
     ctx.services.register(ServiceNames.TOOL_REGISTRY, this.registry, {
       scope: 'tools',
-      registrantType: 'module',
     });
     ctx.services.register(ServiceNames.SKILL_REGISTRY, skillRegistry, {
       scope: 'tools',
-      registrantType: 'module',
     });
     ctx.services.register(ServiceNames.SPEC_REGISTRY, specRegistry, {
       scope: 'tools',
-      registrantType: 'module',
     });
 
     // 4. 热重载：工具启用/禁用由 registry.isEnabled 实时读取 config，
@@ -275,8 +271,4 @@ class ToolsModule implements Module {
   }
 }
 
-export default (manifest: ModuleManifest): Module => {
-  const m = new ToolsModule();
-  m.manifest = manifest;
-  return m;
-};
+export default (): Module => new ToolsModule();

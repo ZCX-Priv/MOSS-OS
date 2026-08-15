@@ -63,19 +63,6 @@ export function PlanModeInput({ open, onClose }: PlanModeInputProps) {
               <Button variant="ghost" size="icon-sm" title={t('common.attachment')}>
                 <Plus />
               </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-1.5 rounded-full"
-                title={t('common.plugin')}
-              >
-                <Sparkles className="size-3.5" />
-                <span>{t('common.plugin')}</span>
-                <ChevronDown className="size-3 opacity-70" />
-                <Badge variant="secondary" className="font-normal">
-                  +1
-                </Badge>
-              </Button>
             </div>
             <div className="flex items-center gap-1.5">
               <Button

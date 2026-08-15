@@ -1,6 +1,7 @@
 // builtin/todo/index.ts
-// todo 工具 execute 逻辑：会话级待办管理（create/update/delete/list/reorder/batch_update），
+// todo 工具 execute 逻辑：会话级待办管理（create[append/replace]/update/list/reorder/batch_update），
 // 持久化到 ~/.moss/todo/<sessionId>.json（每会话一文件）。
+// create 双模式：mode=append（默认）新建一条；mode=replace 用 items 全量覆盖清单（至少 1 条）。
 // 工厂模式：需要 env 以定位持久化路径。
 // 持久化函数位于 ./shared/store.ts，被 server 路由和 agent 引擎复用。
 // 元数据见同目录 tool.json。
@@ -24,15 +25,27 @@ interface TodoUpdatePatch {
   priority?: TodoPriority;
 }
 
+/** create mode=replace 的单条入参：id 可选（保留原条目身份），其余可选字段由后端补齐 */
+interface TodoReplaceInput {
+  id?: string;
+  text: string;
+  status?: TodoStatus;
+  priority?: TodoPriority;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export default function createExecute(env: Environment) {
   return {
     async execute(params: unknown, ctx: ToolContext): Promise<ToolResult> {
       const p = params as {
-        action: 'create' | 'update' | 'delete' | 'list' | 'reorder' | 'batch_update';
+        action: 'create' | 'update' | 'list' | 'reorder' | 'batch_update';
+        mode?: 'append' | 'replace';
         text?: string;
         priority?: TodoPriority;
         id?: string;
         status?: TodoStatus;
+        items?: TodoReplaceInput[];
         orderedIds?: string[];
         updates?: TodoUpdatePatch[];
       };
@@ -50,6 +63,50 @@ export default function createExecute(env: Environment) {
 
       switch (p.action) {
         case 'create': {
+          const mode = p.mode ?? 'append';
+
+          // 覆盖模式：items 全量替换现有清单（禁止空数组）
+          if (mode === 'replace') {
+            if (!Array.isArray(p.items) || p.items.length === 0) {
+              return { content: [{ type: 'text', text: 'Error: items (non-empty array of {text, status?, priority?, id?}) is required for create mode=replace' }], isError: true };
+            }
+            const invalid = p.items
+              .map((it, idx) => ({ idx, it }))
+              .filter(({ it }) => typeof it?.text !== 'string' || it.text.trim() === '')
+              .map(({ idx }) => idx);
+            if (invalid.length > 0) {
+              return { content: [{ type: 'text', text: `Error: items[${invalid.join(', ')}] missing non-empty text. Nothing was modified.` }], isError: true };
+            }
+            const now = new Date().toISOString();
+            // id 分配：保留传入 id；无 id 项从 nextId 起跳过已占用 id 递增分配（防撞号）
+            const usedIds = new Set(p.items.filter(it => it.id).map(it => it.id as string));
+            let next = store.nextId;
+            const newItems: TodoItem[] = p.items.map((it) => {
+              let id = it.id;
+              if (!id) {
+                while (usedIds.has(String(next))) next += 1;
+                id = String(next);
+                usedIds.add(id);
+                next += 1;
+              }
+              return {
+                id,
+                text: it.text,
+                status: it.status ?? 'pending',
+                priority: it.priority ?? 'medium',
+                createdAt: it.createdAt ?? now,
+                updatedAt: it.updatedAt ?? now,
+              };
+            });
+            store.items = newItems;
+            persist();
+            return {
+              content: [{ type: 'text', text: `Todos replaced (${newItems.length} items):\n${JSON.stringify(newItems, null, 2)}` }],
+              metadata: { action: 'create', mode: 'replace', count: newItems.length },
+            };
+          }
+
+          // 新建模式（默认）：追加一条
           if (!p.text || typeof p.text !== 'string' || p.text.trim() === '') {
             return { content: [{ type: 'text', text: 'Error: text is required for create' }], isError: true };
           }
@@ -67,7 +124,7 @@ export default function createExecute(env: Environment) {
           persist();
           return {
             content: [{ type: 'text', text: `Todo created (id=${item.id}):\n${JSON.stringify(item, null, 2)}` }],
-            metadata: { action: 'create', id: item.id },
+            metadata: { action: 'create', mode: 'append', id: item.id },
           };
         }
 
@@ -87,22 +144,6 @@ export default function createExecute(env: Environment) {
           return {
             content: [{ type: 'text', text: `Todo updated (id=${item.id}):\n${JSON.stringify(item, null, 2)}` }],
             metadata: { action: 'update', id: item.id },
-          };
-        }
-
-        case 'delete': {
-          if (!p.id) {
-            return { content: [{ type: 'text', text: 'Error: id is required for delete' }], isError: true };
-          }
-          const idx = store.items.findIndex(it => it.id === p.id);
-          if (idx === -1) {
-            return { content: [{ type: 'text', text: `Error: todo with id="${p.id}" not found. Use action="list" to see current todos.` }], isError: true };
-          }
-          const [removed] = store.items.splice(idx, 1);
-          persist();
-          return {
-            content: [{ type: 'text', text: `Todo deleted (id=${removed.id}): ${removed.text}` }],
-            metadata: { action: 'delete', id: removed.id },
           };
         }
 
