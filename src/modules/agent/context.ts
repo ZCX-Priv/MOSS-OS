@@ -13,6 +13,7 @@ import type { UnifiedTool } from '../llm/types';
 import type { ToolRegistry } from '../contracts';
 import type { Environment, Platform } from '../../core/types';
 import { seedBuiltinAgentPrompts } from '../tools/shared/agent-seed';
+import { SYSTEM_SCOPE } from '../filesys/roots';
 
 /** 兜底系统提示词：当 agent/prompts/main/ 下无任何基本设定文件时使用 */
 const FALLBACK_SYSTEM_PROMPT = `你是 MOSS，一个运行在真实环境中的交互式 AI 智能体。
@@ -181,7 +182,11 @@ function collectPromptVars(
 
   return {
     PLATFORM: env.platform,
-    CWD: cwd,
+    // System 作用域（本机模式）：告知模型全盘可访问 + 默认目录 + .moss 边界
+    CWD:
+      cwd === SYSTEM_SCOPE
+        ? `System-wide access mode (full filesystem access; default working directory: ${env.homeDir}; under ~/.moss only the agent/, mcps/, skills/ subdirectories are accessible)`
+        : cwd,
     cur_date: date,
     cur_time: time,
     cur_datetime: `${date} ${time}`,

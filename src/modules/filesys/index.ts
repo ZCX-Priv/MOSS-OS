@@ -25,7 +25,7 @@ export type {
 } from './types';
 export { safeSessionId, readJsonStore, writeJsonStore } from './store-io';
 export { hashBuffer, hashText } from './hash';
-export { resolveInRoots, normalizeRoots } from './roots';
+export { resolveInRoots, normalizeRoots, SYSTEM_SCOPE, isMossAccessAllowed } from './roots';
 
 class FilesysModule implements Module {
   async initialize(ctx: ModuleContext): Promise<void> {

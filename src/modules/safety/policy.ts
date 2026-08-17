@@ -3,6 +3,7 @@
 //
 // 九步流水线（短路返回）：
 //   1. 工具 disabled            → DENY  {disabled}
+//   1.5 shell 命令 .moss 越界   → DENY  {mossAccess}（全局硬规则，skip 也拦）
 //   2. mode === 'skip'          → ALLOW {mode}      （用户决策：真全放行，仅查禁用）
 //   3. deny 规则命中(会话>全局)  → DENY  {rule}
 //   4. ask 规则命中(会话>全局)   → ASK   {rule}
@@ -22,7 +23,8 @@ import type {
   PermissionMode,
 } from './types';
 import { matchRule } from './rules';
-import { matchDangerousCommand, matchProtectedPath, isHardProtectedPath } from './patterns';
+import { matchDangerousCommand, matchProtectedPath, isHardProtectedPath, matchMossShellAccess } from './patterns';
+import { SYSTEM_SCOPE } from '../filesys/roots';
 
 /** 内置工具风险分类表（按操作可恢复性；fail-closed：未知工具归 L3） */
 const READONLY_TOOLS = new Set(['read', 'glob', 'grep', 'list_mcp', 'list_skill', 'list_spec', 'get_spec', 'use_skill']);
@@ -69,6 +71,8 @@ export interface PolicyEnv {
   home: string;
   /** MOSS 配置目录（~/.moss/config 硬保护） */
   configDir: string;
+  /** MOSS 数据目录（~/.moss；shell 命令 .moss 访问检测用） */
+  dataDir: string;
 }
 
 /**
@@ -81,6 +85,18 @@ export function evaluate(req: SafetyRequest, env: PolicyEnv): SafetyDecision {
     return { action: 'deny', reason: { type: 'disabled' } };
   }
 
+  // 1.5 shell 命令 .moss 访问检测（全局硬规则，skip 模式也拦——用户明确要求；
+  // 防止 shell 命令绕过 filesys 层 isMossAccessAllowed 读写 AI 自身配置/存储）
+  if (req.toolName === 'shell') {
+    const cmd = (req.params as { command?: unknown } | null)?.command;
+    if (typeof cmd === 'string' && cmd.trim()) {
+      const hit = matchMossShellAccess(cmd, env.home, env.dataDir);
+      if (hit) {
+        return { action: 'deny', reason: { type: 'mossAccess', pattern: hit } };
+      }
+    }
+  }
+
   // 2. skip：全放行（用户决策：仅查禁用）
   if (req.mode === 'skip') {
     return { action: 'allow', reason: { type: 'mode', mode: 'skip' } };
@@ -89,17 +105,19 @@ export function evaluate(req: SafetyRequest, env: PolicyEnv): SafetyDecision {
   const sessionRules = env.sessionRules ?? EMPTY_RULES;
   const globalRules = env.globalRules ?? EMPTY_RULES;
   const isShell = req.toolName === 'shell';
+  // System 作用域哨兵下规则路径匹配以主目录为基准（与 filesys 相对路径解析一致）
+  const ruleCwd = req.cwd === SYSTEM_SCOPE ? env.home : req.cwd;
 
   // 3. deny 规则（会话 > 全局）
   for (const rule of [...sessionRules.deny, ...globalRules.deny]) {
-    if (matchRule(rule, req.toolName, req.params, req.cwd, 'restrictive')) {
+    if (matchRule(rule, req.toolName, req.params, ruleCwd, 'restrictive')) {
       return { action: 'deny', reason: { type: 'rule', rule } };
     }
   }
 
   // 4. ask 规则（会话 > 全局）
   for (const rule of [...sessionRules.ask, ...globalRules.ask]) {
-    if (matchRule(rule, req.toolName, req.params, req.cwd, 'restrictive')) {
+    if (matchRule(rule, req.toolName, req.params, ruleCwd, 'restrictive')) {
       return { action: 'ask', reason: { type: 'rule', rule } };
     }
   }
@@ -136,7 +154,7 @@ export function evaluate(req: SafetyRequest, env: PolicyEnv): SafetyDecision {
 
   // 6. allow 规则（会话 > 全局）
   for (const rule of [...sessionRules.allow, ...globalRules.allow]) {
-    if (matchRule(rule, req.toolName, req.params, req.cwd, 'permissive')) {
+    if (matchRule(rule, req.toolName, req.params, ruleCwd, 'permissive')) {
       return { action: 'allow', reason: { type: 'rule', rule } };
     }
   }

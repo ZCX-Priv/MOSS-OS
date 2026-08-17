@@ -452,7 +452,9 @@ export const en = {
     resolving: 'Resolving path…',
     pickFolder: 'Select folder',
     recent: 'Recent',
-    default: 'Default',
+    system: 'System',
+    systemTitle: 'System (full disk access)',
+    systemDesc: 'Full disk access',
   },
   slashCommand: {
     recent: 'Recent',

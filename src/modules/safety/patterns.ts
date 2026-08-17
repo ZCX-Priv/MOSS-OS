@@ -128,3 +128,49 @@ export function isHardProtectedPath(
   }
   return false;
 }
+
+/** ~/.moss 下允许 shell 访问的子目录（与 filesys/roots.ts isMossAccessAllowed 保持一致） */
+const MOSS_ALLOWED_SUBDIRS = ['agent', 'mcps', 'skills'];
+
+/**
+ * shell 命令 .moss 访问检测（全局硬规则，与 filesys 层 isMossAccessAllowed 双保险）：
+ * 命令文本中出现指向 ~/.moss 的路径（~/、$HOME、%USERPROFILE%、$env:USERPROFILE、
+ * home/dataDir 绝对路径形态），且目标不在 agent/mcps/skills 白名单内 → 返回命中片段（DENY）。
+ * 检测所有匹配：一条命令中任一路径非法即整体拒绝。
+ */
+export function matchMossShellAccess(command: string, home: string, dataDir: string): string | null {
+  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // 分隔符弹性：路径中的 / 在正则中同时匹配 / 与 \（Windows 命令两种写法都常见）
+  const sepFlex = (p: string) => esc(p).replace(/\//g, '[/\\\\]');
+  const homeFwd = home.replace(/\\/g, '/');
+  const dataFwd = dataDir.replace(/[\\/]+$/, '').replace(/\\/g, '/');
+  const re = new RegExp(
+    `(?:~|\\$HOME|\\$\\{HOME\\}|%USERPROFILE%|\\$env:USERPROFILE|${sepFlex(homeFwd)})` +
+      `([/\\\\]+)\\.moss([/\\\\]+[^\\s"'\`;&|<>]*)?`,
+    'gi',
+  );
+  let hit: string | null = null;
+  for (const m of command.matchAll(re)) {
+    const sub = m[2];
+    if (sub) {
+      const first = sub.replace(/^[/\\]+/, '').split(/[/\\]+/)[0]?.toLowerCase() ?? '';
+      if (MOSS_ALLOWED_SUBDIRS.includes(first)) continue;
+    }
+    hit = m[0];
+    break;
+  }
+  // dataDir 可能与 ~/.moss 不同（自定义数据目录）：单独按绝对路径形态匹配
+  if (!hit && dataFwd && !dataFwd.toLowerCase().startsWith(`${homeFwd.toLowerCase()}/.moss`)) {
+    const re2 = new RegExp(`${sepFlex(dataFwd)}([/\\\\]+[^\\s"'\`;&|<>]*)?`, 'gi');
+    for (const m of command.matchAll(re2)) {
+      const sub = m[1];
+      if (sub) {
+        const first = sub.replace(/^[/\\]+/, '').split(/[/\\]+/)[0]?.toLowerCase() ?? '';
+        if (MOSS_ALLOWED_SUBDIRS.includes(first)) continue;
+      }
+      hit = m[0];
+      break;
+    }
+  }
+  return hit;
+}

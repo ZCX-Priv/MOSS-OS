@@ -27,6 +27,7 @@ export interface DecisionReason {
     | 'dangerousCommand'
     | 'cautionCommand'
     | 'protectedPath'
+    | 'mossAccess'
     | 'default';
   /** 命中的规则原文（type='rule' 时） */
   rule?: string;

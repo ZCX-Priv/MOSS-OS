@@ -5,7 +5,7 @@ import App from './App.tsx'
 import { ThemeProvider } from './contexts/ThemeContext'
 import { I18nProvider } from './contexts/I18nContext'
 import { idbGet, idbSet, migrateLegacyDatabase } from './utils/idb'
-import { useStore, type PersistedState } from './store'
+import { useStore, type PersistedState, LEGACY_DEFAULT_WORKING_DIRECTORY, DEFAULT_WORKING_DIRECTORY } from './store'
 import i18n, { type Locale, LOCALE_STORAGE_KEY } from './i18n'
 import './styles/global.css'
 
@@ -69,6 +69,11 @@ async function prefetchStoreState(): Promise<Record<string, unknown>> {
     } else {
       result[key] = current;
     }
+  }
+  // 存量迁移：旧默认工作目录（C:\）→ 本机 System 哨兵（覆盖 IndexedDB 与旧 localStorage 两来源）
+  if (result['moss-working-directory'] === LEGACY_DEFAULT_WORKING_DIRECTORY) {
+    result['moss-working-directory'] = DEFAULT_WORKING_DIRECTORY;
+    await idbSet('moss-working-directory', DEFAULT_WORKING_DIRECTORY);
   }
   return result;
 }

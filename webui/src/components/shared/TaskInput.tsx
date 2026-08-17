@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Plus, Mic, ArrowUp, ChevronDown, FolderOpen, FolderInput, Loader2, Square } from 'lucide-react';
+import { Plus, Mic, ArrowUp, ChevronDown, FolderOpen, FolderInput, Loader2, Square, Monitor } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
@@ -13,7 +13,7 @@ import {
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
 import type { OverlayType } from '../../types';
-import { useStore, DEFAULT_WORKING_DIRECTORY } from '../../store';
+import { useStore, SYSTEM_WORKING_DIRECTORY } from '../../store';
 import { ModelSelector } from '../overlays/ModelSelector';
 import { PermissionModeSelector } from '../overlays/PermissionModeSelector';
 import { useDirectoryPicker } from '../../hooks/useDirectoryPicker';
@@ -77,21 +77,22 @@ export function TaskInput({
     }
   };
 
-  const folderLabel =
-    !workingDirectory || workingDirectory === DEFAULT_WORKING_DIRECTORY
-      ? t('directoryPicker.default')
-      : workingDirectory.split(/[\\/]/).pop() || workingDirectory;
+  const isSystemScope = !workingDirectory || workingDirectory === SYSTEM_WORKING_DIRECTORY;
+
+  const folderLabel = isSystemScope
+    ? t('directoryPicker.system')
+    : workingDirectory.split(/[\\/]/).pop() || workingDirectory;
 
   const dirName = (path: string) => {
     const seg = path.split(/[\\/]/).filter(Boolean).pop();
     return seg ?? path;
   };
 
-  const renderDirItem = (name: string, path: string, onSelect: () => void) => (
+  const renderDirItem = (name: string, path: string, onSelect: () => void, icon?: React.ReactNode) => (
     <Tooltip delayDuration={500}>
       <TooltipTrigger asChild>
         <DropdownMenuItem onSelect={onSelect} className="gap-2 py-1.5">
-          <FolderOpen className="size-3.5 shrink-0 text-muted-foreground" />
+          {icon ?? <FolderOpen className="size-3.5 shrink-0 text-muted-foreground" />}
           <div className="flex min-w-0 flex-col">
             <span className="truncate text-sm font-medium">{name}</span>
             <span className="truncate font-mono text-xs text-muted-foreground">{path}</span>
@@ -127,13 +128,15 @@ export function TaskInput({
                 variant="secondary"
                 className="min-w-0 shrink gap-1 h-7 rounded-[min(var(--radius-md),12px)] border border-border bg-transparent px-3 py-1 font-normal cursor-pointer [&>svg]:size-3.5"
                 title={
-                  !workingDirectory || workingDirectory === DEFAULT_WORKING_DIRECTORY
-                    ? t('directoryPicker.default')
+                  isSystemScope
+                    ? t('directoryPicker.systemTitle')
                     : workingDirectory
                 }
               >
                 {isResolving ? (
                   <Loader2 className="size-3 shrink-0 animate-spin" />
+                ) : isSystemScope ? (
+                  <Monitor className="size-3 shrink-0" />
                 ) : (
                   <FolderOpen className="size-3 shrink-0" />
                 )}
@@ -146,9 +149,10 @@ export function TaskInput({
                 {t('directoryPicker.recent')}
               </div>
               {renderDirItem(
-                t('directoryPicker.default'),
-                DEFAULT_WORKING_DIRECTORY,
-                () => setWorkingDirectory(DEFAULT_WORKING_DIRECTORY),
+                t('directoryPicker.system'),
+                t('directoryPicker.systemDesc'),
+                () => setWorkingDirectory(SYSTEM_WORKING_DIRECTORY),
+                <Monitor key="system" className="size-3.5 shrink-0 text-muted-foreground" />,
               )}
               {recentDirectories.length > 0 && (
                 <div className="max-h-[10.5rem] overflow-y-auto pr-1">

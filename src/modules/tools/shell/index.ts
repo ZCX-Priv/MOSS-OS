@@ -9,8 +9,10 @@
 import { t } from '../../../core/i18n';
 import { ServiceNames } from '../../../core/types';
 import { statSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { decodeShellOutput } from '../../../utils/encoding';
 import type { FilesysService, ShellChangeReport } from '../../contracts';
+import { SYSTEM_SCOPE } from '../../filesys/roots';
 import type { ToolContext, ToolResult } from '../types';
 
 /** shell 工具输入参数 */
@@ -97,7 +99,12 @@ export default {
     }
 
     // cwd 解析：filesys roots 机制（相对路径基于 ctx.cwd；必须在 cwd 或授权 roots 内）
-    const cwd = p.cwd ? filesys.resolve(p.cwd, ctx.cwd) : ctx.cwd || process.cwd();
+    // System 作用域（本机模式）：未显式指定 cwd 时默认在用户主目录执行
+    const cwd = p.cwd
+      ? filesys.resolve(p.cwd, ctx.cwd)
+      : ctx.cwd === SYSTEM_SCOPE
+        ? homedir()
+        : ctx.cwd || process.cwd();
     if (!cwd) {
       return {
         content: [{ type: 'text', text: `Error: ${t('fs.pathOutsideRoots', { path: p.cwd ?? '', roots: '' })}` }],

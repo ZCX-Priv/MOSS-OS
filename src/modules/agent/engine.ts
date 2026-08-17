@@ -1237,6 +1237,8 @@ export class AgentEngineImpl implements AgentEngine {
         return `Error: [safety] command blocked (caution: ${reason.pattern}, policy=deny). If truly needed, ask the user to run it manually.`;
       case 'protectedPath':
         return `Error: [safety] target path is protected: ${reason.pattern}. Writes to this location are not allowed.`;
+      case 'mossAccess':
+        return `Error: [safety] access to ~/.moss is restricted: ${reason.pattern}. Only the agent/, mcps/, skills/ subdirectories are accessible; use the dedicated tools instead.`;
       default:
         return `Error: [safety] tool "${toolName}" denied (${reason.type})`;
     }

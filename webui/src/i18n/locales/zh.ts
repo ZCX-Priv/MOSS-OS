@@ -464,7 +464,9 @@ export const zh = {
     resolving: '正在解析路径…',
     pickFolder: '选择文件夹',
     recent: '最近使用',
-    default: '默认',
+    system: '本机',
+    systemTitle: '本机（全盘访问）',
+    systemDesc: '全盘访问',
   },
   slashCommand: {
     recent: '最近使用',

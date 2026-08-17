@@ -296,8 +296,14 @@ export type Store = UIState & UIActions;
 // 工作目录：默认路径 + IndexedDB 持久化
 // ============================================================================
 
-/** 默认工作目录 */
-export const DEFAULT_WORKING_DIRECTORY = 'C:\\';
+/** 系统级（本机）工作目录哨兵：全盘访问（filesys roots 放行，shell 默认目录为主目录） */
+export const SYSTEM_WORKING_DIRECTORY = '__system__';
+
+/** 默认工作目录：本机 System 模式 */
+export const DEFAULT_WORKING_DIRECTORY = SYSTEM_WORKING_DIRECTORY;
+
+/** 旧版默认工作目录（C 盘根）：IndexedDB 存量值迁移用 */
+export const LEGACY_DEFAULT_WORKING_DIRECTORY = 'C:\\';
 
 /** 默认右侧边栏 summary 标签 */
 function defaultSidebarTab(): SidebarTab {

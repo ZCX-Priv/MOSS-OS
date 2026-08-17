@@ -83,6 +83,7 @@ export class SafetyService {
       protectedPaths: safetyCfg.protectedPaths,
       home: this.env.homeDir,
       configDir: this.env.configDir,
+      dataDir: this.env.dataDir,
     });
     // 决策审计日志（集中式，便于排查"为什么被拦"）
     this.logger.info(
