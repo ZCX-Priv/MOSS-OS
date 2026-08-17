@@ -1,4 +1,4 @@
-// builtin/write/index.ts
+// tools/write/index.ts
 // write 工具调度层：参数校验 → 路径安全 → read-before-overwrite → trackEdit → 分派到 handler → 组装结果。
 // 元数据（name/description/icon/annotations/inputSchema/config）见同目录 tool.json。
 // handlers/ 子目录执行实际写入（流式原子写入 + diff + 哈希），shared/ 子目录提供流式写入/diff守卫等公共能力。
@@ -12,11 +12,11 @@
 // 6. BOM 保留 + 权限保留（流式写入层自动处理）
 // 7. 返回 unified diff（供 LLM 审视改动；大文件跳过时返回写入摘要）
 
-import { t } from '../../../../core/i18n';
-import { ServiceNames } from '../../../../core/types';
+import { t } from '../../../core/i18n';
+import { ServiceNames } from '../../../core/types';
 import { existsSync, statSync } from 'node:fs';
-import type { FileHistoryService, FilesysService } from '../../../contracts';
-import type { ToolContext, ToolResult } from '../../types';
+import type { FileHistoryService, FilesysService } from '../../contracts';
+import type { ToolContext, ToolResult } from '../types';
 import { writeText, type WriteTextResult } from './handlers/text';
 
 interface WriteParams {

@@ -1,4 +1,4 @@
-// builtin/delete/index.ts
+// tools/delete/index.ts
 // delete 工具 execute 逻辑：删除文件或目录。
 // 强化点：
 //   1. trash 优先（默认送回收站，可恢复7天）；trash=false 时硬删除（带备份）
@@ -8,8 +8,8 @@
 //   5. read-before-delete（文件需本会话先 read 过，force=true 可跳过）
 //   6. force 控制 rmSync force 参数，覆盖只读文件
 
-import { t } from '../../../../core/i18n';
-import { ServiceNames } from '../../../../core/types';
+import { t } from '../../../core/i18n';
+import { ServiceNames } from '../../../core/types';
 import { existsSync, statSync, unlinkSync, rmSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import {
@@ -17,10 +17,10 @@ import {
   realpathSafe,
   isRootPath,
   containsVcsMarker,
-} from '../../../../utils/fs';
-import { moveToTrash } from '../../../file-history/trash';
-import type { FileHistoryService, FilesysService } from '../../../contracts';
-import type { ToolContext, ToolResult } from '../../types';
+} from '../../../utils/fs';
+import { moveToTrash } from '../../file-history/trash';
+import type { FileHistoryService, FilesysService } from '../../contracts';
+import type { ToolContext, ToolResult } from '../types';
 
 /** 目录硬删除最大字节数（超限拒绝，提示改用 shell 工具） */
 const MAX_DIR_BYTES = 100 * 1024 * 1024; // 100MB

@@ -138,6 +138,7 @@ export async function loadToolFromDir(
 /**
  * 批量加载目录下所有工具（每个子目录一个工具）。
  * 错误隔离：单个工具加载失败不影响其他。
+ * 无 tool.json 的子目录（如 shared/ 共享模块）静默跳过。
  */
 export async function loadToolsFromDir(
   dir: string,
@@ -160,6 +161,8 @@ export async function loadToolsFromDir(
     } catch {
       continue;
     }
+    // 非工具目录（无 tool.json），静默跳过
+    if (!existsSync(join(full, 'tool.json'))) continue;
     const tool = await loadToolFromDir(full, env, logger, source);
     if (tool) tools.push(tool);
   }
@@ -167,13 +170,13 @@ export async function loadToolsFromDir(
 }
 
 /**
- * 探测内置工具目录：优先 src/modules/tools/builtin，回退 dist/modules/tools/builtin。
+ * 探测内置工具目录：优先 src/modules/tools，回退 dist/modules/tools。
  * 双路径扫描（src 优先，dist 回退）。
  */
 export function resolveBuiltinDir(env: Environment): string | null {
   const candidates = [
-    join(env.packageRoot, 'src', 'modules', 'tools', 'builtin'),
-    join(env.packageRoot, 'dist', 'modules', 'tools', 'builtin'),
+    join(env.packageRoot, 'src', 'modules', 'tools'),
+    join(env.packageRoot, 'dist', 'modules', 'tools'),
   ];
   for (const c of candidates) {
     if (existsSync(c)) return c;

@@ -108,6 +108,10 @@ export class GeminiProvider implements LLMProvider {
       completion_tokens: data.usageMetadata?.candidatesTokenCount ?? 0,
       total_tokens: data.usageMetadata?.totalTokenCount ?? 0,
       reasoning_tokens: undefined,
+      // promptTokenCount 已含 cachedContentTokenCount 部分
+      cached_tokens: (
+        data.usageMetadata as { cachedContentTokenCount?: number } | undefined
+      )?.cachedContentTokenCount,
     };
     if (typeof data.usageMetadata === 'object' && data.usageMetadata !== null && 'thoughtsTokenCount' in data.usageMetadata) {
       const thoughts = (data.usageMetadata as { thoughtsTokenCount?: number }).thoughtsTokenCount;
@@ -163,6 +167,9 @@ export class GeminiProvider implements LLMProvider {
           prompt_tokens: data.usageMetadata.promptTokenCount ?? 0,
           completion_tokens: data.usageMetadata.candidatesTokenCount ?? 0,
           total_tokens: data.usageMetadata.totalTokenCount ?? 0,
+          cached_tokens: (
+            data.usageMetadata as { cachedContentTokenCount?: number }
+          ).cachedContentTokenCount,
         },
       });
     }

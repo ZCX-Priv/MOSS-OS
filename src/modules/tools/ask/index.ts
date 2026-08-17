@@ -1,9 +1,9 @@
-// builtin/ask/index.ts
+// tools/ask/index.ts
 // ask 工具 execute 逻辑：向用户提问并阻塞等待回复（支持四种回答类型）。
 // 返回给 LLM 的固定格式为「问题 + 用户回答」，保证上下文完整。
 // 元数据见同目录 tool.json。
 
-import type { AskOption, AskOutcome, AskPayload, ToolContext, ToolResult } from '../../types';
+import type { AskOption, AskOutcome, AskPayload, ToolContext, ToolResult } from '../types';
 
 const VALID_ANSWER_TYPES = new Set(['text', 'single', 'multi', 'boolean']);
 

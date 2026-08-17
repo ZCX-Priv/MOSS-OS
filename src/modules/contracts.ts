@@ -9,13 +9,15 @@ import type {
   StreamDelta,
 } from './llm/types';
 import type { Tool, ToolContext, ToolResult, AskPayload, AskOutcome } from './tools/types';
-import type { TodoItem } from './tools/builtin/todo/shared/store';
+import type { TodoItem } from './tools/todo/shared/store';
 import type {
   FileHistoryEntry,
   TrackEditResult,
   UndoResult,
 } from './file-history/types';
 export type { FilesysService, ShellChangeReport } from './filesys/types';
+import type { PermissionMode, SafetyDecision, SafetyRequest } from './safety/types';
+export type { PermissionMode, SafetyDecision, SafetyRequest } from './safety/types';
 
 // ============================================================================
 // LLM Router（由 LLM 插件注册，ServiceNames.LLM_ROUTER）
@@ -83,9 +85,10 @@ export interface AgentEngine {
 
   /**
    * 前端回复 confirm 确认。
+   * @param remember 「始终允许」级别：session=写会话规则（内存）；global=写 config.safety.rules（持久）
    * @returns true 表示匹配到 pending confirm 并已 resolve；false 表示无匹配（可能已超时或不存在）。
    */
-  resolveConfirm(toolCallId: string, ok: boolean): boolean;
+  resolveConfirm(toolCallId: string, ok: boolean, remember?: 'session' | 'global'): boolean;
 
   /**
    * 消息撤回预览（dryRun）：定位目标用户消息，列出将被删除的消息与将被回滚的文件变更。
@@ -128,6 +131,11 @@ export interface AgentRunInput {
    *   - undefined：不涉及模式操作
    */
   skill?: string | null;
+  /**
+   * 权限模式（前端 PermissionModeSelector 会话级传递）：
+   * 'ask'=手动审批 / 'auto'=自动审批（L2 放行 L3 确认） / 'skip'=完全访问（仅查禁用）
+   */
+  permissionMode?: PermissionMode;
   /** 工作目录 */
   cwd: string;
   /** 流式事件回调 */
@@ -136,6 +144,29 @@ export interface AgentRunInput {
   signal?: AbortSignal;
   /** 运行实例 ID（前端生成，用于隔离不同 run 的事件） */
   runId?: string;
+}
+
+/**
+ * 单次运行（run）级统计（每次用户发送消息后重置，跨轮累加）。
+ * 前端中控台指标栏数据源：
+ * - turns/steps：LLM 调用轮数 / 工具调用步数
+ * - llmMs/toolMs：LLM 流式调用总耗时 / 工具执行总耗时
+ * - ttftCount+ttftMsTotal：首 token 延迟样本（平均 = total/count）
+ * - decodeMs：Σ(轮耗时−轮TTFT)，tok/s = outputTokens/decodeMs
+ * - cachedTokens/inputTokens：缓存命中率 = cached/input（token 加权）
+ */
+export interface RunStats {
+  runId?: string;
+  turns: number;
+  steps: number;
+  llmMs: number;
+  toolMs: number;
+  ttftCount: number;
+  ttftMsTotal: number;
+  decodeMs: number;
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
 }
 
 export type AgentEvent =
@@ -147,8 +178,9 @@ export type AgentEvent =
   | { type: 'tool-call-end'; sessionId: string; toolName: string; toolCallId: string; result: ToolResult; runId?: string }
   | { type: 'ask'; sessionId: string; toolCallId: string; question: string; answerType?: AskPayload['answerType']; options?: AskPayload['options']; defaultAnswer?: string; formSchema?: Record<string, unknown>; runId?: string }
   | { type: 'ask-timeout'; sessionId: string; toolCallId: string; runId?: string }
-  | { type: 'confirm-required'; sessionId: string; toolCallId: string; toolName: string; question: string; details?: unknown; runId?: string }
+  | { type: 'confirm-required'; sessionId: string; toolCallId: string; toolName: string; question: string; details?: unknown; runId?: string; ruleSuggestion?: string }
   | { type: 'skill-mode'; sessionId: string; action: 'enter' | 'switch' | 'exit' | 'error'; name?: string; greet?: string; icon?: string; message?: string; runId?: string }
+  | { type: 'stats-updated'; sessionId: string; stats: RunStats; runId?: string }
   | { type: 'error'; sessionId: string; message: string; runId?: string }
   | { type: 'done'; sessionId: string; finishReason: string; runId?: string };
 
@@ -404,4 +436,26 @@ export interface FileHistoryService {
 
   /** 获取回收站目录路径（供 delete 工具 trash 模式调用 moveToTrash） */
   getTrashDir(): string;
+}
+
+// ============================================================================
+// Safety Service（由 safety 模块注册，ServiceNames.SAFETY）
+// 统一权限决策入口：所有工具（builtin/custom/MCP/use_mcp）执行前必须经过 evaluate。
+// ============================================================================
+
+export interface SafetyService {
+  /** 全局默认权限模式（config.safety.defaultMode） */
+  getDefaultMode(): PermissionMode;
+  /** 确认超时（分钟；0=永不超时） */
+  getConfirmTimeoutMinutes(): number;
+  /** 统一权限决策（allow=放行 / ask=需用户确认 / deny=拒绝） */
+  evaluate(req: SafetyRequest): SafetyDecision;
+  /** 添加会话级规则（「始终允许(会话)」；内存存储，刷新失效） */
+  addSessionRule(sessionId: string, list: 'allow' | 'deny' | 'ask', rule: string): void;
+  /** 清理会话规则（会话删除时调用） */
+  clearSessionRules(sessionId: string): void;
+  /** 添加全局持久规则（「始终允许(全局)」→ config.safety.rules + 广播 config:changed） */
+  addGlobalRule(list: 'allow' | 'deny' | 'ask', rule: string): Promise<boolean>;
+  /** 生成「始终允许」规则建议（shell 智能前缀 / MCP 全名 / 工具名） */
+  generateRuleSuggestion(toolName: string, params: unknown): string;
 }

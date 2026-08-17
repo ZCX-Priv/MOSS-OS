@@ -19,6 +19,7 @@ export type SettingsSection =
   | 'model'
   | 'tools'
   | 'specs'
+  | 'safety'
   | 'task'
   | 'index'
   | 'docs'

@@ -28,6 +28,7 @@ import type {
   ContextFile,
   ResolveDirectoryResult,
   SuggestPath,
+  RunStats,
 } from '../types/api';
 import i18n from '../i18n';
 
@@ -153,12 +154,16 @@ export const api = {
     const resp = await request<{
       sessionId: string;
       messages: unknown[];
-      activeSkill?: { name: string; mode: 'system' | 'message'; content: string };
+      activeSkill?: { name: string; mode: 'system' | 'message' };
+      permissionMode?: 'ask' | 'auto' | 'skip';
+      lastRunStats?: RunStats;
     }>('GET', `/api/session/${id}`);
     return {
       sessionId: resp.sessionId,
       messages: adaptAgentMessages(resp.messages),
       ...(resp.activeSkill ? { activeSkill: resp.activeSkill } : {}),
+      ...(resp.permissionMode ? { permissionMode: resp.permissionMode } : {}),
+      ...(resp.lastRunStats ? { lastRunStats: resp.lastRunStats } : {}),
     };
   },
   deleteSession: (id: string) => request<{ deleted: boolean }>('DELETE', `/api/session/${id}`),

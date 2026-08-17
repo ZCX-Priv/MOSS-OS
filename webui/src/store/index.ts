@@ -29,6 +29,7 @@ import type {
   SidebarTab,
   SidebarTabType,
   PermissionMode,
+  RunStats,
 } from '../types/api';
 
 // ============================================================================
@@ -104,6 +105,12 @@ interface UIState {
   // --- Skill 模式（会话级；skill-mode 事件维护） ---
   activeSkillBySession: Record<string, ActiveSkillState | undefined>;
 
+  // --- 运行统计（会话级；stats-updated 事件维护，run 级口径每次发送重置） ---
+  runStatsBySession: Record<string, RunStats | undefined>;
+
+  // --- 中控岛展开状态（会话级；默认折叠，undefined 视为折叠） ---
+  hubActiveModuleBySession: Record<string, string | null | undefined>;
+
   // --- 工具图标映射（toolName → icon 字符串，由 /api/tools 拉取） ---
   toolIconMap: Record<string, string>;
 
@@ -113,8 +120,10 @@ interface UIState {
   // --- 发送快捷键 ---
   sendShortcut: 'enter' | 'ctrl-enter';
 
-  // --- 执行权限模式 ---
+  // --- 执行权限模式（permissionMode=全局默认；permissionModeBySession=会话级覆盖） ---
   permissionMode: PermissionMode;
+  /** 会话级权限模式覆盖（sessionId → mode；sendMessage 取当前会话值，缺省回退全局） */
+  permissionModeBySession: Record<string, PermissionMode | undefined>;
 
   // --- 右侧边栏标签页（全局，IndexedDB 持久化） ---
   sidebarTabs: SidebarTab[];
@@ -227,6 +236,12 @@ interface UIActions {
   // Skill 模式（skill-mode 事件：enter/switch 设置，exit/error 清除）
   setActiveSkill: (sessionId: string, skill: ActiveSkillState | undefined) => void;
 
+  // 运行统计（stats-updated 事件；sendMessage 时清空旧 run 数据）
+  setRunStats: (sessionId: string, stats: RunStats | undefined) => void;
+
+  // 中控岛展开模块（null=折叠；moduleId=展开并激活）
+  setHubActiveModule: (sessionId: string, moduleId: string | null) => void;
+
   // 工具图标映射
   setToolIconMap: (map: Record<string, string>) => void;
 
@@ -252,7 +267,7 @@ interface UIActions {
   setSendShortcut: (v: UIState['sendShortcut']) => void;
 
   // 执行权限模式
-  setPermissionMode: (v: UIState['permissionMode']) => void;
+  setPermissionMode: (v: UIState['permissionMode'], sessionId?: string) => void;
 
   // 模型菜单"添加自定义模型"跳转设置页并打开弹窗的信号
   modelDialogRequest: boolean;
@@ -349,6 +364,8 @@ export const useStore = create<Store>((set) => ({
   mcpServers: [],
   mcpTools: [],
   activeSkillBySession: {},
+  runStatsBySession: {},
+  hubActiveModuleBySession: {},
 
   // --- 工具图标映射 ---
   toolIconMap: {},
@@ -361,6 +378,7 @@ export const useStore = create<Store>((set) => ({
 
   // --- 执行权限模式 ---
   permissionMode: 'ask',
+  permissionModeBySession: {},
 
   // 模型菜单"添加自定义模型"跳转设置页并打开弹窗的信号
   modelDialogRequest: false,
@@ -380,7 +398,10 @@ export const useStore = create<Store>((set) => ({
       const { [id]: _omitTodos, ...restTodos } = state.todosBySession;
       const { [id]: _omitCtx, ...restCtx } = state.contextBySession;
       const { [id]: _omitSkill, ...restSkill } = state.activeSkillBySession;
+      const { [id]: _omitPerm, ...restPermModes } = state.permissionModeBySession;
       const { [id]: _omitBackup, ...restBackups } = state.truncateBackups;
+      const { [id]: _omitStats, ...restStats } = state.runStatsBySession;
+      const { [id]: _omitHub, ...restHub } = state.hubActiveModuleBySession;
       return {
         sessions: state.sessions.filter((s) => s.id !== id),
         messagesBySession: restMessages,
@@ -388,7 +409,10 @@ export const useStore = create<Store>((set) => ({
         todosBySession: restTodos,
         contextBySession: restCtx,
         activeSkillBySession: restSkill,
+        permissionModeBySession: restPermModes,
         truncateBackups: restBackups,
+        runStatsBySession: restStats,
+        hubActiveModuleBySession: restHub,
         activeSessionId: state.activeSessionId === id ? null : state.activeSessionId,
       };
     }),
@@ -582,6 +606,18 @@ export const useStore = create<Store>((set) => ({
       activeSkillBySession: { ...state.activeSkillBySession, [sessionId]: skill },
     })),
 
+  // --- Actions: 运行统计 ---
+  setRunStats: (sessionId, stats) =>
+    set((state) => ({
+      runStatsBySession: { ...state.runStatsBySession, [sessionId]: stats },
+    })),
+
+  // --- Actions: 中控岛 ---
+  setHubActiveModule: (sessionId, moduleId) =>
+    set((state) => ({
+      hubActiveModuleBySession: { ...state.hubActiveModuleBySession, [sessionId]: moduleId },
+    })),
+
   // --- Actions: 工具图标映射 ---
   setToolIconMap: (toolIconMap) => set({ toolIconMap }),
 
@@ -636,7 +672,13 @@ export const useStore = create<Store>((set) => ({
   },
 
   // --- Actions: 执行权限模式 ---
-  setPermissionMode: (permissionMode) => {
+  setPermissionMode: (permissionMode, sessionId) => {
+    if (sessionId) {
+      // 会话级覆盖：不写 IndexedDB（后端 session 持久化，刷新经 GET /api/tasks/:id 恢复）
+      set((state) => ({ permissionModeBySession: { ...state.permissionModeBySession, [sessionId]: permissionMode } }));
+      return;
+    }
+    // 全局默认：持久化 IndexedDB
     void idbSet('moss-permission-mode', permissionMode);
     set({ permissionMode });
   },

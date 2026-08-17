@@ -1,11 +1,11 @@
-// builtin/use_skill/index.ts
+// tools/use_skill/index.ts
 // use_skill 工具 execute 逻辑：激活注册表中的 skill，返回 prompt 模板
 // （渐进式披露第二级；目录式 skill 附带 references/scripts 文件清单供 LLM 按需 read）。
 // 元数据见同目录 tool.json。
 
-import type { ToolContext, ToolResult } from '../../types';
-import { ServiceNames } from '../../../../core/types';
-import type { SkillRegistry } from '../../skills';
+import type { ToolContext, ToolResult } from '../types';
+import { ServiceNames } from '../../../core/types';
+import type { SkillRegistry } from './registry';
 
 export default {
   async execute(params: unknown, ctx: ToolContext): Promise<ToolResult> {

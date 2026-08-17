@@ -98,6 +98,8 @@ export interface ToolContext {
   confirm?: (question: string) => Promise<boolean>;
   /** 当前工具的配置（从 config.tools[name] 读取，供工具消费如 timeout/requireConfirmation） */
   toolConfig?: Record<string, unknown>;
+  /** safety 模块已放行标记：agent 链路决策 allow 后置 'allowed'，registry 据此跳过内部 requireConfirmation（非 agent 链路仍走兜底确认） */
+  permissionDecision?: 'allowed';
 }
 
 export type ToolEvent =

@@ -100,37 +100,21 @@ function buildBackend() {
 }
 
 // ============================================================================
-// 步骤 3: 复制内置工具目录到 dist（供生产模式动态 import + tool.json 读取）
+// 步骤 3: 复制 tools 模块目录到 dist（供生产模式动态 import + tool.json 读取）
+// 含全部工具子目录 + shared/ 共享模块；顶层 .ts 已打包进 server.js，冗余但无害
 // ============================================================================
-function copyBuiltinTools() {
-  log('Copying builtin tools...');
-  const src = resolve(ROOT, 'src', 'modules', 'tools', 'builtin');
-  const dest = resolve(DIST, 'modules', 'tools', 'builtin');
+function copyToolsModule() {
+  log('Copying tools module...');
+  const src = resolve(ROOT, 'src', 'modules', 'tools');
+  const dest = resolve(DIST, 'modules', 'tools');
   if (!existsSync(src)) {
-    error(`Builtin tools source not found: ${src}`);
+    error(`Tools module source not found: ${src}`);
     process.exit(1);
   }
   // dist 已在 cleanDist 创建；递归复制保留目录结构（含 tool.json + index.ts）
   // Bun 运行时可直接 import .ts，故复制源码即可
-  mkdirSync(resolve(DIST, 'modules', 'tools'), { recursive: true });
   cpSync(src, dest, { recursive: true });
-  log(`Builtin tools copied: ${dest}`);
-}
-
-// ============================================================================
-// 步骤 3b: 复制工具共享模块（builtin 工具通过 ../../shared/search-core 引用）
-// ============================================================================
-function copySharedModules() {
-  log('Copying tools shared modules...');
-  const src = resolve(ROOT, 'src', 'modules', 'tools', 'shared');
-  const dest = resolve(DIST, 'modules', 'tools', 'shared');
-  if (!existsSync(src)) {
-    error(`Tools shared modules source not found: ${src}`);
-    process.exit(1);
-  }
-  mkdirSync(resolve(DIST, 'modules', 'tools'), { recursive: true });
-  cpSync(src, dest, { recursive: true });
-  log(`Tools shared modules copied: ${dest}`);
+  log(`Tools module copied: ${dest}`);
 }
 
 // ============================================================================
@@ -200,8 +184,7 @@ function main() {
   console.log('=========================================');
   cleanDist();
   buildBackend();
-  copyBuiltinTools();
-  copySharedModules();
+  copyToolsModule();
   copyAgentPrompts();
   buildFrontend();
   verifyArtifacts();

@@ -1,17 +1,17 @@
-// src/modules/tools/specs.ts
+// src/modules/tools/get_spec/registry.ts
 // Spec 注册表：从 ~/.moss/agent/prompts/main/spec/ 目录递归加载 .md 文件
 // （YAML front-matter + Markdown body），支持子目录组织。
 // 首次启动时从包内 agent/ 播种到 ~/.moss/agent/（幂等），之后只读用户目录。
 // 支持热重载：递归监听用户 spec 目录变更，自动增删 spec。
 
-import { t } from '../../core/i18n';
+import { t } from '../../../core/i18n';
 import { stat } from 'node:fs/promises';
 import { watch, type FSWatcher } from 'node:fs';
 import { join, relative } from 'node:path';
-import type { Environment, EventBus, Logger } from '../../core/types';
-import { ServiceNames } from '../../core/types';
-import { splitFrontMatter } from './shared/frontmatter';
-import { seedBuiltinAgentPrompts } from './shared/agent-seed';
+import type { Environment, EventBus, Logger } from '../../../core/types';
+import { ServiceNames } from '../../../core/types';
+import { splitFrontMatter } from '../shared/frontmatter';
+import { seedBuiltinAgentPrompts } from '../shared/agent-seed';
 
 /** 旧常量保留，值等于 ServiceNames.SPEC_REGISTRY，向后兼容 */
 export const SPEC_REGISTRY_SERVICE = ServiceNames.SPEC_REGISTRY;

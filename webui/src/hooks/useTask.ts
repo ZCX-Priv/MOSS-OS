@@ -56,6 +56,7 @@ export function useTask() {
   const touchTask = useStore((s) => s.touchTask);
   const removePendingAsk = useStore((s) => s.removePendingAsk);
   const removePendingConfirm = useStore((s) => s.removePendingConfirm);
+  const setRunStats = useStore((s) => s.setRunStats);
 
   const sendMessage = useCallback(
     async (text: string, opts?: { taskId?: string; sessionId?: string }): Promise<string | undefined> => {
@@ -109,6 +110,9 @@ export function useTask() {
       setActiveSession(sessionId);
       if (taskId) setActiveTaskId(taskId);
 
+      // run 级统计重置：新 run 开始前清空旧指标，等首个 stats-updated 事件回填
+      setRunStats(sessionId, undefined);
+
       // 5. 写入用户消息
       const userMsg: TaskMessage = {
         id: genId(),
@@ -119,7 +123,7 @@ export function useTask() {
       addMessage(sessionId, userMsg);
       setGenerating(sessionId, true);
 
-      // 6. 通过 WS 发送流式任务请求（带 runId + agentId + skill 模式参数）
+      // 6. 通过 WS 发送流式任务请求（带 runId + agentId + skill 模式 + 权限模式）
       wsClient.send({
         type: 'task.stream',
         sessionId,
@@ -131,12 +135,14 @@ export function useTask() {
           runId,
           // skill 模式：undefined=不涉及；string=激活/切换；null=退出
           ...(skill !== undefined ? { skill } : {}),
+          // 权限模式（会话级覆盖优先，缺省回退全局默认；后端 safety 统一决策）
+          permissionMode: state.permissionModeBySession[sessionId] ?? state.permissionMode,
         },
       });
 
       return taskId;
     },
-    [addMessage, setActiveSession, setActiveTaskId, setGenerating, finalizeStreamingMessages, addTask, touchTask],
+    [addMessage, setActiveSession, setActiveTaskId, setGenerating, finalizeStreamingMessages, addTask, touchTask, setRunStats],
   );
 
   const abort = useCallback((sessionIdOverride?: string) => {
@@ -165,13 +171,13 @@ export function useTask() {
   );
 
   const replyConfirm = useCallback(
-    (toolCallId: string, ok: boolean) => {
+    (toolCallId: string, ok: boolean, remember?: 'session' | 'global') => {
       const cf = useStore.getState().pendingConfirms.find((c) => c.toolCallId === toolCallId);
       if (!cf) return;
       wsClient.send({
         type: 'tool.confirm.reply',
         sessionId: cf.sessionId,
-        payload: { toolCallId, ok },
+        payload: { toolCallId, ok, remember },
       });
       removePendingConfirm(toolCallId);
     },

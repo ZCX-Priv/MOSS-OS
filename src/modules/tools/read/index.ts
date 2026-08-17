@@ -1,4 +1,4 @@
-// builtin/read/index.ts
+// tools/read/index.ts
 // read 工具核心调度层：参数校验 → 路径安全（filesys roots）→ 大文件策略 → Dedup → 类型分派 → 结果聚合。
 // 元数据（name/description/icon/annotations/inputSchema/config）见同目录 tool.json。
 // handlers/ 子目录按文件类型分派，shared/ 子目录提供检测/minified/流式读取等公共能力。
@@ -17,16 +17,16 @@
 //   ./handlers/*              — readText/readImage/readPdf/readOffice/readNotebook
 
 import { existsSync, statSync, type Stats } from 'node:fs';
-import { ServiceNames } from '../../../../core/types';
-import { t } from '../../../../core/i18n';
+import { ServiceNames } from '../../../core/types';
+import { t } from '../../../core/i18n';
 import { detectFileType, type FileType } from './shared/detector';
 import { readText, type TextParams, type CachedFileEntity } from './handlers/text';
 import { readImage } from './handlers/image';
 import { readPdf } from './handlers/pdf';
 import { readOffice } from './handlers/office';
 import { readNotebook } from './handlers/notebook';
-import type { FileHistoryService, FilesysService } from '../../../contracts';
-import type { ToolContext, ToolResult, ToolResultContent } from '../../types';
+import type { FileHistoryService, FilesysService } from '../../contracts';
+import type { ToolContext, ToolResult, ToolResultContent } from '../types';
 
 /** read 工具参数结构 */
 interface ReadParams {

@@ -67,11 +67,19 @@ export class OpenAIChatProvider implements LLMProvider {
       },
     }));
 
+    const oaiUsage = data.usage as {
+      reasoning_tokens?: number;
+      prompt_tokens_details?: { cached_tokens?: number };
+      /** DeepSeek 兼容字段：prompt_cache_hit_tokens */
+      prompt_cache_hit_tokens?: number;
+    } | undefined;
+    const cachedTokens = oaiUsage?.prompt_tokens_details?.cached_tokens ?? oaiUsage?.prompt_cache_hit_tokens;
     const usage: UnifiedUsage = {
       prompt_tokens: data.usage?.prompt_tokens ?? 0,
       completion_tokens: data.usage?.completion_tokens ?? 0,
       total_tokens: data.usage?.total_tokens ?? 0,
-      reasoning_tokens: (data.usage as { reasoning_tokens?: number } | undefined)?.reasoning_tokens,
+      reasoning_tokens: oaiUsage?.reasoning_tokens,
+      cached_tokens: cachedTokens,
     };
 
     return {
@@ -93,13 +101,19 @@ export class OpenAIChatProvider implements LLMProvider {
     if (!data.choices || data.choices.length === 0) {
       // 可能是 usage chunk
       if (data.usage) {
+        const u = data.usage as {
+          reasoning_tokens?: number;
+          prompt_tokens_details?: { cached_tokens?: number };
+          prompt_cache_hit_tokens?: number;
+        };
         return {
           type: 'usage',
           usage: {
             prompt_tokens: data.usage.prompt_tokens ?? 0,
             completion_tokens: data.usage.completion_tokens ?? 0,
             total_tokens: data.usage.total_tokens ?? 0,
-            reasoning_tokens: (data.usage as { reasoning_tokens?: number }).reasoning_tokens,
+            reasoning_tokens: u.reasoning_tokens,
+            cached_tokens: u.prompt_tokens_details?.cached_tokens ?? u.prompt_cache_hit_tokens,
           },
         };
       }

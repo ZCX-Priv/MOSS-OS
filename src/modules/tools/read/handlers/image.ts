@@ -5,7 +5,7 @@
 
 import { readFileSync } from 'node:fs';
 import { extname } from 'node:path';
-import type { ToolResult } from '../../../types';
+import type { ToolResult } from '../../types';
 
 /** 扩展名 → MIME 类型映射 */
 const MIME_MAP: Record<string, string> = {

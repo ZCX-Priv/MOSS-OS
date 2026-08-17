@@ -1,7 +1,8 @@
 // UI/src/components/overlays/PermissionModeSelector.tsx
 // 执行权限选择器：DropdownMenu 上拉菜单，参考 ModelSelector 布局。
-// 5 种权限模式：询问/自动接受编辑/自动模式/计划模式/跳过权限。
-// 状态持久化到 IndexedDB（经 store.setPermissionMode → idbSet）。
+// 3 种权限模式（对齐后端 safety 模块）：ask=手动审批 / auto=自动审批 / skip=完全访问。
+// 会话级作用域：当前会话独立记忆（后端 session 持久化，刷新恢复）；新会话用全局默认。
+// 选择随 task.stream 传给后端，由 safety 模块统一决策（真正生效，非 UI 装饰）。
 
 import { useTranslation } from 'react-i18next';
 import {
@@ -63,8 +64,12 @@ const MODE_CONFIG: ModeConfig[] = [
 
 export function PermissionModeSelector() {
   const { t } = useTranslation();
-  const permissionMode = useStore((s) => s.permissionMode);
+  const activeSessionId = useStore((s) => s.activeSessionId);
+  const globalMode = useStore((s) => s.permissionMode);
+  const sessionMode = useStore((s) => (activeSessionId ? s.permissionModeBySession[activeSessionId] : undefined));
   const setPermissionMode = useStore((s) => s.setPermissionMode);
+  // 会话级覆盖优先，缺省回退全局默认
+  const permissionMode = sessionMode ?? globalMode;
 
   const currentConfig =
     MODE_CONFIG.find((m) => m.id === permissionMode) ?? MODE_CONFIG[0];
@@ -102,7 +107,7 @@ export function PermissionModeSelector() {
           return (
             <DropdownMenuItem
               key={mode.id}
-              onSelect={() => setPermissionMode(mode.id)}
+              onSelect={() => setPermissionMode(mode.id, activeSessionId ?? undefined)}
               className={cn(
                 'gap-2.5 px-2 py-1.5 focus:text-inherit',
               )}

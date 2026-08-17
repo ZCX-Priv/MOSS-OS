@@ -1,6 +1,6 @@
 // src/modules/tools/manifest.ts
 // 工具配置规格单一真相源。
-// 从 builtin 目录的 tool.json 动态加载每个工具的 config 段，构建 Zod schema + 默认值。
+// 从 tools 目录的 tool.json 动态加载每个工具的 config 段，构建 Zod schema + 默认值。
 // 此文件只读取 JSON（不 import 任何工具实例代码），确保 config 加载不依赖工具代码。
 // config-service 只依赖此文件，工具代码加载失败不影响 config 加载。
 
@@ -30,14 +30,14 @@ interface ToolConfigManifest {
 
 /**
  * 探测内置工具目录（manifest 专用，不依赖 env）。
- * 候选路径：
- *   - import.meta.dir/builtin            （开发模式：manifest.ts 在 src/modules/tools/）
- *   - import.meta.dir/modules/tools/builtin（生产模式：server.js 在 dist/，builtin 复制到 dist/modules/tools/builtin）
+ * 候选路径（顺序不可颠倒）：
+ *   - import.meta.dir/modules/tools（生产模式：server.js 在 dist/，tools 目录复制到 dist/modules/tools）
+ *   - import.meta.dir                （开发模式：manifest.ts 在 src/modules/tools/，工具就在本目录）
  */
 function resolveBuiltinConfigDir(): string | null {
   const candidates = [
-    join(import.meta.dir, 'builtin'),
-    join(import.meta.dir, 'modules', 'tools', 'builtin'),
+    join(import.meta.dir, 'modules', 'tools'),
+    join(import.meta.dir),
   ];
   for (const c of candidates) {
     if (existsSync(c)) return c;
@@ -134,11 +134,11 @@ function inferZodFromValue(val: unknown): z.ZodTypeAny {
 }
 
 // ============================================================================
-// 模块加载时立即扫描 builtin 目录（顶层执行，同步读 JSON）
+// 模块加载时立即扫描 tools 目录（顶层执行，同步读 JSON）
 // ============================================================================
 const BUILTIN_DIR = resolveBuiltinConfigDir();
 if (!BUILTIN_DIR) {
-  // 不阻断启动，但提示开发者 builtin 目录缺失（config 会回退到空 tools schema）
+  // 不阻断启动，但提示开发者 tools 目录缺失（config 会回退到空 tools schema）
   console.warn('[manifest] 未找到内置工具目录，工具配置将为空');
 }
 const TOOL_CONFIGS: Map<string, ToolConfigSpec> = BUILTIN_DIR

@@ -21,8 +21,8 @@ import {
   getOriginalMode,
   readHeadBytes,
   type AtomicWriteOptions,
-} from '../../../../../utils/fs-atomic';
-import { hasUtf8Bom } from '../../../../../utils/encoding';
+} from '../../../../utils/fs-atomic';
+import { hasUtf8Bom } from '../../../../utils/encoding';
 
 /** 流式分块大小（64KB，对齐 Node createWriteStream 默认 highWaterMark） */
 export const STREAM_CHUNK_SIZE = 64 * 1024;

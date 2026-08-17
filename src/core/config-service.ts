@@ -67,6 +67,22 @@ const filesysSchema = z.object({
     .default({}),
 });
 
+// safety：统一权限决策配置（内层全 .default() 自愈，旧 config.json 缺字段自动补全）
+const safetySchema = z.object({
+  defaultMode: z.enum(['ask', 'auto', 'skip']).default('ask'),
+  confirmTimeoutMinutes: z.number().int().min(0).max(1440).default(5),
+  blockDangerousCommands: z.boolean().default(true),
+  cautionPolicy: z.enum(['ask', 'deny']).default('ask'),
+  rules: z
+    .object({
+      allow: z.array(z.string()).default([]),
+      deny: z.array(z.string()).default([]),
+      ask: z.array(z.string()).default([]),
+    })
+    .default({}),
+  protectedPaths: z.array(z.string()).default(['~/.ssh', '~/.gnupg', '~/.aws']),
+});
+
 const appConfigSchema = z.object({
   version: z.number().int().positive(),
   server: z.object({
@@ -117,6 +133,8 @@ const appConfigSchema = z.object({
   fileHistory: fileHistorySchema.optional(),
   // filesys 可选，内层全 .default() 自愈补全（向后兼容旧配置）
   filesys: filesysSchema.optional(),
+  // safety 可选，内层全 .default() 自愈补全（向后兼容旧配置）
+  safety: safetySchema.optional(),
 });
 
 const apiConfigSchema = z.object({
@@ -149,6 +167,14 @@ export function defaultAppConfig(): AppConfig {
     security: { authToken: '', bindLocalhostOnly: true },
     fileHistory: { ...DEFAULT_FILE_HISTORY_CONFIG },
     filesys: { ...DEFAULT_FILESYS_CONFIG },
+    safety: {
+      defaultMode: 'ask',
+      confirmTimeoutMinutes: 5,
+      blockDangerousCommands: true,
+      cautionPolicy: 'ask',
+      rules: { allow: [], deny: [], ask: [] },
+      protectedPaths: ['~/.ssh', '~/.gnupg', '~/.aws'],
+    },
   };
 }
 

@@ -18,6 +18,9 @@ import {
   Undo2,
   FileWarning,
   Sparkles,
+  ListTodo,
+  ShieldCheck,
+  Circle,
 } from 'lucide-react';
 import {
   Dialog,
@@ -65,6 +68,8 @@ import { TodoProgressCard } from '../shared/TodoProgressCard';
 import { AskPromptCard } from '../shared/AskPromptCard';
 import { ConfirmPromptCard } from '../shared/ConfirmPromptCard';
 import { TerminalView } from '../shared/TerminalView';
+import { ControlHub } from '../shared/ControlHub';
+import { StatsBar } from '../shared/StatsBar';
 import { useStore } from '../../store';
 import { useTask } from '../../hooks/useTask';
 import { api } from '../../api/http';
@@ -127,6 +132,10 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
   const pendingConfirms = useStore((s) => s.pendingConfirms);
   // 当前会话激活的 skill 模式（Badge 展示 + 一键退出）
   const activeSkill = useStore((s) => s.activeSkillBySession[taskId]);
+  // 当前会话 run 统计（中控岛下方指标栏）与中控岛展开模块
+  const runStats = useStore((s) => s.runStatsBySession[taskId]);
+  const hubActiveModule = useStore((s) => s.hubActiveModuleBySession[taskId]);
+  const setHubActiveModule = useStore((s) => s.setHubActiveModule);
 
   // ===== 消息撤回（截断）状态机 =====
   /** 待确认的撤回目标（用户消息） */
@@ -180,6 +189,12 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
         if (resp.activeSkill) {
           useStore.getState().setActiveSkill(taskId, { name: resp.activeSkill.name });
         }
+        // 刷新后恢复会话级权限模式（PermissionModeSelector 徽章回显）
+        if (resp.permissionMode) {
+          useStore.getState().setPermissionMode(resp.permissionMode, taskId);
+        }
+        // 刷新后恢复最近一次 run 统计（中控岛指标栏）
+        useStore.getState().setRunStats(taskId, resp.lastRunStats);
       })
       .catch(() => {
         // 后端未就绪或会话不存在，静默
@@ -512,12 +527,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
                 <span className="text-sm">{t('task.thinking')}</span>
               </div>
             )}
-            {pendingAsks.filter((a) => a.sessionId === taskId).map((ask) => (
-              <AskPromptCard key={ask.toolCallId} ask={ask} />
-            ))}
-            {pendingConfirms.filter((c) => c.sessionId === taskId).map((cf) => (
-              <ConfirmPromptCard key={cf.toolCallId} confirm={cf} />
-            ))}
+            {/* ask/confirm 卡片已迁移至任务输入框上方的中控岛（ControlHub 权限模块） */}
           </div>
         </div>
 
@@ -632,13 +642,82 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
               </button>
             </div>
           )}
-          <TaskInput
-            variant="task"
-            isGenerating={isGenerating}
-            onAbort={() => abort(taskId)}
-            onOpenOverlay={onOpenOverlay}
-            onSend={handleSend}
+          {/* 通用中控岛：模块化控制容器（todo / 工具权限确认），默认折叠 */}
+          <ControlHub
+            status={
+              isGenerating ? (
+                <>
+                  <Loader2 className="size-3.5 animate-spin text-primary" />
+                  <span className="text-xs font-medium text-primary">{t('hub.statusRunning')}</span>
+                </>
+              ) : (
+                <>
+                  <Circle className="size-2.5 fill-current text-muted-foreground/50" />
+                  <span className="text-xs font-medium text-muted-foreground">{t('hub.statusIdle')}</span>
+                </>
+              )
+            }
+            activeModuleId={hubActiveModule}
+            onActiveModuleChange={(moduleId) => setHubActiveModule(taskId, moduleId)}
+            modules={[
+              {
+                id: 'todo',
+                icon: ListTodo,
+                title: t('hub.todoModule'),
+                badge: todos.filter((td) => td.status !== 'completed').length,
+                render: () =>
+                  todos.length === 0 ? (
+                    <div className="flex items-center gap-1.5 px-1 py-2 text-xs text-muted-foreground">
+                      <ListTodo className="size-3.5" />
+                      {t('task.noTodos')}
+                    </div>
+                  ) : (
+                    <TodoProgressCard todos={todos} variant="inline" />
+                  ),
+              },
+              {
+                id: 'permission',
+                icon: ShieldCheck,
+                title: t('hub.permissionModule'),
+                badge:
+                  pendingAsks.filter((a) => a.sessionId === taskId).length +
+                  pendingConfirms.filter((c) => c.sessionId === taskId).length,
+                render: () => {
+                  const asks = pendingAsks.filter((a) => a.sessionId === taskId);
+                  const confirms = pendingConfirms.filter((c) => c.sessionId === taskId);
+                  if (asks.length === 0 && confirms.length === 0) {
+                    return (
+                      <div className="flex items-center gap-1.5 px-1 py-2 text-xs text-muted-foreground">
+                        <ShieldCheck className="size-3.5" />
+                        {t('hub.noPending')}
+                      </div>
+                    );
+                  }
+                  return (
+                    <div className="flex flex-col gap-2">
+                      {asks.map((ask) => (
+                        <AskPromptCard key={ask.toolCallId} ask={ask} />
+                      ))}
+                      {confirms.map((cf) => (
+                        <ConfirmPromptCard key={cf.toolCallId} confirm={cf} />
+                      ))}
+                    </div>
+                  );
+                },
+              },
+            ]}
           />
+          <div className="mt-1.5">
+            <TaskInput
+              variant="task"
+              isGenerating={isGenerating}
+              onAbort={() => abort(taskId)}
+              onOpenOverlay={onOpenOverlay}
+              onSend={handleSend}
+            />
+          </div>
+          {/* 运行指标栏（run 级口径，每次发送消息重置） */}
+          <StatsBar stats={runStats} />
         </div>
       </div>
 

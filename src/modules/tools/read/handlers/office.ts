@@ -9,7 +9,7 @@
 
 import { readFileSync } from 'node:fs';
 import { extname, basename } from 'node:path';
-import type { ToolResult } from '../../../types';
+import type { ToolResult } from '../../types';
 
 /** mammoth.extractRawText 返回结构 */
 interface MammothResult {

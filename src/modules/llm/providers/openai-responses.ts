@@ -90,6 +90,9 @@ export class OpenAIResponsesProvider implements LLMProvider {
       completion_tokens: data.usage?.output_tokens ?? 0,
       total_tokens: (data.usage?.input_tokens ?? 0) + (data.usage?.output_tokens ?? 0),
       reasoning_tokens: undefined,
+      cached_tokens: (
+        data.usage as { input_tokens_details?: { cached_tokens?: number } } | undefined
+      )?.input_tokens_details?.cached_tokens,
     };
     if (typeof data.usage === 'object' && data.usage !== null && 'output_tokens_details' in data.usage) {
       const details = (data.usage as { output_tokens_details?: { reasoning_tokens?: number } }).output_tokens_details;
@@ -146,13 +149,18 @@ export class OpenAIResponsesProvider implements LLMProvider {
         break;
       case 'response.completed':
         if (data.response?.usage) {
-          const u = data.response.usage;
+          const u = data.response.usage as {
+            input_tokens?: number;
+            output_tokens?: number;
+            input_tokens_details?: { cached_tokens?: number };
+          };
           deltas.push({
             type: 'usage',
             usage: {
               prompt_tokens: u.input_tokens ?? 0,
               completion_tokens: u.output_tokens ?? 0,
               total_tokens: (u.input_tokens ?? 0) + (u.output_tokens ?? 0),
+              cached_tokens: u.input_tokens_details?.cached_tokens,
             },
           });
         }

@@ -1,6 +1,6 @@
 // src/modules/tools/index.ts
 // Tools 模块入口：注册 ToolRegistry + 内置工具 + SkillRegistry。
-// 工具从 builtin 目录的「tool.json + index.ts」结构加载，新增工具只需加目录。
+// 工具从 tools 目录的「tool.json + index.ts」结构加载，新增工具只需加目录。
 // 支持配置热重载（enabled 变更即时生效）和文件级增量热重载（tool.json/index.ts 变更即时生效）。
 
 import { t } from '../../core/i18n';
@@ -9,8 +9,8 @@ import { ServiceNames } from '../../core/types';
 import { join } from 'node:path';
 import { existsSync, statSync, watch, type FSWatcher } from 'node:fs';
 import { ToolRegistryImpl } from './registry';
-import { createSkillRegistry } from './skills';
-import { createSpecRegistry } from './specs';
+import { createSkillRegistry } from './use_skill/registry';
+import { createSpecRegistry } from './get_spec/registry';
 import { BUILTIN_TOOL_NAMES } from './manifest';
 import { loadToolsFromDir, loadToolFromDir, resolveBuiltinDir } from './loader';
 import type { Tool } from './types';
@@ -30,7 +30,7 @@ class ToolsModule implements Module {
     const skillRegistry = createSkillRegistry(ctx.env, ctx.logger, ctx.eventBus, ctx.config);
     const specRegistry = createSpecRegistry(ctx.env, ctx.logger, ctx.eventBus);
 
-    // 1. 加载并注册内置工具（从 builtin 目录，按 config 过滤）
+    // 1. 加载并注册内置工具（从 tools 目录，按 config 过滤）
     await this.loadAndRegisterBuiltinTools(ctx);
 
     // 2. 加载自定义工具（~/.moss/tools/）
@@ -56,14 +56,14 @@ class ToolsModule implements Module {
     });
   }
 
-  /** 从 builtin 目录加载所有内置工具并注册（含 disabled，启用状态由 registry 实时过滤） */
+  /** 从 tools 目录加载所有内置工具并注册（含 disabled，启用状态由 registry 实时过滤） */
   private async loadAndRegisterBuiltinTools(ctx: ModuleContext): Promise<void> {
     const builtinDir = resolveBuiltinDir(ctx.env);
     if (!builtinDir) {
       ctx.logger.warn(t('tools.builtinDirNotFound'), {
         checked: [
-          join(ctx.env.packageRoot, 'src', 'modules', 'tools', 'builtin'),
-          join(ctx.env.packageRoot, 'dist', 'modules', 'tools', 'builtin'),
+          join(ctx.env.packageRoot, 'src', 'modules', 'tools'),
+          join(ctx.env.packageRoot, 'dist', 'modules', 'tools'),
         ],
       });
       return;
@@ -154,6 +154,7 @@ class ToolsModule implements Module {
    * 按 watch 的 filename 增量重载单个工具。
    * filename 形如 'read/tool.json' 或 'read/index.ts'，取首段为工具子目录名。
    * 若无法提取 filename，回退到全量重载该来源的所有工具。
+   * 守卫：首段含 '.'（顶层文件，如 loader.ts）或目录无 tool.json（如 shared/）时静默跳过。
    */
   private async reloadToolByFilename(
     rootDir: string,
@@ -176,6 +177,11 @@ class ToolsModule implements Module {
       return;
     }
 
+    // 顶层文件变更（非工具子目录），静默跳过
+    if (parts[0].includes('.')) {
+      return;
+    }
+
     const toolDir = join(rootDir, parts[0]);
     const toolName = parts[0];
 
@@ -185,6 +191,11 @@ class ToolsModule implements Module {
       dirExists = statSync(toolDir).isDirectory();
     } catch {
       dirExists = false;
+    }
+
+    // 非工具目录（无 tool.json，如 shared/），静默跳过
+    if (dirExists && !existsSync(join(toolDir, 'tool.json'))) {
+      return;
     }
 
     if (!dirExists) {

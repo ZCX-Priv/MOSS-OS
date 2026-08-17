@@ -1,1 +1,0 @@
-﻿  Property 'resolveConfirm' is missing in type 'AgentEngineImpl' but required in type 'AgentEngine'.

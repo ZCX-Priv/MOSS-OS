@@ -150,8 +150,10 @@ export class ToolRegistryImpl implements ToolRegistry {
     }
 
     try {
-      // 权限确认 hook（通过 ctx.emit 上报，由前端/上层确认）
-      if (requireConfirmation) {
+      // 权限确认 hook（通过 ctx.emit 上报，由前端/上层确认）。
+      // safety 模块已决策放行（agent 链路，permissionDecision='allowed'）时跳过；
+      // 非 agent 链路（直调 registry）仍走此兜底确认。
+      if (requireConfirmation && ctx.permissionDecision !== 'allowed') {
         ctx.emit({
           type: 'confirm-required',
           message: t('toolsExtra.toolRequiresConfirmation', { name }),

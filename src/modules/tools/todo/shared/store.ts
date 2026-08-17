@@ -1,13 +1,13 @@
-// builtin/todo/shared/store.ts
+// tools/todo/shared/store.ts
 // Todo 会话级持久化层：读写 ~/.moss/todo/<sessionId>.json（每会话一文件）。
 // 原子写（atomicWriteFile）保证中断不损坏；旧全局 todos.json 不迁移不读取。
-// 被 builtin/todo/index.ts（工具执行）、server 路由（todos.ts / tasks.ts）、
+// 被 tools/todo/index.ts（工具执行）、server 路由（todos.ts / tasks.ts）、
 // agent 引擎（notifyToolSideEffects）三方复用。
 
 import { existsSync, readFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import type { Environment } from '../../../../../core/types';
-import { atomicWriteFile } from '../../../../../utils/fs-atomic';
+import type { Environment } from '../../../../core/types';
+import { atomicWriteFile } from '../../../../utils/fs-atomic';
 
 export type TodoStatus = 'pending' | 'in_progress' | 'completed';
 export type TodoPriority = 'low' | 'medium' | 'high';

@@ -23,6 +23,7 @@ import {
   ModelSettings,
   ToolsSettings,
   SpecsSettings,
+  SafetySettings,
   AboutSettings,
   PlaceholderSection,
 } from './components/pages/SettingsPage';
@@ -122,6 +123,7 @@ export default function App() {
               <Route path="model" element={<ModelSettings />} />
               <Route path="tools" element={<ToolsSettings />} />
               <Route path="specs" element={<SpecsSettings />} />
+              <Route path="safety" element={<SafetySettings />} />
               <Route path="about" element={<AboutSettings />} />
               <Route path="task" element={<PlaceholderSection section="task" />} />
               <Route path="index" element={<PlaceholderSection section="index" />} />

@@ -1,4 +1,4 @@
-// builtin/todo/index.ts
+// tools/todo/index.ts
 // todo 工具 execute 逻辑：会话级待办管理（create[append/replace]/update/list/reorder/batch_update），
 // 持久化到 ~/.moss/todo/<sessionId>.json（每会话一文件）。
 // create 双模式：mode=append（默认）新建一条；mode=replace 用 items 全量覆盖清单（至少 1 条）。
@@ -6,8 +6,8 @@
 // 持久化函数位于 ./shared/store.ts，被 server 路由和 agent 引擎复用。
 // 元数据见同目录 tool.json。
 
-import type { Environment } from '../../../../core/types';
-import type { ToolContext, ToolResult } from '../../types';
+import type { Environment } from '../../../core/types';
+import type { ToolContext, ToolResult } from '../types';
 import {
   readSessionTodoStore,
   writeSessionTodoStore,

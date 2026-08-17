@@ -13,7 +13,7 @@
 import type { HttpRequest, HttpResponse, RouteHandler } from '../types';
 import type { ServiceRegistry, Environment } from '../../../core/types';
 import type { AgentEngine } from '../../contracts';
-import { getSessionTodoPath, readSessionTodoStore } from '../../tools/builtin/todo/shared/store';
+import { getSessionTodoPath, readSessionTodoStore } from '../../tools/todo/shared/store';
 import { ErrorCode } from '../../../core/error-codes';
 
 type AgentEngineWithTasks = AgentEngine & {
@@ -76,6 +76,8 @@ type AgentEngineWithTasks = AgentEngine & {
   deleteTaskGroup?: (id: string, moveTasksTo?: string) => boolean;
   getHistory?: (id: string) => unknown[];
   getActiveSkill?: (id: string) => { name: string; mode: 'system' | 'message'; content: string } | undefined;
+  /** 获取会话权限模式（前端刷新后恢复 PermissionModeSelector 徽章） */
+  getPermissionMode?: (id: string) => 'ask' | 'auto' | 'skip' | undefined;
   deleteSession?: (id: string) => void;
 };
 
@@ -142,6 +144,9 @@ export function createGetTaskHandler(services: ServiceRegistry, env: Environment
     // 当前激活的 skill 模式（前端刷新后恢复 Badge）
     const activeSkill = engine.getActiveSkill?.(id) ?? undefined;
 
+    // 会话级权限模式（前端刷新后恢复 PermissionModeSelector 徽章）
+    const permissionMode = engine.getPermissionMode?.(id) ?? undefined;
+
     return {
       status: 200,
       body: {
@@ -150,6 +155,7 @@ export function createGetTaskHandler(services: ServiceRegistry, env: Environment
         todos,
         contextFiles,
         ...(activeSkill ? { activeSkill } : {}),
+        ...(permissionMode ? { permissionMode } : {}),
       },
     };
   };

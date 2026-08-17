@@ -6,10 +6,10 @@
 
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { computeLineDiff } from '../../../../file-history/diff';
+import { computeLineDiff } from '../../../file-history/diff';
 import { atomicWriteFileStream } from '../shared/streaming';
 import { readOldContentForDiff } from '../shared/diff-guard';
-import type { FilesysService } from '../../../../contracts';
+import type { FilesysService } from '../../../contracts';
 
 /** 小文件/大文件分界（与 diff-guard 的跳过阈值一致） */
 const STREAMING_THRESHOLD_BYTES = 1024 * 1024;

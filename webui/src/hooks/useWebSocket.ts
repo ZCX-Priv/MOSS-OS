@@ -35,6 +35,7 @@ import type {
   AutomationRun,
   WSMessage,
   ToolCall,
+  RunStats,
 } from '../types/api';
 
 function genId(): string {
@@ -45,7 +46,7 @@ function genId(): string {
 const AGENT_EVENT_TYPES = new Set([
   'assistant-text', 'assistant-thinking',
   'tool-call-start', 'tool-call-delta', 'tool-call-executing', 'tool-call-end',
-  'ask', 'error', 'done', 'task.done', 'task.aborted',
+  'ask', 'error', 'done', 'stats-updated', 'task.done', 'task.aborted',
 ]);
 
 // ============================================================================
@@ -337,6 +338,7 @@ export function useWebSocket(): void {
           toolName: event.toolName,
           question: event.question,
           details: event.details,
+          ruleSuggestion: (msg.payload as { ruleSuggestion?: string }).ruleSuggestion,
           createdAt: Date.now(),
         });
         break;
@@ -369,6 +371,14 @@ export function useWebSocket(): void {
           s.setActiveSkill(sessionId, undefined);
         } else if (event.action === 'error') {
           toast.error(i18n.t('task.skillModeError', { name: event.name ?? '', message: event.message ?? '' }));
+        }
+        break;
+      }
+      case 'stats-updated': {
+        if (!sessionId) return;
+        const event = (msg.payload ?? {}) as { stats?: RunStats };
+        if (event.stats) {
+          s.setRunStats(sessionId, event.stats);
         }
         break;
       }

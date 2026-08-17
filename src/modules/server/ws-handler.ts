@@ -138,6 +138,8 @@ export class WsHandler {
       agentId?: string;
       /** skill 模式（/ 菜单触发）：非空=激活/切换；null=退出；缺省=不涉及 */
       skill?: string | null;
+      /** 权限模式（前端 PermissionModeSelector 会话级传递）：ask/auto/skip；缺省=会话记忆/全局默认 */
+      permissionMode?: 'ask' | 'auto' | 'skip';
     };
 
     if (!payload.message) {
@@ -169,6 +171,8 @@ export class WsHandler {
         runId,
         // skill 模式透传：undefined=不涉及；string=激活/切换；null=退出
         skill: payload.skill,
+        // 权限模式透传（会话级；缺省时 engine 回退会话记忆/全局默认）
+        permissionMode: payload.permissionMode,
       });
 
       if (abortController.signal.aborted) {
@@ -227,6 +231,7 @@ export class WsHandler {
           toolCallId: string;
           sessionId: string;
           question: string;
+          ruleSuggestion?: string;
         }>;
       }>('agent.engine');
       const asks = agent?.getPendingAsks?.(msg.sessionId) ?? [];
@@ -245,7 +250,7 @@ export class WsHandler {
           },
         });
       }
-      // WS 重连恢复 pending confirms：查询该 session 的待确认列表，逐条发送 confirm-required 事件
+      // WS 重连恢复 pending confirms：查询该 session 的待确认列表，逐条发送 confirm-required 事件（含规则建议）
       const confirms = agent?.getPendingConfirms?.(msg.sessionId) ?? [];
       for (const cf of confirms) {
         state.conn.send({
@@ -257,6 +262,7 @@ export class WsHandler {
             toolCallId: cf.toolCallId,
             toolName: '',
             question: cf.question,
+            ruleSuggestion: cf.ruleSuggestion,
           },
         });
       }
@@ -310,12 +316,12 @@ export class WsHandler {
       state.conn.send({ type: 'error', payload: { message: ErrorCode.WS_AGENT_ENGINE_UNAVAILABLE } });
       return;
     }
-    const payload = (msg.payload ?? {}) as { toolCallId?: string; ok?: boolean };
+    const payload = (msg.payload ?? {}) as { toolCallId?: string; ok?: boolean; remember?: 'session' | 'global' };
     if (!payload.toolCallId || typeof payload.ok !== 'boolean') {
       state.conn.send({ type: 'error', payload: { message: ErrorCode.WS_TOOLCALLID_ANSWER_REQUIRED } });
       return;
     }
-    const ok = agent.resolveConfirm(payload.toolCallId, payload.ok);
+    const ok = agent.resolveConfirm(payload.toolCallId, payload.ok, payload.remember);
     if (!ok) {
       state.conn.send({
         type: 'error',

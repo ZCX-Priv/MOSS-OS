@@ -99,6 +99,25 @@ export interface AppConfig {
   tools: Record<string, { enabled: boolean; requireConfirmation?: boolean; timeout?: number }>;
   mcpServers: Record<string, unknown>;
   security: { authToken: string; bindLocalhostOnly: boolean };
+  /** 统一权限决策配置（safety 模块；可选，旧 config 无此段时用默认值） */
+  safety?: SafetyConfig;
+}
+
+/** 权限规则表（与后端 config.safety.rules 对齐） */
+export interface SafetyRules {
+  allow: string[];
+  deny: string[];
+  ask: string[];
+}
+
+/** config.safety 段（与后端 Zod schema 对齐） */
+export interface SafetyConfig {
+  defaultMode: PermissionMode;
+  confirmTimeoutMinutes: number;
+  blockDangerousCommands: boolean;
+  cautionPolicy: 'ask' | 'deny';
+  rules: SafetyRules;
+  protectedPaths: string[];
 }
 
 export type ThinkingEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
@@ -363,6 +382,21 @@ export interface WSMessage {
   payload?: unknown;
 }
 
+/** 单次运行（run）级统计（与后端 contracts RunStats 对齐；每次发送消息后重置） */
+export interface RunStats {
+  runId?: string;
+  turns: number;
+  steps: number;
+  llmMs: number;
+  toolMs: number;
+  ttftCount: number;
+  ttftMsTotal: number;
+  decodeMs: number;
+  inputTokens: number;
+  outputTokens: number;
+  cachedTokens: number;
+}
+
 export type AgentEvent =
   | { type: 'assistant-text'; sessionId: string; text: string; runId?: string }
   | { type: 'assistant-thinking'; sessionId: string; text: string; runId?: string }
@@ -374,6 +408,7 @@ export type AgentEvent =
   | { type: 'ask-timeout'; sessionId: string; toolCallId: string; runId?: string }
   | { type: 'confirm-required'; sessionId: string; toolCallId: string; toolName: string; question: string; details?: unknown; runId?: string }
   | { type: 'skill-mode'; sessionId: string; action: 'enter' | 'switch' | 'exit' | 'error'; name?: string; greet?: string; icon?: string; message?: string; runId?: string }
+  | { type: 'stats-updated'; sessionId: string; stats: RunStats; runId?: string }
   | { type: 'error'; sessionId: string; message: string; runId?: string }
   | { type: 'done'; sessionId: string; finishReason: string; runId?: string };
 
@@ -427,6 +462,8 @@ export interface PendingConfirm {
   question: string;
   /** 工具调用参数（供前端展示具体将执行什么） */
   details?: unknown;
+  /** 「始终允许」规则建议（safety 模块生成，如 "shell(git commit *)"；卡片展示+remember 回复） */
+  ruleSuggestion?: string;
   /** 收到时间，用于排序 */
   createdAt: number;
 }
@@ -460,5 +497,5 @@ export interface SuggestPath {
 // 执行权限模式
 // ============================================================================
 
-/** 任务执行权限模式 */
-export type PermissionMode = 'ask' | 'auto-edit' | 'auto' | 'plan' | 'skip';
+/** 任务执行权限模式（对齐 PermissionModeSelector 现有 UI：3 种；与后端 safety/types 对齐） */
+export type PermissionMode = 'ask' | 'auto' | 'skip';

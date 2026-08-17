@@ -1,10 +1,10 @@
-// builtin/get_spec/index.ts
+// tools/get_spec/index.ts
 // get_spec 工具 execute 逻辑：按 id 读取指定 spec 规范文件的完整 Markdown 内容。
 // 元数据见同目录 tool.json。
 
-import type { ToolContext, ToolResult } from '../../types';
-import { ServiceNames } from '../../../../core/types';
-import type { SpecRegistry } from '../../specs';
+import type { ToolContext, ToolResult } from '../types';
+import { ServiceNames } from '../../../core/types';
+import type { SpecRegistry } from './registry';
 
 export default {
   async execute(params: unknown, ctx: ToolContext): Promise<ToolResult> {

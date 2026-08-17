@@ -1,4 +1,4 @@
-// builtin/glob/index.ts
+// tools/glob/index.ts
 // glob 工具 execute 逻辑：按 glob 模式匹配文件/目录，返回匹配路径列表。
 // 引擎：Bun.Glob 原生匹配（支持 {a,b} 展开、! 否定、**、字符类）+ shared 异步 walker
 // （gitignore 剪枝 / 隐藏文件开关 / 上限保护 / AbortSignal 取消）。
@@ -7,17 +7,17 @@
 import { stat } from 'node:fs/promises';
 import { statSync } from 'node:fs';
 import { Glob } from 'bun';
-import { t } from '../../../../core/i18n';
-import { ServiceNames } from '../../../../core/types';
-import type { FilesysService } from '../../../contracts';
+import { t } from '../../../core/i18n';
+import { ServiceNames } from '../../../core/types';
+import type { FilesysService } from '../../contracts';
 import {
   walkFiles,
   typeToGlobs,
   toDisplayPath,
   SUPPORTED_TYPES,
   type WalkEntry,
-} from '../../shared/search-core';
-import type { ToolContext, ToolResult } from '../../types';
+} from '../shared/search-core';
+import type { ToolContext, ToolResult } from '../types';
 
 interface GlobParams {
   pattern?: string | string[];

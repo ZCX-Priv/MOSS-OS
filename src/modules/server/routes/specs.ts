@@ -5,7 +5,7 @@
 
 import type { HttpRequest, HttpResponse, RouteHandler } from '../types';
 import type { Environment, ServiceRegistry } from '../../../core/types';
-import type { SpecRegistry } from '../../tools/specs';
+import type { SpecRegistry } from '../../tools/get_spec/registry';
 import { ErrorCode } from '../../../core/error-codes';
 
 /**

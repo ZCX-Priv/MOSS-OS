@@ -89,11 +89,17 @@ export class AnthropicProvider implements LLMProvider {
       }
     }
 
+    // Anthropic 的 input_tokens 不含缓存部分，归一化为总输入（含 cache_read + cache_creation）
+    const aInput = data.usage?.input_tokens ?? 0;
+    const aCacheRead = data.usage?.cache_read_input_tokens ?? 0;
+    const aCacheCreate = data.usage?.cache_creation_input_tokens ?? 0;
+    const totalInput = aInput + aCacheRead + aCacheCreate;
     const usage: UnifiedUsage = {
-      prompt_tokens: data.usage?.input_tokens ?? 0,
+      prompt_tokens: totalInput,
       completion_tokens: data.usage?.output_tokens ?? 0,
-      total_tokens: (data.usage?.input_tokens ?? 0) + (data.usage?.output_tokens ?? 0),
+      total_tokens: totalInput + (data.usage?.output_tokens ?? 0),
       reasoning_tokens: undefined,
+      cached_tokens: aCacheRead,
     };
 
     return {
@@ -159,12 +165,18 @@ export class AnthropicProvider implements LLMProvider {
         break;
       case 'message_start':
         if (data.message?.usage) {
+          // message_start 只含输入侧 usage；输出侧在 message_delta 补齐（消费端按字段取 max 合并）
+          const msInput = data.message.usage.input_tokens ?? 0;
+          const msCacheRead = data.message.usage.cache_read_input_tokens ?? 0;
+          const msCacheCreate = data.message.usage.cache_creation_input_tokens ?? 0;
+          const msTotalInput = msInput + msCacheRead + msCacheCreate;
           deltas.push({
             type: 'usage',
             usage: {
-              prompt_tokens: data.message.usage.input_tokens ?? 0,
+              prompt_tokens: msTotalInput,
               completion_tokens: data.message.usage.output_tokens ?? 0,
-              total_tokens: (data.message.usage.input_tokens ?? 0) + (data.message.usage.output_tokens ?? 0),
+              total_tokens: msTotalInput + (data.message.usage.output_tokens ?? 0),
+              cached_tokens: msCacheRead,
             },
           });
         }
@@ -289,6 +301,8 @@ interface AnthropicResponse {
   usage?: {
     input_tokens?: number;
     output_tokens?: number;
+    cache_read_input_tokens?: number;
+    cache_creation_input_tokens?: number;
   };
 }
 
@@ -308,7 +322,12 @@ interface AnthropicStreamEvent {
     stop_reason?: string;
   };
   message?: {
-    usage?: { input_tokens?: number; output_tokens?: number };
+    usage?: {
+      input_tokens?: number;
+      output_tokens?: number;
+      cache_read_input_tokens?: number;
+      cache_creation_input_tokens?: number;
+    };
   };
   usage?: { output_tokens?: number };
 }

@@ -1,4 +1,4 @@
-// src/modules/tools/skills.ts
+// src/modules/tools/use_skill/registry.ts
 // Skill 注册表（对齐 Anthropic Agent Skills 开放标准 + greet/icon 扩展）。
 //
 // 两种格式（~/.moss/skills/ 下）：
@@ -9,13 +9,13 @@
 // 启用/禁用：config.skills[name].enabled（缺省启用），listEnabled()/isEnabled() 实时读取。
 // 热重载：递归监听用户目录，目录级增量重载。
 
-import { t } from '../../core/i18n';
+import { t } from '../../../core/i18n';
 import { stat } from 'node:fs/promises';
 import { watch, type FSWatcher } from 'node:fs';
 import { join } from 'node:path';
-import type { ConfigService, Environment, EventBus, Logger } from '../../core/types';
-import { ServiceNames } from '../../core/types';
-import { splitFrontMatter } from './shared/frontmatter';
+import type { ConfigService, Environment, EventBus, Logger } from '../../../core/types';
+import { ServiceNames } from '../../../core/types';
+import { splitFrontMatter } from '../shared/frontmatter';
 
 /** 旧常量保留，值等于 ServiceNames.SKILL_REGISTRY，向后兼容 */
 export const SKILL_REGISTRY_SERVICE = ServiceNames.SKILL_REGISTRY;

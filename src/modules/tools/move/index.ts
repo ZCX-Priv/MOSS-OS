@@ -1,4 +1,4 @@
-// builtin/move/index.ts
+// tools/move/index.ts
 // move 工具：移动/重命名文件或目录（替代 shell 的 mv/Move-Item，全程可 undo）。
 // 强化点：
 //   1. 同盘 rename 原子移动；跨盘（EXDEV）回退递归 copy + delete
@@ -8,8 +8,8 @@
 //   5. dryRun 预演 + 批量（sources）
 //   6. filesys 变更事件（file-moved，前端可见）
 
-import { t } from '../../../../core/i18n';
-import { ServiceNames } from '../../../../core/types';
+import { t } from '../../../core/i18n';
+import { ServiceNames } from '../../../core/types';
 import {
   existsSync,
   statSync,
@@ -25,9 +25,9 @@ import {
   realpathSafe,
   isRootPath,
   containsVcsMarker,
-} from '../../../../utils/fs';
-import type { FileHistoryService, FilesysService } from '../../../contracts';
-import type { ToolContext, ToolResult } from '../../types';
+} from '../../../utils/fs';
+import type { FileHistoryService, FilesysService } from '../../contracts';
+import type { ToolContext, ToolResult } from '../types';
 
 /** 目录移动大小上限（跨盘 fallback 时递归复制的保护） */
 const MAX_DIR_BYTES = 100 * 1024 * 1024;

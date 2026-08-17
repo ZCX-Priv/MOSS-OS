@@ -12,7 +12,7 @@ import {
   type TodoItem,
   type TodoStatus,
   type TodoPriority,
-} from '../../tools/builtin/todo/shared/store';
+} from '../../tools/todo/shared/store';
 import { ErrorCode } from '../../../core/error-codes';
 
 /** 入参可能缺 id/createdAt/updatedAt，由后端补齐。兼容旧字段 content。 */

@@ -1,4 +1,4 @@
-// builtin/shell/index.ts
+// tools/shell/index.ts
 // shell 工具 execute 逻辑：执行 shell 命令，捕获 stdout/stderr/exitCode。
 // filesys 统一化：
 //   - cwd 解析走 filesys roots（替代旧版手写 isAbsolute/normalize，统一越权语义）
@@ -6,12 +6,12 @@
 //     shell 造成的文件变更（mv/rm/重定向）纳入 file-history（缓存命中可 undo）+ shell-changed 事件
 // 元数据见同目录 tool.json。
 
-import { t } from '../../../../core/i18n';
-import { ServiceNames } from '../../../../core/types';
+import { t } from '../../../core/i18n';
+import { ServiceNames } from '../../../core/types';
 import { statSync } from 'node:fs';
-import { decodeShellOutput } from '../../../../utils/encoding';
-import type { FilesysService, ShellChangeReport } from '../../../contracts';
-import type { ToolContext, ToolResult } from '../../types';
+import { decodeShellOutput } from '../../../utils/encoding';
+import type { FilesysService, ShellChangeReport } from '../../contracts';
+import type { ToolContext, ToolResult } from '../types';
 
 /** shell 工具输入参数 */
 interface ShellParams {

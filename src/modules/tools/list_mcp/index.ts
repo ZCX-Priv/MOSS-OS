@@ -1,10 +1,10 @@
-// builtin/list_mcp/index.ts
+// tools/list_mcp/index.ts
 // list_mcp 工具 execute 逻辑：列出所有 MCP 服务器（含启用状态）及工具清单。
 // 元数据见同目录 tool.json。
 
-import type { ToolContext, ToolResult } from '../../types';
-import type { MCPManager } from '../../../contracts';
-import { ServiceNames } from '../../../../core/types';
+import type { ToolContext, ToolResult } from '../types';
+import type { MCPManager } from '../../contracts';
+import { ServiceNames } from '../../../core/types';
 
 export default {
   async execute(params: unknown, ctx: ToolContext): Promise<ToolResult> {

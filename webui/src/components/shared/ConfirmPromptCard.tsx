@@ -1,15 +1,21 @@
 // webui/src/components/shared/ConfirmPromptCard.tsx
-// 确认卡片：渲染 requireConfirmation 工具（shell/write/delete/undo）发起的待确认请求，
-// 提供确认/取消按钮，调用 replyConfirm 打通链路。
+// 确认卡片：渲染 safety 模块决策为 ask 的工具调用（shell/write/edit/delete/MCP 等），
+// 提供「允许 / 始终允许(本会话|全局) / 拒绝」三级按钮，调用 replyConfirm 打通链路。
 // confirm 不进入 message.toolCalls（走独立 WS 事件 → store.pendingConfirms），故需独立渲染。
 // 样式与 AskPromptCard 一致，保证视觉统一。
 
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ShieldAlert, Check, X, Loader2 } from 'lucide-react';
+import { ShieldAlert, Check, X, Loader2, ChevronDown, Infinity as InfinityIcon, Clock3 } from 'lucide-react';
 import type { PendingConfirm } from '../../types/api';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from '@/components/ui/dropdown-menu';
 import { useTask } from '../../hooks/useTask';
 
 interface ConfirmPromptCardProps {
@@ -43,12 +49,12 @@ export function ConfirmPromptCard({ confirm, className }: ConfirmPromptCardProps
   const { replyConfirm } = useTask();
   const [sending, setSending] = useState(false);
 
-  const handle = (ok: boolean) => {
+  const handle = (ok: boolean, remember?: 'session' | 'global') => {
     if (sending) return;
     setSending(true);
-    // replyConfirm 同步发送 WS tool.confirm.reply 并 removePendingConfirm，
+    // replyConfirm 同步发送 WS tool.confirm.reply（含 remember 级别）并 removePendingConfirm，
     // 本组件随 store 变化自动卸载，无需额外清理
-    replyConfirm(confirm.toolCallId, ok);
+    replyConfirm(confirm.toolCallId, ok, remember);
   };
 
   const detailsText = formatDetails(confirm.toolName, confirm.details);
@@ -81,7 +87,21 @@ export function ConfirmPromptCard({ confirm, className }: ConfirmPromptCardProps
           </pre>
         </div>
       )}
-      {/* 确认/取消按钮 */}
+      {/* 「始终允许」规则预览（safety 模块生成的建议规则） */}
+      {confirm.ruleSuggestion && (
+        <div className="rounded-md border border-border bg-muted/40 px-2 py-1.5">
+          <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+            <Clock3 className="size-3 shrink-0" />
+            <span>
+              {t('task.confirmRulePreview')}
+              <code className="ml-1 rounded bg-muted px-1 py-0.5 font-mono text-[11px] text-foreground">
+                {confirm.ruleSuggestion}
+              </code>
+            </span>
+          </div>
+        </div>
+      )}
+      {/* 允许 / 始终允许(下拉) / 拒绝 按钮组 */}
       <div className="flex items-center justify-end gap-2">
         <Button
           size="sm"
@@ -93,6 +113,43 @@ export function ConfirmPromptCard({ confirm, className }: ConfirmPromptCardProps
           {sending ? <Loader2 className="size-3.5 animate-spin" /> : <X className="size-3.5" />}
           <span>{t('task.confirmCancel')}</span>
         </Button>
+        {confirm.ruleSuggestion && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={sending}
+                className="h-8 shrink-0 gap-1 pr-1.5"
+                title={t('task.confirmAlwaysAllow')}
+              >
+                <InfinityIcon className="size-3.5" />
+                <span>{t('task.confirmAlwaysAllow')}</span>
+                <ChevronDown className="size-3 opacity-70" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" side="top" sideOffset={4} collisionPadding={8} className="min-w-[14rem] p-1">
+              <DropdownMenuItem onSelect={() => handle(true, 'session')} className="gap-2 px-2 py-1.5">
+                <Clock3 className="size-3.5 shrink-0" />
+                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                  <span className="text-sm leading-tight">{t('task.confirmRememberSession')}</span>
+                  <span className="text-[11px] leading-tight text-muted-foreground">
+                    {t('task.confirmRememberSessionDesc')}
+                  </span>
+                </div>
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => handle(true, 'global')} className="gap-2 px-2 py-1.5">
+                <InfinityIcon className="size-3.5 shrink-0" />
+                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                  <span className="text-sm leading-tight">{t('task.confirmRememberGlobal')}</span>
+                  <span className="text-[11px] leading-tight text-muted-foreground">
+                    {t('task.confirmRememberGlobalDesc')}
+                  </span>
+                </div>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
         <Button
           size="sm"
           onClick={() => handle(true)}

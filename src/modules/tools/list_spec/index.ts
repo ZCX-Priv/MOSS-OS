@@ -1,10 +1,10 @@
-// builtin/list_spec/index.ts
+// tools/list_spec/index.ts
 // list_spec 工具 execute 逻辑：列出所有可用的 spec 规范文件，以文件树形式展示。
 // 元数据见同目录 tool.json。
 
-import type { ToolContext, ToolResult } from '../../types';
-import { ServiceNames } from '../../../../core/types';
-import type { Spec, SpecRegistry } from '../../specs';
+import type { ToolContext, ToolResult } from '../types';
+import { ServiceNames } from '../../../core/types';
+import type { Spec, SpecRegistry } from '../get_spec/registry';
 
 export default {
   async execute(_params: unknown, ctx: ToolContext): Promise<ToolResult> {

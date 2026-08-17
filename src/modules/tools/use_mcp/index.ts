@@ -1,10 +1,10 @@
-// builtin/use_mcp/index.ts
+// tools/use_mcp/index.ts
 // use_mcp 工具 execute 逻辑：转发到指定 MCP 服务器的指定工具。
 // 元数据见同目录 tool.json。
 
-import type { ToolContext, ToolResult } from '../../types';
-import type { MCPManager } from '../../../contracts';
-import { ServiceNames } from '../../../../core/types';
+import type { ToolContext, ToolResult } from '../types';
+import type { MCPManager } from '../../contracts';
+import { ServiceNames } from '../../../core/types';
 
 export default {
   async execute(params: unknown, ctx: ToolContext): Promise<ToolResult> {

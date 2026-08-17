@@ -58,6 +58,7 @@ export const zh = {
     loadedSessions: '已从磁盘加载 {{count}} 个会话',
     scanSessionsDirFailed: '扫描会话目录失败',
     saveSessionFailed: '保存会话失败',
+    persistRunStatsFailed: '持久化运行统计失败',
     sessionCreated: '会话已创建: {{sessionId}}',
     deleteSessionFailed: '删除会话文件失败',
     contextTrimmed: '上下文已裁剪: {{messages}} 条消息，约 {{tokens}} tokens',

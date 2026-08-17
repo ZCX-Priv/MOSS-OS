@@ -4,10 +4,10 @@
 // 路径：read/handlers/text.ts → src/utils = ../../../../../utils
 
 import { readFileSync, type Stats } from 'node:fs';
-import { classifyFileContent, type FileContentKind } from '../../../../../utils/fs';
-import { decodeShellOutput, stripBom } from '../../../../../utils/encoding';
+import { classifyFileContent, type FileContentKind } from '../../../../utils/fs';
+import { decodeShellOutput, stripBom } from '../../../../utils/encoding';
 import { detectMinified, truncateMinifiedLines } from '../shared/minified';
-import type { ToolResult } from '../../../types';
+import type { ToolResult } from '../../types';
 
 /** 已由 filesys.readFile 读出的派生数据（复用免二次读盘） */
 export interface CachedFileEntity {

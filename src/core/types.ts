@@ -142,6 +142,7 @@ export interface ServiceRegistry {
 import type { ToolsConfig } from '../modules/tools/manifest';
 import type { FileHistoryConfig } from '../modules/file-history/types';
 import type { FilesysConfig } from '../modules/filesys/types';
+import type { SafetyConfig } from '../modules/safety/types';
 
 /** 应用配置（config.json）的结构 —— 由 config-service 中 Zod schema 严格校验 */
 export interface AppConfig {
@@ -194,6 +195,8 @@ export interface AppConfig {
   fileHistory?: FileHistoryConfig;
   /** 虚拟文件系统配置（由 filesys 模块消费：roots/缓存/shell 快照检测） */
   filesys?: FilesysConfig;
+  /** 统一权限决策配置（由 safety 模块消费：模式/规则/危险拦截/保护路径） */
+  safety?: SafetyConfig;
 }
 
 export type ApiConfig = {
@@ -303,4 +306,6 @@ export const ServiceNames = {
   FILE_HISTORY: 'file.history',
   /** 虚拟文件系统服务（由 filesys 模块注册：统一文件 IO / 读缓存 / roots / 变更事件） */
   FILESYS: 'file.sys',
+  /** 安全服务（由 safety 模块注册：统一权限决策 + 会话规则 + 规则建议） */
+  SAFETY: 'safety.service',
 } as const;

@@ -4,7 +4,7 @@
 // 注意：destroy() 必须在 finally 中调用，释放 pdfjs worker 句柄避免内存泄漏。
 
 import { readFileSync } from 'node:fs';
-import type { ToolResult } from '../../../types';
+import type { ToolResult } from '../../types';
 
 /** pdf-parse v2 的 TextResult 结构 */
 interface PdfTextResult {

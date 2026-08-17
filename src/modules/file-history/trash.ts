@@ -6,6 +6,7 @@ import {
   existsSync,
   mkdirSync,
   renameSync,
+  cpSync,
   writeFileSync,
   unlinkSync,
   readdirSync,
@@ -68,6 +69,28 @@ function readMeta(trashPath: string): TrashMeta | null {
 }
 
 /**
+ * 移动文件/目录：同盘走 rename（零拷贝）；跨盘（EXDEV）回退为复制+删源。
+ * Windows 跨盘符 / Unix 跨挂载点 rename 均不允许，必须回退。
+ */
+function moveEntry(src: string, dest: string): void {
+  try {
+    renameSync(src, dest);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== 'EXDEV') throw err;
+    // 跨盘回退：完整复制到目标，成功后再删源
+    try {
+      cpSync(src, dest, { recursive: true, force: true });
+    } catch (copyErr) {
+      // 复制失败（如中途磁盘满）：清理不完整副本后抛出原始错误
+      try { rmSync(dest, { recursive: true, force: true }); } catch { /* 静默 */ }
+      throw copyErr;
+    }
+    rmSync(src, { recursive: true, force: true });
+  }
+}
+
+/**
  * 移动文件/目录到回收站，返回 trash 路径与元数据。
  * 同名冲突时追加时间戳后缀（仿 Finder），仍冲突则继续追加序号。
  *
@@ -97,7 +120,7 @@ export function moveToTrash(absPath: string, trashDir: string): TrashEntry {
     }
   }
 
-  renameSync(absPath, trashPath);
+  moveEntry(absPath, trashPath);
   const trashedAt = new Date();
   writeMeta(trashPath, absPath, trashedAt);
 
@@ -125,7 +148,7 @@ export function restoreFromTrash(trashPath: string, originalPath: string): void 
       unlinkSync(originalPath);
     }
   }
-  renameSync(trashPath, originalPath);
+  moveEntry(trashPath, originalPath);
   // 清理 sidecar 元数据
   const metaPath = metaPathFor(trashPath);
   if (existsSync(metaPath)) {

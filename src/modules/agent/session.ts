@@ -6,9 +6,10 @@ import { t } from '../../core/i18n';
 import { existsSync, readFileSync, readdirSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { safeSessionId, writeJsonStore } from '../filesys/store-io';
-import type { AgentMessage } from '../contracts';
+import type { AgentMessage, RunStats } from '../contracts';
 import type { UnifiedMessage } from '../llm/types';
-import type { TodoItem } from '../tools/builtin/todo/shared/store';
+import type { TodoItem } from '../tools/todo/shared/store';
+import type { PermissionMode } from '../safety/types';
 import type { Environment, Logger } from '../../core/types';
 
 /** 上下文文件轨迹（与前端 ContextFile 对齐） */
@@ -19,7 +20,7 @@ export interface ContextFile {
 }
 
 export interface ActiveSkill {
-  /** skill 名称 */
+  /** skill 名称（内容运行时从 skill 注册表按 name 解析，不持久化全文） */
   name: string;
   /**
    * 注入位置：
@@ -27,15 +28,17 @@ export interface ActiveSkill {
    *   - message：内容作为 skill-inject system 消息锚定在切换消息后（切换激活）
    */
   mode: 'system' | 'message';
-  /** skill 指令内容（激活时刻固化；不含元数据） */
-  content: string;
+}
+
+/** 旧格式 session 记录（含已废弃的全量提示词字段），仅用于加载时的类型窄化与主动清理检测 */
+interface LegacySessionRecord {
+  systemPrompt?: string;
+  activeSkill?: { name?: string; mode?: 'system' | 'message'; content?: string };
 }
 
 export interface Session {
   id: string;
-  /** 系统提示词（独立存储，不混入任务历史） */
-  systemPrompt: string;
-  /** 任务历史（不含系统提示，仅 user/assistant/tool；可含 skill-inject 的 system 消息） */
+  /** 任务历史（不含系统提示词，仅 user/assistant/tool；skill-inject 的 system 消息只存单行占位标题，全文运行时从注册表解析） */
   messages: AgentMessage[];
   /** 创建时间 */
   createdAt: string;
@@ -47,6 +50,10 @@ export interface Session {
   contextFiles: ContextFile[];
   /** 当前激活的 skill 模式（会话级持久；/ 菜单触发） */
   activeSkill?: ActiveSkill;
+  /** 会话级权限模式（ask/auto/skip；前端 PermissionModeSelector 切换，随 run 持久化，刷新恢复） */
+  permissionMode?: PermissionMode;
+  /** 最近一次 run 的运行统计（run 级口径：每次发送消息重置；中控台指标栏刷新恢复用） */
+  lastRunStats?: RunStats;
   /** 最近一次消息撤回（截断）的恢复信息（redo 用；新撤回覆盖旧的） */
   lastTruncation?: {
     /** 截断起点时间戳（目标用户消息的 timestamp） */
@@ -77,32 +84,10 @@ export class SessionStore {
       const entries = readdirSync(this.sessionsDir);
       for (const name of entries) {
         if (!name.endsWith('.json')) continue;
-        const filePath = join(this.sessionsDir, name);
-        try {
-          const raw = readFileSync(filePath, 'utf8');
-          const parsed = JSON.parse(raw) as Partial<Session>;
-          if (
-            typeof parsed.id === 'string' &&
-            Array.isArray(parsed.messages) &&
-            typeof parsed.systemPrompt === 'string'
-          ) {
-            const session: Session = {
-              id: parsed.id,
-              systemPrompt: parsed.systemPrompt,
-              messages: parsed.messages,
-              createdAt: parsed.createdAt ?? new Date().toISOString(),
-              updatedAt: parsed.updatedAt ?? new Date().toISOString(),
-              totalTokens: parsed.totalTokens ?? 0,
-              contextFiles: Array.isArray(parsed.contextFiles) ? parsed.contextFiles : [],
-              ...(parsed.lastTruncation ? { lastTruncation: parsed.lastTruncation } : {}),
-            };
-            this.sessions.set(session.id, session);
-          }
-        } catch (err) {
-          this.logger.warn(t('agent.loadSessionFailed'), {
-            file: name,
-            error: err instanceof Error ? err.message : String(err),
-          });
+        // 文件名即 sessionId（saveSession 以 session.id 命名，safeSessionId 清洗保证无歧义）
+        const sessionId = name.slice(0, -'.json'.length);
+        if (!this.loadFromDisk(sessionId)) {
+          this.logger.warn(t('agent.loadSessionFailed'), { file: name });
         }
       }
       this.logger.debug(t('agent.loadedSessions', { count: this.sessions.size }));
@@ -131,29 +116,56 @@ export class SessionStore {
     return join(this.sessionsDir, `${safeSessionId(sessionId)}.json`);
   }
 
-  /** 从磁盘加载单个 session（冗余保护：eager load 后通常命中） */
+  /**
+   * 从磁盘加载单个 session（启动 loadAll 与运行时冗余加载共用）。
+   * 主动清理：检测到旧格式冗余（systemPrompt 字段 / activeSkill 固化全文 / skill-inject 全文消息）
+   * 时先瘦身再立即原子重写文件，磁盘即时去除全量提示词。
+   */
   private loadFromDisk(sessionId: string): Session | null {
     try {
       const filePath = this.sessionFilePath(sessionId);
       if (!existsSync(filePath)) return null;
       const raw = readFileSync(filePath, 'utf8');
-      const parsed = JSON.parse(raw) as Partial<Session>;
-      if (
-        typeof parsed.id === 'string' &&
-        Array.isArray(parsed.messages) &&
-        typeof parsed.systemPrompt === 'string'
-      ) {
+      const parsed = JSON.parse(raw) as Partial<Session> & LegacySessionRecord;
+      if (typeof parsed.id === 'string' && Array.isArray(parsed.messages)) {
+        const legacySkill = parsed.activeSkill;
+        const hasLegacySkillContent = typeof legacySkill?.content === 'string';
+        // skill-inject 全文消息特征：含 `\n\n`（占位格式只有单行标题）
+        const hasFullSkillInject = parsed.messages.some(
+          m => m.role === 'system' && m.name === 'skill-inject' && m.content.includes('\n\n'),
+        );
+        const dirty =
+          parsed.systemPrompt !== undefined || hasLegacySkillContent || hasFullSkillInject;
+        // 瘦身：全文 → 单行占位标题 + metadata.skillName（全文运行时从注册表解析）
+        if (hasFullSkillInject) {
+          for (const m of parsed.messages) {
+            if (m.role === 'system' && m.name === 'skill-inject' && m.content.includes('\n\n')) {
+              const fallbackName = /^# Active Skill: (.+)$/.exec(m.content)?.[1];
+              const skillName = legacySkill?.name ?? fallbackName ?? 'unknown';
+              m.content = `# Active Skill: ${skillName}`;
+              m.metadata = { ...(m.metadata ?? {}), skillName };
+            }
+          }
+        }
         const session: Session = {
           id: parsed.id,
-          systemPrompt: parsed.systemPrompt,
           messages: parsed.messages,
           createdAt: parsed.createdAt ?? new Date().toISOString(),
           updatedAt: parsed.updatedAt ?? new Date().toISOString(),
           totalTokens: parsed.totalTokens ?? 0,
           contextFiles: Array.isArray(parsed.contextFiles) ? parsed.contextFiles : [],
+          ...(legacySkill?.name && legacySkill.mode
+            ? { activeSkill: { name: legacySkill.name, mode: legacySkill.mode } }
+            : {}),
+          ...(parsed.permissionMode ? { permissionMode: parsed.permissionMode } : {}),
+          ...(parsed.lastRunStats ? { lastRunStats: parsed.lastRunStats } : {}),
           ...(parsed.lastTruncation ? { lastTruncation: parsed.lastTruncation } : {}),
         };
         this.sessions.set(session.id, session);
+        if (dirty) {
+          // 重写瘦身：旧 systemPrompt 等废弃字段不再写入，自然消失
+          this.saveSession(session);
+        }
         return session;
       }
       return null;
@@ -162,8 +174,8 @@ export class SessionStore {
     }
   }
 
-  /** 获取或创建会话 */
-  getOrCreate(sessionId: string, systemPrompt: string): Session {
+  /** 获取或创建会话（系统提示词不持久化，每次 run 由 engine 实时构建并拼接进发送视图） */
+  getOrCreate(sessionId: string): Session {
     let session: Session | null = this.sessions.get(sessionId) ?? null;
     if (!session) {
       // 冗余保护：尝试从磁盘加载
@@ -172,7 +184,6 @@ export class SessionStore {
     if (!session) {
       session = {
         id: sessionId,
-        systemPrompt,
         messages: [],
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -253,6 +264,19 @@ export class SessionStore {
     session.messages.push({ role: 'user', content, timestamp: new Date().toISOString() });
     session.updatedAt = new Date().toISOString();
     this.saveSession(session);
+  }
+
+  /** 设置会话级权限模式（变化时持久化；引擎每次 run 解析后调用） */
+  setPermissionMode(session: Session, mode: PermissionMode): void {
+    if (session.permissionMode === mode) return;
+    session.permissionMode = mode;
+    session.updatedAt = new Date().toISOString();
+    this.saveSession(session);
+  }
+
+  /** 写入最近一次 run 统计（不落盘，由调用方按需 persistSession） */
+  setLastRunStats(session: Session, stats: RunStats): void {
+    session.lastRunStats = stats;
   }
 
   /** 添加 assistant 消息（含可能的 tool_calls） */
@@ -415,10 +439,10 @@ export class SessionStore {
    * LLM 上下文窗口裁剪只应是"发送视图"（见 toUnifiedMessages 的 budgetTokens 参数），
    * 物理裁剪曾导致持久化历史丢失（首条 user 消息被裁掉后无法恢复）。
    */
-  trimContext(session: Session, maxTokens: number): void {
+  trimContext(session: Session, maxTokens: number, systemContent: string): void {
     // 粗略估算：char 数 / 2 ≈ token 数
     const estimateTokens = (text: string): number => Math.ceil(text.length / 2);
-    const systemTokens = estimateTokens(session.systemPrompt);
+    const systemTokens = estimateTokens(systemContent);
     let totalTokens = systemTokens;
     for (const m of session.messages) {
       if (m.deletedAt) continue;
@@ -432,13 +456,13 @@ export class SessionStore {
     session.totalTokens = totalTokens;
   }
 
-  /** 把 AgentMessage 转为 LLM UnifiedMessage（头部拼接系统提示词）。软删除消息被过滤。
-   *  activeSkill(mode='system') 的 skill 内容拼接在系统提示词后。
+  /** 把 AgentMessage 转为 LLM UnifiedMessage。软删除消息被过滤。
+   *  systemContent：运行时构建的完整系统提示词（engine 传入，可含 skill 后缀）——不持久化。
    *  budgetTokens（可选）：LLM 上下文窗口预算。超限时只发送尾部窗口（视图裁剪），
    *  不修改 session.messages。 */
-  toUnifiedMessages(session: Session, budgetTokens?: number): UnifiedMessage[] {
+  toUnifiedMessages(session: Session, systemContent: string, budgetTokens?: number): UnifiedMessage[] {
     const active = session.messages.filter(m => !m.deletedAt);
-    const windowed = budgetTokens === undefined ? active : this.computeContextWindow(session, active, budgetTokens);
+    const windowed = budgetTokens === undefined ? active : this.computeContextWindow(active, budgetTokens, systemContent);
     // 发送前自愈：保证 tool_use / tool_result 配对完整，避免历史脏数据触发
     // Anthropic HTTP 400（tool_use without tool_result）。不修改 session.messages。
     const sanitized = sanitizeMessages(windowed);
@@ -453,13 +477,8 @@ export class SessionStore {
       })),
       name: m.name,
     }));
-    // skill 模式（system 注入）：内容拼接在系统提示词后
-    const skillSuffix =
-      session.activeSkill?.mode === 'system'
-        ? `\n\n---\n\n# Active Skill: ${session.activeSkill.name}\n\n${session.activeSkill.content}`
-        : '';
     return [
-      { role: 'system', content: session.systemPrompt + skillSuffix },
+      { role: 'system', content: systemContent },
       ...conversation,
     ];
   }
@@ -469,9 +488,9 @@ export class SessionStore {
    * 超预算时保留尾部消息，并保证 tool_calls / tool 结果配对完整；
    * budget <= 0 或全部超限时保底保留最后一条（避免空对话触发 provider 400）。
    */
-  private computeContextWindow(session: Session, active: AgentMessage[], maxTokens: number): AgentMessage[] {
+  private computeContextWindow(active: AgentMessage[], maxTokens: number, systemContent: string): AgentMessage[] {
     const estimateTokens = (text: string): number => Math.ceil(text.length / 2);
-    const systemTokens = estimateTokens(session.systemPrompt);
+    const systemTokens = estimateTokens(systemContent);
     const budget = maxTokens - systemTokens - 500; // 留 500 token 余量
 
     // 从后往前保留，直到不超过预算

@@ -58,6 +58,7 @@ export const en = {
     loadedSessions: 'Loaded {{count}} sessions from disk',
     scanSessionsDirFailed: 'Failed to scan sessions directory',
     saveSessionFailed: 'Failed to save session',
+    persistRunStatsFailed: 'Failed to persist run stats',
     sessionCreated: 'Session created: {{sessionId}}',
     deleteSessionFailed: 'Failed to delete session file',
     contextTrimmed: 'Context trimmed: {{messages}} messages, ~{{tokens}} tokens',

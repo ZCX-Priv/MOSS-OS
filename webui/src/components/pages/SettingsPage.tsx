@@ -30,6 +30,8 @@ import {
   Wrench,
   FileCode,
   Pencil,
+  ShieldCheck,
+  X,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
@@ -75,10 +77,11 @@ import { useModels } from '../../hooks/useModels';
 import { useAgents } from '../../hooks/useAgents';
 import { useTools } from '../../hooks/useTools';
 import { useSpecs } from '../../hooks/useSpecs';
+import { useConfig } from '../../hooks/useConfig';
 import { useStore } from '../../store';
 import { api } from '../../api/http';
 import { TOOL_ICON_MAP } from '../../lib/tool-icons';
-import type { ModelItem, ThinkingEffort, SpecDetail } from '../../types/api';
+import type { ModelItem, ThinkingEffort, SpecDetail, SafetyConfig } from '../../types/api';
 
 export interface NavItem {
   id: SettingsSection;
@@ -93,6 +96,7 @@ export const settingsNavItems: NavItem[] = [
   { id: 'model', labelKey: 'settings.nav.model', Icon: Brain },
   { id: 'tools', labelKey: 'settings.nav.tools', Icon: Wrench },
   { id: 'specs', labelKey: 'settings.nav.specs', Icon: FileCode },
+  { id: 'safety', labelKey: 'settings.nav.safety', Icon: ShieldCheck },
   { id: 'task', labelKey: 'settings.nav.task', Icon: MessageSquare },
   { id: 'index', labelKey: 'settings.nav.index', Icon: Layers },
   { id: 'docs', labelKey: 'settings.nav.docs', Icon: FileText },
@@ -117,6 +121,11 @@ export const settingsSearchIndex: SearchableSetting[] = [
   { labelKey: 'settings.nav.model', section: 'model' },
   { labelKey: 'settings.nav.tools', section: 'tools' },
   { labelKey: 'settings.nav.specs', section: 'specs' },
+  { labelKey: 'settings.nav.safety', section: 'safety' },
+  { labelKey: 'settings.safety.defaultMode', descriptionKey: 'settings.safety.defaultModeDesc', section: 'safety' },
+  { labelKey: 'settings.safety.confirmTimeout', descriptionKey: 'settings.safety.confirmTimeoutDesc', section: 'safety' },
+  { labelKey: 'settings.safety.sandboxTitle', descriptionKey: 'settings.safety.sandboxDesc', section: 'safety' },
+  { labelKey: 'settings.safety.rulesTitle', descriptionKey: 'settings.safety.rulesDesc', section: 'safety' },
   { labelKey: 'settings.placeholder.taskTitle', descriptionKey: 'settings.placeholder.taskDesc', section: 'task' },
   { labelKey: 'settings.placeholder.indexTitle', descriptionKey: 'settings.placeholder.indexDesc', section: 'index' },
   { labelKey: 'settings.placeholder.docsTitle', descriptionKey: 'settings.placeholder.docsDesc', section: 'docs' },
@@ -162,6 +171,301 @@ export function SettingsPage() {
     <section className="flex-1 overflow-auto">
       <Outlet />
     </section>
+  );
+}
+
+/* ===== 安全设置（safety 统一权限系统） ===== */
+
+/** 安全设置默认值（后端 config 缺 safety 段时的展示兜底） */
+const SAFETY_FALLBACK: SafetyConfig = {
+  defaultMode: 'ask',
+  confirmTimeoutMinutes: 5,
+  blockDangerousCommands: true,
+  cautionPolicy: 'ask',
+  rules: { allow: [], deny: [], ask: [] },
+  protectedPaths: ['~/.ssh', '~/.gnupg', '~/.aws'],
+};
+
+/** 规则列表编辑器（allow/deny/ask 同构） */
+function SafetyRuleList({
+  titleKey,
+  descKey,
+  rules,
+  onAdd,
+  onRemove,
+  accentClass,
+}: {
+  titleKey: string;
+  descKey: string;
+  rules: string[];
+  onAdd: (rule: string) => void;
+  onRemove: (rule: string) => void;
+  accentClass: string;
+}) {
+  const { t } = useTranslation();
+  const [draft, setDraft] = useState('');
+
+  const add = () => {
+    const trimmed = draft.trim();
+    if (!trimmed) return;
+    if (rules.includes(trimmed)) {
+      toast.error(t('settings.safety.ruleDuplicate'));
+      return;
+    }
+    onAdd(trimmed);
+    setDraft('');
+  };
+
+  return (
+    <div className="flex flex-col gap-2 py-3">
+      <div className="flex items-center gap-2">
+        <span className={cn('size-2 shrink-0 rounded-full', accentClass)} />
+        <span className="text-sm font-medium text-foreground">{t(titleKey)}</span>
+        <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-normal text-muted-foreground">
+          {rules.length}
+        </Badge>
+      </div>
+      <p className="text-xs text-muted-foreground">{t(descKey)}</p>
+      {rules.length > 0 && (
+        <div className="flex flex-col gap-1">
+          {rules.map((rule) => (
+            <div
+              key={rule}
+              className="flex items-center justify-between gap-2 rounded-md border border-border bg-muted/30 px-2 py-1"
+            >
+              <code className="min-w-0 flex-1 truncate font-mono text-xs text-foreground">{rule}</code>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 w-6 shrink-0 p-0 text-muted-foreground hover:text-destructive"
+                onClick={() => onRemove(rule)}
+                title={t('common.delete')}
+              >
+                <Trash2 className="size-3.5" />
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="flex items-center gap-2">
+        <Input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              add();
+            }
+          }}
+          placeholder="shell(git *)"
+          className="h-8 flex-1 font-mono text-xs"
+        />
+        <Button variant="outline" size="sm" className="h-8 shrink-0 gap-1" onClick={add} disabled={!draft.trim()}>
+          <Plus className="size-3.5" />
+          <span className="hidden sm:inline">{t('settings.safety.addRule')}</span>
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+export function SafetySettings() {
+  const { t } = useTranslation();
+  const { appConfig, updateAppConfig } = useConfig();
+  const [pathDraft, setPathDraft] = useState('');
+  const safety = appConfig?.safety ?? SAFETY_FALLBACK;
+
+  const patchSafety = async (patch: Partial<typeof SAFETY_FALLBACK>) => {
+    try {
+      await updateAppConfig({ safety: { ...safety, ...patch } });
+    } catch {
+      // toast 已在 useConfig 内处理
+    }
+  };
+
+  const patchRules = (list: 'allow' | 'deny' | 'ask', mutate: (rules: string[]) => string[]) => {
+    void patchSafety({ rules: { ...safety.rules, [list]: mutate([...safety.rules[list]]) } });
+  };
+
+  const addProtectedPath = () => {
+    const trimmed = pathDraft.trim();
+    if (!trimmed) return;
+    if (safety.protectedPaths.includes(trimmed)) return;
+    void patchSafety({ protectedPaths: [...safety.protectedPaths, trimmed] });
+    setPathDraft('');
+  };
+
+  return (
+    <div className="flex flex-col gap-6 p-6">
+      <h1 className="text-xl font-semibold text-foreground">{t('settings.safety.title')}</h1>
+
+      {/* 权限模式 */}
+      <div className="flex flex-col gap-3">
+        <div className="text-sm font-medium text-foreground">{t('settings.safety.modeTitle')}</div>
+        <div className="flex flex-col divide-y divide-border">
+          <div className="flex items-center justify-between gap-4 py-3">
+            <div className="flex min-w-0 flex-col gap-0.5">
+              <span className="text-sm text-foreground">{t('settings.safety.defaultMode')}</span>
+              <span className="text-xs text-muted-foreground">{t('settings.safety.defaultModeDesc')}</span>
+            </div>
+            <Select
+              value={safety.defaultMode}
+              onValueChange={(v) => void patchSafety({ defaultMode: v as typeof safety.defaultMode })}
+            >
+              <SelectTrigger className="h-8 w-40 shrink-0">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent position="popper" align="start">
+                <SelectItem value="ask">{t('permissionMode.ask.label')}</SelectItem>
+                <SelectItem value="auto">{t('permissionMode.auto.label')}</SelectItem>
+                <SelectItem value="skip">{t('permissionMode.skip.label')}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex items-center justify-between gap-4 py-3">
+            <div className="flex min-w-0 flex-col gap-0.5">
+              <span className="text-sm text-foreground">{t('settings.safety.confirmTimeout')}</span>
+              <span className="text-xs text-muted-foreground">{t('settings.safety.confirmTimeoutDesc')}</span>
+            </div>
+            <Input
+              type="number"
+              min={0}
+              max={1440}
+              value={safety.confirmTimeoutMinutes}
+              onChange={(e) => {
+                const v = Math.max(0, Math.min(1440, Number(e.target.value) || 0));
+                void patchSafety({ confirmTimeoutMinutes: v });
+              }}
+              className="h-8 w-24 shrink-0 text-right"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* 沙箱（智能拦截） */}
+      <div className="flex flex-col gap-3">
+        <div className="text-sm font-medium text-foreground">{t('settings.safety.sandboxTitle')}</div>
+        <p className="text-xs text-muted-foreground">{t('settings.safety.sandboxDesc')}</p>
+        <div className="flex flex-col divide-y divide-border">
+          <div className="flex items-center justify-between gap-4 py-3">
+            <div className="flex min-w-0 flex-col gap-0.5">
+              <span className="text-sm text-foreground">{t('settings.safety.blockDangerous')}</span>
+              <span className="text-xs text-muted-foreground">{t('settings.safety.blockDangerousDesc')}</span>
+            </div>
+            <Switch
+              checked={safety.blockDangerousCommands}
+              onCheckedChange={(v) => void patchSafety({ blockDangerousCommands: v })}
+            />
+          </div>
+          <div className="flex items-center justify-between gap-4 py-3">
+            <div className="flex min-w-0 flex-col gap-0.5">
+              <span className="text-sm text-foreground">{t('settings.safety.cautionPolicy')}</span>
+              <span className="text-xs text-muted-foreground">{t('settings.safety.cautionPolicyDesc')}</span>
+            </div>
+            <Select
+              value={safety.cautionPolicy}
+              onValueChange={(v) => void patchSafety({ cautionPolicy: v as typeof safety.cautionPolicy })}
+            >
+              <SelectTrigger className="h-8 w-32 shrink-0">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent position="popper" align="start">
+                <SelectItem value="ask">{t('settings.safety.cautionAsk')}</SelectItem>
+                <SelectItem value="deny">{t('settings.safety.cautionDeny')}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex flex-col gap-2 py-3">
+            <span className="text-sm text-foreground">{t('settings.safety.protectedPaths')}</span>
+            <span className="text-xs text-muted-foreground">{t('settings.safety.protectedPathsDesc')}</span>
+            {safety.protectedPaths.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {safety.protectedPaths.map((p) => (
+                  <Badge key={p} variant="secondary" className="gap-1 py-0.5 pl-2 pr-1 font-mono text-[11px]">
+                    {p}
+                    <button
+                      className="rounded-full p-0.5 text-muted-foreground hover:bg-muted hover:text-destructive"
+                      onClick={() =>
+                        void patchSafety({ protectedPaths: safety.protectedPaths.filter((x) => x !== p) })
+                      }
+                      title={t('common.delete')}
+                    >
+                      <X className="size-3" />
+                    </button>
+                  </Badge>
+                ))}
+              </div>
+            )}
+            <div className="flex items-center gap-2">
+              <Input
+                value={pathDraft}
+                onChange={(e) => setPathDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    addProtectedPath();
+                  }
+                }}
+                placeholder="~/.ssh"
+                className="h-8 flex-1 font-mono text-xs"
+              />
+              <Button variant="outline" size="sm" className="h-8 shrink-0 gap-1" onClick={addProtectedPath} disabled={!pathDraft.trim()}>
+                <Plus className="size-3.5" />
+              </Button>
+            </div>
+            {/* 硬保护只读展示 */}
+            <div className="flex items-center gap-1.5 rounded-md border border-border bg-muted/20 px-2 py-1">
+              <ShieldCheck className="size-3 shrink-0 text-muted-foreground" />
+              <span className="text-[11px] text-muted-foreground">
+                {t('settings.safety.hardProtected')}
+                <code className="mx-1 font-mono">~/.moss/config</code>
+                {t('settings.safety.hardProtectedDesc')}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 规则表 */}
+      <div className="flex flex-col gap-3">
+        <div className="text-sm font-medium text-foreground">{t('settings.safety.rulesTitle')}</div>
+        <p className="text-xs text-muted-foreground">{t('settings.safety.rulesDesc')}</p>
+        <details className="rounded-md border border-border bg-muted/20 px-2 py-1.5">
+          <summary className="cursor-pointer select-none text-xs text-muted-foreground">
+            {t('settings.safety.syntaxHelp')}
+          </summary>
+          <pre className="mt-2 whitespace-pre-wrap break-all font-mono text-[11px] leading-relaxed text-foreground">
+            {t('settings.safety.syntaxExamples')}
+          </pre>
+        </details>
+        <div className="flex flex-col divide-y divide-border">
+          <SafetyRuleList
+            titleKey="settings.safety.denyRules"
+            descKey="settings.safety.denyRulesDesc"
+            rules={safety.rules.deny}
+            onAdd={(rule) => patchRules('deny', (r) => [...r, rule])}
+            onRemove={(rule) => patchRules('deny', (r) => r.filter((x) => x !== rule))}
+            accentClass="bg-red-500"
+          />
+          <SafetyRuleList
+            titleKey="settings.safety.askRules"
+            descKey="settings.safety.askRulesDesc"
+            rules={safety.rules.ask}
+            onAdd={(rule) => patchRules('ask', (r) => [...r, rule])}
+            onRemove={(rule) => patchRules('ask', (r) => r.filter((x) => x !== rule))}
+            accentClass="bg-amber-500"
+          />
+          <SafetyRuleList
+            titleKey="settings.safety.allowRules"
+            descKey="settings.safety.allowRulesDesc"
+            rules={safety.rules.allow}
+            onAdd={(rule) => patchRules('allow', (r) => [...r, rule])}
+            onRemove={(rule) => patchRules('allow', (r) => r.filter((x) => x !== rule))}
+            accentClass="bg-emerald-500"
+          />
+        </div>
+      </div>
+    </div>
   );
 }
 

@@ -1,4 +1,4 @@
-// builtin/copy/index.ts
+// tools/copy/index.ts
 // copy 工具：复制文件/目录（替代 shell 的 cp/Copy-Item）。
 // 强化点：
 //   1. 副本登记 file-history：新副本为 create 条目（undo = 删除副本）；覆盖时对目标先备份
@@ -6,8 +6,8 @@
 //   3. 安全校验（roots / 根路径 / VCS / 目录大小上限）+ dryRun + 批量
 //   4. filesys 变更事件（file-created, source=copy）
 
-import { t } from '../../../../core/i18n';
-import { ServiceNames } from '../../../../core/types';
+import { t } from '../../../core/i18n';
+import { ServiceNames } from '../../../core/types';
 import {
   existsSync,
   statSync,
@@ -22,9 +22,9 @@ import {
   realpathSafe,
   isRootPath,
   containsVcsMarker,
-} from '../../../../utils/fs';
-import type { FileHistoryService, FilesysService } from '../../../contracts';
-import type { ToolContext, ToolResult } from '../../types';
+} from '../../../utils/fs';
+import type { FileHistoryService, FilesysService } from '../../contracts';
+import type { ToolContext, ToolResult } from '../types';
 
 /** 目录复制大小上限 */
 const MAX_DIR_BYTES = 100 * 1024 * 1024;

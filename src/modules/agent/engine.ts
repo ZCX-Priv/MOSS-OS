@@ -3,7 +3,7 @@
 
 import { t } from '../../core/i18n';
 import { buildSystemPrompt, buildTools } from './context';
-import { SessionStore, type ContextFile, type Session } from './session';
+import { SessionStore, type ContextFile, type Session, type ActiveSkill } from './session';
 import { TaskStore, type TaskItem, type TaskGroup } from './task-store';
 import { LLMError, type UnifiedRequest } from '../llm/types';
 import type {
@@ -12,17 +12,20 @@ import type {
   AgentEvent,
   AgentRunInput,
   AgentRunResult,
+  RunStats,
   TruncatePreview,
   TruncateResult,
   TruncateRestoreResult,
 } from '../contracts';
 import type { LLMRouter, ToolRegistry, MCPManager, FileHistoryService, FilesysService } from '../contracts';
+import type { SafetyService } from '../contracts';
+import type { PermissionMode } from '../safety/types';
 import type { FileChangeEvent } from '../filesys/types';
 import type { ConfigService, EventBus, Logger, ServiceRegistry, Environment, ApiConfig } from '../../core/types';
 import { ServiceNames } from '../../core/types';
 import type { AskOutcome, AskPayload, ToolResult } from '../tools/types';
-import type { SkillRegistry } from '../tools/skills';
-import { readSessionTodoStore, getSessionTodoPath } from '../tools/builtin/todo/shared/store';
+import type { SkillRegistry } from '../tools/use_skill/registry';
+import { readSessionTodoStore, getSessionTodoPath } from '../tools/todo/shared/store';
 
 /** ask 超时兜底上限（即使配置异常也不会让 Promise 永久悬挂） */
 const ASK_TIMEOUT_CEILING_MS = 24 * 60 * 60 * 1000; // 24h
@@ -46,13 +49,15 @@ export class AgentEngineImpl implements AgentEngine {
     payload: AskPayload;
   }>();
 
-  /** pending confirm 调用：toolCallId -> { resolve, reject, timer, sessionId, question } */
+  /** pending confirm 调用：toolCallId -> { resolve, reject, timer, sessionId, question, ruleSuggestion } */
   private readonly pendingConfirms = new Map<string, {
     resolve: (ok: boolean) => void;
     reject: (err: Error) => void;
     timer: ReturnType<typeof setTimeout>;
     sessionId: string;
     question: string;
+    /** 「始终允许」规则建议（confirm-required 事件携带，前端卡片展示） */
+    ruleSuggestion?: string;
   }>();
 
   constructor(deps: {
@@ -177,11 +182,19 @@ export class AgentEngineImpl implements AgentEngine {
     // 构建会话 + 系统提示（注入模型信息用于 {{model_id}}/{{model_name}} 变量替换）
     const apiCfg = this.config.getApiConfig();
     const modelDisplayName = resolveModelDisplayName(apiCfg, model);
+    // 系统提示词每次 run 实时构建（prompts 文件修改即生效），不持久化进 session
     const systemPrompt = buildSystemPrompt(this.env, cwd, model, modelDisplayName);
-    const session = this.sessions.getOrCreate(sessionId, systemPrompt);
+    const session = this.sessions.getOrCreate(sessionId);
     this.sessions.addUserMessage(session, userMessage);
     // 活跃置顶：task.id 即 sessionId；无对应任务时静默返回 null
     this.tasks.touchTask(sessionId);
+
+    // 权限模式解析（副作用集中化）：前端显式传递 > 会话记忆 > 全局默认（config.safety.defaultMode）。
+    // 变化时写入 session 持久化（刷新恢复，对齐 activeSkill 先例）。
+    const safety = this.services.tryResolve<SafetyService>(ServiceNames.SAFETY);
+    const permissionMode: PermissionMode =
+      input.permissionMode ?? session.permissionMode ?? safety?.getDefaultMode() ?? 'ask';
+    this.sessions.setPermissionMode(session, permissionMode);
 
     // skill 模式处理（/ 菜单触发：payload.skill 非空=激活/切换；null=退出）
     if (input.skill !== undefined) {
@@ -205,6 +218,22 @@ export class AgentEngineImpl implements AgentEngine {
     let finalText = '';
     let finishReason: AgentRunResult['finishReason'] = 'stop';
 
+    // run 级统计（每次 run 重置；轮/工具结束与 done 时推送 stats-updated）
+    const stats: RunStats = {
+      runId: input.runId,
+      turns: 0,
+      steps: 0,
+      llmMs: 0,
+      toolMs: 0,
+      ttftCount: 0,
+      ttftMsTotal: 0,
+      decodeMs: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cachedTokens: 0,
+    };
+    const pushStats = () => onEvent({ type: 'stats-updated', sessionId, stats: { ...stats } });
+
     while (turn < maxTurns) {
       if (signal?.aborted) {
         finishReason = 'aborted';
@@ -212,9 +241,26 @@ export class AgentEngineImpl implements AgentEngine {
       }
       turn++;
 
-      // 构建请求
-      this.sessions.trimContext(session, cfg.maxTokens * 4); // 留余量
-      const messages = this.sessions.toUnifiedMessages(session);
+      // 构建请求：系统提示词运行时拼接（skill 内容从注册表实时解析，不持久化）
+      const skillPrompt = session.activeSkill
+        ? this.resolveSkillPrompt(session.activeSkill.name)
+        : null;
+      let systemContent = systemPrompt;
+      if (session.activeSkill?.mode === 'system' && skillPrompt) {
+        systemContent += `\n\n---\n\n# Active Skill: ${session.activeSkill.name}\n\n${skillPrompt}`;
+      }
+      this.sessions.trimContext(session, cfg.maxTokens * 4, systemContent); // 留余量
+      const messages = this.sessions.toUnifiedMessages(session, systemContent);
+      // skill 模式（message 注入）：把 skill-inject 占位消息在发送视图中替换为全文。
+      // messages 是 toUnifiedMessages 新建的数组/对象，原地改不影响 session.messages；
+      // 窗口预算按占位符估算略低于实际（char/2 本为粗估，可接受）。
+      if (session.activeSkill?.mode === 'message' && skillPrompt) {
+        for (const m of messages) {
+          if (m.role === 'system' && m.name === 'skill-inject') {
+            m.content = `# Active Skill: ${session.activeSkill.name}\n\n${skillPrompt}`;
+          }
+        }
+      }
 
       const req: UnifiedRequest = {
         model,
@@ -229,10 +275,20 @@ export class AgentEngineImpl implements AgentEngine {
       let assistantText = '';
       let assistantThinking = '';
       const toolCallAccumulators = new Map<number, { id: string; name: string; args: string }>();
+      // 本轮计时与 usage（usage 各字段在流内单调不减，按字段取 max 合并以兼容
+      // Anthropic 流式拆分 message_start/message_delta、Gemini 累积值）
+      const turnStart = performance.now();
+      let ttftMs = -1;
+      let turnUsage = { prompt: 0, completion: 0, cached: 0 };
 
       try {
         for await (const delta of llm.stream(req, signal)) {
           if (signal?.aborted) break;
+
+          // TTFT：首个内容型 delta（text/thinking/tool_call）
+          if (ttftMs < 0 && (delta.type === 'text' || delta.type === 'thinking' || delta.type === 'tool_call')) {
+            ttftMs = performance.now() - turnStart;
+          }
 
           switch (delta.type) {
             case 'text':
@@ -286,7 +342,11 @@ export class AgentEngineImpl implements AgentEngine {
               finishReason = 'error';
               break;
             case 'usage':
-              // 可记录但无需推送
+              turnUsage = {
+                prompt: Math.max(turnUsage.prompt, delta.usage.prompt_tokens ?? 0),
+                completion: Math.max(turnUsage.completion, delta.usage.completion_tokens ?? 0),
+                cached: Math.max(turnUsage.cached, delta.usage.cached_tokens ?? 0),
+              };
               break;
           }
         }
@@ -308,6 +368,19 @@ export class AgentEngineImpl implements AgentEngine {
         finalText = assistantText || `Error: ${msg}`;
         this.sessions.addAssistantMessage(session, finalText, undefined, assistantThinking || undefined);
         break;
+      } finally {
+        // 轮统计（正常/中断/异常路径统一在此结算；finally 先于 break 生效）
+        const elapsed = performance.now() - turnStart;
+        const ttft = ttftMs >= 0 ? ttftMs : elapsed;
+        stats.turns++;
+        stats.llmMs += elapsed;
+        stats.ttftCount++;
+        stats.ttftMsTotal += ttft;
+        stats.decodeMs += Math.max(0, elapsed - ttft);
+        stats.inputTokens += turnUsage.prompt;
+        stats.outputTokens += turnUsage.completion;
+        stats.cachedTokens += turnUsage.cached;
+        pushStats();
       }
 
       if (signal?.aborted) {
@@ -361,6 +434,7 @@ export class AgentEngineImpl implements AgentEngine {
         }
         // 单工具失败隔离：executeToolCall 抛错时兜底补错误 tool_result，
         // 避免中断后续 tc 导致多个 tool_use 失去 tool_result（触发 HTTP 400）。
+        const toolStart = performance.now();
         try {
           await this.executeToolCall(tc, {
             sessionId,
@@ -368,6 +442,7 @@ export class AgentEngineImpl implements AgentEngine {
             toolCallId: tc.id,
             onEvent,
             signal,
+            permissionMode,
           });
           // 工具执行完毕后检查 abort，避免继续下一轮
           if (signal?.aborted) {
@@ -387,6 +462,10 @@ export class AgentEngineImpl implements AgentEngine {
             tc.name,
             { isError: true },
           );
+        } finally {
+          stats.steps++;
+          stats.toolMs += performance.now() - toolStart;
+          pushStats();
         }
       }
 
@@ -399,6 +478,17 @@ export class AgentEngineImpl implements AgentEngine {
     if (turn >= maxTurns && finishReason === 'stop') {
       this.logger.warn(t('agent.reachedMaxTurns', { maxTurns }), { sessionId });
       finishReason = 'length';
+    }
+
+    // 持久化本次 run 统计（刷新后经 GET /api/session/:id 恢复指标栏）
+    try {
+      this.sessions.setLastRunStats(session, stats);
+      this.sessions.persistSession(session);
+    } catch (err) {
+      this.logger.warn(t('agent.persistRunStatsFailed'), {
+        sessionId,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
 
     onEvent({ type: 'done', sessionId, finishReason });
@@ -431,6 +521,21 @@ export class AgentEngineImpl implements AgentEngine {
   /** 获取会话历史（不含已撤回的软删除消息） */
   getHistory(sessionId: string): AgentMessage[] {
     return (this.sessions.get(sessionId)?.messages ?? []).filter(m => !m.deletedAt);
+  }
+
+  /** 获取会话权限模式（供 GET /api/session/:id 与 /api/tasks/:id 刷新恢复前端徽章） */
+  getPermissionMode(sessionId: string): PermissionMode | undefined {
+    return this.sessions.get(sessionId)?.permissionMode;
+  }
+
+  /** 获取会话当前激活的 skill 模式（供路由刷新恢复 Badge；内容运行时从注册表解析） */
+  getActiveSkill(sessionId: string): ActiveSkill | undefined {
+    return this.sessions.get(sessionId)?.activeSkill;
+  }
+
+  /** 获取会话最近一次 run 统计（供 GET /api/session/:id 刷新恢复前端指标栏） */
+  getLastRunStats(sessionId: string): RunStats | undefined {
+    return this.sessions.get(sessionId)?.lastRunStats;
   }
 
   // ========================================================================
@@ -695,6 +800,7 @@ export class AgentEngineImpl implements AgentEngine {
       toolCallId: string;
       onEvent: (event: AgentEvent) => void;
       signal?: AbortSignal;
+      permissionMode: PermissionMode;
     },
   ): Promise<void> {
     const { sessionId, cwd, toolCallId, onEvent, signal } = ctx;
@@ -845,6 +951,7 @@ export class AgentEngineImpl implements AgentEngine {
       toolCallId: string;
       onEvent: (event: AgentEvent) => void;
       signal?: AbortSignal;
+      permissionMode: PermissionMode;
     },
   ): Promise<ToolResult> {
     const toolRegistry = this.services.tryResolve<ToolRegistry>(ServiceNames.TOOL_REGISTRY);
@@ -853,6 +960,43 @@ export class AgentEngineImpl implements AgentEngine {
         content: [{ type: 'text', text: 'Error: tool registry not available' }],
         isError: true,
       };
+    }
+
+    // 统一权限决策（safety 模块）：所有 builtin 工具的唯一权限入口。
+    // ALLOW→ctx 带 permissionDecision（registry 跳过内部 requireConfirmation）；
+    // ASK→confirm 卡片（带规则建议）用户同意后执行；DENY→结构化错误（模型可感知原因）。
+    const safety = this.services.tryResolve<SafetyService>(ServiceNames.SAFETY);
+    let permissionDecision: 'allowed' | undefined;
+    if (safety) {
+      const tool = toolRegistry.get(name);
+      const decision = safety.evaluate({
+        toolName: name,
+        params: args,
+        annotations: tool?.annotations,
+        mode: ctx.permissionMode,
+        sessionId: ctx.sessionId,
+        cwd: ctx.cwd,
+        enabled: toolRegistry.isEnabled(name),
+      });
+      if (decision.action === 'deny') {
+        await this.eventBus.emit('tool:after', {
+          name, args, sessionId: ctx.sessionId,
+          result: { content: [{ type: 'text', text: 'denied' }], isError: true },
+        });
+        return { content: [{ type: 'text', text: this.formatDenyReason(name, decision.reason) }], isError: true };
+      }
+      if (decision.action === 'ask') {
+        const ruleSuggestion = safety.generateRuleSuggestion(name, args);
+        const ok = await this.requestConfirm(ctx, name, args, ruleSuggestion);
+        if (!ok) {
+          return {
+            content: [{ type: 'text', text: `Tool "${name}" canceled (user declined the permission prompt)` }],
+            isError: true,
+          };
+        }
+      } else {
+        permissionDecision = 'allowed';
+      }
     }
 
     // tool:before hook
@@ -937,42 +1081,8 @@ export class AgentEngineImpl implements AgentEngine {
           });
         });
       },
-      confirm: (question: string) => {
-        return new Promise<boolean>((resolve, reject) => {
-          const timer = setTimeout(() => {
-            this.pendingConfirms.delete(ctx.toolCallId);
-            resolve(false);
-          }, 5 * 60 * 1000);
-          this.pendingConfirms.set(ctx.toolCallId, {
-            resolve,
-            reject,
-            timer,
-            sessionId: ctx.sessionId,
-            question,
-          });
-          if (ctx.signal) {
-            ctx.signal.addEventListener(
-              'abort',
-              () => {
-                if (this.pendingConfirms.has(ctx.toolCallId)) {
-                  clearTimeout(timer);
-                  this.pendingConfirms.delete(ctx.toolCallId);
-                  reject(new Error('aborted'));
-                }
-              },
-              { once: true },
-            );
-          }
-          ctx.onEvent({
-            type: 'confirm-required',
-            sessionId: ctx.sessionId,
-            toolCallId: ctx.toolCallId,
-            toolName: name,
-            question,
-            details: args,
-          });
-        });
-      },
+      confirm: (question: string) => this.requestConfirm(ctx, name, args, undefined, question),
+      permissionDecision,
     });
 
     // tool:after hook
@@ -1007,25 +1117,125 @@ export class AgentEngineImpl implements AgentEngine {
     return out;
   }
 
-  /** 前端回复 confirm 确认。匹配到 pending 则 resolve 并返回 true。 */
-  resolveConfirm(toolCallId: string, ok: boolean): boolean {
+  /**
+   * 前端回复 confirm 确认。匹配到 pending 则 resolve 并返回 true。
+   * @param remember 「始终允许」级别：session=写入会话规则（内存）；global=写入 config.safety.rules（持久+广播）
+   */
+  resolveConfirm(toolCallId: string, ok: boolean, remember?: 'session' | 'global'): boolean {
     const pending = this.pendingConfirms.get(toolCallId);
     if (!pending) return false;
     clearTimeout(pending.timer);
     this.pendingConfirms.delete(toolCallId);
+    // 用户选择「始终允许」：按建议规则写入对应层级的 allow 列表
+    if (ok && remember && pending.ruleSuggestion) {
+      const safety = this.services.tryResolve<SafetyService>(ServiceNames.SAFETY);
+      if (safety) {
+        if (remember === 'session') {
+          safety.addSessionRule(pending.sessionId, 'allow', pending.ruleSuggestion);
+        } else {
+          void safety.addGlobalRule('allow', pending.ruleSuggestion);
+        }
+      }
+    }
     pending.resolve(ok);
     return true;
   }
 
   /** 列出某 session 的待确认 confirm（供 WS 重连恢复 pending confirms）。 */
-  getPendingConfirms(sessionId: string): Array<{ toolCallId: string; sessionId: string; question: string }> {
-    const out: Array<{ toolCallId: string; sessionId: string; question: string }> = [];
+  getPendingConfirms(sessionId: string): Array<{ toolCallId: string; sessionId: string; question: string; ruleSuggestion?: string }> {
+    const out: Array<{ toolCallId: string; sessionId: string; question: string; ruleSuggestion?: string }> = [];
     for (const [toolCallId, pending] of this.pendingConfirms) {
       if (pending.sessionId === sessionId) {
-        out.push({ toolCallId, sessionId: pending.sessionId, question: pending.question });
+        out.push({ toolCallId, sessionId: pending.sessionId, question: pending.question, ruleSuggestion: pending.ruleSuggestion });
       }
     }
     return out;
+  }
+
+  /**
+   * 统一确认请求：注册 pendingConfirms + 推送 confirm-required 事件（带规则建议）+
+   * 超时从 config.safety.confirmTimeoutMinutes 读取（0=永不，默认 5 分钟）。
+   */
+  private requestConfirm(
+    ctx: {
+      sessionId: string;
+      toolCallId: string;
+      onEvent: (event: AgentEvent) => void;
+      signal?: AbortSignal;
+    },
+    toolName: string,
+    details?: unknown,
+    ruleSuggestion?: string,
+    customQuestion?: string,
+  ): Promise<boolean> {
+    return new Promise<boolean>((resolve, reject) => {
+      let timeoutMs = 5 * 60 * 1000;
+      try {
+        const safety = this.services.tryResolve<SafetyService>(ServiceNames.SAFETY);
+        if (safety) {
+          const minutes = safety.getConfirmTimeoutMinutes();
+          timeoutMs = minutes === 0 ? 0 : Math.min(minutes * 60 * 1000, ASK_TIMEOUT_CEILING_MS);
+        }
+      } catch {
+        // config 不可用：默认 5 分钟
+      }
+      const timer = setTimeout(() => {
+        this.pendingConfirms.delete(ctx.toolCallId);
+        resolve(false);
+      }, timeoutMs);
+      const question = customQuestion ?? `Tool "${toolName}" requires confirmation (permission mode)`;
+      this.pendingConfirms.set(ctx.toolCallId, {
+        resolve,
+        reject,
+        timer,
+        sessionId: ctx.sessionId,
+        question,
+        ruleSuggestion,
+      });
+      if (ctx.signal) {
+        ctx.signal.addEventListener(
+          'abort',
+          () => {
+            if (this.pendingConfirms.has(ctx.toolCallId)) {
+              clearTimeout(timer);
+              this.pendingConfirms.delete(ctx.toolCallId);
+              reject(new Error('aborted'));
+            }
+          },
+          { once: true },
+        );
+      }
+      ctx.onEvent({
+        type: 'confirm-required',
+        sessionId: ctx.sessionId,
+        toolCallId: ctx.toolCallId,
+        toolName,
+        question,
+        details,
+        ruleSuggestion,
+      });
+    });
+  }
+
+  /** safety DENY 原因 → 模型可读文案（结构化原因，让模型感知为何被拒并调整策略） */
+  private formatDenyReason(
+    toolName: string,
+    reason: { type: string; rule?: string; pattern?: string; mode?: string },
+  ): string {
+    switch (reason.type) {
+      case 'disabled':
+        return `Error: [safety] tool "${toolName}" is disabled`;
+      case 'rule':
+        return `Error: [safety] tool "${toolName}" blocked by deny rule: ${reason.rule}`;
+      case 'dangerousCommand':
+        return `Error: [safety] command blocked (dangerous operation: ${reason.pattern}). If truly needed, ask the user to run it manually.`;
+      case 'cautionCommand':
+        return `Error: [safety] command blocked (caution: ${reason.pattern}, policy=deny). If truly needed, ask the user to run it manually.`;
+      case 'protectedPath':
+        return `Error: [safety] target path is protected: ${reason.pattern}. Writes to this location are not allowed.`;
+      default:
+        return `Error: [safety] tool "${toolName}" denied (${reason.type})`;
+    }
   }
 
   /** 清理所有未完成的 pending ask 与 confirm（run 结束时兜底）。 */
@@ -1040,6 +1250,14 @@ export class AgentEngineImpl implements AgentEngine {
       pending.resolve(false);
     }
     this.pendingConfirms.clear();
+  }
+
+  /** 从 skill 注册表解析当前 prompt 全文（skill 被删/禁用时返回 null，注入自然为空） */
+  private resolveSkillPrompt(name: string): string | null {
+    const registry = this.services.tryResolve<SkillRegistry>(ServiceNames.SKILL_REGISTRY);
+    const skill = registry?.get(name);
+    if (!registry || !skill || !registry.isEnabled(name)) return null;
+    return skill.prompt;
   }
 
   /**
@@ -1095,15 +1313,17 @@ export class AgentEngineImpl implements AgentEngine {
     }
 
     if (!prev) {
-      // 首次激活：注入系统提示词后
-      session.activeSkill = { name: skill.name, mode: 'system', content: skill.prompt };
+      // 首次激活：注入系统提示词后（全文运行时从注册表解析，不持久化）
+      session.activeSkill = { name: skill.name, mode: 'system' };
     } else {
-      // 切换：锚定到本次用户消息后（addUserMessage 已执行，append 即紧跟其后）
-      session.activeSkill = { name: skill.name, mode: 'message', content: skill.prompt };
+      // 切换：锚定到本次用户消息后（addUserMessage 已执行，append 即紧跟其后）。
+      // 消息只持久化单行占位标题 + metadata.skillName，发送视图由 run 循环替换为注册表全文。
+      session.activeSkill = { name: skill.name, mode: 'message' };
       session.messages.push({
         role: 'system',
-        content: `# Active Skill: ${skill.name}\n\n${skill.prompt}`,
+        content: `# Active Skill: ${skill.name}`,
         name: 'skill-inject',
+        metadata: { skillName: skill.name },
         timestamp: new Date().toISOString(),
       });
     }
@@ -1138,6 +1358,7 @@ export class AgentEngineImpl implements AgentEngine {
       toolCallId: string;
       onEvent: (event: AgentEvent) => void;
       signal?: AbortSignal;
+      permissionMode: PermissionMode;
     },
   ): Promise<ToolResult> {
     const mcpManager = this.services.tryResolve<MCPManager>(ServiceNames.MCP_MANAGER);
@@ -1158,43 +1379,51 @@ export class AgentEngineImpl implements AgentEngine {
 
     const fullToolName = `mcp__${serverName}__${toolName}`;
 
-    // 2. destructiveHint → 用户确认（与 builtin 工具的 confirm 链一致）
+    // 2. 统一权限决策（safety 模块）：MCP 工具与 builtin 同一决策管线（模式/规则/风险分级）
     const annotations = mcpManager.getToolAnnotations(serverName, toolName);
-    if (annotations?.destructiveHint === true) {
-      const ok = await new Promise<boolean>((resolve, reject) => {
-        const timer = setTimeout(() => {
-          this.pendingConfirms.delete(ctx.toolCallId);
-          resolve(false);
-        }, 5 * 60 * 1000);
-        this.pendingConfirms.set(ctx.toolCallId, {
-          resolve,
-          reject,
-          timer,
-          sessionId: ctx.sessionId,
-          question: `[MCP:${serverName}] ${toolName}`,
-        });
-        if (ctx.signal) {
-          ctx.signal.addEventListener(
-            'abort',
-            () => {
-              if (this.pendingConfirms.has(ctx.toolCallId)) {
-                clearTimeout(timer);
-                this.pendingConfirms.delete(ctx.toolCallId);
-                reject(new Error('aborted'));
-              }
-            },
-            { once: true },
-          );
-        }
-        ctx.onEvent({
-          type: 'confirm-required',
-          sessionId: ctx.sessionId,
-          toolCallId: ctx.toolCallId,
-          toolName: fullToolName,
-          question: t('agent.mcpDestructiveConfirm', { server: serverName, tool: toolName }),
-          details: args,
-        });
+    const safety = this.services.tryResolve<SafetyService>(ServiceNames.SAFETY);
+    if (safety) {
+      const decision = safety.evaluate({
+        toolName: fullToolName,
+        params: args,
+        mcpAnnotations: annotations ?? undefined,
+        mode: ctx.permissionMode,
+        sessionId: ctx.sessionId,
+        cwd: ctx.cwd,
+        enabled: true,
       });
+      if (decision.action === 'deny') {
+        return {
+          content: [{ type: 'text', text: this.formatDenyReason(fullToolName, decision.reason) }],
+          isError: true,
+          metadata: { server: serverName, tool: toolName, denied: true },
+        };
+      }
+      if (decision.action === 'ask') {
+        const ok = await this.requestConfirm(
+          ctx,
+          fullToolName,
+          args,
+          fullToolName,
+          t('agent.mcpDestructiveConfirm', { server: serverName, tool: toolName }),
+        );
+        if (!ok) {
+          return {
+            content: [{ type: 'text', text: 'Canceled: user declined the MCP tool call' }],
+            isError: true,
+            metadata: { server: serverName, tool: toolName, canceled: true },
+          };
+        }
+      }
+    } else if (annotations?.destructiveHint === true) {
+      // safety 服务不可用时兜底（保守）：destructiveHint 仍需确认
+      const ok = await this.requestConfirm(
+        ctx,
+        fullToolName,
+        args,
+        undefined,
+        t('agent.mcpDestructiveConfirm', { server: serverName, tool: toolName }),
+      );
       if (!ok) {
         return {
           content: [{ type: 'text', text: 'Canceled: user declined the destructive MCP tool call' }],

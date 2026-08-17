@@ -1,4 +1,4 @@
-// builtin/edit/index.ts
+// tools/edit/index.ts
 // edit 工具 execute 逻辑：精确字符串匹配替换，支持三种模式：
 //   A. 单次替换（path+oldString+newString，向后兼容）
 //   B. 单文件批量（path+edits，顺序应用，预校验全通过才原子写入）
@@ -11,15 +11,15 @@
 // filesys 统一化：读取/哈希走 filesys.readFile（sha256 对磁盘原始字节，修复 BOM 乐观锁断裂）；
 // 写入走 filesys.writeFile（BOM 单次保留，替代旧双写；缓存更新 + 变更事件）。
 
-import { t } from '../../../../core/i18n';
-import { ServiceNames } from '../../../../core/types';
+import { t } from '../../../core/i18n';
+import { ServiceNames } from '../../../core/types';
 import { existsSync, statSync } from 'node:fs';
-import { stripBom } from '../../../../utils/encoding';
-import { computeLineDiff } from '../../../file-history/diff';
-import { hashText } from '../../../filesys/hash';
-import type { FileHistoryService, FilesysService } from '../../../contracts';
-import type { TrackEditResult } from '../../../file-history/types';
-import type { ToolContext, ToolResult } from '../../types';
+import { stripBom } from '../../../utils/encoding';
+import { computeLineDiff } from '../../file-history/diff';
+import { hashText } from '../../filesys/hash';
+import type { FileHistoryService, FilesysService } from '../../contracts';
+import type { TrackEditResult } from '../../file-history/types';
+import type { ToolContext, ToolResult } from '../types';
 
 // ============================================================================
 // 类型定义
@@ -384,7 +384,7 @@ async function editOneFile(
 
   // 10. 原子写入（filesys.writeFile：BOM 单次保留 + 缓存更新 + 变更事件；旧双写废弃）
   //     expectHash 已在步骤 6 校验，此处不再传（避免二次比对）
-  let writeResult: import('../../../filesys/types').WriteFileResult;
+  let writeResult: import('../../filesys/types').WriteFileResult;
   try {
     writeResult = filesys.writeFile(absPath, newContent, {
       source: 'edit',

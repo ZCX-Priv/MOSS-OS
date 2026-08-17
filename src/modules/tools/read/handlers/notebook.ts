@@ -4,7 +4,7 @@
 // 每个单元格标注类型，code 单元格的输出（text/plain）也包含在内。
 
 import { readFileSync } from 'node:fs';
-import type { ToolResult } from '../../../types';
+import type { ToolResult } from '../../types';
 
 /** notebook 单元格 source 字段：可能是字符串或字符串数组 */
 type CellSource = string | string[];

@@ -1,4 +1,4 @@
-// builtin/grep/index.ts
+// tools/grep/index.ts
 // grep 工具 execute 逻辑：按正则表达式搜索文件内容。
 // 三种输出模式（content / files_with_matches / count）+ 上下文行 + smartCase +
 // fixedStrings + multiline + type/glob 过滤 + offset 分页。
@@ -8,10 +8,10 @@
 import { readFile, stat } from 'node:fs/promises';
 import { statSync } from 'node:fs';
 import { Glob } from 'bun';
-import { t } from '../../../../core/i18n';
-import { ServiceNames } from '../../../../core/types';
-import type { FilesysService } from '../../../contracts';
-import { stripBom } from '../../../../utils/encoding';
+import { t } from '../../../core/i18n';
+import { ServiceNames } from '../../../core/types';
+import type { FilesysService } from '../../contracts';
+import { stripBom } from '../../../utils/encoding';
 import {
   walkFiles,
   typeToGlobs,
@@ -19,8 +19,8 @@ import {
   readFileHead,
   isBinaryBufferHead,
   SUPPORTED_TYPES,
-} from '../../shared/search-core';
-import type { ToolContext, ToolResult } from '../../types';
+} from '../shared/search-core';
+import type { ToolContext, ToolResult } from '../types';
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
 /** multiline 模式单文件上限（整文件 exec，收紧防大文件回溯开销） */

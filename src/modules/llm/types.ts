@@ -68,6 +68,8 @@ export interface UnifiedUsage {
   completion_tokens: number;
   total_tokens: number;
   reasoning_tokens?: number;
+  /** 命中缓存的输入 token 数（prompt_tokens 含此部分；Anthropic 归一化后同样成立） */
+  cached_tokens?: number;
 }
 
 export interface UnifiedResponse {

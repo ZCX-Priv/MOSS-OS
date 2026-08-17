@@ -3,7 +3,7 @@
 
 import type { HttpRequest, HttpResponse, RouteHandler } from '../types';
 import type { ConfigService, ServiceRegistry } from '../../../core/types';
-import type { SkillRegistry, Skill } from '../../tools/skills';
+import type { SkillRegistry, Skill } from '../../tools/use_skill/registry';
 import { ErrorCode } from '../../../core/error-codes';
 
 /** Skill → 前端 API 形状（含启停状态与扩展字段） */
