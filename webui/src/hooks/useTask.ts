@@ -56,7 +56,6 @@ export function useTask() {
   const touchTask = useStore((s) => s.touchTask);
   const removePendingAsk = useStore((s) => s.removePendingAsk);
   const removePendingConfirm = useStore((s) => s.removePendingConfirm);
-  const setRunStats = useStore((s) => s.setRunStats);
 
   const sendMessage = useCallback(
     async (text: string, opts?: { taskId?: string; sessionId?: string }): Promise<string | undefined> => {
@@ -110,9 +109,6 @@ export function useTask() {
       setActiveSession(sessionId);
       if (taskId) setActiveTaskId(taskId);
 
-      // run 级统计重置：新 run 开始前清空旧指标，等首个 stats-updated 事件回填
-      setRunStats(sessionId, undefined);
-
       // 5. 写入用户消息
       const userMsg: TaskMessage = {
         id: genId(),
@@ -142,7 +138,7 @@ export function useTask() {
 
       return taskId;
     },
-    [addMessage, setActiveSession, setActiveTaskId, setGenerating, finalizeStreamingMessages, addTask, touchTask, setRunStats],
+    [addMessage, setActiveSession, setActiveTaskId, setGenerating, finalizeStreamingMessages, addTask, touchTask],
   );
 
   const abort = useCallback((sessionIdOverride?: string) => {

@@ -218,20 +218,24 @@ export class AgentEngineImpl implements AgentEngine {
     let finalText = '';
     let finishReason: AgentRunResult['finishReason'] = 'stop';
 
-    // run 级统计（每次 run 重置；轮/工具结束与 done 时推送 stats-updated）
-    const stats: RunStats = {
-      runId: input.runId,
-      turns: 0,
-      steps: 0,
-      llmMs: 0,
-      toolMs: 0,
-      ttftCount: 0,
-      ttftMsTotal: 0,
-      decodeMs: 0,
-      inputTokens: 0,
-      outputTokens: 0,
-      cachedTokens: 0,
-    };
+    // 会话级累计统计：以 session.lastRunStats 为种子跨 run 累加（刷新/重启后继续累计；
+    // 轮/工具结束与 done 时推送 stats-updated）
+    const prevStats = session.lastRunStats;
+    const stats: RunStats = prevStats
+      ? { ...prevStats, runId: input.runId }
+      : {
+          runId: input.runId,
+          turns: 0,
+          steps: 0,
+          llmMs: 0,
+          toolMs: 0,
+          ttftCount: 0,
+          ttftMsTotal: 0,
+          decodeMs: 0,
+          inputTokens: 0,
+          outputTokens: 0,
+          cachedTokens: 0,
+        };
     const pushStats = () => onEvent({ type: 'stats-updated', sessionId, stats: { ...stats } });
 
     while (turn < maxTurns) {

@@ -1,5 +1,6 @@
 // 通用中控岛：任务输入框上方的模块化控制容器。
 // 折叠态 = 一行状态区 + 模块 chips（badge 徽标提醒）；点击 chip 展开模块内容面板。
+// 背景透明（不遮挡后方），保留边框轮廓。
 
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -33,7 +34,7 @@ export function ControlHub({ status, modules, activeModuleId, onActiveModuleChan
   return (
     <div
       className={cn(
-        'rounded-xl border border-border bg-card/60 transition-shadow',
+        'mx-auto w-[96%] rounded-xl border border-border bg-transparent transition-shadow',
         activeModule && 'shadow-sm',
       )}
       data-expanded={activeModule ? 'true' : 'false'}

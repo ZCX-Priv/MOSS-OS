@@ -1,5 +1,5 @@
-// 运行指标栏：任务输入框下方的一行统计（run 级口径，每次发送消息重置）。
-// 指标：N轮·M步 | LLM 耗时 | 工具调用耗时 | 首 token 平均 | tok/s | 缓存命中 | 输入/输出 token
+// 运行指标栏：任务输入框下方的一行统计（会话级累计口径，跨消息持续累加，刷新后恢复）。
+// 常驻显示（无数据时按 0 值渲染）。指标：N轮·M步 | LLM 耗时 | 工具调用耗时 | 缓存命中 | 输入/输出 token
 
 import { useTranslation } from 'react-i18next';
 import type { RunStats } from '../../types/api';
@@ -27,50 +27,38 @@ function Separator() {
   return <span className="select-none text-border" aria-hidden>|</span>;
 }
 
+/** 无数据时的全 0 兜底（常驻显示） */
+const EMPTY_STATS: RunStats = {
+  turns: 0,
+  steps: 0,
+  llmMs: 0,
+  toolMs: 0,
+  ttftCount: 0,
+  ttftMsTotal: 0,
+  decodeMs: 0,
+  inputTokens: 0,
+  outputTokens: 0,
+  cachedTokens: 0,
+};
+
 export function StatsBar({ stats }: { stats?: RunStats }) {
   const { t } = useTranslation();
-
-  if (!stats || (stats.turns === 0 && stats.steps === 0)) {
-    return (
-      <div className="w-full px-4 pb-1 pt-0.5 text-center text-[11px] text-muted-foreground/60">
-        {t('stats.empty')}
-      </div>
-    );
-  }
-
-  const ttftAvg = stats.ttftCount > 0 ? stats.ttftMsTotal / stats.ttftCount : undefined;
-  const tokPerSec = stats.decodeMs > 0 ? Math.round((stats.outputTokens / stats.decodeMs) * 1000) : undefined;
-  const cacheHitPct = stats.inputTokens > 0 ? Math.round((stats.cachedTokens / stats.inputTokens) * 100) : undefined;
+  const s = stats ?? EMPTY_STATS;
+  const cacheHitPct = s.inputTokens > 0 ? Math.round((s.cachedTokens / s.inputTokens) * 100) : 0;
 
   return (
     <div className="flex w-full flex-wrap items-center justify-center gap-x-2.5 gap-y-0.5 px-3 pb-1 pt-0.5 text-[11px] text-muted-foreground">
-      <StatItem label="" value={t('stats.turnsSteps', { turns: stats.turns, steps: stats.steps })} />
+      <StatItem label="" value={t('stats.turnsSteps', { turns: s.turns, steps: s.steps })} />
       <Separator />
-      <StatItem label={t('stats.llmLabel')} value={fmtMs(stats.llmMs)} />
+      <StatItem label={t('stats.llmLabel')} value={fmtMs(s.llmMs)} />
       <Separator />
-      <StatItem label={t('stats.toolLabel')} value={fmtMs(stats.toolMs)} />
-      {ttftAvg !== undefined && (
-        <>
-          <Separator />
-          <StatItem label={t('stats.ttftLabel')} value={fmtMs(ttftAvg)} />
-        </>
-      )}
-      {tokPerSec !== undefined && tokPerSec > 0 && (
-        <>
-          <Separator />
-          <StatItem label="" value={t('stats.tokPerSec', { rate: tokPerSec })} />
-        </>
-      )}
-      {cacheHitPct !== undefined && (
-        <>
-          <Separator />
-          <StatItem label={t('stats.cacheLabel')} value={t('stats.percent', { pct: cacheHitPct })} />
-        </>
-      )}
+      <StatItem label={t('stats.toolLabel')} value={fmtMs(s.toolMs)} />
       <Separator />
-      <StatItem label={t('stats.inputLabel')} value={t('stats.tokCount', { count: fmtTokens(stats.inputTokens) })} />
+      <StatItem label={t('stats.cacheLabel')} value={t('stats.percent', { pct: cacheHitPct })} />
       <Separator />
-      <StatItem label={t('stats.outputLabel')} value={t('stats.tokCount', { count: fmtTokens(stats.outputTokens) })} />
+      <StatItem label={t('stats.inputLabel')} value={t('stats.tokCount', { count: fmtTokens(s.inputTokens) })} />
+      <Separator />
+      <StatItem label={t('stats.outputLabel')} value={t('stats.tokCount', { count: fmtTokens(s.outputTokens) })} />
     </div>
   );
 }

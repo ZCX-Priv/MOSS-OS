@@ -64,7 +64,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { TaskInput } from '../shared/TaskInput';
-import { TodoProgressCard } from '../shared/TodoProgressCard';
+import { TodoProgressCard, TodoRow } from '../shared/TodoProgressCard';
 import { AskPromptCard } from '../shared/AskPromptCard';
 import { ConfirmPromptCard } from '../shared/ConfirmPromptCard';
 import { TerminalView } from '../shared/TerminalView';
@@ -136,6 +136,17 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
   const runStats = useStore((s) => s.runStatsBySession[taskId]);
   const hubActiveModule = useStore((s) => s.hubActiveModuleBySession[taskId]);
   const setHubActiveModule = useStore((s) => s.setHubActiveModule);
+
+  // ask 分类是动态模块（有待回答提问才出现）：提问清空后若仍处于展开态则自动折叠，
+  // 避免残留 hubActiveModule='ask' 导致下次提问出现时意外自动展开
+  useEffect(() => {
+    if (
+      hubActiveModule === 'ask' &&
+      !pendingAsks.some((a) => a.sessionId === taskId)
+    ) {
+      setHubActiveModule(taskId, null);
+    }
+  }, [hubActiveModule, pendingAsks, taskId, setHubActiveModule]);
 
   // ===== 消息撤回（截断）状态机 =====
   /** 待确认的撤回目标（用户消息） */
@@ -621,28 +632,8 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
           </DialogContent>
         </Dialog>
 
-        {/* Task Input */}
-        <div className="shrink-0 p-3">
-          {/* 当前 skill 模式 Badge（点击 ✕ 发送 /skill:exit 退出） */}
-          {activeSkill && (
-            <div className="mb-2 flex items-center gap-1.5">
-              <span className="inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700 dark:border-blue-500/40 dark:bg-blue-500/10 dark:text-blue-300">
-                <Sparkles className="size-3" />
-                {t('task.skillModeActive', { name: activeSkill.name })}
-              </span>
-              <button
-                type="button"
-                title={t('task.skillModeExit')}
-                aria-label={t('task.skillModeExit')}
-                disabled={isGenerating}
-                onClick={() => void handleSend('/skill:exit')}
-                className="flex size-5 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
-              >
-                <X className="size-3" />
-              </button>
-            </div>
-          )}
-          {/* 通用中控岛：模块化控制容器（todo / 工具权限确认），默认折叠 */}
+        {/* 通用中控岛：独立于发送框的平级组件（todo / ask / 权限确认），默认折叠 */}
+        <div className="shrink-0 px-3">
           <ControlHub
             status={
               isGenerating ? (
@@ -672,20 +663,45 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
                       {t('task.noTodos')}
                     </div>
                   ) : (
-                    <TodoProgressCard todos={todos} variant="inline" />
+                    <div className="flex flex-col gap-2">
+                      {todos.map((item) => (
+                        <TodoRow key={item.id} item={item} />
+                      ))}
+                    </div>
                   ),
               },
+              // ask 模块：动态独立分类，仅当存在待回答提问时出现
+              ...(pendingAsks.filter((a) => a.sessionId === taskId).length > 0
+                ? [
+                    {
+                      id: 'ask',
+                      icon: HelpCircle,
+                      title: t('hub.askModule'),
+                      badge: pendingAsks.filter((a) => a.sessionId === taskId).length,
+                      render: () => (
+                        <div className="flex flex-col gap-2.5">
+                          {pendingAsks
+                            .filter((a) => a.sessionId === taskId)
+                            .map((ask) => (
+                              <AskPromptCard
+                                key={ask.toolCallId}
+                                ask={ask}
+                                className="border-0 bg-transparent p-0 shadow-none"
+                              />
+                            ))}
+                        </div>
+                      ),
+                    },
+                  ]
+                : []),
               {
                 id: 'permission',
                 icon: ShieldCheck,
                 title: t('hub.permissionModule'),
-                badge:
-                  pendingAsks.filter((a) => a.sessionId === taskId).length +
-                  pendingConfirms.filter((c) => c.sessionId === taskId).length,
+                badge: pendingConfirms.filter((c) => c.sessionId === taskId).length,
                 render: () => {
-                  const asks = pendingAsks.filter((a) => a.sessionId === taskId);
                   const confirms = pendingConfirms.filter((c) => c.sessionId === taskId);
-                  if (asks.length === 0 && confirms.length === 0) {
+                  if (confirms.length === 0) {
                     return (
                       <div className="flex items-center gap-1.5 px-1 py-2 text-xs text-muted-foreground">
                         <ShieldCheck className="size-3.5" />
@@ -694,12 +710,13 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
                     );
                   }
                   return (
-                    <div className="flex flex-col gap-2">
-                      {asks.map((ask) => (
-                        <AskPromptCard key={ask.toolCallId} ask={ask} />
-                      ))}
+                    <div className="flex flex-col gap-2.5">
                       {confirms.map((cf) => (
-                        <ConfirmPromptCard key={cf.toolCallId} confirm={cf} />
+                        <ConfirmPromptCard
+                          key={cf.toolCallId}
+                          confirm={cf}
+                          className="border-0 bg-transparent p-0 shadow-none"
+                        />
                       ))}
                     </div>
                   );
@@ -707,16 +724,37 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
               },
             ]}
           />
-          <div className="mt-1.5">
-            <TaskInput
-              variant="task"
-              isGenerating={isGenerating}
-              onAbort={() => abort(taskId)}
-              onOpenOverlay={onOpenOverlay}
-              onSend={handleSend}
-            />
-          </div>
-          {/* 运行指标栏（run 级口径，每次发送消息重置） */}
+        </div>
+
+        {/* Task Input */}
+        <div className="shrink-0 p-3 pt-1.5">
+          {/* 当前 skill 模式 Badge（点击 ✕ 发送 /skill:exit 退出） */}
+          {activeSkill && (
+            <div className="mb-2 flex items-center gap-1.5">
+              <span className="inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700 dark:border-blue-500/40 dark:bg-blue-500/10 dark:text-blue-300">
+                <Sparkles className="size-3" />
+                {t('task.skillModeActive', { name: activeSkill.name })}
+              </span>
+              <button
+                type="button"
+                title={t('task.skillModeExit')}
+                aria-label={t('task.skillModeExit')}
+                disabled={isGenerating}
+                onClick={() => void handleSend('/skill:exit')}
+                className="flex size-5 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
+              >
+                <X className="size-3" />
+              </button>
+            </div>
+          )}
+          <TaskInput
+            variant="task"
+            isGenerating={isGenerating}
+            onAbort={() => abort(taskId)}
+            onOpenOverlay={onOpenOverlay}
+            onSend={handleSend}
+          />
+          {/* 运行指标栏（会话级累计口径） */}
           <StatsBar stats={runStats} />
         </div>
       </div>

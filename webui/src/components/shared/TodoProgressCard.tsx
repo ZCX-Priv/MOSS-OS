@@ -28,7 +28,6 @@ export function TodoProgressCard({
 
   const total = todos.length;
   const completed = todos.filter((item) => item.status === 'completed').length;
-  const progressPercent = total > 0 ? Math.round((completed / total) * 100) : 0;
 
   // sidebar 空状态
   if (total === 0 && variant === 'sidebar') {
@@ -84,14 +83,6 @@ export function TodoProgressCard({
         )}
       </div>
 
-      {/* 迷你进度条 */}
-      <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
-        <div
-          className="h-full rounded-full bg-primary transition-all duration-300 ease-out"
-          style={{ width: `${progressPercent}%` }}
-        />
-      </div>
-
       {/* 任务列表（inline 折叠时隐藏） */}
       {(!isInline || !collapsed) && (
         <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-1">
@@ -104,8 +95,8 @@ export function TodoProgressCard({
   );
 }
 
-/** 单个任务行 */
-function TodoRow({ item }: { item: TodoItem }) {
+/** 单个任务行（导出供中控岛 todo 模块直接渲染裸条目） */
+export function TodoRow({ item }: { item: TodoItem }) {
   return (
     <div className="flex min-w-0 items-start gap-2">
       {item.status === 'completed' && (

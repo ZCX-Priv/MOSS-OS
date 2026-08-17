@@ -25,6 +25,11 @@ export class OpenAIChatProvider implements LLMProvider {
       messages: req.messages.map(toOpenAIMessage),
       stream: req.stream,
     };
+    // 流式时显式请求 usage chunk（OpenAI 兼容 API 默认不在流中返回 usage；
+    // DeepSeek/通义/智谱/Kimi 等兼容端点均支持，否则 tokens 统计恒为 0）
+    if (req.stream) {
+      body.stream_options = { include_usage: true };
+    }
     if (req.temperature !== undefined) body.temperature = req.temperature;
     if (req.max_tokens !== undefined) body.max_tokens = req.max_tokens;
     if (req.top_p !== undefined) body.top_p = req.top_p;
@@ -67,20 +72,9 @@ export class OpenAIChatProvider implements LLMProvider {
       },
     }));
 
-    const oaiUsage = data.usage as {
-      reasoning_tokens?: number;
-      prompt_tokens_details?: { cached_tokens?: number };
-      /** DeepSeek 兼容字段：prompt_cache_hit_tokens */
-      prompt_cache_hit_tokens?: number;
-    } | undefined;
-    const cachedTokens = oaiUsage?.prompt_tokens_details?.cached_tokens ?? oaiUsage?.prompt_cache_hit_tokens;
-    const usage: UnifiedUsage = {
-      prompt_tokens: data.usage?.prompt_tokens ?? 0,
-      completion_tokens: data.usage?.completion_tokens ?? 0,
-      total_tokens: data.usage?.total_tokens ?? 0,
-      reasoning_tokens: oaiUsage?.reasoning_tokens,
-      cached_tokens: cachedTokens,
-    };
+    const usage: UnifiedUsage = data.usage
+      ? normalizeUsage(data.usage)
+      : { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
 
     return {
       content,
@@ -98,29 +92,17 @@ export class OpenAIChatProvider implements LLMProvider {
     } catch {
       return null;
     }
+    const deltas: StreamDelta[] = [];
+    // usage 可出现在任意 chunk：OpenAI 官方是 choices 为空的独立 usage chunk；
+    // DeepSeek 在最后一个 choices 非空（finish_reason）chunk 中同 chunk 携带，
+    // 因此必须在 choices 检查之前提取，否则会被静默丢弃
+    if (data.usage) {
+      deltas.push({ type: 'usage', usage: normalizeUsage(data.usage) });
+    }
     if (!data.choices || data.choices.length === 0) {
-      // 可能是 usage chunk
-      if (data.usage) {
-        const u = data.usage as {
-          reasoning_tokens?: number;
-          prompt_tokens_details?: { cached_tokens?: number };
-          prompt_cache_hit_tokens?: number;
-        };
-        return {
-          type: 'usage',
-          usage: {
-            prompt_tokens: data.usage.prompt_tokens ?? 0,
-            completion_tokens: data.usage.completion_tokens ?? 0,
-            total_tokens: data.usage.total_tokens ?? 0,
-            reasoning_tokens: u.reasoning_tokens,
-            cached_tokens: u.prompt_tokens_details?.cached_tokens ?? u.prompt_cache_hit_tokens,
-          },
-        };
-      }
-      return null;
+      return deltas.length === 0 ? null : deltas;
     }
     const choice = data.choices[0];
-    const deltas: StreamDelta[] = [];
 
     const delta = choice.delta;
     if (delta?.content) {
@@ -177,6 +159,17 @@ export function toOpenAIChatThinking(t: ThinkingConfig): Record<string, unknown>
 // 内部 helper
 // ============================================================================
 
+/** OpenAI Chat usage 归一化：兼容 prompt_tokens_details.cached_tokens（OpenAI）与 prompt_cache_hit_tokens（DeepSeek） */
+function normalizeUsage(u: OpenAIChatUsage): UnifiedUsage {
+  return {
+    prompt_tokens: u.prompt_tokens ?? 0,
+    completion_tokens: u.completion_tokens ?? 0,
+    total_tokens: u.total_tokens ?? 0,
+    reasoning_tokens: u.reasoning_tokens,
+    cached_tokens: u.prompt_tokens_details?.cached_tokens ?? u.prompt_cache_hit_tokens,
+  };
+}
+
 function toOpenAIMessage(msg: UnifiedMessage): unknown {
   const out: Record<string, unknown> = { role: msg.role, content: msg.content };
   if (msg.name) out.name = msg.name;
@@ -219,6 +212,18 @@ function mergeThinking(
 // 类型定义（OpenAI Chat 原生格式）
 // ============================================================================
 
+/** OpenAI Chat usage（含 DeepSeek 兼容字段） */
+interface OpenAIChatUsage {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  reasoning_tokens?: number;
+  /** OpenAI 兼容：缓存命中的输入 token 数 */
+  prompt_tokens_details?: { cached_tokens?: number };
+  /** DeepSeek 兼容字段：prompt_cache_hit_tokens */
+  prompt_cache_hit_tokens?: number;
+}
+
 interface OpenAIChatResponse {
   choices?: Array<{
     message: {
@@ -231,12 +236,7 @@ interface OpenAIChatResponse {
     };
     finish_reason?: string;
   }>;
-  usage?: {
-    prompt_tokens?: number;
-    completion_tokens?: number;
-    total_tokens?: number;
-    reasoning_tokens?: number;
-  };
+  usage?: OpenAIChatUsage;
 }
 
 interface OpenAIChatStreamChunk {
@@ -252,10 +252,5 @@ interface OpenAIChatStreamChunk {
     };
     finish_reason?: string;
   }>;
-  usage?: {
-    prompt_tokens?: number;
-    completion_tokens?: number;
-    total_tokens?: number;
-    reasoning_tokens?: number;
-  };
+  usage?: OpenAIChatUsage;
 }
