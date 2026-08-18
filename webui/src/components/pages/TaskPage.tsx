@@ -21,6 +21,7 @@ import {
   ListTodo,
   ShieldCheck,
   Circle,
+  CircleAlert,
 } from 'lucide-react';
 import {
   Dialog,
@@ -782,7 +783,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
           >
             <div
               {...rightResize.bind}
-              className="absolute inset-y-0 left-0 z-10 w-1.5 cursor-col-resize touch-none select-none after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] after:-translate-x-1/2 after:bg-transparent hover:after:bg-border"
+              className="absolute inset-y-0 -left-[3px] z-10 w-1.5 cursor-col-resize touch-none select-none after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] after:-translate-x-1/2 after:bg-transparent hover:after:bg-border"
             />
             {rightPanelContent}
           </aside>
@@ -1051,6 +1052,8 @@ const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap,
                   <ChevronRight className="size-3.5 transition-transform group-open:rotate-90" />
                   {tc.status === 'generating' || tc.status === 'executing' ? (
                     <Loader2 className="size-3.5 animate-spin" />
+                  ) : isError ? (
+                    <CircleAlert className="size-3.5 text-destructive" />
                   ) : (
                     (() => {
                       const ToolIcon = resolveToolIcon(tc.name, toolIconMap);

@@ -2,6 +2,7 @@
 // use_mcp 工具 execute 逻辑：转发到指定 MCP 服务器的指定工具。
 // 元数据见同目录 tool.json。
 
+import { t } from '../../../core/i18n';
 import type { ToolContext, ToolResult } from '../types';
 import type { MCPManager } from '../../contracts';
 import { ServiceNames } from '../../../core/types';
@@ -11,7 +12,7 @@ export default {
     const p = params as { server: string; tool: string; arguments?: unknown };
     if (!p.server || !p.tool) {
       return {
-        content: [{ type: 'text', text: 'Error: server and tool are required' }],
+        content: [{ type: 'text', text: `Error: ${t('tools.useMcpServerRequired')}` }],
         isError: true,
       };
     }
@@ -19,7 +20,7 @@ export default {
     const mgr = ctx.services.tryResolve<MCPManager>(ServiceNames.MCP_MANAGER);
     if (!mgr) {
       return {
-        content: [{ type: 'text', text: 'Error: MCP manager not available. Is the MCP module loaded?' }],
+        content: [{ type: 'text', text: `Error: ${t('tools.useMcpManagerUnavailable')}` }],
         isError: true,
       };
     }
@@ -27,7 +28,7 @@ export default {
     // server 启用检查（disabled / 未定义 → 拒绝）
     if (mgr.isServerEnabled(p.server) !== true) {
       return {
-        content: [{ type: 'text', text: `Error: MCP server "${p.server}" is disabled or not found` }],
+        content: [{ type: 'text', text: `Error: ${t('tools.useMcpServerDisabled', { server: p.server })}` }],
         isError: true,
       };
     }
@@ -74,7 +75,11 @@ export default {
         content: [
           {
             type: 'text',
-            text: `Error calling MCP tool "${p.server}/${p.tool}": ${err instanceof Error ? err.message : err}`,
+            text: t('tools.useMcpCallFailed', {
+              server: p.server,
+              tool: p.tool,
+              message: err instanceof Error ? err.message : String(err),
+            }),
           },
         ],
         isError: true,

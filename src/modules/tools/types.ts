@@ -26,6 +26,8 @@ export interface JSONSchema {
 export interface Tool {
   name: string;
   description: string;
+  /** 英文描述（tool.json description_en；en locale 且存在时替代 description 暴露给 LLM/UI） */
+  descriptionEn?: string;
   inputSchema: JSONSchema;
   annotations?: ToolAnnotations;
   /** 显示图标（lucide 图标 kebab-case 名，如 'file-text'；前端白名单映射，缺失回退扳手） */

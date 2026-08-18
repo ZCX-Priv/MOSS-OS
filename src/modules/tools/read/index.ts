@@ -54,7 +54,7 @@ export default {
     // 1. 参数校验：path 与 paths 互斥，至少一个
     const targets = resolveTargets(p);
     if (!targets) {
-      return errorResult('path or paths is required');
+      return errorResult(t('tools.readPathRequired'));
     }
 
     // filesys 服务必须可用（统一入口，不静默降级回旧路径）
@@ -107,14 +107,14 @@ async function processSingleFile(
 
   // 存在性检测
   if (!existsSync(path)) {
-    return errorResult(`file not found: ${path}`);
+    return errorResult(t('tools.readFileNotFound', { path }));
   }
 
   const stat = statSync(path);
 
   // 目录拒绝
   if (stat.isDirectory()) {
-    return errorResult(`path is a directory, not a file: ${path}`);
+    return errorResult(t('tools.readPathIsDirectory', { path }));
   }
 
   // 大文件策略：>50MB 返回错误 + 提示
@@ -125,7 +125,7 @@ async function processSingleFile(
   // Dedup 去重：自上次 read 后未变（mtime/size 校验）则不重复全量返回
   if (filesys.isUnchangedSinceRead(path)) {
     return {
-      content: [{ type: 'text', text: `File unchanged since last read: ${path}` }],
+      content: [{ type: 'text', text: t('tools.readFileUnchanged', { path }) }],
       metadata: { path, unchanged: true, sizeBytes: stat.size },
     };
   }
@@ -133,7 +133,7 @@ async function processSingleFile(
   // 一次读盘全派生：rawBuffer / sha256 / 编码分类（缓存命中则零 I/O）
   const entity = filesys.readFile(path);
   if (!entity) {
-    return errorResult(`file not found: ${path}`);
+    return errorResult(t('tools.readFileNotFound', { path }));
   }
 
   // 注册 read ledger（read-before-overwrite 校验），sha256 来自 filesys 统一哈希（含 BOM 原始字节）
@@ -202,7 +202,7 @@ function largeFileResult(path: string, size: number): ToolResult {
   return {
     content: [{
       type: 'text',
-      text: `Error: file too large (${size} bytes, ${sizeMB}MB, max 50MB): ${path}\n\n提示：文件超过 50MB 上限。你可以：\n1. 使用 mode=precise + offset + limit 精确读取某行范围（例如 offset=1&limit=1000 读取前 1000 行）\n2. 使用 grep 工具搜索特定内容，而非全量读取\n3. 写一个程序解析该文件（例如：写个 Node.js 脚本用 readline 逐行处理，或用 fs.createReadStream 流式读取）`,
+      text: `Error: ${t('tools.readTooLarge', { bytes: size, sizeMB, path })}\n\n${t('tools.readTooLargeHint')}`,
     }],
     isError: true,
     metadata: { path, sizeBytes: size, tooLarge: true },

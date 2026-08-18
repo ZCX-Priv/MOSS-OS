@@ -6,6 +6,7 @@
 // 持久化函数位于 ./shared/store.ts，被 server 路由和 agent 引擎复用。
 // 元数据见同目录 tool.json。
 
+import { t } from '../../../core/i18n';
 import type { Environment } from '../../../core/types';
 import type { ToolContext, ToolResult } from '../types';
 import {
@@ -51,7 +52,7 @@ export default function createExecute(env: Environment) {
       };
 
       if (!ctx.sessionId) {
-        return { content: [{ type: 'text', text: 'Error: sessionId is required for todo operations' }], isError: true };
+        return { content: [{ type: 'text', text: `Error: ${t('tools.todoSessionIdRequired')}` }], isError: true };
       }
       const storePath = getSessionTodoPath(env, ctx.sessionId);
       const store = readSessionTodoStore(storePath);
@@ -68,14 +69,14 @@ export default function createExecute(env: Environment) {
           // 覆盖模式：items 全量替换现有清单（禁止空数组）
           if (mode === 'replace') {
             if (!Array.isArray(p.items) || p.items.length === 0) {
-              return { content: [{ type: 'text', text: 'Error: items (non-empty array of {text, status?, priority?, id?}) is required for create mode=replace' }], isError: true };
+              return { content: [{ type: 'text', text: `Error: ${t('tools.todoReplaceItemsRequired')}` }], isError: true };
             }
             const invalid = p.items
               .map((it, idx) => ({ idx, it }))
               .filter(({ it }) => typeof it?.text !== 'string' || it.text.trim() === '')
               .map(({ idx }) => idx);
             if (invalid.length > 0) {
-              return { content: [{ type: 'text', text: `Error: items[${invalid.join(', ')}] missing non-empty text. Nothing was modified.` }], isError: true };
+              return { content: [{ type: 'text', text: `Error: ${t('tools.todoItemsMissingText', { indexes: invalid.join(', ') })}` }], isError: true };
             }
             const now = new Date().toISOString();
             // id 分配：保留传入 id；无 id 项从 nextId 起跳过已占用 id 递增分配（防撞号）
@@ -101,14 +102,14 @@ export default function createExecute(env: Environment) {
             store.items = newItems;
             persist();
             return {
-              content: [{ type: 'text', text: `Todos replaced (${newItems.length} items):\n${JSON.stringify(newItems, null, 2)}` }],
+              content: [{ type: 'text', text: `${t('tools.todoReplaced', { count: newItems.length })}:\n${JSON.stringify(newItems, null, 2)}` }],
               metadata: { action: 'create', mode: 'replace', count: newItems.length },
             };
           }
 
           // 新建模式（默认）：追加一条
           if (!p.text || typeof p.text !== 'string' || p.text.trim() === '') {
-            return { content: [{ type: 'text', text: 'Error: text is required for create' }], isError: true };
+            return { content: [{ type: 'text', text: `Error: ${t('tools.todoTextRequired')}` }], isError: true };
           }
           const now = new Date().toISOString();
           const item: TodoItem = {
@@ -123,18 +124,18 @@ export default function createExecute(env: Environment) {
           store.nextId += 1;
           persist();
           return {
-            content: [{ type: 'text', text: `Todo created (id=${item.id}):\n${JSON.stringify(item, null, 2)}` }],
+            content: [{ type: 'text', text: `${t('tools.todoCreated', { id: item.id })}:\n${JSON.stringify(item, null, 2)}` }],
             metadata: { action: 'create', mode: 'append', id: item.id },
           };
         }
 
         case 'update': {
           if (!p.id) {
-            return { content: [{ type: 'text', text: 'Error: id is required for update' }], isError: true };
+            return { content: [{ type: 'text', text: `Error: ${t('tools.todoIdRequired')}` }], isError: true };
           }
           const item = store.items.find(it => it.id === p.id);
           if (!item) {
-            return { content: [{ type: 'text', text: `Error: todo with id="${p.id}" not found. Use action="list" to see current todos.` }], isError: true };
+            return { content: [{ type: 'text', text: `Error: ${t('tools.todoNotFound', { id: p.id })}` }], isError: true };
           }
           if (p.text !== undefined) item.text = p.text;
           if (p.status !== undefined) item.status = p.status;
@@ -142,7 +143,7 @@ export default function createExecute(env: Environment) {
           item.updatedAt = new Date().toISOString();
           persist();
           return {
-            content: [{ type: 'text', text: `Todo updated (id=${item.id}):\n${JSON.stringify(item, null, 2)}` }],
+            content: [{ type: 'text', text: `${t('tools.todoUpdated', { id: item.id })}:\n${JSON.stringify(item, null, 2)}` }],
             metadata: { action: 'update', id: item.id },
           };
         }
@@ -150,25 +151,25 @@ export default function createExecute(env: Environment) {
         case 'list': {
           const todos = store.items.map(it => ({ id: it.id, text: it.text, status: it.status, priority: it.priority }));
           return {
-            content: [{ type: 'text', text: todos.length === 0 ? 'No todos in this session.' : `Todos (${todos.length}):\n${JSON.stringify(todos, null, 2)}` }],
+            content: [{ type: 'text', text: todos.length === 0 ? t('tools.todoEmpty') : `${t('tools.todoListHeader', { count: todos.length })}:\n${JSON.stringify(todos, null, 2)}` }],
             metadata: { action: 'list', count: todos.length },
           };
         }
 
         case 'reorder': {
           if (!Array.isArray(p.orderedIds) || p.orderedIds.length === 0) {
-            return { content: [{ type: 'text', text: 'Error: orderedIds (full id list in new order) is required for reorder' }], isError: true };
+            return { content: [{ type: 'text', text: `Error: ${t('tools.todoOrderedIdsRequired')}` }], isError: true };
           }
           const currentIds = new Set(store.items.map(it => it.id));
           const incoming = new Set(p.orderedIds);
           if (p.orderedIds.length !== store.items.length || p.orderedIds.some(id => !currentIds.has(id)) || [...currentIds].some(id => !incoming.has(id))) {
-            return { content: [{ type: 'text', text: `Error: orderedIds must be a permutation of all current todo ids (${[...currentIds].join(', ')}). Use action="list" first.` }], isError: true };
+            return { content: [{ type: 'text', text: `Error: ${t('tools.todoOrderedIdsMismatch', { ids: [...currentIds].join(', ') })}` }], isError: true };
           }
           const byId = new Map(store.items.map(it => [it.id, it]));
           store.items = p.orderedIds.map(id => byId.get(id)!);
           persist();
           return {
-            content: [{ type: 'text', text: `Todos reordered. New order: ${store.items.map(it => `${it.id}(${it.text})`).join(' -> ')}` }],
+            content: [{ type: 'text', text: t('tools.todoReordered', { order: store.items.map(it => `${it.id}(${it.text})`).join(' -> ') }) }],
             metadata: { action: 'reorder', count: store.items.length },
           };
         }
@@ -176,12 +177,12 @@ export default function createExecute(env: Environment) {
         case 'batch_update': {
           const updates = p.updates;
           if (!Array.isArray(updates) || updates.length === 0) {
-            return { content: [{ type: 'text', text: 'Error: updates (array of {id, status?, text?, priority?}) is required for batch_update' }], isError: true };
+            return { content: [{ type: 'text', text: `Error: ${t('tools.todoUpdatesRequired')}` }], isError: true };
           }
           // 预校验全通过才写入（原子语义）：任一 id 不存在则整体报错
           const missing = updates.filter(u => !u.id || !store.items.some(it => it.id === u.id));
           if (missing.length > 0) {
-            return { content: [{ type: 'text', text: `Error: todos not found: ${missing.map(u => u.id).join(', ')}. Nothing was modified. Use action="list" to see current todos.` }], isError: true };
+            return { content: [{ type: 'text', text: `Error: ${t('tools.todoBatchNotFound', { ids: missing.map(u => u.id).join(', ') })}` }], isError: true };
           }
           const now = new Date().toISOString();
           const updateIds = new Set(updates.map(u => u.id));
@@ -194,13 +195,13 @@ export default function createExecute(env: Environment) {
           }
           persist();
           return {
-            content: [{ type: 'text', text: `Updated ${updates.length} todos:\n${JSON.stringify(store.items.filter(it => updateIds.has(it.id)), null, 2)}` }],
+            content: [{ type: 'text', text: `${t('tools.todoBatchUpdated', { count: updates.length })}:\n${JSON.stringify(store.items.filter(it => updateIds.has(it.id)), null, 2)}` }],
             metadata: { action: 'batch_update', count: updates.length },
           };
         }
 
         default:
-          return { content: [{ type: 'text', text: `Error: unknown action "${String(p.action)}"` }], isError: true };
+          return { content: [{ type: 'text', text: `Error: ${t('tools.todoUnknownAction', { action: String(p.action) })}` }], isError: true };
       }
     },
   };

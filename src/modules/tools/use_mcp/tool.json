@@ -1,6 +1,7 @@
 {
   "name": "use_mcp",
   "description": "调用指定 MCP 服务器上的工具。先使用 list_mcp 发现可用的服务器和工具。",
+  "description_en": "Call a tool on the specified MCP server. Use list_mcp first to discover available servers and tools.",
   "icon": "plug",
   "annotations": {
     "readOnlyHint": false,
@@ -11,23 +12,31 @@
     "properties": {
       "server": {
         "type": "string",
-        "description": "MCP 服务器名称"
+        "description": "MCP 服务器名称",
+        "description_en": "MCP server name"
       },
       "tool": {
         "type": "string",
-        "description": "要调用的服务器上的工具名称"
+        "description": "要调用的服务器上的工具名称",
+        "description_en": "Name of the tool on the server to call"
       },
       "arguments": {
         "type": "object",
         "description": "传递给工具的参数",
+        "description_en": "Arguments to pass to the tool",
         "additionalProperties": true
       }
     },
-    "required": ["server", "tool"],
+    "required": [
+      "server",
+      "tool"
+    ],
     "additionalProperties": false
   },
   "config": {
-    "defaults": { "enabled": true },
+    "defaults": {
+      "enabled": true
+    },
     "schema": {}
   }
 }

@@ -1,6 +1,7 @@
 {
   "name": "todo",
   "description": "管理当前会话的待办清单（每会话独立持久化）。action=\"create\" mode=\"append\"（默认）加 text（可选 priority）新建一条；action=\"create\" mode=\"replace\" 加 items（全量待办数组，至少 1 条，每项可选 id/status/priority）整体覆盖清单；action=\"update\" 加 id 与 text/status/priority 至少一项修改；action=\"list\" 查看当前全部待办（含 id，操作前建议先 list）；action=\"reorder\" 加 orderedIds（全量 id 的新顺序排列）重排；action=\"batch_update\" 加 updates 数组一次批量更新多项（任一 id 无效则整体失败不写入）。开始多步任务时建议创建待办并在每步完成后更新状态。任务全部完成后保留 completed 状态即可，无需重建清单。",
+  "description_en": "Manage the current session's todo list (persisted per session). action=\"create\" mode=\"append\" (default) with text (optional priority) creates one item; action=\"create\" mode=\"replace\" with items (full todo array, at least 1 item, each with optional id/status/priority) replaces the whole list; action=\"update\" with id plus at least one of text/status/priority; action=\"list\" shows all current todos (with ids; listing first is recommended before operating); action=\"reorder\" with orderedIds (a full permutation of ids in the new order); action=\"batch_update\" with an updates array to update multiple items at once (any invalid id fails the whole batch, nothing is written). When starting a multi-step task, create todos and update statuses as steps complete. After everything is done, keep the completed statuses; no need to rebuild the list.",
   "icon": "list-checks",
   "annotations": {
     "idempotentHint": false
@@ -10,31 +11,54 @@
     "properties": {
       "action": {
         "type": "string",
-        "enum": ["create", "update", "list", "reorder", "batch_update"],
-        "description": "要执行的操作"
+        "enum": [
+          "create",
+          "update",
+          "list",
+          "reorder",
+          "batch_update"
+        ],
+        "description": "要执行的操作",
+        "description_en": "The action to perform"
       },
       "mode": {
         "type": "string",
-        "enum": ["append", "replace"],
-        "description": "create 的模式：append=新建一条（默认，需 text）；replace=全量覆盖清单（需 items，至少 1 条）"
+        "enum": [
+          "append",
+          "replace"
+        ],
+        "description": "create 的模式：append=新建一条（默认，需 text）；replace=全量覆盖清单（需 items，至少 1 条）",
+        "description_en": "create mode: append=create one item (default, requires text); replace=replace the whole list (requires items, at least 1)"
       },
       "text": {
         "type": "string",
-        "description": "待办文本内容。create(mode=append) 必填；update 可选"
+        "description": "待办文本内容。create(mode=append) 必填；update 可选",
+        "description_en": "Todo text content. Required for create(mode=append); optional for update"
       },
       "priority": {
         "type": "string",
-        "enum": ["low", "medium", "high"],
-        "description": "优先级（默认 medium）"
+        "enum": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "description": "优先级（默认 medium）",
+        "description_en": "Priority (default medium)"
       },
       "id": {
         "type": "string",
-        "description": "待办 id。update 必填"
+        "description": "待办 id。update 必填",
+        "description_en": "Todo id. Required for update"
       },
       "status": {
         "type": "string",
-        "enum": ["pending", "in_progress", "completed"],
-        "description": "状态。仅 update/batch_update/create(mode=replace 的 items 内) 使用"
+        "enum": [
+          "pending",
+          "in_progress",
+          "completed"
+        ],
+        "description": "状态。仅 update/batch_update/create(mode=replace 的 items 内) 使用",
+        "description_en": "Status. Only used by update/batch_update/create (inside items when mode=replace)"
       },
       "items": {
         "type": "array",
@@ -42,42 +66,97 @@
         "items": {
           "type": "object",
           "properties": {
-            "id": { "type": "string", "description": "可选，保留原条目身份；不传则自动分配新 id" },
-            "text": { "type": "string", "description": "待办文本内容" },
-            "status": { "type": "string", "enum": ["pending", "in_progress", "completed"] },
-            "priority": { "type": "string", "enum": ["low", "medium", "high"] }
+            "id": {
+              "type": "string",
+              "description": "可选，保留原条目身份；不传则自动分配新 id",
+              "description_en": "Optional, preserves the original item identity; a new id is assigned automatically if omitted"
+            },
+            "text": {
+              "type": "string",
+              "description": "待办文本内容",
+              "description_en": "Todo text content"
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "in_progress",
+                "completed"
+              ]
+            },
+            "priority": {
+              "type": "string",
+              "enum": [
+                "low",
+                "medium",
+                "high"
+              ]
+            }
           },
-          "required": ["text"],
+          "required": [
+            "text"
+          ],
           "additionalProperties": false
         },
-        "description": "全量待办列表（整体覆盖现有清单，至少 1 条）。仅 create mode=replace 使用"
+        "description": "全量待办列表（整体覆盖现有清单，至少 1 条）。仅 create mode=replace 使用",
+        "description_en": "Full todo list (replaces the existing list entirely, at least 1 item). Only used by create mode=replace"
       },
       "orderedIds": {
         "type": "array",
-        "items": { "type": "string" },
-        "description": "全量待办 id 按新顺序排列。仅 reorder 使用，必须是当前全部 id 的排列"
+        "items": {
+          "type": "string"
+        },
+        "description": "全量待办 id 按新顺序排列。仅 reorder 使用，必须是当前全部 id 的排列",
+        "description_en": "All todo ids arranged in the new order. Only used by reorder; must be a permutation of all current ids"
       },
       "updates": {
         "type": "array",
         "items": {
           "type": "object",
           "properties": {
-            "id": { "type": "string", "description": "待办 id" },
-            "text": { "type": "string" },
-            "status": { "type": "string", "enum": ["pending", "in_progress", "completed"] },
-            "priority": { "type": "string", "enum": ["low", "medium", "high"] }
+            "id": {
+              "type": "string",
+              "description": "待办 id",
+              "description_en": "Todo id"
+            },
+            "text": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "in_progress",
+                "completed"
+              ]
+            },
+            "priority": {
+              "type": "string",
+              "enum": [
+                "low",
+                "medium",
+                "high"
+              ]
+            }
           },
-          "required": ["id"],
+          "required": [
+            "id"
+          ],
           "additionalProperties": false
         },
-        "description": "批量更新列表。仅 batch_update 使用"
+        "description": "批量更新列表。仅 batch_update 使用",
+        "description_en": "List of batch updates. Only used by batch_update"
       }
     },
-    "required": ["action"],
+    "required": [
+      "action"
+    ],
     "additionalProperties": false
   },
   "config": {
-    "defaults": { "enabled": true },
+    "defaults": {
+      "enabled": true
+    },
     "schema": {}
   }
 }

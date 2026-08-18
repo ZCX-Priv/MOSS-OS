@@ -19,6 +19,7 @@ import { PermissionModeSelector } from '../overlays/PermissionModeSelector';
 import { useDirectoryPicker } from '../../hooks/useDirectoryPicker';
 import { DirectoryPickerDialog } from '../overlays/DirectoryPickerDialog';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { resolveWorkingDirectoryName } from '@/lib/utils';
 
 interface TaskInputProps {
   placeholder?: string;
@@ -78,10 +79,8 @@ export function TaskInput({
   };
 
   const isSystemScope = !workingDirectory || workingDirectory === SYSTEM_WORKING_DIRECTORY;
-
-  const folderLabel = isSystemScope
-    ? t('directoryPicker.system')
-    : workingDirectory.split(/[\\/]/).pop() || workingDirectory;
+  const folderLabel =
+    resolveWorkingDirectoryName(workingDirectory) ?? t('directoryPicker.system');
 
   const dirName = (path: string) => {
     const seg = path.split(/[\\/]/).filter(Boolean).pop();

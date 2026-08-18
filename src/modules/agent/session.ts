@@ -1,6 +1,7 @@
 // src/modules/agent/session.ts
 // 会话状态、历史、上下文裁剪。
-// 持久化：每个 session 存为 ~/.moss/sessions/<sessionId>.json，启动时全量加载到内存。
+// 持久化：每个 session 存为 ~/.moss/tasks/<groupId>/<sessionId>.json（归属分组由
+// TaskStore 总管索引解析，engine 注入 resolveGroupId），启动时全量加载到内存。
 
 import { t } from '../../core/i18n';
 import { existsSync, readFileSync, readdirSync, unlinkSync } from 'node:fs';
@@ -68,32 +69,41 @@ export interface Session {
 export class SessionStore {
   private readonly sessions = new Map<string, Session>();
   private readonly logger: Logger;
-  /** session 持久化目录：~/.moss/sessions */
-  private readonly sessionsDir: string;
+  /** session 持久化根目录：~/.moss/tasks（session 文件按任务分组存于 tasks/<groupId>/） */
+  private readonly tasksDir: string;
+  /** sessionId → groupId 解析器（TaskStore 总管索引；未注入/未知返回 null → 兜底扫描/默认组） */
+  private readonly resolveGroupId: (sessionId: string) => string | null;
 
-  constructor(env: Environment, logger: Logger) {
+  constructor(
+    env: Environment,
+    logger: Logger,
+    opts?: { resolveGroupId?: (sessionId: string) => string | null },
+  ) {
     this.logger = logger;
-    this.sessionsDir = join(env.dataDir, 'sessions');
+    this.tasksDir = join(env.dataDir, 'tasks');
+    this.resolveGroupId = opts?.resolveGroupId ?? (() => null);
     this.loadAll();
   }
 
   /** 启动时全量加载所有 session 文件到内存（损坏文件跳过，目录不存在则跳过） */
   private loadAll(): void {
     try {
-      if (!existsSync(this.sessionsDir)) return;
-      const entries = readdirSync(this.sessionsDir);
-      for (const name of entries) {
-        if (!name.endsWith('.json')) continue;
-        // 文件名即 sessionId（saveSession 以 session.id 命名，safeSessionId 清洗保证无歧义）
-        const sessionId = name.slice(0, -'.json'.length);
-        if (!this.loadFromDisk(sessionId)) {
-          this.logger.warn(t('agent.loadSessionFailed'), { file: name });
+      if (!existsSync(this.tasksDir)) return;
+      for (const entry of readdirSync(this.tasksDir, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        for (const name of readdirSync(join(this.tasksDir, entry.name))) {
+          // 组内 task.json 是任务元信息（TaskStore 管），其余 .json 文件名即 sessionId
+          if (!name.endsWith('.json') || name === 'task.json') continue;
+          const sessionId = name.slice(0, -'.json'.length);
+          if (!this.loadFromDisk(sessionId)) {
+            this.logger.warn(t('agent.loadSessionFailed'), { file: `${entry.name}/${name}` });
+          }
         }
       }
       this.logger.debug(t('agent.loadedSessions', { count: this.sessions.size }));
     } catch (err) {
       this.logger.warn(t('agent.scanSessionsDirFailed'), {
-        dir: this.sessionsDir,
+        dir: this.tasksDir,
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -111,9 +121,29 @@ export class SessionStore {
     }
   }
 
-  /** session 文件路径（sessionId 经 safeSessionId 清洗，防 `../` 路径穿越——与 transcript/todo 一致） */
+  /**
+   * session 文件路径：tasks/<groupId>/<sessionId>.json。
+   * groupId 优先取 TaskStore 总管索引；索引未命中（孤儿 session/任务已删）时兜底扫描
+   * 磁盘定位既有文件；均未命中落到默认组。sessionId 经 safeSessionId 清洗防路径穿越。
+   */
   private sessionFilePath(sessionId: string): string {
-    return join(this.sessionsDir, `${safeSessionId(sessionId)}.json`);
+    const sid = safeSessionId(sessionId);
+    const gid = this.resolveGroupId(sessionId) ?? this.findGroupIdOnDisk(sid) ?? 'default';
+    return join(this.tasksDir, gid, `${sid}.json`);
+  }
+
+  /** 兜底扫描：在各分组目录（tasks 下）定位 <sid>.json 既有文件，返回其所在组目录名；未找到返回 null */
+  private findGroupIdOnDisk(sid: string): string | null {
+    try {
+      if (!existsSync(this.tasksDir)) return null;
+      for (const entry of readdirSync(this.tasksDir, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        if (existsSync(join(this.tasksDir, entry.name, `${sid}.json`))) return entry.name;
+      }
+    } catch {
+      // 扫描失败交由调用方回退默认组
+    }
+    return null;
   }
 
   /**

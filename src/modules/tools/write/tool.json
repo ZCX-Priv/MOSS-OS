@@ -1,6 +1,7 @@
 {
   "name": "write",
   "description": "将内容写入文件，如已存在则覆盖。强制 read-before-overwrite：覆盖已存在文件前必须先调用 read 工具读取该文件。流式原子写入（tmp+fsync+rename，防损坏，支持大文件）+ 哈希备份（支持 undo）。大文件自动跳过 diff 以防爆内存，返回写入摘要。此操作具有破坏性。",
+  "description_en": "Write content to a file, overwriting if it exists. Enforces read-before-overwrite: you must call the read tool on an existing file before overwriting it. Streaming atomic write (tmp+fsync+rename, corruption-safe, supports large files) + hash backup (undo supported). Large files automatically skip the diff to avoid memory blowup; returns a write summary. This operation is destructive.",
   "icon": "file-plus",
   "annotations": {
     "destructiveHint": true,
@@ -10,11 +11,26 @@
   "inputSchema": {
     "type": "object",
     "properties": {
-      "path": { "type": "string", "description": "要写入的文件的绝对或相对路径" },
-      "content": { "type": "string", "description": "要写入文件的内容" },
-      "createDirs": { "type": "boolean", "description": "是否在父目录不存在时自动创建（默认 true）" }
+      "path": {
+        "type": "string",
+        "description": "要写入的文件的绝对或相对路径",
+        "description_en": "Absolute or relative path of the file to write"
+      },
+      "content": {
+        "type": "string",
+        "description": "要写入文件的内容",
+        "description_en": "Content to write to the file"
+      },
+      "createDirs": {
+        "type": "boolean",
+        "description": "是否在父目录不存在时自动创建（默认 true）",
+        "description_en": "Whether to automatically create missing parent directories (default true)"
+      }
     },
-    "required": ["path", "content"],
+    "required": [
+      "path",
+      "content"
+    ],
     "additionalProperties": false
   },
   "config": {
@@ -25,8 +41,12 @@
       "requireReadBeforeOverwrite": true
     },
     "schema": {
-      "trackHistory": { "type": "boolean" },
-      "requireReadBeforeOverwrite": { "type": "boolean" }
+      "trackHistory": {
+        "type": "boolean"
+      },
+      "requireReadBeforeOverwrite": {
+        "type": "boolean"
+      }
     }
   }
 }

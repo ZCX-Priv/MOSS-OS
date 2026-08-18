@@ -1,6 +1,7 @@
 {
   "name": "use_skill",
   "description": "激活指定的 skill，返回其完整指令模板（渐进式披露第二级；目录式 skill 附带附属资源清单供按需读取）。先用 list_skill 发现可用技能；args 替换模板中的 {{placeholder}} 占位符。",
+  "description_en": "Activate the specified skill and return its full instruction template (progressive disclosure level 2; directory-based skills include a list of companion resources for on-demand reading). Use list_skill first to discover available skills; args replace {{placeholder}} tokens in the template.",
   "icon": "sparkles",
   "annotations": {
     "readOnlyHint": true,
@@ -11,19 +12,25 @@
     "properties": {
       "skill": {
         "type": "string",
-        "description": "要调用的技能名称"
+        "description": "要调用的技能名称",
+        "description_en": "Name of the skill to invoke"
       },
       "args": {
         "type": "object",
         "description": "替换到技能提示词占位符中的参数（如 {topic: \"react hooks\"} 对应 {{topic}}）。",
+        "description_en": "Arguments substituted into the skill prompt placeholders (e.g. {topic: \"react hooks\"} fills {{topic}}).",
         "additionalProperties": true
       }
     },
-    "required": ["skill"],
+    "required": [
+      "skill"
+    ],
     "additionalProperties": false
   },
   "config": {
-    "defaults": { "enabled": true },
+    "defaults": {
+      "enabled": true
+    },
     "schema": {}
   }
 }

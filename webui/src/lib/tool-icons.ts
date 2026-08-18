@@ -5,7 +5,7 @@
 import {
   Wrench, Plug, FileText, FilePlus, FilePen, Trash2, Terminal,
   FolderSearch, Search, ListChecks, HelpCircle, Sparkles, List, BookOpen,
-  FileCode,
+  FileCode, Copy, FolderInput,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -25,6 +25,8 @@ export const TOOL_ICON_MAP: Record<string, LucideIcon> = {
   'list': List,
   'book-open': BookOpen,
   'file-code': FileCode,
+  'copy': Copy,
+  'folder-input': FolderInput,
 };
 
 /** 按 toolName + toolIconMap 解析图标组件，未知/缺失回退 Wrench */

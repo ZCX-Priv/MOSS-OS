@@ -43,6 +43,8 @@ interface UIState {
   messagesBySession: Record<string, TaskMessage[]>;
   /** 是否正在生成（按 sessionId 索引；缺省视为 false） */
   generatingBySession: Record<string, boolean>;
+  /** 最近一轮运行是否出错（按 sessionId 索引；缺省视为 false，新流开始自动清除） */
+  errorBySession: Record<string, boolean>;
   /** 工具发起的、等待用户回复的提问列表 */
   pendingAsks: PendingAsk[];
 
@@ -173,6 +175,8 @@ interface UIActions {
 
   // 生成态
   setGenerating: (sessionId: string, v: boolean) => void;
+  /** 标记/清除 session 的错误态（新流开始时由 setGenerating 自动清除） */
+  setTaskError: (sessionId: string, v: boolean) => void;
   /** 将指定 session 中所有 streaming 的消息标记为已完成 */
   finalizeStreamingMessages: (sessionId: string) => void;
 
@@ -325,6 +329,7 @@ export const useStore = create<Store>((set) => ({
   sessions: [],
   messagesBySession: {},
   generatingBySession: {},
+  errorBySession: {},
   pendingAsks: [],
   pendingConfirms: [],
   truncateBackups: {},
@@ -473,6 +478,12 @@ export const useStore = create<Store>((set) => ({
   setGenerating: (sessionId, v) =>
     set((state) => ({
       generatingBySession: { ...state.generatingBySession, [sessionId]: v },
+      // 新流开始自动清除上一轮错误态（发送消息 = 用户已看到错误并重试）
+      ...(v ? { errorBySession: { ...state.errorBySession, [sessionId]: false } } : {}),
+    })),
+  setTaskError: (sessionId, v) =>
+    set((state) => ({
+      errorBySession: { ...state.errorBySession, [sessionId]: v },
     })),
   finalizeStreamingMessages: (sessionId) =>
     set((state) => ({
@@ -530,9 +541,25 @@ export const useStore = create<Store>((set) => ({
       return { tasks: next };
     }),
   updateTask: (id, patch) =>
-    set((state) => ({
-      tasks: state.tasks.map((t) => (t.id === id ? { ...t, ...patch } : t)),
-    })),
+    set((state) => {
+      const task = state.tasks.find((t) => t.id === id);
+      if (!task) return {};
+      const merged = { ...task, ...patch };
+      const rest = state.tasks.filter((t) => t.id !== id);
+      // 该任务所在组按 order 局部重排（与后端 listTasks 排序一致）：
+      // 跨组移动（后端 order 置顶）后"移入顶部"即时可见，不必等重新拉取列表
+      const groupTasks = rest
+        .filter((t) => t.groupId === merged.groupId)
+        .concat(merged)
+        .sort((a, b) => {
+          const oa = a.order ?? Number.MAX_SAFE_INTEGER;
+          const ob = b.order ?? Number.MAX_SAFE_INTEGER;
+          if (oa !== ob) return oa - ob;
+          return b.createdAt.localeCompare(a.createdAt);
+        });
+      const others = rest.filter((t) => t.groupId !== merged.groupId);
+      return { tasks: [...others, ...groupTasks] };
+    }),
   removeTask: (id) =>
     set((state) => ({
       tasks: state.tasks.filter((t) => t.id !== id),

@@ -3,6 +3,7 @@
 // （渐进式披露第二级；目录式 skill 附带 references/scripts 文件清单供 LLM 按需 read）。
 // 元数据见同目录 tool.json。
 
+import { t } from '../../../core/i18n';
 import type { ToolContext, ToolResult } from '../types';
 import { ServiceNames } from '../../../core/types';
 import type { SkillRegistry } from './registry';
@@ -11,13 +12,13 @@ export default {
   async execute(params: unknown, ctx: ToolContext): Promise<ToolResult> {
     const p = params as { skill: string; args?: Record<string, unknown> };
     if (!p.skill) {
-      return { content: [{ type: 'text', text: 'Error: skill is required' }], isError: true };
+      return { content: [{ type: 'text', text: `Error: ${t('tools.useSkillRequired')}` }], isError: true };
     }
 
     const reg = ctx.services.tryResolve<SkillRegistry>(ServiceNames.SKILL_REGISTRY);
     if (!reg) {
       return {
-        content: [{ type: 'text', text: 'Error: skill registry not available' }],
+        content: [{ type: 'text', text: `Error: ${t('tools.useSkillRegistryUnavailable')}` }],
         isError: true,
       };
     }
@@ -27,7 +28,7 @@ export default {
       const available = reg.list().filter(s => reg.isEnabled(s.name)).map(s => s.name).join(', ');
       return {
         content: [
-          { type: 'text', text: `Error: skill "${p.skill}" not found. Available: ${available || '(none)'}` },
+          { type: 'text', text: `Error: ${t('tools.useSkillNotFound', { skill: p.skill, available: available || t('tools.useSkillNoneAvailable') })}` },
         ],
         isError: true,
       };
@@ -36,7 +37,7 @@ export default {
     // 启停校验（config.skills[name].enabled）
     if (!reg.isEnabled(p.skill)) {
       return {
-        content: [{ type: 'text', text: `Error: skill "${p.skill}" is disabled` }],
+        content: [{ type: 'text', text: `Error: ${t('tools.useSkillDisabled', { skill: p.skill })}` }],
         isError: true,
       };
     }
@@ -47,10 +48,10 @@ export default {
       if (skill.files && skill.files.length > 0) {
         const base = skill.dir ?? '';
         const fileList = skill.files.map(f => `- ${base ? `${base}/` : ''}${f}`).join('\n');
-        promptText += `\n\n---\n# 附属资源（按需用 read 工具读取，不要一次性全部读取）\n${fileList}`;
+        promptText += `\n\n---\n${t('tools.useSkillFilesHeader')}\n${fileList}`;
       }
       if (skill.allowedTools && skill.allowedTools.length > 0) {
-        promptText += `\n\n# 建议仅使用以下工具：${skill.allowedTools.join(', ')}`;
+        promptText += `\n\n${t('tools.useSkillAllowedTools', { tools: skill.allowedTools.join(', ') })}`;
       }
       return {
         content: [{ type: 'text', text: promptText }],
@@ -64,7 +65,10 @@ export default {
     } catch (err) {
       return {
         content: [
-          { type: 'text', text: `Error invoking skill "${p.skill}": ${err instanceof Error ? err.message : err}` },
+          { type: 'text', text: t('tools.useSkillInvokeFailed', {
+            skill: p.skill,
+            message: err instanceof Error ? err.message : String(err),
+          }) },
         ],
         isError: true,
       };

@@ -44,7 +44,7 @@ export default {
         : [];
     const patterns = rawPatterns.filter((x): x is string => typeof x === 'string' && x.length > 0);
     if (patterns.length === 0) {
-      return { content: [{ type: 'text', text: 'Error: pattern is required' }], isError: true };
+      return { content: [{ type: 'text', text: `Error: ${t('tools.globPatternRequired')}` }], isError: true };
     }
 
     // ---- 模式归一化与正/负分组（! 前缀为排除过滤）----
@@ -110,13 +110,13 @@ export default {
     try {
       if (!statSync(base).isDirectory()) {
         return {
-          content: [{ type: 'text', text: `Error: path is not a directory: ${base}` }],
+          content: [{ type: 'text', text: `Error: ${t('tools.globPathNotDir', { path: base })}` }],
           isError: true,
         };
       }
     } catch {
       return {
-        content: [{ type: 'text', text: `Error: path not found: ${base}` }],
+        content: [{ type: 'text', text: `Error: ${t('tools.globPathNotFound', { path: base })}` }],
         isError: true,
       };
     }
@@ -194,9 +194,15 @@ export default {
     // ---- 输出 ----
     const patternDesc = Array.isArray(p.pattern) ? p.pattern.join('", "') : p.pattern;
     const header =
-      `Found ${total} entr${total === 1 ? 'y' : 'ies'} matching "${patternDesc}"` +
-      `${p.type ? ` (type: ${p.type})` : ''} in ${toDisplayPath(base, displayBase)}` +
-      `${truncated ? ` (showing ${offset + 1}-${offset + page.length})` : ''}\n`;
+      t('tools.globFoundHeader', {
+        total,
+        entryUnit: t(total === 1 ? 'tools.globEntryUnitOne' : 'tools.globEntryUnitMany'),
+        pattern: patternDesc ?? '',
+        typeSuffix: p.type ? t('tools.globTypeSuffix', { type: p.type }) : '',
+        path: toDisplayPath(base, displayBase),
+      }) +
+      (truncated ? t('tools.globShowingRange', { from: offset + 1, to: offset + page.length }) : '') +
+      '\n';
     const hint = truncated ? `\n${t('tools.searchTruncatedHint')}` : '';
     const cancelledNote = cancelled ? `\n${t('tools.searchCancelled')}` : '';
     const body = lines.length > 0 ? lines.join('\n') : t('tools.searchNoResults');

@@ -1,6 +1,7 @@
 {
   "name": "list_mcp",
   "description": "列出所有已连接的 MCP 服务器及其工具。如果指定了 server，则仅列出该服务器的工具。在调用 use_mcp 之前使用此工具发现可用的 MCP 工具。",
+  "description_en": "List all connected MCP servers and their tools. If a server is specified, only that server's tools are listed. Use this tool before calling use_mcp to discover available MCP tools.",
   "icon": "list",
   "annotations": {
     "readOnlyHint": true,
@@ -11,13 +12,16 @@
     "properties": {
       "server": {
         "type": "string",
-        "description": "可选：仅列出指定服务器的工具"
+        "description": "可选：仅列出指定服务器的工具",
+        "description_en": "Optional: list only the tools of the specified server"
       }
     },
     "additionalProperties": false
   },
   "config": {
-    "defaults": { "enabled": true },
+    "defaults": {
+      "enabled": true
+    },
     "schema": {}
   }
 }

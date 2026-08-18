@@ -1,6 +1,7 @@
 {
   "name": "get_spec",
   "description": "按 id 读取规范文档的完整内容。spec id 是 agent/prompts/main/spec/ 下的相对路径（不含 .md 扩展名，如 \"coding/typescript\"、\"safety\"）。先使用 list_spec 发现可用的 spec id。返回规范的 Markdown 正文（去除 front-matter）。",
+  "description_en": "Read the full content of a spec document by id. A spec id is the relative path (without .md extension) under agent/prompts/main/spec/, e.g. \"coding/typescript\", \"safety\". Use list_spec first to discover available spec ids. Returns the spec's Markdown body (front-matter stripped).",
   "icon": "file-code",
   "annotations": {
     "readOnlyHint": true,
@@ -11,14 +12,19 @@
     "properties": {
       "spec": {
         "type": "string",
-        "description": "要读取的 spec id（相对路径不含 .md，如 \"coding/typescript\"）"
+        "description": "要读取的 spec id（相对路径不含 .md，如 \"coding/typescript\"）",
+        "description_en": "The spec id to read (relative path without .md, e.g. \"coding/typescript\")"
       }
     },
-    "required": ["spec"],
+    "required": [
+      "spec"
+    ],
     "additionalProperties": false
   },
   "config": {
-    "defaults": { "enabled": true },
+    "defaults": {
+      "enabled": true
+    },
     "schema": {}
   }
 }

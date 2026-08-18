@@ -1,6 +1,7 @@
 {
   "name": "delete",
   "description": "删除文件或目录。默认送回收站（trash=true，可恢复7天），force=true 且 trash=false 时永久硬删除（删除前自动备份：文件用哈希内容寻址备份，目录用 tar.gz 整体归档，均支持 undo 恢复）。支持批量（paths 数组）与预演模式（dryRun）。安全校验：路径越权、symlink 遍历、Windows 路径折叠、dev vault（.git）防护、read-before-delete。此操作具有破坏性。",
+  "description_en": "Delete files or directories. Defaults to moving to the recycle bin (trash=true, recoverable for 7 days); with force=true and trash=false performs a permanent hard delete (automatic backup before deletion: hash content-addressed backup for files, tar.gz archive for directories, both undo-recoverable). Supports batching (paths array) and dry-run. Safety checks: path escapes, symlink traversal, Windows path folding, dev vault (.git) protection, read-before-delete. This operation is destructive.",
   "icon": "trash-2",
   "annotations": {
     "destructiveHint": true,
@@ -11,31 +12,39 @@
     "properties": {
       "path": {
         "type": "string",
-        "description": "要删除的文件或目录的绝对或相对路径（单路径模式，与 paths 互斥）"
+        "description": "要删除的文件或目录的绝对或相对路径（单路径模式，与 paths 互斥）",
+        "description_en": "Absolute or relative path of the file or directory to delete (single-path mode, mutually exclusive with paths)"
       },
       "paths": {
         "type": "array",
-        "items": { "type": "string" },
-        "description": "批量删除的路径数组（多路径模式，与 path 互斥）"
+        "items": {
+          "type": "string"
+        },
+        "description": "批量删除的路径数组（多路径模式，与 path 互斥）",
+        "description_en": "Array of paths to delete in batch (multi-path mode, mutually exclusive with path)"
       },
       "recursive": {
         "type": "boolean",
-        "description": "删除目录时必填。递归删除目录树。对文件忽略"
+        "description": "删除目录时必填。递归删除目录树。对文件忽略",
+        "description_en": "Required when deleting a directory. Recursively deletes the directory tree. Ignored for files"
       },
       "trash": {
         "type": "boolean",
         "default": true,
-        "description": "默认 true 送回收站（可恢复7天）。设为 false 且 force=true 时永久硬删除"
+        "description": "默认 true 送回收站（可恢复7天）。设为 false 且 force=true 时永久硬删除",
+        "description_en": "Defaults to true: move to recycle bin (recoverable for 7 days). Set to false with force=true for permanent hard delete"
       },
       "force": {
         "type": "boolean",
         "default": false,
-        "description": "强制模式：跳过 read-before-delete 与 dev vault 防护，rmSync 用 force 覆盖只读文件。仅与 trash=false 配合生效"
+        "description": "强制模式：跳过 read-before-delete 与 dev vault 防护，rmSync 用 force 覆盖只读文件。仅与 trash=false 配合生效",
+        "description_en": "Force mode: skips read-before-delete and dev vault protection; rmSync uses force to override read-only files. Only effective together with trash=false"
       },
       "dryRun": {
         "type": "boolean",
         "default": false,
-        "description": "预演模式：返回将被删除的路径清单与总大小，不执行任何删除操作"
+        "description": "预演模式：返回将被删除的路径清单与总大小，不执行任何删除操作",
+        "description_en": "Dry-run mode: returns the list of paths that would be deleted and their total size without deleting anything"
       }
     },
     "additionalProperties": false
@@ -47,7 +56,9 @@
       "trackHistory": true
     },
     "schema": {
-      "trackHistory": { "type": "boolean" }
+      "trackHistory": {
+        "type": "boolean"
+      }
     }
   }
 }

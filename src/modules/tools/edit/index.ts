@@ -224,20 +224,22 @@ function applyEditsOnContent(
   for (let i = 0; i < edits.length; i++) {
     const e = edits[i];
     if (typeof e.oldString !== 'string' || typeof e.newString !== 'string') {
-      return { ok: false, failedEditIndex: i, error: `edit[${i}]: oldString and newString must be strings` };
+      return { ok: false, failedEditIndex: i, error: t('tools.editEntryStringsInvalid', { index: i }) };
     }
     if (e.oldString === e.newString) {
-      return { ok: false, failedEditIndex: i, error: `edit[${i}]: oldString and newString are identical` };
+      return { ok: false, failedEditIndex: i, error: t('tools.editIdenticalStrings', { index: i }) };
     }
     if (e.oldString === '') {
-      return { ok: false, failedEditIndex: i, error: `edit[${i}]: oldString cannot be empty` };
+      return { ok: false, failedEditIndex: i, error: t('tools.editEmptyOldString', { index: i }) };
     }
     const replaceAll = e.replaceAll ?? false;
     const loc = fuzzyLocate(current, e.oldString, fuzzyEnabled, replaceAll);
     if (!loc) {
       const occ = countOccurrences(current, e.oldString);
-      const reason = occ === 0 ? 'not found' : `not unique (${occ} occurrences)`;
-      return { ok: false, failedEditIndex: i, error: `edit[${i}]: oldString ${reason}` };
+      const error = occ === 0
+        ? t('tools.editOldStringNotFound', { index: i })
+        : t('tools.editOldStringNotUnique', { index: i, count: occ });
+      return { ok: false, failedEditIndex: i, error };
     }
     if (replaceAll) {
       current = current.split(loc.alignedOld).join(e.newString);
@@ -289,7 +291,7 @@ async function editOneFile(
 
   // 2. 存在性
   if (!existsSync(absPath)) {
-    result.error = `file not found: ${absPath}`;
+    result.error = t('tools.editFileNotFound', { path: absPath });
     return result;
   }
 
@@ -307,7 +309,7 @@ async function editOneFile(
   const fileHistory = getFileHistory(ctx);
   if (toolConfig.requireReadBeforeOverwrite && fileHistory) {
     if (!fileHistory.isRead(ctx.sessionId, absPath)) {
-      result.error = `${t('tools.readBeforeOverwriteRequired', { path: absPath })}\n请先调用 read 工具读取该文件，再执行 edit。`;
+      result.error = `${t('tools.readBeforeOverwriteRequired', { path: absPath })}\n${t('tools.editReadFirstHint')}`;
       return result;
     }
   }
@@ -318,14 +320,14 @@ async function editOneFile(
   try {
     const entity = filesys.readFile(absPath);
     if (!entity) {
-      result.error = `file not found: ${absPath}`;
+      result.error = t('tools.editFileNotFound', { path: absPath });
       return result;
     }
     // 全项目统一哈希规范：sha256 对磁盘原始字节（含 BOM）计算（修复 BOM 文件乐观锁断裂 bug）
     diskHashBefore = entity.sha256;
     content = stripBom(entity.rawBuffer.toString('utf8'));
   } catch (err) {
-    result.error = `Error reading file: ${err instanceof Error ? err.message : err}`;
+    result.error = t('tools.editReadError', { reason: err instanceof Error ? err.message : String(err) });
     return result;
   }
 
@@ -395,11 +397,11 @@ async function editOneFile(
       createDirs: false,
     });
   } catch (err) {
-    result.error = `Error writing file: ${err instanceof Error ? err.message : err}`;
+    result.error = t('tools.editWriteError', { reason: err instanceof Error ? err.message : String(err) });
     return result;
   }
   if (!writeResult.ok) {
-    result.error = `Error writing file: ${writeResult.message}`;
+    result.error = t('tools.editWriteError', { reason: writeResult.message });
     return result;
   }
 
@@ -471,7 +473,7 @@ export default {
       // 模式 C：多文件批量
       if (p.files.length > toolConfig.maxFiles) {
         return {
-          content: [{ type: 'text', text: `Error: files array exceeds maxFiles (${toolConfig.maxFiles})` }],
+          content: [{ type: 'text', text: `Error: ${t('tools.editFilesExceedMax', { max: toolConfig.maxFiles })}` }],
           isError: true,
         };
       }
@@ -481,7 +483,7 @@ export default {
       // 模式 B：单文件批量
       if (p.edits.length > toolConfig.maxEditsPerFile) {
         return {
-          content: [{ type: 'text', text: `Error: edits array exceeds maxEditsPerFile (${toolConfig.maxEditsPerFile})` }],
+          content: [{ type: 'text', text: `Error: ${t('tools.editEditsExceedMax', { max: toolConfig.maxEditsPerFile })}` }],
           isError: true,
         };
       }
@@ -496,7 +498,7 @@ export default {
       expectHash = p.expectHash;
     } else {
       return {
-        content: [{ type: 'text', text: 'Error: must provide (path+oldString+newString) or (path+edits) or (files)' }],
+        content: [{ type: 'text', text: `Error: ${t('tools.editMissingParams')}` }],
         isError: true,
       };
     }
@@ -504,11 +506,11 @@ export default {
     // 基础校验
     for (const fe of fileEdits) {
       if (!fe.path) {
-        return { content: [{ type: 'text', text: 'Error: path is required' }], isError: true };
+        return { content: [{ type: 'text', text: `Error: ${t('tools.editPathRequired')}` }], isError: true };
       }
       for (const e of fe.edits) {
         if (typeof e.oldString !== 'string' || typeof e.newString !== 'string') {
-          return { content: [{ type: 'text', text: 'Error: oldString and newString must be strings' }], isError: true };
+          return { content: [{ type: 'text', text: `Error: ${t('tools.editStringsMustBeStrings')}` }], isError: true };
         }
       }
     }
@@ -525,11 +527,17 @@ export default {
       const fuzzyNote = nonExactLevels.length > 0
         ? `\n[${t('tools.fuzzyMatchUsed', { level: nonExactLevels.join(',') })}]`
         : '';
+      const replacementsDesc = t(
+        r.replacements > 1 ? 'tools.editReplacementsMany' : 'tools.editReplacementsOne',
+        { count: r.replacements },
+      );
       const summary = r.dryRun
-        ? `${t('tools.dryRunPreview')}: ${r.path} (${r.replacements} replacement${r.replacements > 1 ? 's' : ''})`
-        : `Successfully edited ${r.path} (${r.replacements} replacement${r.replacements > 1 ? 's' : ''})`;
+        ? `${t('tools.dryRunPreview')}: ${r.path} (${replacementsDesc})`
+        : t('tools.editSuccess', { path: r.path, replacements: replacementsDesc });
       const diffSection = r.diff ? `\n\n--- unified diff ---\n${r.diff}` : '';
-      const backupNote = r.backedUp && r.entryId ? `\n[backup created, entryId: ${r.entryId}]` : '';
+      const backupNote = r.backedUp && r.entryId
+        ? `\n[${t('tools.editBackupCreated', { entryId: r.entryId })}]`
+        : '';
 
       return {
         content: [{ type: 'text', text: summary + fuzzyNote + diffSection + backupNote }],
@@ -572,15 +580,19 @@ export default {
     if (failed.length > 0) {
       lines.push(t('tools.multiEditPartialFailure', { failed: failed.length, success: succeeded.length }));
     } else {
-      lines.push(`Successfully edited ${succeeded.length} file(s).`);
+      lines.push(t('tools.editMultiSuccess', { count: succeeded.length }));
     }
     lines.push('');
-    lines.push('Succeeded:');
+    lines.push(t('tools.editSucceededLabel'));
     for (const r of succeeded) {
       const nonExact = r.fuzzyLevels.filter((l) => l !== 'exact');
-      const fuzzy = nonExact.length > 0 ? ` [fuzzy: ${nonExact.join(',')}]` : '';
-      const dryTag = r.dryRun ? ' [dry-run]' : '';
-      lines.push(`  - ${r.path} (${r.replacements} replacement${r.replacements > 1 ? 's' : ''})${fuzzy}${dryTag}`);
+      const fuzzy = nonExact.length > 0 ? ` [${t('tools.editFuzzyTag', { levels: nonExact.join(',') })}]` : '';
+      const dryTag = r.dryRun ? ` [${t('tools.editDryRunTag')}]` : '';
+      const replDesc = t(
+        r.replacements > 1 ? 'tools.editReplacementsMany' : 'tools.editReplacementsOne',
+        { count: r.replacements },
+      );
+      lines.push(`  - ${r.path} (${replDesc})${fuzzy}${dryTag}`);
       if (r.diff) {
         lines.push('    --- diff ---');
         lines.push(r.diff.split('\n').map((l) => '    ' + l).join('\n'));
@@ -588,7 +600,7 @@ export default {
     }
     if (failed.length > 0) {
       lines.push('');
-      lines.push('Failed:');
+      lines.push(t('tools.editFailedLabel'));
       for (const r of failed) {
         lines.push(`  - ${r.path}: ${r.error}`);
       }

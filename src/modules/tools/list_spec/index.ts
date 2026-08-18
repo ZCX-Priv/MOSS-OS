@@ -2,6 +2,7 @@
 // list_spec 工具 execute 逻辑：列出所有可用的 spec 规范文件，以文件树形式展示。
 // 元数据见同目录 tool.json。
 
+import { t } from '../../../core/i18n';
 import type { ToolContext, ToolResult } from '../types';
 import { ServiceNames } from '../../../core/types';
 import type { Spec, SpecRegistry } from '../get_spec/registry';
@@ -11,7 +12,7 @@ export default {
     const reg = ctx.services.tryResolve<SpecRegistry>(ServiceNames.SPEC_REGISTRY);
     if (!reg) {
       return {
-        content: [{ type: 'text', text: 'Error: spec registry not available' }],
+        content: [{ type: 'text', text: `Error: ${t('tools.listSpecRegistryUnavailable')}` }],
         isError: true,
       };
     }
@@ -20,7 +21,7 @@ export default {
     if (specs.length === 0) {
       return {
         content: [
-          { type: 'text', text: '(no specs available. Add .md files to agent/prompts/main/spec/)' },
+          { type: 'text', text: t('tools.listSpecNoSpecs') },
         ],
         metadata: { count: 0 },
       };
@@ -85,7 +86,7 @@ function renderNode(node: TreeNode, prefix: string, lines: string[]): void {
 
     const hasChildren = child.children.size > 0;
     if (child.spec) {
-      const desc = child.spec.description || '(no description)';
+      const desc = child.spec.description || t('tools.listSpecNoDescription');
       lines.push(`${prefix}${connector}${child.name}.md — ${desc}`);
       if (hasChildren) {
         renderNode(child, childPrefix, lines);

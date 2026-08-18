@@ -43,10 +43,10 @@ export default {
 
     // 1. 基础参数校验
     if (!p.path) {
-      return errorResult('path is required');
+      return errorResult(t('tools.writePathRequired'));
     }
     if (typeof p.content !== 'string') {
-      return errorResult('content must be a string');
+      return errorResult(t('tools.writeContentString'));
     }
 
     // 2. 路径解析与越权检测（filesys roots 机制）
@@ -87,7 +87,7 @@ export default {
         return {
           content: [{
             type: 'text',
-            text: `Error: ${t('tools.readBeforeOverwriteRequired', { path: absPath })}\n请先调用 read 工具读取该文件，再执行 write 覆盖。`,
+            text: `Error: ${t('tools.readBeforeOverwriteRequired', { path: absPath })}\n${t('tools.writeReadFirst')}`,
           }],
           isError: true,
         };
@@ -121,7 +121,7 @@ export default {
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      return errorResult(`Error writing file: ${msg}`);
+      return errorResult(t('tools.writeError', { message: msg }));
     }
 
     // 8. 记录历史条目（写入 transcript）
@@ -139,9 +139,11 @@ export default {
     // 9. 返回丰富结果
     ctx.logger.info(t('tools.fileWritten', { path: absPath }), { bytes: writeResult.bytes, operation: writeResult.operation });
 
-    const summary = `Successfully ${writeResult.operation === 'create' ? 'created' : 'overwrote'} ${absPath} (${writeResult.bytes} bytes)`;
+    const summary = writeResult.operation === 'create'
+      ? t('tools.writeCreated', { path: absPath, bytes: writeResult.bytes })
+      : t('tools.writeOverwrote', { path: absPath, bytes: writeResult.bytes });
     const diffSection = writeResult.diff ? `\n\n--- unified diff ---\n${writeResult.diff}` : '';
-    const backupNote = trackResult?.backedUp ? `\n[backup created: ${trackResult.backupPath}]` : '';
+    const backupNote = trackResult?.backedUp ? t('tools.writeBackupNote', { path: trackResult.backupPath ?? '' }) : '';
 
     return {
       content: [{ type: 'text', text: summary + diffSection + backupNote }],

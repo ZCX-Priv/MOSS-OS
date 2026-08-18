@@ -5,7 +5,7 @@
 //   - 静态：export default { execute: async (params, ctx) => {...} }
 //   - 工厂：export default function createExecute(env) { return { execute: ... } }
 
-import { t } from '../../core/i18n';
+import { t, getBackendLocale } from '../../core/i18n';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Environment, Logger } from '../../core/types';
@@ -28,6 +28,8 @@ export interface ToolConfigManifest {
 export interface ToolManifest {
   name: string;
   description: string;
+  /** 英文描述（可选；en locale 时替代 description） */
+  description_en?: string;
   icon?: string;
   annotations?: ToolAnnotations;
   inputSchema: JSONSchema;
@@ -123,6 +125,7 @@ export async function loadToolFromDir(
   const tool: Tool = {
     name: manifest.name,
     description: manifest.description,
+    descriptionEn: manifest.description_en,
     inputSchema: manifest.inputSchema,
     annotations: manifest.annotations,
     icon: manifest.icon,
@@ -133,6 +136,46 @@ export async function loadToolFromDir(
   };
 
   return tool;
+}
+
+// ============================================================================
+// 工具文本 locale 解析（description / inputSchema 的双语字段）
+// ============================================================================
+
+/**
+ * 按当前后端 locale 解析工具描述：en 且存在 descriptionEn 时返回英文，否则中文默认。
+ * 每次调用 live 读取 locale（config 变更后下一次 run/请求即生效）。
+ */
+export function localizeDescription(tool: Pick<Tool, 'description' | 'descriptionEn'>): string {
+  return getBackendLocale() === 'en' && tool.descriptionEn ? tool.descriptionEn : tool.description;
+}
+
+/** 递归复制 schema 节点：en locale 用 description_en 替换 description，并剥离 description_en 自定义字段 */
+function localizeValue(value: unknown, useEn: boolean): unknown {
+  if (Array.isArray(value)) {
+    return value.map((v) => localizeValue(v, useEn));
+  }
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = localizeValue(v, useEn);
+    }
+    const en = out.description_en;
+    if (typeof en === 'string' && useEn) {
+      out.description = en;
+    }
+    delete out.description_en;
+    return out;
+  }
+  return value;
+}
+
+/**
+ * 按当前后端 locale 解析 inputSchema：返回新对象（不污染原始 manifest），
+ * 无论 locale 都剥离 description_en 键（保证发给 LLM 的 schema 无自定义字段）。
+ */
+export function localizeSchema(schema: JSONSchema): JSONSchema {
+  return localizeValue(schema, getBackendLocale() === 'en') as JSONSchema;
 }
 
 /**

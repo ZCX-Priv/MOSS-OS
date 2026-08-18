@@ -92,7 +92,7 @@ export interface Session {
 
 export interface AppConfig {
   version: number;
-  server: { host: string; port: number; autoPort: boolean };
+  server: { host: string; port: number; autoPort: boolean; locale?: string };
   daemon: { enabled: boolean; logLevel: string };
   update: { autoCheck: boolean; channel: 'stable' | 'beta'; checkIntervalHours: number };
   agent: { defaultModel: string; maxTokens: number; maxTurns: number; workingDirectory: string };

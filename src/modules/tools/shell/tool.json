@@ -1,6 +1,7 @@
 {
   "name": "shell",
   "description": "执行 shell 命令并返回 stdout、stderr 和退出码。默认超时 30 秒。使用 cwd 设置工作目录，shell 指定 shell 类型（Windows 默认 cmd 可选 powershell，POSIX 默认 bash）。警告：此工具以用户权限执行任意命令。",
+  "description_en": "Execute a shell command and return stdout, stderr and exit code. Default timeout is 30 seconds. Use cwd to set the working directory and shell to pick the shell type (Windows defaults to cmd with powershell optional; POSIX defaults to bash). Warning: this tool executes arbitrary commands with user privileges.",
   "icon": "terminal",
   "annotations": {
     "destructiveHint": true,
@@ -11,36 +12,57 @@
     "properties": {
       "command": {
         "type": "string",
-        "description": "要执行的 shell 命令"
+        "description": "要执行的 shell 命令",
+        "description_en": "The shell command to execute"
       },
       "cwd": {
         "type": "string",
-        "description": "命令的工作目录（默认：agent 工作目录）"
+        "description": "命令的工作目录（默认：agent 工作目录）",
+        "description_en": "Working directory for the command (default: agent working directory)"
       },
       "timeout": {
         "type": "integer",
         "description": "超时时间（毫秒，默认 30000）。",
+        "description_en": "Timeout in milliseconds (default 30000).",
         "minimum": 1000,
         "maximum": 600000
       },
       "env": {
         "type": "object",
         "description": "额外的环境变量（与 process.env 合并）。",
-        "additionalProperties": { "type": "string" }
+        "description_en": "Additional environment variables (merged with process.env).",
+        "additionalProperties": {
+          "type": "string"
+        }
       },
       "shell": {
         "type": "string",
-        "enum": ["cmd", "powershell", "bash"],
-        "description": "指定使用的 shell。Windows 默认 cmd（可选 powershell），macOS/Linux 默认 bash。"
+        "enum": [
+          "cmd",
+          "powershell",
+          "bash"
+        ],
+        "description": "指定使用的 shell。Windows 默认 cmd（可选 powershell），macOS/Linux 默认 bash。",
+        "description_en": "Which shell to use. Windows defaults to cmd (powershell optional); macOS/Linux defaults to bash."
       }
     },
-    "required": ["command"],
+    "required": [
+      "command"
+    ],
     "additionalProperties": false
   },
   "config": {
-    "defaults": { "enabled": true, "timeout": 30000, "requireConfirmation": true },
+    "defaults": {
+      "enabled": true,
+      "timeout": 30000,
+      "requireConfirmation": true
+    },
     "schema": {
-      "timeout": { "type": "integer", "min": 1000, "max": 600000 }
+      "timeout": {
+        "type": "integer",
+        "min": 1000,
+        "max": 600000
+      }
     }
   }
 }

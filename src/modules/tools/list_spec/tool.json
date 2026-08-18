@@ -1,6 +1,7 @@
 {
   "name": "list_spec",
   "description": "以树形结构列出所有可用的规范文件。规范位于 agent/prompts/main/spec/ 下，可组织在子文件夹中。每个 spec id 是其相对路径（不含 .md 扩展名，如 \"coding/typescript\"）。先使用此工具发现可用规范，再用 get_spec 读取。",
+  "description_en": "List all available spec files as a tree. Specs live under agent/prompts/main/spec/ and may be organized in subfolders. Each spec id is its relative path (without .md extension), e.g. \"coding/typescript\". Use this tool to discover available specs, then get_spec to read one.",
   "icon": "book-open",
   "annotations": {
     "readOnlyHint": true,
@@ -12,7 +13,9 @@
     "additionalProperties": false
   },
   "config": {
-    "defaults": { "enabled": true },
+    "defaults": {
+      "enabled": true
+    },
     "schema": {}
   }
 }

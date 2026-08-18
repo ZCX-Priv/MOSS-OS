@@ -10,6 +10,7 @@ import i18n from '../i18n';
 import type { Locale } from '../i18n';
 import { DEFAULT_LOCALE, LOCALE_STORAGE_KEY } from '../i18n';
 import { idbGetSync, idbSet } from '../utils/idb';
+import { syncBackendLocale } from '../hooks/useLocale';
 
 interface I18nContextValue {
   locale: Locale;
@@ -34,12 +35,13 @@ function getInitialLocale(): Locale {
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [locale, setLocaleState] = useState<Locale>(getInitialLocale);
 
-  // 挂载时同步 DOM lang 属性与 i18n 实例
+  // 挂载/切换时同步 DOM lang 属性、i18n 实例与后端 locale（幂等：后端一致时不写入）
   useEffect(() => {
     document.documentElement.lang = locale;
     if (i18n.language !== locale) {
       void i18n.changeLanguage(locale);
     }
+    void syncBackendLocale(locale);
   }, [locale]);
 
   const setLocale = useCallback((newLocale: Locale) => {

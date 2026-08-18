@@ -280,7 +280,7 @@ function Sidebar({
             className={cn(
               "absolute inset-y-0 z-20 hidden w-1.5 cursor-col-resize touch-none select-none md:block",
               "after:absolute after:inset-y-0 after:start-1/2 after:w-[2px] after:-translate-x-1/2 after:bg-transparent after:transition-colors hover:after:bg-sidebar-border",
-              side === "left" ? "right-0" : "left-0"
+              side === "left" ? "-right-[3px]" : "-left-[3px]"
             )}
           />
         )}

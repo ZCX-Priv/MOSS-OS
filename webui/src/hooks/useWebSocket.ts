@@ -398,6 +398,7 @@ export function useWebSocket(): void {
             timestamp: new Date().toISOString(),
           });
           s.setGenerating(sessionId, false);
+          s.setTaskError(sessionId, true);
           pendingAssistant.delete(sessionId);
         }
         toast.error(localizedMessage);

@@ -15,6 +15,8 @@ import { useStore } from '../store';
 import { wsClient } from '../api/ws';
 import { api } from '../api/http';
 import { pendingAssistant, pendingRunId } from '../lib/pending-assistant';
+import { resolveWorkingDirectoryName } from '../lib/utils';
+import i18n from '../i18n';
 import type { AskOutcome, TaskMessage } from '../types/api';
 
 function genId(): string {
@@ -23,6 +25,24 @@ function genId(): string {
 
 function genRunId(): string {
   return `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/**
+ * 目录→分组：按名查找（大小写不敏感，兼容 Windows 目录）已有分组，无则自动创建。
+ * 查服务端而非 store.taskGroups——避免列表未加载时误建重复组。
+ * 失败返回 undefined（任务落默认分组，不阻断发消息）。
+ */
+async function ensureTaskGroup(name: string): Promise<string | undefined> {
+  try {
+    const { groups } = await api.listTaskGroups();
+    const found = groups.find((g) => g.name.toLowerCase() === name.toLowerCase());
+    if (found) return found.id;
+    const created = await api.createTaskGroup(name);
+    useStore.getState().addTaskGroup(created);
+    return created.id;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -78,8 +98,12 @@ export function useTask() {
           sessionId = existingTask?.sessionId ?? existingTask?.id ?? taskId;
         } else {
           // 新任务：先创建 task，获取 task.id 作为 sessionId
+          // 目标分组按当前工作目录派生：文件夹名（D:\test → test）/ 本机模式 → "本机"组；不存在自动创建
+          const groupName =
+            resolveWorkingDirectoryName(state.workingDirectory) ?? i18n.t('directoryPicker.system');
+          const groupId = await ensureTaskGroup(groupName);
           try {
-            const task = await api.createTask(content.slice(0, 50));
+            const task = await api.createTask(content.slice(0, 50), groupId);
             addTask(task);
             taskId = task.id;
             sessionId = task.sessionId ?? task.id;

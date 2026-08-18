@@ -52,14 +52,14 @@ export default {
     const p = params as CopyParams;
 
     if (p.source && p.sources) {
-      return errorResult('"source" and "sources" are mutually exclusive. Provide only one.');
+      return errorResult(t('tools.copySourceExclusive'));
     }
     const inputSources = p.sources ?? (p.source ? [p.source] : []);
     if (inputSources.length === 0) {
-      return errorResult('at least one of "source" or "sources" is required');
+      return errorResult(t('tools.copySourceRequired'));
     }
     if (!p.dest) {
-      return errorResult('"dest" is required');
+      return errorResult(t('tools.copyDestRequired'));
     }
 
     const overwrite = p.overwrite ?? 'error';
@@ -92,9 +92,14 @@ export default {
     }
 
     if (dryRun) {
-      const lines = dryRunList.map((d) => `  • ${d.source} → ${d.dest} (${d.type}, ${d.bytes} bytes)`);
+      const lines = dryRunList.map((d) => t('tools.copyDryRunLine', {
+        source: d.source,
+        dest: d.dest,
+        type: t(d.type === 'directory' ? 'tools.copyTypeDirectory' : 'tools.copyTypeFile'),
+        bytes: d.bytes,
+      }));
       return {
-        content: [{ type: 'text', text: `[dryRun] No files copied. Would copy ${dryRunList.length} item(s):\n${lines.join('\n')}` }],
+        content: [{ type: 'text', text: `${t('tools.copyDryRunSummary', { count: dryRunList.length })}\n${lines.join('\n')}` }],
         metadata: { dryRun: true, wouldCopy: dryRunList },
       };
     }
@@ -102,7 +107,7 @@ export default {
     const okCount = results.filter((r) => r.success).length;
     const failCount = results.length - okCount;
     const lines = results.map((r) => `  ${r.success ? '✓' : '✗'} ${r.source} → ${r.dest}: ${r.message}`);
-    const summary = `Copied ${okCount}/${results.length}${failCount > 0 ? `, failed: ${failCount}` : ''}`;
+    const summary = `${t('tools.copySummary', { ok: okCount, total: results.length })}${failCount > 0 ? t('tools.copyFailedSuffix', { count: failCount }) : ''}`;
 
     return {
       content: [{ type: 'text', text: `${summary}\n${lines.join('\n')}` }],
@@ -131,25 +136,25 @@ async function copySingle(
   // a. 源解析（roots）
   const sourceAbs = filesys.resolve(rawSource, ctx.cwd);
   if (!sourceAbs) {
-    return { source: rawSource, dest: destAbs, success: false, message: 'source escapes allowed roots' };
+    return { source: rawSource, dest: destAbs, success: false, message: t('tools.copySourceEscapesRoots') };
   }
   if (!existsSync(sourceAbs)) {
-    return { source: sourceAbs, dest: destAbs, success: false, message: 'source not found' };
+    return { source: sourceAbs, dest: destAbs, success: false, message: t('tools.copySourceNotFound') };
   }
 
   // b. 安全防护
   const realSource = realpathSafe(sourceAbs);
   if (!isPathInside(realSource, ctx.cwd)) {
-    return { source: sourceAbs, dest: destAbs, success: false, message: 'symlink traversal detected' };
+    return { source: sourceAbs, dest: destAbs, success: false, message: t('tools.copySymlinkTraversal') };
   }
   if (isRootPath(sourceAbs) || isRootPath(destAbs)) {
-    return { source: sourceAbs, dest: destAbs, success: false, message: 'refused to copy root path' };
+    return { source: sourceAbs, dest: destAbs, success: false, message: t('tools.copyRootRefused') };
   }
   if (containsVcsMarker(sourceAbs) || containsVcsMarker(destAbs)) {
-    return { source: sourceAbs, dest: destAbs, success: false, message: 'dev vault protection: path contains VCS marker (.git/.svn/.hg)' };
+    return { source: sourceAbs, dest: destAbs, success: false, message: t('tools.copyVcsProtected') };
   }
   if (isPathInside(destAbs, sourceAbs)) {
-    return { source: sourceAbs, dest: destAbs, success: false, message: 'cannot copy a directory into itself' };
+    return { source: sourceAbs, dest: destAbs, success: false, message: t('tools.copyIntoItself') };
   }
 
   const sourceStat = statSync(realSource);
@@ -161,7 +166,7 @@ async function copySingle(
     if (dirBytes > MAX_DIR_BYTES) {
       return {
         source: sourceAbs, dest: destAbs, success: false,
-        message: `directory too large (${dirBytes} bytes > ${MAX_DIR_BYTES} limit). Use shell tool instead.`,
+        message: t('tools.copyDirTooLarge', { bytes: dirBytes, limit: MAX_DIR_BYTES }),
       };
     }
   }
@@ -172,14 +177,14 @@ async function copySingle(
   const destExists = existsSync(destAbs);
   const destIsDir = destExists && statSync(destAbs).isDirectory();
   if (multiSource && !destIsDir) {
-    return { source: sourceAbs, dest: destAbs, success: false, message: 'multi-source mode requires dest to be an existing directory' };
+    return { source: sourceAbs, dest: destAbs, success: false, message: t('tools.copyMultiSourceDestDir') };
   }
   if (destIsDir) {
     finalDest = join(destAbs, basename(sourceAbs));
   }
   if (existsSync(finalDest)) {
     if (overwrite === 'error') {
-      return { source: sourceAbs, dest: finalDest, success: false, message: `destination already exists: ${finalDest} (use overwrite="rename"/"overwrite")` };
+      return { source: sourceAbs, dest: finalDest, success: false, message: t('tools.copyDestExists', { path: finalDest }) };
     }
     if (overwrite === 'rename') {
       finalDest = findNonConflictingPath(finalDest);
@@ -189,7 +194,7 @@ async function copySingle(
 
   if (dryRun) {
     dryRunList.push({ source: sourceAbs, dest: finalDest, type: isDir ? 'directory' : 'file', bytes });
-    return { source: sourceAbs, dest: finalDest, success: true, message: '[dryRun] would copy' };
+    return { source: sourceAbs, dest: finalDest, success: true, message: t('tools.copyDryRunWouldCopy') };
   }
 
   // d. 覆盖前备份已存在目标（支持 undo 恢复被覆盖内容）
@@ -214,7 +219,7 @@ async function copySingle(
     }
     copyRecursive(realSource, finalDest);
   } catch (err) {
-    return { source: sourceAbs, dest: finalDest, success: false, message: `copy failed: ${err instanceof Error ? err.message : String(err)}` };
+    return { source: sourceAbs, dest: finalDest, success: false, message: t('tools.copyFailed', { message: err instanceof Error ? err.message : String(err) }) };
   }
 
   // f. file-history：副本登记 create 条目（undo = 删除副本；复制产物在复制前不存在）
@@ -257,7 +262,9 @@ async function copySingle(
     source: sourceAbs,
     dest: finalDest,
     success: true,
-    message: `copied${renamedToAvoidConflict ? ' (renamed to avoid conflict)' : ''}, undo removes the copy`,
+    message: t('tools.copySuccess', {
+      renamed: renamedToAvoidConflict ? t('tools.copyRenamedNote') : '',
+    }),
     bytes,
     isDirectory: isDir,
     renamedToAvoidConflict,

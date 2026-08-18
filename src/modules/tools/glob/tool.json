@@ -1,6 +1,7 @@
 {
   "name": "glob",
   "description": "按 glob 模式查找文件。支持多 pattern 合并（数组）、{a,b} 大括号展开、! 否定模式、** 任意深度、? 单字符、[abc] 字符类；支持按文件类型过滤（type）、mtime 降序排序（最近修改优先）、offset 分页。默认尊重 .gitignore/.ignore 并跳过隐藏文件与 node_modules/dist/build 等目录。",
+  "description_en": "Find files by glob pattern. Supports multiple patterns merged (array), {a,b} brace expansion, ! negation, ** any depth, ? single char, [abc] character classes; filter by file type (type), mtime descending sort (most recently modified first), offset pagination. Respects .gitignore/.ignore by default and skips hidden files and node_modules/dist/build directories.",
   "icon": "folder-search",
   "annotations": {
     "readOnlyHint": true,
@@ -11,52 +12,72 @@
     "properties": {
       "pattern": {
         "anyOf": [
-          { "type": "string", "description": "glob 模式，如 \"**/*.ts\"、\"src/**/*.{json,md}\"、\"!**/*.test.ts\"（! 开头为排除过滤）" },
+          {
+            "type": "string",
+            "description": "glob 模式，如 \"**/*.ts\"、\"src/**/*.{json,md}\"、\"!**/*.test.ts\"（! 开头为排除过滤）",
+            "description_en": "Glob pattern, e.g. \"**/*.ts\", \"src/**/*.{json,md}\", \"!**/*.test.ts\" (leading ! means exclusion filter)"
+          },
           {
             "type": "array",
-            "items": { "type": "string" },
-            "description": "多个 glob 模式，正模式取并集、! 开头负模式从并集中排除，如 [\"**/*.ts\",\"**/*.tsx\",\"!**/*.test.*\"]"
+            "items": {
+              "type": "string"
+            },
+            "description": "多个 glob 模式，正模式取并集、! 开头负模式从并集中排除，如 [\"**/*.ts\",\"**/*.tsx\",\"!**/*.test.*\"]",
+            "description_en": "Multiple glob patterns: positive patterns are unioned, !-prefixed negative patterns are excluded from the union, e.g. [\"**/*.ts\",\"**/*.tsx\",\"!**/*.test.*\"]"
           }
         ]
       },
       "path": {
         "type": "string",
-        "description": "搜索的根目录（默认：agent 工作目录）。绝对或相对路径"
+        "description": "搜索的根目录（默认：agent 工作目录）。绝对或相对路径",
+        "description_en": "Root directory to search (default: agent working directory). Absolute or relative path"
       },
       "type": {
         "type": "string",
-        "description": "按文件类型过滤（等价 rg --type）：ts/js/py/rust/go/java/kotlin/c/cpp/cs/rb/php/swift/md/json/yaml/toml/css/scss/less/html/vue/svelte/sh/bat/sql/xml/astro/graphql。比手写 glob 更不易漏扩展名"
+        "description": "按文件类型过滤（等价 rg --type）：ts/js/py/rust/go/java/kotlin/c/cpp/cs/rb/php/swift/md/json/yaml/toml/css/scss/less/html/vue/svelte/sh/bat/sql/xml/astro/graphql。比手写 glob 更不易漏扩展名",
+        "description_en": "Filter by file type (equivalent to rg --type): ts/js/py/rust/go/java/kotlin/c/cpp/cs/rb/php/swift/md/json/yaml/toml/css/scss/less/html/vue/svelte/sh/bat/sql/xml/astro/graphql. Less error-prone than hand-written extension globs"
       },
       "maxResults": {
         "type": "integer",
         "description": "最多返回的结果数（默认 200，最大 1000）。",
+        "description_en": "Maximum number of results to return (default 200, max 1000).",
         "minimum": 1,
         "maximum": 1000
       },
       "offset": {
         "type": "integer",
         "description": "分页偏移量（默认 0）。结果截断时配合使用可翻页",
+        "description_en": "Pagination offset (default 0). Use together when results are truncated to page through them",
         "minimum": 0
       },
       "includeDirs": {
         "type": "boolean",
-        "description": "结果中包含匹配的目录（默认 false，仅文件）"
+        "description": "结果中包含匹配的目录（默认 false，仅文件）",
+        "description_en": "Include matching directories in results (default false, files only)"
       },
       "noIgnore": {
         "type": "boolean",
-        "description": "不尊重 .gitignore/.ignore 且不跳过 node_modules/dist/build 等默认忽略目录（默认 false）。查找构建产物/依赖时使用"
+        "description": "不尊重 .gitignore/.ignore 且不跳过 node_modules/dist/build 等默认忽略目录（默认 false）。查找构建产物/依赖时使用",
+        "description_en": "Do not respect .gitignore/.ignore and do not skip default ignored directories such as node_modules/dist/build (default false). Use when looking for build artifacts/dependencies"
       },
       "dot": {
         "type": "boolean",
-        "description": "包含隐藏文件/目录（. 开头，默认 false）"
+        "description": "包含隐藏文件/目录（. 开头，默认 false）",
+        "description_en": "Include hidden files/directories (dot-prefixed, default false)"
       },
       "sortBy": {
         "type": "string",
-        "enum": ["mtime", "path"],
-        "description": "排序方式：mtime=修改时间降序（默认，最近修改优先）；path=字典序"
+        "enum": [
+          "mtime",
+          "path"
+        ],
+        "description": "排序方式：mtime=修改时间降序（默认，最近修改优先）；path=字典序",
+        "description_en": "Sort order: mtime=modification time descending (default, most recent first); path=lexicographic"
       }
     },
-    "required": ["pattern"],
+    "required": [
+      "pattern"
+    ],
     "additionalProperties": false
   },
   "config": {
@@ -66,8 +87,14 @@
       "maxResults": 200
     },
     "schema": {
-      "respectGitignore": { "type": "boolean", "description": "是否默认尊重 .gitignore（false 等同全局 noIgnore）" },
-      "maxResults": { "type": "integer", "description": "默认返回结果数上限（1-1000）" }
+      "respectGitignore": {
+        "type": "boolean",
+        "description": "是否默认尊重 .gitignore（false 等同全局 noIgnore）"
+      },
+      "maxResults": {
+        "type": "integer",
+        "description": "默认返回结果数上限（1-1000）"
+      }
     }
   }
 }

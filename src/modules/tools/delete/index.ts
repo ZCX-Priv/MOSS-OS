@@ -58,14 +58,14 @@ export default {
     // 1. 参数解析：path 与 paths 互斥，至少提供一个
     if (p.path && p.paths) {
       return {
-        content: [{ type: 'text', text: 'Error: "path" and "paths" are mutually exclusive. Provide only one.' }],
+        content: [{ type: 'text', text: `Error: ${t('tools.deletePathExclusive')}` }],
         isError: true,
       };
     }
     const inputPaths = p.paths ?? (p.path ? [p.path] : []);
     if (inputPaths.length === 0) {
       return {
-        content: [{ type: 'text', text: 'Error: at least one of "path" or "paths" is required' }],
+        content: [{ type: 'text', text: `Error: ${t('tools.deletePathRequired')}` }],
         isError: true,
       };
     }
@@ -104,13 +104,18 @@ export default {
     // dryRun 模式：返回清单不执行
     if (dryRun) {
       const lines = dryRunList.map(
-        (d) => `  • ${d.path} (${d.type}, ${d.bytes} bytes) → ${d.action}`,
+        (d) => t('tools.deleteDryRunLine', {
+          path: d.path,
+          type: t(d.type === 'directory' ? 'tools.deleteTypeDirectory' : 'tools.deleteTypeFile'),
+          bytes: d.bytes,
+          action: d.action,
+        }),
       );
       return {
         content: [
           {
             type: 'text',
-            text: `[dryRun] No files deleted. Would affect ${dryRunList.length} item(s), total ${totalBytes} bytes:\n${lines.join('\n')}`,
+            text: `${t('tools.deleteDryRunSummary', { count: dryRunList.length, bytes: totalBytes })}\n${lines.join('\n')}`,
           },
         ],
         metadata: { dryRun: true, wouldDelete: dryRunList, totalBytes },
@@ -125,7 +130,13 @@ export default {
     const backedUpCount = results.filter((r) => r.backedUp).length;
 
     const lines = results.map((r) => `  ${r.success ? '✓' : '✗'} ${r.absPath}: ${r.message}`);
-    const summary = `Deleted ${successCount}/${results.length} (trashed: ${trashedCount}, hardDeleted: ${hardDeletedCount}, backedUp: ${backedUpCount})${failCount > 0 ? `, failed: ${failCount}` : ''}`;
+    const summary = `${t('tools.deleteSummary', {
+      ok: successCount,
+      total: results.length,
+      trashed: trashedCount,
+      hardDeleted: hardDeletedCount,
+      backedUp: backedUpCount,
+    })}${failCount > 0 ? t('tools.deleteFailedSuffix', { count: failCount }) : ''}`;
 
     return {
       content: [{ type: 'text', text: `${summary}\n${lines.join('\n')}` }],
@@ -154,12 +165,12 @@ async function deleteSingle(
   // a. 路径越权校验（filesys roots 机制）
   const absPath = filesys ? filesys.resolve(rawPath, ctx.cwd) : null;
   if (!absPath) {
-    return { absPath: rawPath, success: false, message: `path escapes allowed roots` };
+    return { absPath: rawPath, success: false, message: t('tools.deletePathEscapesRoots') };
   }
 
   // b. 存在性校验
   if (!existsSync(absPath)) {
-    return { absPath, success: false, message: `path not found` };
+    return { absPath, success: false, message: t('tools.deletePathNotFound') };
   }
 
   // c. symlink 遍历防护：realpath 解析后必须仍在 cwd 内
@@ -168,7 +179,7 @@ async function deleteSingle(
     return {
       absPath,
       success: false,
-      message: `symlink traversal detected: real path "${realPath}" escapes working directory`,
+      message: t('tools.deleteSymlinkTraversal', { path: realPath }),
     };
   }
 
@@ -177,7 +188,7 @@ async function deleteSingle(
     return {
       absPath,
       success: false,
-      message: `refused to delete root path (Windows path collapse protection)`,
+      message: t('tools.deleteRootRefused'),
     };
   }
 
@@ -186,7 +197,7 @@ async function deleteSingle(
     return {
       absPath,
       success: false,
-      message: `dev vault protection: path contains VCS marker (.git/.svn/.hg). Use force=true to override.`,
+      message: t('tools.deleteVcsProtected'),
     };
   }
 
@@ -200,7 +211,7 @@ async function deleteSingle(
       return {
         absPath,
         success: false,
-        message: `is a directory. Set recursive=true to delete it.`,
+        message: t('tools.deleteIsDirectory'),
       };
     }
     // 计算目录大小（硬删除时校验，trash 时 rename 快不校验）
@@ -210,7 +221,7 @@ async function deleteSingle(
         return {
           absPath,
           success: false,
-          message: `directory too large (${dirBytes} bytes > ${MAX_DIR_BYTES} limit). Use shell tool for large directories.`,
+          message: t('tools.deleteDirTooLarge', { bytes: dirBytes, limit: MAX_DIR_BYTES }),
         };
       }
     }
@@ -220,19 +231,19 @@ async function deleteSingle(
       return {
         absPath,
         success: false,
-        message: `${t('tools.readBeforeOverwriteRequired', { path: absPath })}\n请先调用 read 工具读取该文件，再执行 delete。或使用 force=true 跳过此校验，或 trash=true 送回收站。`,
+        message: `${t('tools.readBeforeOverwriteRequired', { path: absPath })}\n${t('tools.deleteReadFirstHint')}`,
       };
     }
   }
 
   // h. dryRun：收集清单不执行
   if (dryRun) {
-    const action = trash ? 'move to trash' : 'hard delete';
+    const action = trash ? t('tools.deleteActionTrash') : t('tools.deleteActionHardDelete');
     dryRunList.push({ path: absPath, type: isDir ? 'directory' : 'file', bytes, action });
     return {
       absPath,
       success: true,
-      message: `[dryRun] would ${action}`,
+      message: t('tools.deleteDryRunWould', { action }),
       bytes,
       isDirectory: isDir,
       dryRun: true,
@@ -242,7 +253,7 @@ async function deleteSingle(
   // i/j. trash 模式：移到回收站
   if (trash) {
     if (!trashDir) {
-      return { absPath, success: false, message: `trash dir unavailable (file-history service not registered)` };
+      return { absPath, success: false, message: t('tools.deleteTrashDirUnavailable') };
     }
     try {
       const entry = moveToTrash(realPath, trashDir);
@@ -262,14 +273,14 @@ async function deleteSingle(
       return {
         absPath,
         success: true,
-        message: `moved to trash (${entry.trashPath}, recoverable 7 days)`,
+        message: t('tools.deleteTrashed', { path: entry.trashPath }),
         trashed: true,
         bytes,
         isDirectory: isDir,
       };
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      return { absPath, success: false, message: `trash failed: ${errMsg}` };
+      return { absPath, success: false, message: t('tools.deleteTrashFailed', { message: errMsg }) };
     }
   }
 
@@ -299,7 +310,7 @@ async function deleteSingle(
     }
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
-    return { absPath, success: false, message: `delete failed: ${errMsg}` };
+    return { absPath, success: false, message: t('tools.deleteFailed', { message: errMsg }) };
   }
 
   // 记录历史（hashAfter='', bytesAfter=0）
@@ -315,7 +326,7 @@ async function deleteSingle(
   }
 
   const backupNote = trackResult?.backedUp
-    ? ` (backed up: ${trackResult.backupPath}, undo available)`
+    ? t('tools.deleteBackupNote', { path: trackResult.backupPath ?? '' })
     : '';
 
   // 变更事件（同 trash 分支；delete 从原位置消失即视为 deleted）
@@ -332,7 +343,7 @@ async function deleteSingle(
   return {
     absPath,
     success: true,
-    message: `hard deleted${backupNote}`,
+    message: `${t('tools.deleteHardDeleted')}${backupNote}`,
     hardDeleted: true,
     backedUp: trackResult?.backedUp ?? false,
     entryId: trackResult?.entryId || null,

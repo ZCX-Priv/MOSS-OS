@@ -5,6 +5,7 @@ import { t } from '../../core/i18n';
 import type { Logger, ConfigService } from '../../core/types';
 import type { Tool, ToolContext, ToolResult } from './types';
 import type { ToolRegistry } from '../contracts';
+import { localizeDescription, localizeSchema } from './loader';
 
 export class ToolRegistryImpl implements ToolRegistry {
   private readonly tools = new Map<string, Tool>();
@@ -91,13 +92,14 @@ export class ToolRegistryImpl implements ToolRegistry {
     inputSchema: unknown;
     annotations?: Record<string, unknown>;
   }> {
-    // 仅暴露启用的工具给 LLM（enabled 从 config 实时读取）
+    // 仅暴露启用的工具给 LLM（enabled 从 config 实时读取）；
+    // description/schema 按当前后端 locale live 解析（en 时用 description_en）
     return this.list()
       .filter(t => this.isEnabled(t.name))
       .map(t => ({
         name: t.name,
-        description: t.description,
-        inputSchema: t.inputSchema,
+        description: localizeDescription(t),
+        inputSchema: localizeSchema(t.inputSchema),
         annotations: t.annotations as Record<string, unknown> | undefined,
       }));
   }

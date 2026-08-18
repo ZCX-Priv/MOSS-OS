@@ -7,6 +7,7 @@ import type { ConfigService, ServiceRegistry } from '../../../core/types';
 import { ServiceNames } from '../../../core/types';
 import type { ToolRegistry } from '../../contracts';
 import { ErrorCode } from '../../../core/error-codes';
+import { localizeDescription } from '../../tools/loader';
 
 /** GET /api/tools：返回所有已加载工具（含 disabled）的完整信息 */
 export function createListToolsHandler(services: ServiceRegistry): RouteHandler {
@@ -17,7 +18,7 @@ export function createListToolsHandler(services: ServiceRegistry): RouteHandler 
     }
     const tools = registry.list().map((t) => ({
       name: t.name,
-      description: t.description,
+      description: localizeDescription(t),
       icon: t.icon,
       source: t.source ?? 'builtin',
       annotations: t.annotations,

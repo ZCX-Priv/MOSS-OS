@@ -3,6 +3,7 @@
 // 返回给 LLM 的固定格式为「问题 + 用户回答」，保证上下文完整。
 // 元数据见同目录 tool.json。
 
+import { t } from '../../../core/i18n';
 import type { AskOption, AskOutcome, AskPayload, ToolContext, ToolResult } from '../types';
 
 const VALID_ANSWER_TYPES = new Set(['text', 'single', 'multi', 'boolean']);
@@ -10,7 +11,7 @@ const VALID_ANSWER_TYPES = new Set(['text', 'single', 'multi', 'boolean']);
 /** 把用户回答拼装为人类可读文本（含题目） */
 function formatAnswer(payload: AskPayload, outcome: AskOutcome): string {
   if (outcome.action === 'cancel') {
-    return '用户取消了本次提问，未作回答。请勿原样重试同一问题，重新规划后续步骤或改用其他方式推进。';
+    return t('tools.askCancelled');
   }
   const a = outcome.answer ?? {};
   const other = a.otherText?.trim();
@@ -19,15 +20,15 @@ function formatAnswer(payload: AskPayload, outcome: AskOutcome): string {
     case 'boolean': {
       // boolean 与 single 同构：前端回传 selectedValues=['yes'|'no']
       const v = a.selectedValues?.[0] ?? a.selectedLabels?.[0];
-      answerText = v === undefined || v === '' ? (other ? `其他（${other}）` : '（未作答）') : v === 'yes' || v === '是' ? '是' : v === 'no' || v === '否' ? '否' : String(v);
+      answerText = v === undefined || v === '' ? (other ? t('tools.askOther', { text: other }) : t('tools.askNoAnswer')) : v === 'yes' || v === '是' ? t('tools.askYes') : v === 'no' || v === '否' ? t('tools.askNo') : String(v);
       break;
     }
     case 'single': {
       const label = a.selectedLabels?.[0];
       const value = a.selectedValues?.[0];
-      const picked = label !== undefined ? (value !== undefined && label !== value ? `${label}（${value}）` : label) : value !== undefined ? String(value) : undefined;
-      answerText = picked ?? (other ? `其他（${other}）` : '（未作答）');
-      if (picked && other) answerText = `${picked}，并补充：${other}`;
+      const picked = label !== undefined ? (value !== undefined && label !== value ? t('tools.askLabelValue', { label, value }) : label) : value !== undefined ? String(value) : undefined;
+      answerText = picked ?? (other ? t('tools.askOther', { text: other }) : t('tools.askNoAnswer'));
+      if (picked && other) answerText = t('tools.askPickedWithOther', { picked, text: other });
       break;
     }
     case 'multi': {
@@ -38,15 +39,15 @@ function formatAnswer(payload: AskPayload, outcome: AskOutcome): string {
       for (let i = 0; i < n; i++) {
         const l = labels[i];
         const v = values[i];
-        parts.push(l !== undefined ? (v !== undefined && l !== v ? `${l}（${v}）` : l) : String(v));
+        parts.push(l !== undefined ? (v !== undefined && l !== v ? t('tools.askLabelValue', { label: l, value: v }) : l) : String(v));
       }
-      if (other) parts.push(`其他（${other}）`);
-      answerText = parts.length > 0 ? parts.join('、') : '（未作答）';
+      if (other) parts.push(t('tools.askOther', { text: other }));
+      answerText = parts.length > 0 ? parts.join('、') : t('tools.askNoAnswer');
       break;
     }
     default: {
       // text
-      answerText = a.text?.trim() || other || '（未作答）';
+      answerText = a.text?.trim() || other || t('tools.askNoAnswer');
       break;
     }
   }
@@ -63,22 +64,22 @@ export default {
     };
 
     if (!p.question || typeof p.question !== 'string' || p.question.trim() === '') {
-      return { content: [{ type: 'text', text: 'Error: question is required' }], isError: true };
+      return { content: [{ type: 'text', text: `Error: ${t('tools.askQuestionRequired')}` }], isError: true };
     }
 
     const answerType = (p.answerType ?? 'text') as NonNullable<AskPayload['answerType']>;
     if (!VALID_ANSWER_TYPES.has(answerType)) {
-      return { content: [{ type: 'text', text: `Error: invalid answerType "${String(p.answerType)}" (must be text/single/multi/boolean)` }], isError: true };
+      return { content: [{ type: 'text', text: `Error: ${t('tools.askInvalidAnswerType', { type: String(p.answerType) })}` }], isError: true };
     }
 
     let options: AskOption[] | undefined;
     if (answerType === 'single' || answerType === 'multi') {
       if (!Array.isArray(p.options) || p.options.length < 2 || p.options.length > 6) {
-        return { content: [{ type: 'text', text: 'Error: options with 2-6 items are required when answerType is single/multi' }], isError: true };
+        return { content: [{ type: 'text', text: `Error: ${t('tools.askOptionsRequired')}` }], isError: true };
       }
       for (const opt of p.options) {
         if (!opt || typeof opt.value !== 'string' || !opt.value.trim() || typeof opt.label !== 'string' || !opt.label.trim()) {
-          return { content: [{ type: 'text', text: 'Error: each option must have non-empty value and label' }], isError: true };
+          return { content: [{ type: 'text', text: `Error: ${t('tools.askOptionInvalid')}` }], isError: true };
         }
       }
       options = p.options;
@@ -86,7 +87,7 @@ export default {
 
     if (!ctx.askUser) {
       return {
-        content: [{ type: 'text', text: 'Error: ask not supported in this context (no interactive channel)' }],
+        content: [{ type: 'text', text: `Error: ${t('tools.askNoChannel')}` }],
         isError: true,
       };
     }
@@ -104,13 +105,13 @@ export default {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return {
-        content: [{ type: 'text', text: `Error: ask failed: ${msg}` }],
+        content: [{ type: 'text', text: `Error: ${t('tools.askFailed', { message: msg })}` }],
         isError: true,
       };
     }
 
     const answerText = formatAnswer(payload, outcome);
-    const text = `问题：${payload.question}\n用户回答：${answerText}`;
+    const text = `${t('tools.askQuestionLabel')}${payload.question}\n${t('tools.askAnswerLabel')}${answerText}`;
     return {
       content: [{ type: 'text', text }],
       metadata: {

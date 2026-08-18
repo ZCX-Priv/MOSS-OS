@@ -190,9 +190,10 @@ export function createDeleteTaskHandler(services: ServiceRegistry): RouteHandler
     if (!engine?.deleteTask) {
       return { status: 503, body: { error: ErrorCode.AGENT_ENGINE_UNAVAILABLE } };
     }
-    const deleted = engine.deleteTask(id);
-    // 同时删除关联的 session
+    // 先删 session 再删 task：session 文件路径按任务总管索引解析分组目录，
+    // 任务元信息先删会导致索引失效（只能兜底扫描），先删 session 路径即精确命中
     engine.deleteSession?.(id);
+    const deleted = engine.deleteTask(id);
     if (!deleted) {
       return { status: 404, body: { error: ErrorCode.TASK_NOT_FOUND } };
     }

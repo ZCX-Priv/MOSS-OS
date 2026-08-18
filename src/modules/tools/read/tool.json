@@ -1,6 +1,7 @@
 {
   "name": "read",
   "description": "读取文件内容，支持文本/图片/PDF/Jupyter notebook/Office 及文档格式（docx/docm/dotx/doc、xlsx/xlsm/xltx/xltm/xls、pptx/pptm/potx/ppsx、odt/ods/odp/rtf；旧版 .ppt 不支持）。Word 提取纯文本（旧版含脚注/页眉页脚），Excel 转 CSV 分表展示，PPT/ODF/RTF 提取文本。支持全量读取（带行号）、精确行范围读取（offset+limit）、indentation 模式（基于缩进提取完整代码块）。支持多文件批量读取。自动检测 UTF-8/GBK 编码，检测 minified 文件。大于 50MB 的文件返回错误并提示。",
+  "description_en": "Read file contents. Supports text/images/PDF/Jupyter notebooks/Office and document formats (docx/docm/dotx/doc, xlsx/xlsm/xltx/xltm/xls, pptx/pptm/potx/ppsx, odt/ods/odp/rtf; legacy .ppt is not supported). Word extracts plain text (legacy format includes footnotes/headers/footers), Excel is converted to CSV per sheet, PPT/ODF/RTF extract text. Supports full read (with line numbers), exact line-range read (offset+limit), and indentation mode (extract a complete code block based on indentation). Supports batch reading of multiple files. Auto-detects UTF-8/GBK encodings and minified files. Files larger than 50MB return an error with a hint.",
   "icon": "file-text",
   "annotations": {
     "readOnlyHint": true,
@@ -11,41 +12,63 @@
     "properties": {
       "path": {
         "type": "string",
-        "description": "单个文件路径（与 paths 互斥）"
+        "description": "单个文件路径（与 paths 互斥）",
+        "description_en": "Single file path (mutually exclusive with paths)"
       },
       "paths": {
         "type": "array",
-        "items": { "type": "string" },
-        "description": "多文件批量读取路径数组（与 path 互斥）"
+        "items": {
+          "type": "string"
+        },
+        "description": "多文件批量读取路径数组（与 path 互斥）",
+        "description_en": "Array of paths for batch reading of multiple files (mutually exclusive with path)"
       },
       "offset": {
         "type": "integer",
         "minimum": 1,
-        "description": "精确模式：开始行号（1-based）；indentation 模式：锚点行号"
+        "description": "精确模式：开始行号（1-based）；indentation 模式：锚点行号",
+        "description_en": "Precise mode: starting line number (1-based); indentation mode: anchor line number"
       },
       "limit": {
         "type": "integer",
         "minimum": 1,
-        "description": "精确模式：读取行数"
+        "description": "精确模式：读取行数",
+        "description_en": "Precise mode: number of lines to read"
       },
       "mode": {
         "type": "string",
-        "enum": ["full", "precise", "indentation"],
-        "description": "读取模式：full=全量带行号（默认），precise=offset+limit 精确范围，indentation=基于缩进提取完整代码块"
+        "enum": [
+          "full",
+          "precise",
+          "indentation"
+        ],
+        "description": "读取模式：full=全量带行号（默认），precise=offset+limit 精确范围，indentation=基于缩进提取完整代码块",
+        "description_en": "Read mode: full=entire file with line numbers (default), precise=exact range via offset+limit, indentation=extract a complete code block based on indentation"
       },
       "pages": {
         "type": "string",
-        "description": "PDF 页码范围，如 '1-5' 或 '3'"
+        "description": "PDF 页码范围，如 '1-5' 或 '3'",
+        "description_en": "PDF page range, e.g. '1-5' or '3'"
       }
     },
     "anyOf": [
-      { "required": ["path"] },
-      { "required": ["paths"] }
+      {
+        "required": [
+          "path"
+        ]
+      },
+      {
+        "required": [
+          "paths"
+        ]
+      }
     ],
     "additionalProperties": false
   },
   "config": {
-    "defaults": { "enabled": true },
+    "defaults": {
+      "enabled": true
+    },
     "schema": {}
   }
 }

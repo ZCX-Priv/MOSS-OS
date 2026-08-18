@@ -82,11 +82,11 @@ export default {
 
     // ---- pattern 校验与归一 ----
     if (!p.pattern || typeof p.pattern !== 'string') {
-      return { content: [{ type: 'text', text: 'Error: pattern is required' }], isError: true };
+      return { content: [{ type: 'text', text: `Error: ${t('tools.grepPatternRequired')}` }], isError: true };
     }
     if (p.pattern.length > MAX_PATTERN_LENGTH) {
       return {
-        content: [{ type: 'text', text: `Error: pattern too long (max ${MAX_PATTERN_LENGTH} chars)` }],
+        content: [{ type: 'text', text: `Error: ${t('tools.grepPatternTooLong', { max: MAX_PATTERN_LENGTH })}` }],
         isError: true,
       };
     }
@@ -95,7 +95,7 @@ export default {
     const effectivePattern = fixedStrings ? escapeRegex(p.pattern) : p.pattern;
     if (!fixedStrings && isRiskyRegex(effectivePattern)) {
       return {
-        content: [{ type: 'text', text: 'Error: pattern rejected (potentially unsafe regex)' }],
+        content: [{ type: 'text', text: `Error: ${t('tools.grepPatternRejected')}` }],
         isError: true,
       };
     }
@@ -122,7 +122,7 @@ export default {
       return {
         content: [{
           type: 'text',
-          text: `Error: invalid regex "${p.pattern}": ${err instanceof Error ? err.message : err}`,
+          text: `Error: ${t('tools.grepInvalidRegex', { pattern: p.pattern, reason: err instanceof Error ? err.message : String(err) })}`,
         }],
         isError: true,
       };
@@ -189,7 +189,7 @@ export default {
       pathIsFile = statSync(searchPath).isFile();
     } catch {
       return {
-        content: [{ type: 'text', text: `Error: path not found: ${searchPath}` }],
+        content: [{ type: 'text', text: `Error: ${t('tools.grepPathNotFound', { path: searchPath })}` }],
         isError: true,
       };
     }
@@ -400,12 +400,18 @@ export default {
     const page = allLines.slice(offset, offset + maxResults);
 
     const modeDesc =
-      outputMode === 'files_with_matches' ? 'file(s) with matches' :
-      outputMode === 'count' ? 'file(s) with matches' : 'match(es)';
+      outputMode === 'content' ? t('tools.grepModeMatches') : t('tools.grepModeFilesWithMatches');
     const header =
-      `Found ${total} ${modeDesc} in ${filesWithMatches} file${filesWithMatches === 1 ? '' : 's'}` +
-      ` (scanned ${filesScanned}, ${Date.now() - startedAt}ms)` +
-      `${truncated ? ` (showing ${offset + 1}-${offset + page.length})` : ''}\n`;
+      t('tools.grepFoundHeader', {
+        total,
+        mode: modeDesc,
+        files: filesWithMatches,
+        fileUnit: t(filesWithMatches === 1 ? 'tools.grepFileUnitOne' : 'tools.grepFileUnitMany'),
+        scanned: filesScanned,
+        elapsed: Date.now() - startedAt,
+      }) +
+      (truncated ? t('tools.grepShowingRange', { from: offset + 1, to: offset + page.length }) : '') +
+      '\n';
     const hints: string[] = [];
     if (truncated) hints.push(t('tools.searchTruncatedHint'));
     if (skippedLarge > 0) hints.push(t('tools.searchMultilineSkipped', { count: skippedLarge, max: 1 }));

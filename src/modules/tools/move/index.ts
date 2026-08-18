@@ -56,14 +56,14 @@ export default {
 
     // 1. 参数校验：source 与 sources 互斥，dest 必填
     if (p.source && p.sources) {
-      return errorResult('"source" and "sources" are mutually exclusive. Provide only one.');
+      return errorResult(t('tools.moveSourceExclusive'));
     }
     const inputSources = p.sources ?? (p.source ? [p.source] : []);
     if (inputSources.length === 0) {
-      return errorResult('at least one of "source" or "sources" is required');
+      return errorResult(t('tools.moveSourceRequired'));
     }
     if (!p.dest) {
-      return errorResult('"dest" is required');
+      return errorResult(t('tools.moveDestRequired'));
     }
 
     const overwrite = p.overwrite ?? 'error';
@@ -97,9 +97,14 @@ export default {
     }
 
     if (dryRun) {
-      const lines = dryRunList.map((d) => `  • ${d.source} → ${d.dest} (${d.type}, ${d.bytes} bytes)`);
+      const lines = dryRunList.map((d) => t('tools.moveDryRunLine', {
+        source: d.source,
+        dest: d.dest,
+        type: t(d.type === 'directory' ? 'tools.moveTypeDirectory' : 'tools.moveTypeFile'),
+        bytes: d.bytes,
+      }));
       return {
-        content: [{ type: 'text', text: `[dryRun] No files moved. Would move ${dryRunList.length} item(s):\n${lines.join('\n')}` }],
+        content: [{ type: 'text', text: `${t('tools.moveDryRunSummary', { count: dryRunList.length })}\n${lines.join('\n')}` }],
         metadata: { dryRun: true, wouldMove: dryRunList },
       };
     }
@@ -107,7 +112,7 @@ export default {
     const okCount = results.filter((r) => r.success).length;
     const failCount = results.length - okCount;
     const lines = results.map((r) => `  ${r.success ? '✓' : '✗'} ${r.source} → ${r.dest}: ${r.message}`);
-    const summary = `Moved ${okCount}/${results.length}${failCount > 0 ? `, failed: ${failCount}` : ''}`;
+    const summary = `${t('tools.moveSummary', { ok: okCount, total: results.length })}${failCount > 0 ? t('tools.moveFailedSuffix', { count: failCount }) : ''}`;
 
     return {
       content: [{ type: 'text', text: `${summary}\n${lines.join('\n')}` }],
@@ -136,28 +141,28 @@ async function moveSingle(
   // a. 源解析（roots）
   const sourceAbs = filesys.resolve(rawSource, ctx.cwd);
   if (!sourceAbs) {
-    return { source: rawSource, dest: destAbs, success: false, message: 'source escapes allowed roots' };
+    return { source: rawSource, dest: destAbs, success: false, message: t('tools.moveSourceEscapesRoots') };
   }
 
   // b. 源存在性
   if (!existsSync(sourceAbs)) {
-    return { source: sourceAbs, dest: destAbs, success: false, message: 'source not found' };
+    return { source: sourceAbs, dest: destAbs, success: false, message: t('tools.moveSourceNotFound') };
   }
 
   // c. symlink / 根路径 / VCS 防护
   const realSource = realpathSafe(sourceAbs);
   if (!isPathInside(realSource, ctx.cwd)) {
-    return { source: sourceAbs, dest: destAbs, success: false, message: 'symlink traversal detected' };
+    return { source: sourceAbs, dest: destAbs, success: false, message: t('tools.moveSymlinkTraversal') };
   }
   if (isRootPath(sourceAbs) || isRootPath(destAbs)) {
-    return { source: sourceAbs, dest: destAbs, success: false, message: 'refused to move root path' };
+    return { source: sourceAbs, dest: destAbs, success: false, message: t('tools.moveRootRefused') };
   }
   if (containsVcsMarker(sourceAbs) || containsVcsMarker(destAbs)) {
-    return { source: sourceAbs, dest: destAbs, success: false, message: 'dev vault protection: path contains VCS marker (.git/.svn/.hg)' };
+    return { source: sourceAbs, dest: destAbs, success: false, message: t('tools.moveVcsProtected') };
   }
   // 不能把目录移进自己内部
   if (isPathInside(destAbs, sourceAbs)) {
-    return { source: sourceAbs, dest: destAbs, success: false, message: 'cannot move a directory into itself' };
+    return { source: sourceAbs, dest: destAbs, success: false, message: t('tools.moveIntoItself') };
   }
 
   const sourceStat = statSync(realSource);
@@ -170,7 +175,7 @@ async function moveSingle(
     if (dirBytes > MAX_DIR_BYTES) {
       return {
         source: sourceAbs, dest: destAbs, success: false,
-        message: `directory too large (${dirBytes} bytes > ${MAX_DIR_BYTES} limit). Use shell tool instead.`,
+        message: t('tools.moveDirTooLarge', { bytes: dirBytes, limit: MAX_DIR_BYTES }),
       };
     }
   }
@@ -181,7 +186,7 @@ async function moveSingle(
   const destExists = existsSync(destAbs);
   const destIsDir = destExists && statSync(destAbs).isDirectory();
   if (multiSource && !destIsDir) {
-    return { source: sourceAbs, dest: destAbs, success: false, message: 'multi-source mode requires dest to be an existing directory' };
+    return { source: sourceAbs, dest: destAbs, success: false, message: t('tools.moveMultiSourceDestDir') };
   }
   if (destIsDir && !multiSource) {
     // 单源移入目录：dest = dir/basename(source)
@@ -189,7 +194,7 @@ async function moveSingle(
   }
   if (existsSync(finalDest) && finalDest !== sourceAbs) {
     if (overwrite === 'error') {
-      return { source: sourceAbs, dest: finalDest, success: false, message: `destination already exists: ${finalDest} (use overwrite="rename"/"overwrite")` };
+      return { source: sourceAbs, dest: finalDest, success: false, message: t('tools.moveDestExists', { path: finalDest }) };
     }
     if (overwrite === 'rename') {
       finalDest = findNonConflictingPath(finalDest);
@@ -199,13 +204,13 @@ async function moveSingle(
   }
 
   if (finalDest === sourceAbs) {
-    return { source: sourceAbs, dest: finalDest, success: false, message: 'source and destination are identical' };
+    return { source: sourceAbs, dest: finalDest, success: false, message: t('tools.moveSamePath') };
   }
 
   // f. dryRun
   if (dryRun) {
     dryRunList.push({ source: sourceAbs, dest: finalDest, type: isDir ? 'directory' : 'file', bytes });
-    return { source: sourceAbs, dest: finalDest, success: true, message: '[dryRun] would move' };
+    return { source: sourceAbs, dest: finalDest, success: true, message: t('tools.moveDryRunWouldMove') };
   }
 
   // g. overwrite 策略：覆盖前对已存在目标备份（支持 undo 恢复被覆盖内容）
@@ -236,7 +241,7 @@ async function moveSingle(
       }
     }
   } catch (err) {
-    return { source: sourceAbs, dest: finalDest, success: false, message: `move failed: ${err instanceof Error ? err.message : String(err)}` };
+    return { source: sourceAbs, dest: finalDest, success: false, message: t('tools.moveFailed', { message: err instanceof Error ? err.message : String(err) }) };
   }
 
   // i. file-history move 条目（undo = 反向 rename）
@@ -267,7 +272,9 @@ async function moveSingle(
     source: sourceAbs,
     dest: finalDest,
     success: true,
-    message: `moved${renamedToAvoidConflict ? ' (renamed to avoid conflict)' : ''}, undo available`,
+    message: t('tools.moveSuccess', {
+      renamed: renamedToAvoidConflict ? t('tools.moveRenamedNote') : '',
+    }),
     bytes,
     isDirectory: isDir,
     renamedToAvoidConflict,

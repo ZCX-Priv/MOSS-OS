@@ -1,6 +1,7 @@
 {
   "name": "ask",
   "description": "向用户提问并阻塞等待回复。当需要澄清、决策或仅用户能提供的信息时使用。支持四种回答类型：answerType=\"text\" 自由文本（缺省）；\"single\" 单选（需提供 2-6 个 options）；\"multi\" 多选（需提供 options）；\"boolean\" 是/否。前端始终会附加「其他」自由输入项，用户也可能取消提问。返回格式固定为「问题 + 用户回答」，便于完整理解上下文。等待无默认超时。",
+  "description_en": "Ask the user a question and block until the reply arrives. Use when you need clarification, a decision, or information only the user can provide. Four answer types: answerType=\"text\" free text (default); \"single\" single choice (requires 2-6 options); \"multi\" multiple choice (requires options); \"boolean\" yes/no. The frontend always appends an \"Other\" free-input option, and the user may cancel the question. Returns a fixed \"question + user answer\" format for full context. No default timeout while waiting.",
   "icon": "help-circle",
   "annotations": {
     "readOnlyHint": true,
@@ -11,12 +12,19 @@
     "properties": {
       "question": {
         "type": "string",
-        "description": "要向用户提问的问题。请具体且简洁。"
+        "description": "要向用户提问的问题。请具体且简洁。",
+        "description_en": "The question to ask the user. Be specific and concise."
       },
       "answerType": {
         "type": "string",
-        "enum": ["text", "single", "multi", "boolean"],
-        "description": "回答类型。text=自由文本（缺省）；single=单选；multi=多选；boolean=是/否"
+        "enum": [
+          "text",
+          "single",
+          "multi",
+          "boolean"
+        ],
+        "description": "回答类型。text=自由文本（缺省）；single=单选；multi=多选；boolean=是/否",
+        "description_en": "Answer type. text=free text (default); single=single choice; multi=multiple choice; boolean=yes/no"
       },
       "options": {
         "type": "array",
@@ -25,26 +33,47 @@
         "items": {
           "type": "object",
           "properties": {
-            "value": { "type": "string", "description": "选项标识（如 \"a\"、\"postgres\"）" },
-            "label": { "type": "string", "description": "选项显示文本" }
+            "value": {
+              "type": "string",
+              "description": "选项标识（如 \"a\"、\"postgres\"）",
+              "description_en": "Option identifier (e.g. \"a\", \"postgres\")"
+            },
+            "label": {
+              "type": "string",
+              "description": "选项显示文本",
+              "description_en": "Option display text"
+            }
           },
-          "required": ["value", "label"],
+          "required": [
+            "value",
+            "label"
+          ],
           "additionalProperties": false
         },
-        "description": "候选项列表。answerType 为 single/multi 时必填（2-6 项）；前端会自动附加「其他」自由输入项"
+        "description": "候选项列表。answerType 为 single/multi 时必填（2-6 项）；前端会自动附加「其他」自由输入项",
+        "description_en": "List of candidate options. Required when answerType is single/multi (2-6 items); the frontend automatically appends an \"Other\" free-input option"
       },
       "defaultAnswer": {
         "type": "string",
-        "description": "预填的默认回答文本（可选，仅 text 类型）"
+        "description": "预填的默认回答文本（可选，仅 text 类型）",
+        "description_en": "Pre-filled default answer text (optional, text type only)"
       }
     },
-    "required": ["question"],
+    "required": [
+      "question"
+    ],
     "additionalProperties": false
   },
   "config": {
-    "defaults": { "enabled": true, "timeoutMinutes": 0 },
+    "defaults": {
+      "enabled": true,
+      "timeoutMinutes": 0
+    },
     "schema": {
-      "timeoutMinutes": { "type": "integer", "min": 0 }
+      "timeoutMinutes": {
+        "type": "integer",
+        "min": 0
+      }
     }
   }
 }

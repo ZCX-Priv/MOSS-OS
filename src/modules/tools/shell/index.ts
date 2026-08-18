@@ -78,14 +78,14 @@ export default {
 
     // 输入校验：command 必填且非空白
     if (!p.command || typeof p.command !== 'string' || !p.command.trim()) {
-      return { content: [{ type: 'text', text: 'Error: command is required' }], isError: true };
+      return { content: [{ type: 'text', text: `Error: ${t('tools.shellCommandRequired')}` }], isError: true };
     }
     // env 值类型校验（必须全部为字符串）
     if (p.env) {
       for (const [k, v] of Object.entries(p.env)) {
         if (typeof v !== 'string') {
           return {
-            content: [{ type: 'text', text: `Error: env value for "${k}" must be string, got ${typeof v}` }],
+            content: [{ type: 'text', text: `Error: ${t('tools.shellEnvValueType', { key: k, type: typeof v })}` }],
             isError: true,
           };
         }
@@ -116,10 +116,10 @@ export default {
     try {
       const st = statSync(cwd);
       if (!st.isDirectory()) {
-        return { content: [{ type: 'text', text: `Error: cwd is not a directory: ${cwd}` }], isError: true };
+        return { content: [{ type: 'text', text: `Error: ${t('tools.shellCwdNotDir', { path: cwd })}` }], isError: true };
       }
     } catch {
-      return { content: [{ type: 'text', text: `Error: cwd does not exist: ${cwd}` }], isError: true };
+      return { content: [{ type: 'text', text: `Error: ${t('tools.shellCwdNotExist', { path: cwd })}` }], isError: true };
     }
 
     // 优先级：调用参数 > config.tools.shell.timeout > 硬编码 30000；clamp 到 [1000, 600000]
@@ -172,7 +172,7 @@ export default {
         stdoutText = decodeShellOutput(stdoutBuf);
         stderrText = decodeShellOutput(stderrBuf);
       } catch {
-        stdoutText = '(output unavailable: process terminated)';
+        stdoutText = t('tools.shellOutputUnavailable');
         stderrText = '';
       }
 
@@ -180,18 +180,18 @@ export default {
       let truncated = false;
       const MAX_OUTPUT = 100_000;
       if (stdoutText.length > MAX_OUTPUT) {
-        stdoutText = stdoutText.slice(0, MAX_OUTPUT) + '\n... (truncated)';
+        stdoutText = stdoutText.slice(0, MAX_OUTPUT) + t('tools.shellTruncatedSuffix');
         truncated = true;
       }
       if (stderrText.length > MAX_OUTPUT) {
-        stderrText = stderrText.slice(0, MAX_OUTPUT) + '\n... (truncated)';
+        stderrText = stderrText.slice(0, MAX_OUTPUT) + t('tools.shellTruncatedSuffix');
         truncated = true;
       }
 
       const output =
-        `Exit code: ${exitCode}\n` +
-        `--- stdout ---\n${stdoutText || '(empty)'}\n` +
-        `--- stderr ---\n${stderrText || '(empty)'}`;
+        `${t('tools.shellExitCode', { code: exitCode })}\n` +
+        `--- stdout ---\n${stdoutText || t('tools.shellEmpty')}\n` +
+        `--- stderr ---\n${stderrText || t('tools.shellEmpty')}`;
 
       const durationMs = Date.now() - startedAt;
       ctx.logger.debug(t('tools.shellDone', { exitCode, durationMs }), {
@@ -210,11 +210,13 @@ export default {
             const brief = (items: string[], label: string): string =>
               items.length === 0 ? '' : `\n  ${label} (${items.length}): ${items.slice(0, 5).join(', ')}${items.length > 5 ? ', ...' : ''}`;
             workspaceNote =
-              `\n--- workspace changes ---` +
-              brief(shellChanges.created, 'created') +
-              brief(shellChanges.modified, 'modified') +
-              brief(shellChanges.deleted, 'deleted') +
-              `\n  (undoable: ${shellChanges.undone}/${count}${shellChanges.truncated ? ', diff truncated' : ''})`;
+              `\n${t('tools.shellWorkspaceChanges')}` +
+              brief(shellChanges.created, t('tools.shellChangeCreated')) +
+              brief(shellChanges.modified, t('tools.shellChangeModified')) +
+              brief(shellChanges.deleted, t('tools.shellChangeDeleted')) +
+              (shellChanges.truncated
+                ? t('tools.shellUndoableTruncated', { undone: shellChanges.undone, count })
+                : t('tools.shellUndoable', { undone: shellChanges.undone, count }));
           }
         }
       }
@@ -240,7 +242,7 @@ export default {
     } catch (err) {
       // spawn 抛错 = 命令未执行，工作区不会变化，无需 end 快照
       return {
-        content: [{ type: 'text', text: `Error executing command: ${err instanceof Error ? err.message : err}` }],
+        content: [{ type: 'text', text: t('tools.shellExecError', { message: err instanceof Error ? err.message : String(err) }) }],
         isError: true,
       };
     }

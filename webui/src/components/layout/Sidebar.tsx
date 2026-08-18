@@ -1,4 +1,4 @@
-import { useState, type CSSProperties } from 'react';
+import { useState, useCallback, type CSSProperties, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
@@ -7,7 +7,6 @@ import {
   AlarmClock,
   ListChecks,
   Search,
-  ChevronRight,
   MoreHorizontal,
   Pencil,
   Trash2,
@@ -16,16 +15,22 @@ import {
   Check,
   CheckCheck,
   X,
+  Folder,
+  FolderOpen,
+  FolderPlus,
+  Loader2,
+  CircleAlert,
 } from 'lucide-react';
 import {
   DndContext,
-  closestCenter,
   PointerSensor,
   useSensor,
   useSensors,
+  useDroppable,
+  pointerWithin,
+  type CollisionDetection,
   type DragEndEvent,
 } from '@dnd-kit/core';
-import { restrictToParentElement } from '@dnd-kit/modifiers';
 import {
   SortableContext,
   verticalListSortingStrategy,
@@ -35,7 +40,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { cn } from '@/lib/utils';
 import type { OverlayType } from '../../types';
-import type { TaskItem } from '../../types/api';
+import type { TaskItem, TaskGroup } from '../../types/api';
 import { useStore } from '../../store';
 import {
   Sidebar as UISidebar,
@@ -86,7 +91,7 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { pathname } = useLocation();
-  const { tasks, taskGroups, updateTask, deleteTask, reorderTasks } = useTasks();
+  const { tasks, taskGroups, updateTask, deleteTask, reorderTasks, createTaskGroup, updateTaskGroup, deleteTaskGroup } = useTasks();
   const isSettingsRoute = pathname.startsWith('/settings');
   const [settingsSearch, setSettingsSearch] = useState('');
   const { isMobile, setOpenMobile } = useSidebar();
@@ -100,6 +105,45 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
   const [renameTask, setRenameTask] = useState<TaskItem | null>(null);
   const [renameTitle, setRenameTitle] = useState('');
   const [deleteTaskId, setDeleteTaskId] = useState<string | null>(null);
+
+  // 分组管理状态：受控折叠 + 新建/重命名/删除
+  const [groupExpanded, setGroupExpanded] = useState<Record<string, boolean>>(() => {
+    const initial: Record<string, boolean> = {};
+    for (const g of taskGroups) initial[g.id] = g.expanded ?? true;
+    return initial;
+  });
+  const [newGroupOpen, setNewGroupOpen] = useState(false);
+  const [newGroupName, setNewGroupName] = useState('');
+  const [renameGroup, setRenameGroup] = useState<TaskGroup | null>(null);
+  const [renameGroupName, setRenameGroupName] = useState('');
+  const [deleteGroupId, setDeleteGroupId] = useState<string | null>(null);
+
+  const toggleGroup = (groupId: string) => {
+    setGroupExpanded((prev) => ({ ...prev, [groupId]: !(prev[groupId] ?? true) }));
+  };
+
+  const handleCreateGroup = async () => {
+    if (newGroupName.trim()) {
+      await createTaskGroup(newGroupName.trim());
+      setNewGroupName('');
+    }
+    setNewGroupOpen(false);
+  };
+
+  const handleRenameGroup = async () => {
+    if (renameGroup && renameGroupName.trim()) {
+      await updateTaskGroup(renameGroup.id, { name: renameGroupName.trim() });
+      setRenameGroup(null);
+    }
+  };
+
+  const handleDeleteGroup = async () => {
+    if (deleteGroupId) {
+      // 后端将组内任务（含 session 文件）迁回默认分组
+      await deleteTaskGroup(deleteGroupId, 'default');
+      setDeleteGroupId(null);
+    }
+  };
 
   const handleRename = async () => {
     if (renameTask && renameTitle.trim()) {
@@ -138,22 +182,52 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
     setBatchDeleteOpen(false);
   };
 
-  const handleDragEnd = (groupId: string, groupTaskIds: string[]) => (event: DragEndEvent) => {
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-    const oldIndex = groupTaskIds.indexOf(String(active.id));
-    const newIndex = groupTaskIds.indexOf(String(over.id));
-    if (oldIndex === -1 || newIndex === -1) return;
-    const newOrderIds = arrayMove(groupTaskIds, oldIndex, newIndex);
-    // 乐观更新：立即按新顺序重排该组任务，避免松手回弹闪烁
-    const current = useStore.getState().tasks;
-    const inGroup = current.filter((t) => t.groupId === groupId);
-    const byId = new Map(inGroup.map((t) => [t.id, t]));
-    const reordered = newOrderIds.map((id, idx) => ({ ...byId.get(id)!, order: idx }));
-    const others = current.filter((t) => t.groupId !== groupId);
-    useStore.getState().setTasks([...others, ...reordered]);
-    // 持久化（后端返回后再次 setTasks 校正）
-    void reorderTasks(newOrderIds);
+  // 跨组拖拽碰撞检测：指针下有任务（sortable item）时优先任务（保证组内精确排序），
+  // 否则命中组容器 droppable（含空组），使任务可拖入任意分组区域
+  const collisionDetection: CollisionDetection = useCallback((args) => {
+    const pointerCollisions = pointerWithin(args);
+    const taskCollision = pointerCollisions.find((c) => !String(c.id).startsWith('group:'));
+    if (taskCollision) return [taskCollision];
+    return pointerCollisions;
+  }, []);
+
+  // 统一拖拽结束：同组 → 精确排序；异组 → 移组（后端置顶 + session 文件搬移）
+  const handleDragEnd = ({ active, over }: DragEndEvent) => {
+    if (!over) return;
+    const activeId = String(active.id);
+    const overId = String(over.id);
+    const state = useStore.getState();
+    const activeTask = state.tasks.find((t) => t.id === activeId);
+    if (!activeTask) return;
+
+    let targetGroupId: string;
+    let overTaskId: string | null = null;
+    if (overId.startsWith('group:')) {
+      targetGroupId = overId.slice('group:'.length);
+    } else {
+      const overTask = state.tasks.find((t) => t.id === overId);
+      if (!overTask) return;
+      targetGroupId = overTask.groupId;
+      overTaskId = overTask.id;
+    }
+
+    if (targetGroupId === activeTask.groupId) {
+      // 同组：over 必须是任务且非自身，做组内精确排序
+      if (!overTaskId || overTaskId === activeId) return;
+      const groupTaskIds = state.tasks.filter((t) => t.groupId === targetGroupId).map((t) => t.id);
+      const newOrderIds = arrayMove(groupTaskIds, groupTaskIds.indexOf(activeId), groupTaskIds.indexOf(overTaskId));
+      // 乐观更新：立即按新顺序重排该组任务，避免松手回弹闪烁
+      const inGroup = state.tasks.filter((t) => t.groupId === targetGroupId);
+      const byId = new Map(inGroup.map((t) => [t.id, t]));
+      const reordered = newOrderIds.map((id, idx) => ({ ...byId.get(id)!, order: idx }));
+      const others = state.tasks.filter((t) => t.groupId !== targetGroupId);
+      useStore.getState().setTasks([...others, ...reordered]);
+      // 持久化（后端返回后再次 setTasks 校正）
+      void reorderTasks(newOrderIds);
+    } else {
+      // 跨组移动：updateTask 移组（后端 order 置顶 + session 文件搬移；store 单点更新，渲染按 groupId 过滤即时生效）
+      void updateTask(activeId, { groupId: targetGroupId });
+    }
   };
 
   const navItems: {
@@ -322,6 +396,14 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
               <Button
                 variant="ghost"
                 size="icon-xs"
+                title={t('sidebar.newGroup')}
+                onClick={() => setNewGroupOpen(true)}
+              >
+                <FolderPlus />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-xs"
                 title={t('sidebar.manage')}
                 onClick={() => { setManageMode((v) => !v); setSelectedIds(new Set()); }}
                 className={cn(manageMode && 'bg-muted text-foreground')}
@@ -373,26 +455,62 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
               </div>
             )}
             <SidebarMenu>
+              {/* 单一顶层 DndContext：任务可跨组拖拽（同组精确排序 / 异组移组置顶） */}
+              <DndContext
+                sensors={sensors}
+                collisionDetection={collisionDetection}
+                onDragEnd={handleDragEnd}
+              >
               {taskGroups.map((group) => {
                 const groupTasks = tasks.filter((task) => task.groupId === group.id);
                 const groupTaskIds = groupTasks.map((t) => t.id);
+                const expanded = groupExpanded[group.id] ?? true;
+                const GroupIcon = expanded ? FolderOpen : Folder;
                 return (
-                  <Collapsible key={group.id} defaultOpen={group.expanded}>
+                  <Collapsible key={group.id} open={expanded} onOpenChange={() => toggleGroup(group.id)}>
                     <SidebarMenuItem>
-                      <CollapsibleTrigger asChild>
-                        <SidebarMenuButton>
-                          <ChevronRight className="size-4 transition-transform [[data-state=open]_&]:rotate-90" />
-                          <span>{group.name}</span>
-                        </SidebarMenuButton>
-                      </CollapsibleTrigger>
+                      <div className="group/group-item relative">
+                        <CollapsibleTrigger asChild>
+                          <SidebarMenuButton>
+                            <GroupIcon className="size-4 shrink-0 text-muted-foreground" />
+                            <span className="truncate pr-6">{group.name}</span>
+                          </SidebarMenuButton>
+                        </CollapsibleTrigger>
+                        {/* 分组计数：与 ellipsis 同盒（right-0 size-6 居中），中心精确对齐；hover/菜单打开时让位给 ellipsis */}
+                        <span className="pointer-events-none absolute right-0 top-1/2 z-[5] flex size-6 -translate-y-1/2 items-center justify-center text-xs text-muted-foreground/70 transition-opacity group-hover/group-item:opacity-0 group-has-data-[state=open]/group-item:opacity-0">
+                          {groupTasks.length}
+                        </span>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon-xs"
+                              className="absolute right-0 top-1/2 z-10 size-6 -translate-y-1/2 opacity-0 transition-opacity group-hover/group-item:opacity-100 data-[state=open]:opacity-100"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <MoreHorizontal className="size-3.5" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" side="right" sideOffset={4} collisionPadding={8}>
+                            <DropdownMenuItem
+                              onSelect={() => { setRenameGroupName(group.name); setRenameGroup(group); }}
+                            >
+                              <Pencil className="size-3.5" />
+                              {t('sidebar.renameGroup')}
+                            </DropdownMenuItem>
+                            {group.id !== 'default' && (
+                              <DropdownMenuItem variant="destructive" onSelect={() => setDeleteGroupId(group.id)}>
+                                <Trash2 className="size-3.5" />
+                                {t('sidebar.deleteGroup')}
+                              </DropdownMenuItem>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
                       <CollapsibleContent>
-                        <SidebarMenuSub>
-                          <DndContext
-                            sensors={sensors}
-                            collisionDetection={closestCenter}
-                            modifiers={[restrictToParentElement]}
-                            onDragEnd={handleDragEnd(group.id, groupTaskIds)}
-                          >
+                        {/* 组级 droppable：拖入组内任意位置（含空白/空组）即移入该组 */}
+                        <GroupDropZone groupId={group.id}>
+                          <SidebarMenuSub className="mr-0 pr-0">
                             <SortableContext items={groupTaskIds} strategy={verticalListSortingStrategy}>
                               {groupTasks.map((task) => (
                                 <TaskRow
@@ -400,7 +518,6 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
                                   task={task}
                                   manageMode={manageMode}
                                   isSelected={selectedIds.has(task.id)}
-                                  isActive={pathname === `/task/${task.id}`}
                                   onToggleSelect={toggleSelect}
                                   onNavigate={(id) => { closeMobile(); navigate(`/task/${id}`); }}
                                   onRename={(tk) => { setRenameTitle(tk.title); setRenameTask(tk); }}
@@ -408,13 +525,14 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
                                 />
                               ))}
                             </SortableContext>
-                          </DndContext>
-                        </SidebarMenuSub>
+                          </SidebarMenuSub>
+                        </GroupDropZone>
                       </CollapsibleContent>
                     </SidebarMenuItem>
                   </Collapsible>
                 );
               })}
+              </DndContext>
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
@@ -429,6 +547,70 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
         </SidebarFooter>
       )}
     </UISidebar>
+
+    {/* 新建分组弹窗 */}
+    <Dialog open={newGroupOpen} onOpenChange={setNewGroupOpen}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{t('sidebar.newGroup')}</DialogTitle>
+          <DialogDescription>{t('sidebar.newGroupDesc')}</DialogDescription>
+        </DialogHeader>
+        <Input
+          autoFocus
+          value={newGroupName}
+          onChange={(e) => setNewGroupName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void handleCreateGroup();
+          }}
+        />
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setNewGroupOpen(false)}>
+            {t('common.cancel')}
+          </Button>
+          <Button onClick={() => void handleCreateGroup()} disabled={!newGroupName.trim()}>
+            {t('common.confirm')}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    {/* 重命名分组弹窗 */}
+    <Dialog open={!!renameGroup} onOpenChange={(o) => !o && setRenameGroup(null)}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{t('sidebar.renameGroup')}</DialogTitle>
+          <DialogDescription>{t('sidebar.renameGroupDesc')}</DialogDescription>
+        </DialogHeader>
+        <Input
+          autoFocus
+          value={renameGroupName}
+          onChange={(e) => setRenameGroupName(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void handleRenameGroup();
+          }}
+        />
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setRenameGroup(null)}>
+            {t('common.cancel')}
+          </Button>
+          <Button onClick={() => void handleRenameGroup()} disabled={!renameGroupName.trim()}>
+            {t('common.confirm')}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    {/* 删除分组确认弹窗 */}
+    <ConfirmDialog
+      open={!!deleteGroupId}
+      onOpenChange={(o) => !o && setDeleteGroupId(null)}
+      title={t('sidebar.deleteGroup')}
+      description={t('sidebar.deleteGroupDesc')}
+      variant="danger"
+      confirmText={t('sidebar.delete')}
+      cancelText={t('common.cancel')}
+      onConfirm={handleDeleteGroup}
+    />
 
     {/* 重命名弹窗 */}
     <Dialog open={!!renameTask} onOpenChange={(o) => !o && setRenameTask(null)}>
@@ -492,7 +674,6 @@ interface TaskRowProps {
   task: TaskItem;
   manageMode: boolean;
   isSelected: boolean;
-  isActive: boolean;
   onToggleSelect: (id: string) => void;
   onNavigate: (id: string) => void;
   onRename: (task: TaskItem) => void;
@@ -503,7 +684,6 @@ function TaskRow({
   task,
   manageMode,
   isSelected,
-  isActive,
   onToggleSelect,
   onNavigate,
   onRename,
@@ -511,7 +691,11 @@ function TaskRow({
 }: TaskRowProps) {
   const { t } = useTranslation();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: task.id });
-  // 仅垂直：剥离 x 分量（restrictToParentElement 已限制不超出父 ul 边界）
+  // 状态指示器：运行中（转圈）/ 出错（红警示），空闲不显示；WS 事件流驱动
+  const sid = task.sessionId ?? task.id;
+  const generating = useStore((s) => s.generatingBySession[sid] ?? false);
+  const errored = useStore((s) => s.errorBySession[sid] ?? false);
+  // 仅垂直拖拽：剥离 x 分量（列表语义，跨组也是纵向移入）
   const restrictedTransform = transform ? { ...transform, x: 0 } : null;
   const style: CSSProperties = {
     transform: CSS.Transform.toString(restrictedTransform),
@@ -558,17 +742,37 @@ function TaskRow({
   return (
     <li ref={setNodeRef} style={style} className="group/menu-item relative group/item">
       <SidebarMenuButton
-        isActive={isActive}
         onClick={() => onNavigate(task.id)}
       >
         <span className="truncate pr-5">{task.title}</span>
       </SidebarMenuButton>
+      {/* 拖拽手柄（跨组移动/组内排序）：hover 显示；绑独立手柄而非整行，避免 dnd-kit listeners 吞掉点击导航 */}
+      <button
+        type="button"
+        aria-label={t('sidebar.dragHandle')}
+        className="absolute right-11 top-1/2 z-[5] flex size-4 -translate-y-1/2 cursor-grab items-center justify-center text-muted-foreground opacity-0 transition-opacity hover:text-foreground active:cursor-grabbing group-hover/item:opacity-100"
+        {...attributes}
+        {...listeners}
+      >
+        <GripVertical className="size-3.5" />
+      </button>
+      {/* 状态指示器：运行中/出错时常显，hover 时被菜单按钮覆盖；标题 pr-5 为其预留空间 */}
+      <span
+        className="pointer-events-none absolute right-0.25 top-1/2 z-[5] flex size-4 -translate-y-1/2 items-center justify-center"
+        aria-label={generating ? t('sidebar.statusRunning') : errored ? t('sidebar.statusError') : undefined}
+      >
+        {generating ? (
+          <Loader2 className="size-3.5 animate-spin text-primary" />
+        ) : errored ? (
+          <CircleAlert className="size-3.5 text-destructive" />
+        ) : null}
+      </span>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
             variant="ghost"
             size="icon-xs"
-            className="absolute right-0.5 top-1/2 z-10 -translate-y-1/2 opacity-0 transition-opacity group-hover/item:opacity-100 data-[state=open]:opacity-100"
+            className="absolute right-0 top-1/2 z-10 -translate-y-1/2 opacity-0 transition-opacity group-hover/item:opacity-100 data-[state=open]:opacity-100"
             onClick={(e) => e.stopPropagation()}
           >
             <MoreHorizontal className="size-3.5" />
@@ -586,5 +790,24 @@ function TaskRow({
         </DropdownMenuContent>
       </DropdownMenu>
     </li>
+  );
+}
+
+/**
+ * 组级 droppable 容器：把分组任务列表区域注册为 drop 目标（id = `group:<groupId>`），
+ * 拖入组内任意位置（任务上/空白处/空组）均触发移组；悬停时高亮提示可放置。
+ */
+function GroupDropZone({ groupId, children }: { groupId: string; children: ReactNode }) {
+  const { setNodeRef, isOver } = useDroppable({ id: `group:${groupId}` });
+  return (
+    <div
+      ref={setNodeRef}
+      className={cn(
+        'rounded-md -mx-1 px-1 transition-colors',
+        isOver && 'bg-primary/10',
+      )}
+    >
+      {children}
+    </div>
   );
 }
