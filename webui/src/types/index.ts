@@ -18,6 +18,7 @@ export type SettingsSection =
   | 'render'
   | 'agent'
   | 'model'
+  | 'context'
   | 'tools'
   | 'specs'
   | 'safety'

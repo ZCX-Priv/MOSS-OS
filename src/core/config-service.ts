@@ -19,6 +19,7 @@ import type {
 import { buildToolsSchema, buildToolsDefaults } from '../modules/tools/manifest';
 import { DEFAULT_FILE_HISTORY_CONFIG } from '../modules/file-history/types';
 import { DEFAULT_FILESYS_CONFIG } from '../modules/filesys/types';
+import { DEFAULT_CONTEXT_CONFIG } from '../modules/context/types';
 
 // ============================================================================
 // Zod Schemas
@@ -90,6 +91,41 @@ const logsSchema = z.object({
   maxFileMb: z.number().min(1).max(100).default(10),
 });
 
+// context：上下文引擎配置（压缩/工具结果修剪/自愈/遥测；内层全 .default() 自愈，
+// 旧 config.json 缺段自动补全，热更新经 config:changed 实时生效）
+const contextSchema = z.object({
+  compaction: z
+    .object({
+      enabled: z.boolean().default(true),
+      compactRatio: z.number().min(0.5).max(0.95).default(0.80),
+      tailKeepRatio: z.number().min(0.05).max(0.5).default(0.16),
+      summaryMaxTokens: z.number().int().positive().default(8192),
+      minFoldTokens: z.number().int().positive().default(400),
+      summaryModel: z.string().default('inherit'),
+    })
+    .default({}),
+  toolPruning: z
+    .object({
+      enabled: z.boolean().default(true),
+      thresholdChars: z.number().int().positive().default(8192),
+      keepHeadChars: z.number().int().positive().default(4096),
+      keepTailChars: z.number().int().positive().default(1024),
+    })
+    .default({}),
+  healer: z
+    .object({
+      enabled: z.boolean().default(true),
+      toolNameFuzzy: z.boolean().default(true),
+      schemaFix: z.boolean().default(true),
+    })
+    .default({}),
+  telemetry: z
+    .object({
+      enabled: z.boolean().default(true),
+    })
+    .default({}),
+});
+
 const appConfigSchema = z.object({
   version: z.number().int().positive(),
   server: z.object({
@@ -143,6 +179,8 @@ const appConfigSchema = z.object({
   filesys: filesysSchema.optional(),
   // safety 可选，内层全 .default() 自愈补全（向后兼容旧配置）
   safety: safetySchema.optional(),
+  // context 可选，内层全 .default() 自愈补全（向后兼容旧配置）
+  context: contextSchema.optional(),
 });
 
 const apiConfigSchema = z.object({
@@ -176,6 +214,12 @@ export function defaultAppConfig(): AppConfig {
     security: { authToken: '', bindLocalhostOnly: true },
     fileHistory: { ...DEFAULT_FILE_HISTORY_CONFIG },
     filesys: { ...DEFAULT_FILESYS_CONFIG },
+    context: {
+      compaction: { ...DEFAULT_CONTEXT_CONFIG.compaction },
+      toolPruning: { ...DEFAULT_CONTEXT_CONFIG.toolPruning },
+      healer: { ...DEFAULT_CONTEXT_CONFIG.healer },
+      telemetry: { ...DEFAULT_CONTEXT_CONFIG.telemetry },
+    },
     safety: {
       defaultMode: 'ask',
       confirmTimeoutMinutes: 5,

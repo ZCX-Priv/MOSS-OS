@@ -36,6 +36,8 @@ import type {
   WSMessage,
   ToolCall,
   RunStats,
+  CompactionRecord,
+  ContextStats,
 } from '../types/api';
 
 function genId(): string {
@@ -546,6 +548,89 @@ export function useWebSocket(): void {
           totalTokens: payload.totalTokens ?? 0,
           maxTokens: payload.maxTokens ?? 0,
         });
+        break;
+      }
+      // ====================================================================
+      // 上下文引擎事件（token 构成 / 缓存命中 / 压缩 / 自愈）
+      // ====================================================================
+      case 'context-stats-updated': {
+        if (!sessionId) break;
+        // 字段级合并而非整体覆盖：部分形状 payload（旧后端/异常数据）不得破坏
+        // store 中完整对象的 systemSections/compaction/cacheHits（渲染崩溃根治防御）
+        const payload = msg.payload as Partial<ContextStats> | undefined;
+        if (payload && typeof payload === 'object' && payload.breakdown) {
+          const cur = useStore.getState().contextStatsBySession[sessionId];
+          useStore.getState().setContextStats(sessionId, {
+            ...(cur ?? {}),
+            ...payload,
+            sessionId: payload.sessionId ?? sessionId,
+            breakdown: payload.breakdown ?? cur?.breakdown,
+            windowTokens: payload.windowTokens ?? cur?.windowTokens ?? 0,
+            usedPercent: payload.usedPercent ?? cur?.usedPercent ?? 0,
+            avgHitRate: payload.avgHitRate ?? cur?.avgHitRate ?? null,
+            compaction:
+              payload.compaction ??
+              cur?.compaction ?? {
+                enabled: false,
+                compactRatio: 0.8,
+                compactedMessages: 0,
+                activeSummaryTokens: 0,
+              },
+            systemSections: payload.systemSections ?? cur?.systemSections ?? [],
+            cacheHits: payload.cacheHits ?? cur?.cacheHits ?? [],
+          });
+        }
+        break;
+      }
+      case 'compaction-started': {
+        if (!sessionId) break;
+        const payload = (msg.payload ?? {}) as { trigger?: 'auto' | 'manual' };
+        toast.info(
+          payload.trigger === 'manual'
+            ? i18n.t('context.compactionStartedManual')
+            : i18n.t('context.compactionStartedAuto'),
+        );
+        break;
+      }
+      case 'compaction-completed': {
+        if (!sessionId) break;
+        const payload = (msg.payload ?? {}) as { compaction?: CompactionRecord };
+        const compaction = payload.compaction;
+        if (!compaction) break;
+        // 消息流插入压缩卡片（特殊 TaskMessage：compaction 字段驱动卡片渲染）
+        const cardMessage: TaskMessage = {
+          id: `compaction_${compaction.id}`,
+          role: 'assistant',
+          content: compaction.summary,
+          timestamp: compaction.at,
+          compaction,
+        };
+        const s = useStore.getState();
+        const existing = s.messagesBySession[sessionId] ?? [];
+        // 幂等：卡片已存在（历史恢复）则跳过
+        if (!existing.some((m) => m.id === cardMessage.id)) {
+          s.setMessages(sessionId, [...existing, cardMessage]);
+        }
+        toast.success(
+          i18n.t('context.compactionDone', {
+            count: compaction.compactedCount,
+            before: compaction.beforeTokens,
+            after: compaction.afterTokens,
+          }),
+        );
+        break;
+      }
+      case 'context-healed': {
+        if (!sessionId) break;
+        const payload = (msg.payload ?? {}) as {
+          toolCallId?: string;
+          healLog?: Array<{ kind: string; detail: string }>;
+        };
+        if (payload.healLog && payload.healLog.length > 0) {
+          toast.info(
+            i18n.t('context.healed', { details: payload.healLog.map((h) => h.detail).join('; ') }),
+          );
+        }
         break;
       }
       case 'file-created': {

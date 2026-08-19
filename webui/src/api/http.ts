@@ -32,6 +32,10 @@ import type {
   LogFileInfo,
   LogQueryResult,
   LogLevel,
+  ContextStats,
+  CompactionRecord,
+  CompactPreview,
+  ManualCompactResult,
 } from '../types/api';
 import i18n from '../i18n';
 
@@ -95,6 +99,9 @@ function adaptAgentMessages(raw: unknown[]): TaskMessage[] {
     } | null;
     if (!m) continue;
     if (m.role === 'system') continue;
+    // 压缩摘要消息（compaction-summary）与 day-rollover/env-context 不进消息流：
+    // 压缩卡片由 getCompactions 历史恢复（TaskPage 合并），其余为引擎内部锚定消息
+    if (m.name === 'compaction-summary' || m.name === 'env-context' || m.name === 'day-rollover') continue;
     if (m.role === 'tool') {
       // 合并到前一条 assistant 的 toolResults；孤立 tool 消息（前一条非 assistant）丢弃
       const prev = result[result.length - 1];
@@ -204,6 +211,30 @@ export const api = {
     request<{ sessionId: string; restoredCount: number; restoredFiles: number; restoreFailed: Array<{ absPath: string; error: string }> }>(
       'POST',
       `/api/sessions/${encodeURIComponent(id)}/truncate-restore`,
+    ),
+
+  // ==========================================================================
+  // 上下文引擎（token 构成 / 缓存命中 / 压缩历史 / 手动压缩 / 摘要模型）
+  // ==========================================================================
+  getContextStats: (id: string) =>
+    request<ContextStats>('GET', `/api/context/${encodeURIComponent(id)}/stats`),
+  getCompactions: (id: string) =>
+    request<{ compactions: CompactionRecord[] }>(
+      'GET',
+      `/api/context/${encodeURIComponent(id)}/compactions`,
+    ),
+  compactPreview: (id: string) =>
+    request<CompactPreview>('GET', `/api/context/${encodeURIComponent(id)}/compact-preview`),
+  manualCompact: (id: string, focus?: string) =>
+    request<ManualCompactResult>(
+      'POST',
+      `/api/context/${encodeURIComponent(id)}/compact`,
+      focus ? { focus } : {},
+    ),
+  getSummaryModels: () =>
+    request<{ models: Array<{ id: string; name: string; model: string }> }>(
+      'GET',
+      '/api/context/summary-models',
     ),
 
   // ==========================================================================

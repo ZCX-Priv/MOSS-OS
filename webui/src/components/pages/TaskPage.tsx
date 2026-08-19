@@ -22,6 +22,8 @@ import {
   ShieldCheck,
   Circle,
   CircleAlert,
+  Archive,
+  Zap,
 } from 'lucide-react';
 import {
   Dialog,
@@ -48,6 +50,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useResizable } from '@/hooks/use-resizable';
 import {
@@ -72,11 +75,12 @@ import { ConfirmPromptCard } from '../shared/ConfirmPromptCard';
 import { TerminalView } from '../shared/TerminalView';
 import { ControlHub } from '../shared/ControlHub';
 import { StatsBar } from '../shared/StatsBar';
+import { CompactionCard } from '../shared/CompactionCard';
 import { useStore } from '../../store';
 import { useTask } from '../../hooks/useTask';
 import { api } from '../../api/http';
 import { wsClient } from '../../api/ws';
-import type { TaskMessage, TodoItem, SidebarTab } from '../../types/api';
+import type { TaskMessage, TodoItem, SidebarTab, CompactPreview } from '../../types/api';
 
 // 稳定引用的空数组，避免 useStore 选择器每次返回新 [] 触发 useSyncExternalStore 无限循环
 const EMPTY_MESSAGES: TaskMessage[] = [];
@@ -168,6 +172,15 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
   /** 执行中 */
   const [truncating, setTruncating] = useState(false);
   const context = useStore((s) => s.contextBySession[taskId]);
+  /** 上下文引擎统计（token 构成/缓存命中/压缩状态/系统分段；stats API + WS 事件维护） */
+  const contextStats = useStore((s) => s.contextStatsBySession[taskId]);
+
+  // ===== 手动压缩状态机（空闲可用 + 确认对话框） =====
+  const [compactDialogOpen, setCompactDialogOpen] = useState(false);
+  const [compactPreview, setCompactPreview] = useState<CompactPreview | null>(null);
+  const [compactPreviewLoading, setCompactPreviewLoading] = useState(false);
+  const [compacting, setCompacting] = useState(false);
+
   const sidebarTabs = useStore((s) => s.sidebarTabs);
   const activeSidebarTabId = useStore((s) => s.activeSidebarTabId);
   const addSidebarTab = useStore((s) => s.addSidebarTab);
@@ -230,6 +243,41 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
           totalTokens: ctx.totalTokens,
           maxTokens: ctx.maxTokens,
         });
+      })
+      .catch(() => {});
+    // 加载上下文引擎统计（token 构成/缓存命中/系统分段；右侧面板 + 后续 WS 增量更新）
+    void api
+      .getContextStats(taskId)
+      .then((stats) => {
+        useStore.getState().setContextStats(taskId, stats);
+      })
+      .catch(() => {
+        // 后端无 context 引擎或会话不存在：静默（Context Section 降级为文件列表）
+      });
+    // 加载压缩历史并恢复压缩卡片（刷新后消息流中的压缩卡片重现）
+    void api
+      .getCompactions(taskId)
+      .then(({ compactions }) => {
+        if (!Array.isArray(compactions) || compactions.length === 0) return;
+        const s = useStore.getState();
+        const existing = s.messagesBySession[taskId] ?? [];
+        const existingIds = new Set(existing.map((m) => m.id));
+        const cards: TaskMessage[] = compactions
+          .filter((c) => !existingIds.has(`compaction_${c.id}`))
+          .map((c) => ({
+            id: `compaction_${c.id}`,
+            role: 'assistant' as const,
+            content: c.summary,
+            timestamp: c.at,
+            compaction: c,
+          }));
+        if (cards.length > 0) {
+          // 按 timestamp 排序合并（卡片插入消息流的时间序列位置）
+          const merged = [...existing, ...cards].sort(
+            (a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp),
+          );
+          s.setMessages(taskId, merged);
+        }
       })
       .catch(() => {});
     // 设置当前活跃 session
@@ -346,6 +394,58 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
     );
   }, [t]);
 
+  // ===== 手动压缩流程 =====
+  /** 点击压缩按钮：拉取预览并弹确认框（运行中禁用由按钮 disabled 保证） */
+  const handleCompactClick = useCallback(async () => {
+    if (!taskId || isGenerating) return;
+    setCompactDialogOpen(true);
+    setCompactPreview(null);
+    setCompactPreviewLoading(true);
+    try {
+      const preview = await api.compactPreview(taskId);
+      setCompactPreview(preview);
+    } catch {
+      // 预览失败（无引擎/会话空）：弹框仍显示，提示不可压缩
+      setCompactPreview(null);
+    } finally {
+      setCompactPreviewLoading(false);
+    }
+  }, [taskId, isGenerating]);
+
+  /** 确认压缩：执行手动压缩，完成后 toast（卡片由 WS compaction-completed 插入消息流） */
+  const handleCompactConfirm = useCallback(async () => {
+    if (!taskId || compacting) return;
+    setCompacting(true);
+    try {
+      const result = await api.manualCompact(taskId);
+      if (result.ok && result.compaction) {
+        // WS 不可达时兜底插入卡片 + 更新 stats
+        const s = useStore.getState();
+        const existing = s.messagesBySession[taskId] ?? [];
+        if (!existing.some((m) => m.id === `compaction_${result.compaction!.id}`)) {
+          s.setMessages(taskId, [
+            ...existing,
+            {
+              id: `compaction_${result.compaction.id}`,
+              role: 'assistant',
+              content: result.compaction.summary,
+              timestamp: result.compaction.at,
+              compaction: result.compaction,
+            },
+          ]);
+        }
+        void api.getContextStats(taskId).then((stats) => useStore.getState().setContextStats(taskId, stats)).catch(() => {});
+        setCompactDialogOpen(false);
+      } else {
+        toast.error(result.error ?? t('context.compactFailed'));
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t('context.compactFailed'));
+    } finally {
+      setCompacting(false);
+    }
+  }, [taskId, compacting, t]);
+
   // 右侧面板内容（移动端 Sheet 与桌面端 aside 共用，避免重复 JSX）
   const rightPanelContent = (
     <>
@@ -415,26 +515,96 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
               variant="sidebar"
               className="border-b border-border"
             />
-            {/* Context Section */}
+            {/* Context Section（上下文引擎：token 构成/缓存命中/动态分类/手动压缩） */}
             <div className="flex flex-1 flex-col gap-2 overflow-hidden p-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-1.5 text-xs font-medium text-foreground">
                   <span>{t('task.context')}</span>
                   <Info className="size-3 text-muted-foreground" />
                 </div>
-                <Button variant="ghost" size="xs">
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  disabled={isGenerating || compacting || !taskId}
+                  title={isGenerating ? t('context.compressDisabledRunning') : t('context.compressHint')}
+                  onClick={handleCompactClick}
+                >
+                  {compacting ? <Loader2 className="size-3.5 animate-spin" /> : <Archive className="size-3.5" />}
                   {t('task.compress')}
                 </Button>
               </div>
+
+              {/* token 构成堆叠条 + 百分比 + 缓存命中率徽章 */}
               <div className="flex items-center gap-2">
-                <Progress value={contextPercent} className="flex-1" />
-                <span className="text-xs text-muted-foreground">{contextPercent}%</span>
+                {contextStats ? (
+                  <ContextStackedBar
+                    breakdown={contextStats.breakdown}
+                    windowTokens={contextStats.windowTokens}
+                  />
+                ) : (
+                  <>
+                    <Progress value={contextPercent} className="flex-1" />
+                    <span className="text-xs text-muted-foreground">{contextPercent}%</span>
+                  </>
+                )}
+                {contextStats?.avgHitRate != null && (
+                  <span
+                    className="flex items-center gap-0.5 rounded-full border px-1.5 py-0.5 text-[10px] tabular-nums"
+                    title={t('context.cacheHitHint')}
+                    style={{
+                      color: contextStats.avgHitRate >= 0.6 ? '#10b981' : contextStats.avgHitRate >= 0.3 ? '#f59e0b' : '#ef4444',
+                      borderColor: contextStats.avgHitRate >= 0.6 ? '#10b98155' : contextStats.avgHitRate >= 0.3 ? '#f59e0b55' : '#ef444455',
+                    }}
+                  >
+                    <Zap className="size-2.5" />
+                    {Math.round(contextStats.avgHitRate * 100)}%
+                  </span>
+                )}
               </div>
+
+              {/* 动态标签：默认 系统 | 文件；有活跃技能/压缩摘要时动态追加 */}
               <Tabs defaultValue="files" className="flex flex-1 flex-col gap-2 overflow-hidden">
                 <TabsList>
+                  <TabsTrigger value="system">{t('context.tabSystem')}</TabsTrigger>
                   <TabsTrigger value="files">{t('task.files')}</TabsTrigger>
-                  <TabsTrigger value="others">{t('task.others')}</TabsTrigger>
+                  {activeSkill && (
+                    <TabsTrigger value="skill">{t('context.tabSkill')}</TabsTrigger>
+                  )}
+                  {contextStats?.breakdown?.summary ? (
+                    <TabsTrigger value="summary">{t('context.tabSummary')}</TabsTrigger>
+                  ) : null}
                 </TabsList>
+
+                {/* 系统标签页：折叠栏展示系统上下文各段（身份/规则/规范引导/环境/技能） */}
+                <TabsContent value="system" className="flex-1 min-h-0 overflow-hidden">
+                  <ScrollArea className="h-full">
+                    <div className="flex flex-col gap-1 pr-1">
+                      {contextStats?.systemSections?.length ? (
+                        contextStats.systemSections.map((section) => (
+                          <SystemSectionItem key={section.id} section={section} />
+                        ))
+                      ) : (
+                        <span className="px-2 py-4 text-xs text-muted-foreground">
+                          {t('context.noSystemSections')}
+                        </span>
+                      )}
+                      {/* 压缩摘要折叠栏（系统页常驻入口） */}
+                      {contextStats?.compaction?.lastCompaction && (
+                        <SystemSectionItem
+                          section={{
+                            id: 'last-compaction',
+                            title: t('context.lastCompaction'),
+                            tokens: contextStats.compaction?.activeSummaryTokens ?? 0,
+                            content: contextStats.compaction?.lastCompaction?.summary ?? '',
+                            defaultOpen: false,
+                          }}
+                        />
+                      )}
+                    </div>
+                  </ScrollArea>
+                </TabsContent>
+
+                {/* 文件标签页：上下文文件轨迹 */}
                 <TabsContent value="files" className="flex-1 min-h-0 overflow-hidden">
                   <ScrollArea className="h-full">
                     <div className="flex flex-col gap-0.5">
@@ -458,11 +628,33 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
                     </div>
                   </ScrollArea>
                 </TabsContent>
-                <TabsContent value="others" className="flex-1 min-h-0">
-                  <div className="px-2 py-4 text-xs text-muted-foreground">
-                    {t('task.noOthers')}
-                  </div>
-                </TabsContent>
+
+                {/* 技能标签页：当前活跃 skill 说明 */}
+                {activeSkill && (
+                  <TabsContent value="skill" className="flex-1 min-h-0 overflow-hidden">
+                    <ScrollArea className="h-full">
+                      <div className="flex flex-col gap-1 px-1 py-2 text-xs text-muted-foreground">
+                        <div className="flex items-center gap-1.5">
+                          <Sparkles className="size-3.5 text-primary" />
+                          <span className="font-medium text-foreground">{activeSkill.name}</span>
+                        </div>
+                        <span>{t('context.skillActiveDesc')}</span>
+                      </div>
+                    </ScrollArea>
+                  </TabsContent>
+                )}
+
+                {/* 摘要标签页：活跃压缩摘要全文 */}
+                {contextStats?.breakdown?.summary ? (
+                  <TabsContent value="summary" className="flex-1 min-h-0 overflow-hidden">
+                    <ScrollArea className="h-full">
+                      <div className="whitespace-pre-wrap break-words px-1 py-2 text-xs leading-relaxed text-foreground">
+                        {contextStats.compaction?.lastCompaction?.summary ??
+                          t('context.noSummary')}
+                      </div>
+                    </ScrollArea>
+                  </TabsContent>
+                ) : null}
               </Tabs>
             </div>
           </>
@@ -629,6 +821,81 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
               >
                 {truncating ? <Loader2 className="size-3.5 animate-spin" /> : <Undo2 className="size-3.5" />}
                 {t('task.truncateConfirm')}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* 手动压缩确认框：预估压缩范围/收益/保留尾部 */}
+        <Dialog open={compactDialogOpen} onOpenChange={(open) => !compacting && setCompactDialogOpen(open)}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-1.5">
+                <Archive className="size-4 text-primary" />
+                {t('context.compactDialogTitle')}
+              </DialogTitle>
+              <DialogDescription>{t('context.compactDialogDesc')}</DialogDescription>
+            </DialogHeader>
+            <div className="flex flex-col gap-3">
+              {compactPreviewLoading ? (
+                <div className="flex items-center gap-2 py-6 text-xs text-muted-foreground">
+                  <Loader2 className="size-3.5 animate-spin" />
+                  <span>{t('context.compactPreviewLoading')}</span>
+                </div>
+              ) : compactPreview && compactPreview.compactableCount > 0 ? (
+                <>
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div className="rounded-md border border-border p-2">
+                      <div className="text-muted-foreground">{t('context.compactableMessages')}</div>
+                      <div className="mt-0.5 text-base font-medium tabular-nums text-foreground">
+                        {compactPreview.compactableCount}
+                      </div>
+                    </div>
+                    <div className="rounded-md border border-border p-2">
+                      <div className="text-muted-foreground">{t('context.compactableTokens')}</div>
+                      <div className="mt-0.5 text-base font-medium tabular-nums text-foreground">
+                        ~{compactPreview.compactableTokens.toLocaleString()}
+                      </div>
+                    </div>
+                    <div className="rounded-md border border-border p-2">
+                      <div className="text-muted-foreground">{t('context.tailKeepCount')}</div>
+                      <div className="mt-0.5 text-base font-medium tabular-nums text-foreground">
+                        {compactPreview.tailKeepCount}
+                      </div>
+                    </div>
+                    <div className="rounded-md border border-border p-2">
+                      <div className="text-muted-foreground">{t('context.estimatedAfter')}</div>
+                      <div className="mt-0.5 text-base font-medium tabular-nums text-emerald-500">
+                        ~{compactPreview.estimatedAfterTokens.toLocaleString()}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="rounded-md bg-muted/50 p-2 text-xs leading-relaxed text-muted-foreground">
+                    {t('context.compactDialogNote')}
+                  </div>
+                </>
+              ) : (
+                <div className="py-4 text-center text-xs text-muted-foreground">
+                  {t('context.compactNothing')}
+                </div>
+              )}
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCompactDialogOpen(false)}
+                disabled={compacting}
+              >
+                {t('task.truncateCancel')}
+              </Button>
+              <Button
+                size="sm"
+                onClick={handleCompactConfirm}
+                disabled={compacting || compactPreviewLoading || !compactPreview || compactPreview.compactableCount === 0}
+              >
+                {compacting ? <Loader2 className="size-3.5 animate-spin" /> : <Archive className="size-3.5" />}
+                {t('context.compactConfirm')}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -866,6 +1133,95 @@ function SortableTab({ tab, isActive, canShowClose, onSelect, onRemove }: Sortab
   );
 }
 
+/** token 数人性化：1048576→1M、1572864→1.5M、2299→2.3k、100000→100k、194→194 */
+function formatTokens(n: number): string {
+  const trim = (s: string) => (s.endsWith('.0') ? s.slice(0, -2) : s);
+  if (n >= 1_000_000) return trim((n / 1_000_000).toFixed(1)) + 'M';
+  if (n >= 1_000) return trim((n / 1_000).toFixed(1)) + 'k';
+  return String(n);
+}
+
+/** 占用百分比分级精度：≥1% 取整；0.1%~1% 保留 1 位小数；<0.1% 显示下限标记。
+ *  修复大窗口低占用时 Math.round 抹成 0% 的缺陷 */
+function formatPercent(ratio: number): string {
+  if (!Number.isFinite(ratio) || ratio <= 0) return '0%';
+  const pct = ratio * 100;
+  if (pct >= 1) return `${Math.round(pct)}%`;
+  if (pct >= 0.1) return `${pct.toFixed(1)}%`;
+  return '<0.1%';
+}
+
+/** token 构成堆叠条：system/env/summary/history 分段配色 + 占用百分比。
+ *  分段宽度基于上下文窗口：各段之和 = 实际占用，剩余空白 = 未占用 */
+function ContextStackedBar({
+  breakdown,
+  windowTokens,
+}: {
+  breakdown: { system: number; env: number; summary: number; history: number; total: number };
+  windowTokens: number;
+}) {
+  const { t } = useTranslation();
+  const window = Math.max(1, windowTokens);
+  const segments = [
+    { key: 'system', value: breakdown.system, color: 'bg-indigo-500', label: t('context.segSystem') },
+    { key: 'env', value: breakdown.env, color: 'bg-teal-500', label: t('context.segEnv') },
+    { key: 'summary', value: breakdown.summary, color: 'bg-amber-500', label: t('context.segSummary') },
+    { key: 'history', value: breakdown.history, color: 'bg-blue-400', label: t('context.segHistory') },
+  ];
+  const percentText = formatPercent(breakdown.total / window);
+  const usedText = formatTokens(breakdown.total);
+  const windowText = formatTokens(windowTokens);
+  // 进度条 hover：完整占用信息（原生 title 支持 \n 多行）
+  const barTitle = [
+    t('context.usageTitle', { used: usedText, total: windowText, percent: percentText }),
+    ...segments.map((s) => `${s.label}: ${formatTokens(s.value)}`),
+  ].join('\n');
+  return (
+    <div className="flex flex-1 items-center gap-2">
+      <div
+        className="flex h-2 flex-1 overflow-hidden rounded-full bg-muted"
+        title={barTitle}
+      >
+        {segments.map((s) => (
+          <div
+            key={s.key}
+            className={s.color}
+            style={{ width: `${Math.min(100, (s.value / window) * 100)}%` }}
+          />
+        ))}
+      </div>
+      <span
+        className="text-xs tabular-nums text-muted-foreground"
+        title={t('context.usageHint', { used: usedText, total: windowText })}
+      >
+        {percentText}
+      </span>
+    </div>
+  );
+}
+
+/** 系统上下文分段折叠栏（「系统」标签页内的动态一栏栏） */
+function SystemSectionItem({
+  section,
+}: {
+  section: { id: string; title: string; tokens: number; content: string; defaultOpen?: boolean };
+}) {
+  return (
+    <Collapsible defaultOpen={section.defaultOpen}>
+      <CollapsibleTrigger className="group flex w-full items-center gap-1 rounded-md px-1.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground data-[state=open]:text-foreground">
+        <ChevronRight className="size-3 transition-transform group-data-[state=open]:rotate-90" />
+        <span className="truncate font-medium">{section.title}</span>
+        <span className="ml-auto shrink-0 tabular-nums">~{section.tokens}</span>
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <div className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-md bg-muted/40 p-2 text-[11px] leading-relaxed">
+          {section.content}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
 /** 渲染单条消息 */
 interface MessageBubbleProps {
   message: TaskMessage;
@@ -898,6 +1254,10 @@ const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap,
         </div>
       </div>
     );
+  }
+  // 上下文压缩卡片：独立于普通气泡的居中卡片（前后 token 对比 + 摘要可展开）
+  if (message.compaction) {
+    return <CompactionCard compaction={message.compaction} />;
   }
   // 防御：tool 已被适配层合并进 assistant；此处不应出现
   if (message.role === 'tool') return null;

@@ -1,5 +1,5 @@
 // src/modules/agent/session.ts
-// 会话状态、历史、上下文裁剪。
+// 会话状态与历史存储（上下文视图构建/裁剪/配对修复已迁入 context 引擎）。
 // 持久化：每个 session 存为 ~/.moss/tasks/<groupId>/<sessionId>.json（归属分组由
 // TaskStore 总管索引解析，engine 注入 resolveGroupId），启动时全量加载到内存。
 
@@ -8,10 +8,10 @@ import { existsSync, readFileSync, readdirSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { safeSessionId, writeJsonStore } from '../filesys/store-io';
 import type { AgentMessage, RunStats } from '../contracts';
-import type { UnifiedMessage } from '../llm/types';
 import type { TodoItem } from '../tools/todo/shared/store';
 import type { PermissionMode } from '../safety/types';
 import type { Environment, Logger } from '../../core/types';
+import type { CompactionRecord, EnvContextInfo } from '../context/types';
 
 /** 上下文文件轨迹（与前端 ContextFile 对齐） */
 export interface ContextFile {
@@ -53,6 +53,10 @@ export interface Session {
   activeSkill?: ActiveSkill;
   /** 会话级权限模式（ask/auto/skip；前端 PermissionModeSelector 切换，随 run 持久化，刷新恢复） */
   permissionMode?: PermissionMode;
+  /** 环境上下文锚定信息（context 引擎：会话首条 env-context 消息的生成时间/日期快照） */
+  envContext?: EnvContextInfo;
+  /** 压缩历史（context 引擎：每次压缩的记录，含摘要全文；前端压缩卡片数据源） */
+  compactions?: CompactionRecord[];
   /** 最近一次 run 的运行统计（run 级口径：每次发送消息重置；中控台指标栏刷新恢复用） */
   lastRunStats?: RunStats;
   /** 最近一次消息撤回（截断）的恢复信息（redo 用；新撤回覆盖旧的） */
@@ -188,6 +192,8 @@ export class SessionStore {
             ? { activeSkill: { name: legacySkill.name, mode: legacySkill.mode } }
             : {}),
           ...(parsed.permissionMode ? { permissionMode: parsed.permissionMode } : {}),
+          ...(parsed.envContext ? { envContext: parsed.envContext } : {}),
+          ...(Array.isArray(parsed.compactions) ? { compactions: parsed.compactions } : {}),
           ...(parsed.lastRunStats ? { lastRunStats: parsed.lastRunStats } : {}),
           ...(parsed.lastTruncation ? { lastTruncation: parsed.lastTruncation } : {}),
         };
@@ -462,161 +468,4 @@ export class SessionStore {
       this.saveSession(session);
     }
   }
-
-  /**
-   * 统计会话上下文 token（粗略估算：1 char ≈ 0.5 token），更新内存 totalTokens。
-   * 仅做统计，不修改、不裁剪 session.messages —— 历史消息是用户资产，
-   * LLM 上下文窗口裁剪只应是"发送视图"（见 toUnifiedMessages 的 budgetTokens 参数），
-   * 物理裁剪曾导致持久化历史丢失（首条 user 消息被裁掉后无法恢复）。
-   */
-  trimContext(session: Session, maxTokens: number, systemContent: string): void {
-    // 粗略估算：char 数 / 2 ≈ token 数
-    const estimateTokens = (text: string): number => Math.ceil(text.length / 2);
-    const systemTokens = estimateTokens(systemContent);
-    let totalTokens = systemTokens;
-    for (const m of session.messages) {
-      if (m.deletedAt) continue;
-      totalTokens += estimateTokens(m.content);
-      if (m.toolCalls) {
-        for (const tc of m.toolCalls) {
-          totalTokens += estimateTokens(tc.arguments);
-        }
-      }
-    }
-    session.totalTokens = totalTokens;
-  }
-
-  /** 把 AgentMessage 转为 LLM UnifiedMessage。软删除消息被过滤。
-   *  systemContent：运行时构建的完整系统提示词（engine 传入，可含 skill 后缀）——不持久化。
-   *  budgetTokens（可选）：LLM 上下文窗口预算。超限时只发送尾部窗口（视图裁剪），
-   *  不修改 session.messages。 */
-  toUnifiedMessages(session: Session, systemContent: string, budgetTokens?: number): UnifiedMessage[] {
-    const active = session.messages.filter(m => !m.deletedAt);
-    const windowed = budgetTokens === undefined ? active : this.computeContextWindow(active, budgetTokens, systemContent);
-    // 发送前自愈：保证 tool_use / tool_result 配对完整，避免历史脏数据触发
-    // Anthropic HTTP 400（tool_use without tool_result）。不修改 session.messages。
-    const sanitized = sanitizeMessages(windowed);
-    const conversation = sanitized.map(m => ({
-      role: m.role,
-      content: m.content,
-      toolCallId: m.toolCallId,
-      toolCalls: m.toolCalls?.map(tc => ({
-        id: tc.id,
-        type: 'function' as const,
-        function: { name: tc.name, arguments: tc.arguments },
-      })),
-      name: m.name,
-    }));
-    return [
-      { role: 'system', content: systemContent },
-      ...conversation,
-    ];
-  }
-
-  /**
-   * 计算 LLM 上下文窗口（纯视图，不修改 session.messages）：
-   * 超预算时保留尾部消息，并保证 tool_calls / tool 结果配对完整；
-   * budget <= 0 或全部超限时保底保留最后一条（避免空对话触发 provider 400）。
-   */
-  private computeContextWindow(active: AgentMessage[], maxTokens: number, systemContent: string): AgentMessage[] {
-    const estimateTokens = (text: string): number => Math.ceil(text.length / 2);
-    const systemTokens = estimateTokens(systemContent);
-    const budget = maxTokens - systemTokens - 500; // 留 500 token 余量
-
-    // 从后往前保留，直到不超过预算
-    const kept: AgentMessage[] = [];
-    let used = 0;
-    for (let i = active.length - 1; i >= 0; i--) {
-      const m = active[i];
-      const t = estimateTokens(m.content) + (m.toolCalls?.reduce((s, tc) => s + estimateTokens(tc.arguments), 0) ?? 0);
-      if (used + t > budget) break;
-      kept.unshift(m);
-      used += t;
-    }
-
-    // 保底：至少保留最后一条（budget 异常/首条即超限时），sanitizeMessages 会兜底配对
-    if (kept.length === 0 && active.length > 0) {
-      kept.push(active[active.length - 1]);
-    }
-
-    // 配对完整性：
-    // 1. 丢弃开头孤立的 tool 结果（对应的 assistant 不在窗口内）
-    while (kept.length > 1 && kept[0].role === 'tool') {
-      kept.shift();
-    }
-    // 2. 从后往前扫描，带 tool_calls 的 assistant 若缺对应 tool 结果则整组丢弃
-    for (let i = kept.length - 1; i >= 0; i--) {
-      const m = kept[i];
-      if (m.role === 'assistant' && m.toolCalls && m.toolCalls.length > 0) {
-        const expectedIds = new Set(m.toolCalls.map(tc => tc.id));
-        let j = i + 1;
-        while (j < kept.length && kept[j].role === 'tool') {
-          j++;
-        }
-        const foundIds = new Set(kept.slice(i + 1, j).map(t => t.toolCallId));
-        const allCovered = [...expectedIds].every(id => foundIds.has(id));
-        if (!allCovered) {
-          kept.splice(i, j - i);
-        }
-      }
-    }
-    // 整组丢弃后可能再次出现保底丢失，兜底最后一条
-    if (kept.length === 0 && active.length > 0) {
-      kept.push(active[active.length - 1]);
-    }
-    this.logger.debug(t('agent.contextTrimmed', { messages: kept.length, tokens: systemTokens + used }));
-    return kept;
-  }
-}
-
-/**
- * 保证 tool_use / tool_result 配对完整性（发送前自愈）。
- * Anthropic（及 OpenAI/Gemini）要求每个 tool_use 后紧跟对应 tool_use_id 的 tool_result。
- * - 带 toolCalls 的 assistant：紧随其后必须有覆盖全部 toolCallId 的连续 tool 消息；
- *   完整则保留 assistant + 对应 tool 结果（丢弃多余 tool 结果）；
- *   不完整则丢弃 toolCalls（保留 assistant 纯文本，文本为空则整条丢弃），并丢弃这些 tool 结果。
- * - 孤立 tool 消息（前面无配对 assistant）：丢弃。
- * 不修改输入数组，返回新数组。
- */
-function sanitizeMessages(msgs: AgentMessage[]): AgentMessage[] {
-  const out: AgentMessage[] = [];
-  let i = 0;
-  while (i < msgs.length) {
-    const m = msgs[i];
-    if (m.role === 'assistant' && m.toolCalls && m.toolCalls.length > 0) {
-      const expectedIds = new Set(m.toolCalls.map(tc => tc.id));
-      // 收集紧随其后的连续 tool 消息
-      const toolResults: AgentMessage[] = [];
-      let j = i + 1;
-      while (j < msgs.length && msgs[j].role === 'tool') {
-        toolResults.push(msgs[j]);
-        j++;
-      }
-      const foundIds = new Set(
-        toolResults.map(t => t.toolCallId).filter((id): id is string => typeof id === 'string'),
-      );
-      const allCovered = [...expectedIds].every(id => foundIds.has(id));
-      if (allCovered) {
-        out.push(m);
-        for (const tr of toolResults) {
-          if (tr.toolCallId && expectedIds.has(tr.toolCallId)) out.push(tr);
-        }
-      } else {
-        // 不配对：保留 assistant 纯文本（去掉 toolCalls），丢弃这些 tool 结果
-        if (m.content && m.content.trim()) {
-          out.push({ ...m, toolCalls: undefined });
-        }
-      }
-      i = j;
-      continue;
-    }
-    if (m.role === 'tool') {
-      // 孤立 tool 消息（无前导配对 assistant）：丢弃
-      i++;
-      continue;
-    }
-    out.push(m);
-    i++;
-  }
-  return out;
 }

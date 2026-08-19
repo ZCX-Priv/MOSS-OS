@@ -21,6 +21,7 @@ import {
   GeneralSettings,
   AgentSettings,
   ModelSettings,
+  ContextSettings,
   ToolsSettings,
   SpecsSettings,
   SafetySettings,
@@ -124,6 +125,7 @@ export default function App() {
               <Route path="render" element={<RenderSettingsSection />} />
               <Route path="agent" element={<AgentSettings />} />
               <Route path="model" element={<ModelSettings />} />
+              <Route path="context" element={<ContextSettings />} />
               <Route path="tools" element={<ToolsSettings />} />
               <Route path="specs" element={<SpecsSettings />} />
               <Route path="safety" element={<SafetySettings />} />

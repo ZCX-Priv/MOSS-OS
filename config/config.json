@@ -21,6 +21,30 @@
     "maxTurns": 25,
     "workingDirectory": ""
   },
+  "context": {
+    "compaction": {
+      "enabled": true,
+      "compactRatio": 0.80,
+      "tailKeepRatio": 0.16,
+      "summaryMaxTokens": 8192,
+      "minFoldTokens": 400,
+      "summaryModel": "inherit"
+    },
+    "toolPruning": {
+      "enabled": true,
+      "thresholdChars": 8192,
+      "keepHeadChars": 4096,
+      "keepTailChars": 1024
+    },
+    "healer": {
+      "enabled": true,
+      "toolNameFuzzy": true,
+      "schemaFix": true
+    },
+    "telemetry": {
+      "enabled": true
+    }
+  },
   "tools": {
     "read":      { "enabled": true },
     "write":     { "enabled": true, "requireConfirmation": true },

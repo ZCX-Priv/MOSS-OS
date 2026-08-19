@@ -84,7 +84,7 @@ import { useConfig } from '../../hooks/useConfig';
 import { useStore } from '../../store';
 import { api } from '../../api/http';
 import { TOOL_ICON_MAP } from '../../lib/tool-icons';
-import type { ModelItem, ThinkingEffort, SpecDetail, SafetyConfig, LogLevel, LogsConfig, LogFileInfo } from '../../types/api';
+import type { ModelItem, ThinkingEffort, SpecDetail, SafetyConfig, LogLevel, LogsConfig, LogFileInfo, ContextEngineConfig } from '../../types/api';
 
 export interface NavItem {
   id: SettingsSection;
@@ -98,6 +98,7 @@ export const settingsNavItems: NavItem[] = [
   { id: 'render', labelKey: 'settings.nav.render', Icon: Eye },
   { id: 'agent', labelKey: 'settings.nav.agent', Icon: Bot },
   { id: 'model', labelKey: 'settings.nav.model', Icon: Brain },
+  { id: 'context', labelKey: 'settings.nav.context', Icon: Database },
   { id: 'tools', labelKey: 'settings.nav.tools', Icon: Wrench },
   { id: 'specs', labelKey: 'settings.nav.specs', Icon: FileCode },
   { id: 'safety', labelKey: 'settings.nav.safety', Icon: ShieldCheck },
@@ -131,6 +132,10 @@ export const settingsSearchIndex: SearchableSetting[] = [
   { labelKey: 'settings.render.filePreview', descriptionKey: 'settings.render.filePreviewDesc', section: 'render' },
   { labelKey: 'settings.nav.agent', section: 'agent' },
   { labelKey: 'settings.nav.model', section: 'model' },
+  { labelKey: 'settings.nav.context', section: 'context' },
+  { labelKey: 'settings.context.compactionTitle', descriptionKey: 'settings.context.compactionDesc', section: 'context' },
+  { labelKey: 'settings.context.summaryModel', descriptionKey: 'settings.context.summaryModelDesc', section: 'context' },
+  { labelKey: 'settings.context.healerTitle', descriptionKey: 'settings.context.healerDesc', section: 'context' },
   { labelKey: 'settings.nav.tools', section: 'tools' },
   { labelKey: 'settings.nav.specs', section: 'specs' },
   { labelKey: 'settings.nav.safety', section: 'safety' },
@@ -561,6 +566,218 @@ export function SafetySettings() {
             onRemove={(rule) => patchRules('allow', (r) => r.filter((x) => x !== rule))}
             accentClass="bg-emerald-500"
           />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ===== 上下文引擎设置（压缩 / 摘要模型 / 工具结果修剪 / 自愈） ===== */
+
+const CONTEXT_FALLBACK: ContextEngineConfig = {
+  compaction: {
+    enabled: true,
+    compactRatio: 0.8,
+    tailKeepRatio: 0.16,
+    summaryMaxTokens: 8192,
+    minFoldTokens: 400,
+    summaryModel: 'inherit',
+  },
+  toolPruning: { enabled: true, thresholdChars: 8192, keepHeadChars: 4096, keepTailChars: 1024 },
+  healer: { enabled: true, toolNameFuzzy: true, schemaFix: true },
+  telemetry: { enabled: true },
+};
+
+/** 上下文引擎设置行（标题 + 描述 + 控件；复用 safety/render 的行样式） */
+function ContextSettingRow({
+  title,
+  desc,
+  children,
+}: {
+  title: string;
+  desc?: string;
+  children?: ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-2 border-b border-border/60 py-3 last:border-b-0 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <span className="text-sm font-medium text-foreground">{title}</span>
+        {desc ? <span className="text-xs text-muted-foreground">{desc}</span> : null}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+export function ContextSettings() {
+  const { t } = useTranslation();
+  const { appConfig, apiConfig, updateAppConfig } = useConfig();
+  const context = appConfig?.context ?? CONTEXT_FALLBACK;
+  const models = apiConfig?.models ?? [];
+
+  const patchContext = (patch: Partial<ContextEngineConfig>) => {
+    void updateAppConfig({ context: { ...context, ...patch } }).catch(() => {
+      // toast 已在 useConfig 内处理
+    });
+  };
+  const patchCompaction = (patch: Partial<ContextEngineConfig['compaction']>) => {
+    patchContext({ compaction: { ...context.compaction, ...patch } });
+  };
+
+  return (
+    <div className="flex flex-col gap-6 p-6">
+      <h1 className="text-xl font-semibold text-foreground">{t('settings.nav.context')}</h1>
+      <p className="-mt-4 text-xs text-muted-foreground">{t('settings.context.pageDesc')}</p>
+
+      {/* 上下文压缩 */}
+      <div className="flex flex-col gap-1">
+        <div className="text-sm font-medium text-foreground">{t('settings.context.compactionTitle')}</div>
+        <div className="text-xs text-muted-foreground">{t('settings.context.compactionDesc')}</div>
+        <div className="mt-2 flex flex-col rounded-lg border border-border px-4">
+          <ContextSettingRow
+            title={t('settings.context.compactionEnabled')}
+            desc={t('settings.context.compactionEnabledDesc')}
+          >
+            <Switch
+              checked={context.compaction.enabled}
+              onCheckedChange={(v) => patchCompaction({ enabled: v })}
+            />
+          </ContextSettingRow>
+          <ContextSettingRow
+            title={t('settings.context.compactRatio')}
+            desc={t('settings.context.compactRatioDesc')}
+          >
+            <div className="flex items-center gap-2">
+              <input
+                type="range"
+                min={0.5}
+                max={0.95}
+                step={0.05}
+                value={context.compaction.compactRatio}
+                onChange={(e) => patchCompaction({ compactRatio: Number(e.target.value) })}
+                className="w-32"
+                disabled={!context.compaction.enabled}
+              />
+              <span className="w-10 text-right text-xs tabular-nums text-muted-foreground">
+                {Math.round(context.compaction.compactRatio * 100)}%
+              </span>
+            </div>
+          </ContextSettingRow>
+          <ContextSettingRow
+            title={t('settings.context.tailKeepRatio')}
+            desc={t('settings.context.tailKeepRatioDesc')}
+          >
+            <div className="flex items-center gap-2">
+              <input
+                type="range"
+                min={0.05}
+                max={0.5}
+                step={0.01}
+                value={context.compaction.tailKeepRatio}
+                onChange={(e) => patchCompaction({ tailKeepRatio: Number(e.target.value) })}
+                className="w-32"
+                disabled={!context.compaction.enabled}
+              />
+              <span className="w-10 text-right text-xs tabular-nums text-muted-foreground">
+                {Math.round(context.compaction.tailKeepRatio * 100)}%
+              </span>
+            </div>
+          </ContextSettingRow>
+          <ContextSettingRow
+            title={t('settings.context.summaryMaxTokens')}
+            desc={t('settings.context.summaryMaxTokensDesc')}
+          >
+            <Input
+              type="number"
+              min={512}
+              max={32768}
+              value={context.compaction.summaryMaxTokens}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                if (Number.isFinite(v) && v >= 512 && v <= 32768) {
+                  patchCompaction({ summaryMaxTokens: Math.round(v) });
+                }
+              }}
+              className="w-28"
+              disabled={!context.compaction.enabled}
+            />
+          </ContextSettingRow>
+          <ContextSettingRow
+            title={t('settings.context.summaryModel')}
+            desc={t('settings.context.summaryModelDesc')}
+          >
+            <Select
+              value={context.compaction.summaryModel}
+              onValueChange={(v) => patchCompaction({ summaryModel: v })}
+              disabled={!context.compaction.enabled}
+            >
+              <SelectTrigger className="w-48">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="inherit">{t('settings.context.summaryModelInherit')}</SelectItem>
+                {models.map((m) => (
+                  <SelectItem key={m.id} value={m.id}>
+                    {m.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </ContextSettingRow>
+        </div>
+      </div>
+
+      {/* 工具结果修剪 */}
+      <div className="flex flex-col gap-1">
+        <div className="text-sm font-medium text-foreground">{t('settings.context.toolPruningTitle')}</div>
+        <div className="text-xs text-muted-foreground">{t('settings.context.toolPruningDesc')}</div>
+        <div className="mt-2 flex flex-col rounded-lg border border-border px-4">
+          <ContextSettingRow
+            title={t('settings.context.toolPruningEnabled')}
+            desc={t('settings.context.toolPruningEnabledDesc')}
+          >
+            <Switch
+              checked={context.toolPruning.enabled}
+              onCheckedChange={(v) => patchContext({ toolPruning: { ...context.toolPruning, enabled: v } })}
+            />
+          </ContextSettingRow>
+        </div>
+      </div>
+
+      {/* 工具调用自愈 */}
+      <div className="flex flex-col gap-1">
+        <div className="text-sm font-medium text-foreground">{t('settings.context.healerTitle')}</div>
+        <div className="text-xs text-muted-foreground">{t('settings.context.healerDesc')}</div>
+        <div className="mt-2 flex flex-col rounded-lg border border-border px-4">
+          <ContextSettingRow
+            title={t('settings.context.healerEnabled')}
+            desc={t('settings.context.healerEnabledDesc')}
+          >
+            <Switch
+              checked={context.healer.enabled}
+              onCheckedChange={(v) => patchContext({ healer: { ...context.healer, enabled: v } })}
+            />
+          </ContextSettingRow>
+          <ContextSettingRow
+            title={t('settings.context.toolNameFuzzy')}
+            desc={t('settings.context.toolNameFuzzyDesc')}
+          >
+            <Switch
+              checked={context.healer.toolNameFuzzy}
+              disabled={!context.healer.enabled}
+              onCheckedChange={(v) => patchContext({ healer: { ...context.healer, toolNameFuzzy: v } })}
+            />
+          </ContextSettingRow>
+          <ContextSettingRow
+            title={t('settings.context.schemaFix')}
+            desc={t('settings.context.schemaFixDesc')}
+          >
+            <Switch
+              checked={context.healer.schemaFix}
+              disabled={!context.healer.enabled}
+              onCheckedChange={(v) => patchContext({ healer: { ...context.healer, schemaFix: v } })}
+            />
+          </ContextSettingRow>
         </div>
       </div>
     </div>

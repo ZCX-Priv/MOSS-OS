@@ -2,16 +2,17 @@
 // Agent ReAct 循环引擎。
 
 import { t } from '../../core/i18n';
-import { buildSystemPrompt, buildTools } from './context';
+import { buildTools } from './context';
 import { SessionStore, type ContextFile, type Session, type ActiveSkill } from './session';
 import { TaskStore, type TaskItem, type TaskGroup } from './task-store';
-import { LLMError, type UnifiedRequest } from '../llm/types';
+import { LLMError, type UnifiedRequest, type UnifiedMessage } from '../llm/types';
 import type {
   AgentMessage,
   AgentEngine,
   AgentEvent,
   AgentRunInput,
   AgentRunResult,
+  ContextEngine,
   RunStats,
   TruncatePreview,
   TruncateResult,
@@ -26,6 +27,8 @@ import { ServiceNames } from '../../core/types';
 import type { AskOutcome, AskPayload, ToolResult } from '../tools/types';
 import type { SkillRegistry } from '../tools/use_skill/registry';
 import { readSessionTodoStore, getSessionTodoPath } from '../tools/todo/shared/store';
+import { buildStaticSystemPrompt, buildRequestView } from '../context/compiler';
+import { DEFAULT_TOOL_PRUNING_CONFIG } from '../context/types';
 
 /** ask 超时兜底上限（即使配置异常也不会让 Promise 永久悬挂） */
 const ASK_TIMEOUT_CEILING_MS = 24 * 60 * 60 * 1000; // 24h
@@ -179,15 +182,17 @@ export class AgentEngineImpl implements AgentEngine {
     const toolRegistry = this.services.tryResolve<ToolRegistry>(ServiceNames.TOOL_REGISTRY);
     const mcpManager = this.services.tryResolve<MCPManager>(ServiceNames.MCP_MANAGER);
 
-    // 构建会话 + 系统提示（注入模型信息用于 {{model_id}}/{{model_name}} 变量替换）
+    // 构建会话（系统提示词由 context 引擎构建/缓存；fallback 见 buildFallbackMessages）
     const apiCfg = this.config.getApiConfig();
     const modelDisplayName = resolveModelDisplayName(apiCfg, model);
-    // 系统提示词每次 run 实时构建（prompts 文件修改即生效），不持久化进 session
-    const systemPrompt = buildSystemPrompt(this.env, cwd, model, modelDisplayName);
     const session = this.sessions.getOrCreate(sessionId);
     this.sessions.addUserMessage(session, userMessage);
     // 活跃置顶：task.id 即 sessionId；无对应任务时静默返回 null
     this.tasks.touchTask(sessionId);
+
+    // 上下文引擎（基础设施：每轮请求流水线 + 工具自愈）；不可用时降级 fallback
+    const contextEngine = this.services.tryResolve<ContextEngine>(ServiceNames.CONTEXT_ENGINE);
+    contextEngine?.markBusy(sessionId);
 
     // 权限模式解析（副作用集中化）：前端显式传递 > 会话记忆 > 全局默认（config.safety.defaultMode）。
     // 变化时写入 session 持久化（刷新恢复，对齐 activeSkill 先例）。
@@ -245,25 +250,32 @@ export class AgentEngineImpl implements AgentEngine {
       }
       turn++;
 
-      // 构建请求：系统提示词运行时拼接（skill 内容从注册表实时解析，不持久化）
-      const skillPrompt = session.activeSkill
-        ? this.resolveSkillPrompt(session.activeSkill.name)
-        : null;
-      let systemContent = systemPrompt;
-      if (session.activeSkill?.mode === 'system' && skillPrompt) {
-        systemContent += `\n\n---\n\n# Active Skill: ${session.activeSkill.name}\n\n${skillPrompt}`;
-      }
-      this.sessions.trimContext(session, cfg.maxTokens * 4, systemContent); // 留余量
-      const messages = this.sessions.toUnifiedMessages(session, systemContent);
-      // skill 模式（message 注入）：把 skill-inject 占位消息在发送视图中替换为全文。
-      // messages 是 toUnifiedMessages 新建的数组/对象，原地改不影响 session.messages；
-      // 窗口预算按占位符估算略低于实际（char/2 本为粗估，可接受）。
-      if (session.activeSkill?.mode === 'message' && skillPrompt) {
-        for (const m of messages) {
-          if (m.role === 'system' && m.name === 'skill-inject') {
-            m.content = `# Active Skill: ${session.activeSkill.name}\n\n${skillPrompt}`;
+      // 构建请求：context 引擎每轮流水线（env 保障 → 压缩决策 → 缓存对齐视图）
+      // 服务不可用/异常时降级为纯函数 fallback（静态提示 + 视图构建，无压缩）
+      let messages: UnifiedMessage[];
+      if (contextEngine) {
+        try {
+          const prepared = await contextEngine.prepareRequest(session, {
+            cwd,
+            model,
+            modelDisplayName,
+          });
+          messages = prepared.messages;
+          if (prepared.degradedReason) {
+            this.logger.warn('agent: context engine degraded', {
+              sessionId,
+              reason: prepared.degradedReason,
+            });
           }
+        } catch (err) {
+          this.logger.warn('agent: context engine prepareRequest failed, using fallback', {
+            sessionId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          messages = this.buildFallbackMessages(session, cwd, model, modelDisplayName);
         }
+      } else {
+        messages = this.buildFallbackMessages(session, cwd, model, modelDisplayName);
       }
 
       const req: UnifiedRequest = {
@@ -384,6 +396,13 @@ export class AgentEngineImpl implements AgentEngine {
         stats.inputTokens += turnUsage.prompt;
         stats.outputTokens += turnUsage.completion;
         stats.cachedTokens += turnUsage.cached;
+        // 上下文引擎 usage 上报（缓存命中采样 + tokPerChar 校准 + WS 推送）
+        if (turnUsage.prompt > 0) {
+          contextEngine?.onTurnUsage(sessionId, {
+            promptTokens: turnUsage.prompt,
+            cachedTokens: turnUsage.cached,
+          });
+        }
         pushStats();
       }
 
@@ -495,6 +514,9 @@ export class AgentEngineImpl implements AgentEngine {
       });
     }
 
+    // run 结束：解除 busy（手动压缩恢复可用）
+    contextEngine?.markIdle(sessionId);
+
     onEvent({ type: 'done', sessionId, finishReason });
 
     // 兜底清理未完成的 ask（正常流程下应已被 resolve/reject）
@@ -535,6 +557,16 @@ export class AgentEngineImpl implements AgentEngine {
   /** 获取会话当前激活的 skill 模式（供路由刷新恢复 Badge；内容运行时从注册表解析） */
   getActiveSkill(sessionId: string): ActiveSkill | undefined {
     return this.sessions.get(sessionId)?.activeSkill;
+  }
+
+  /** context 引擎会话桥：获取会话（Session 结构兼容 ContextSessionLike） */
+  getSessionForContext(sessionId: string): Session | null {
+    return this.sessions.get(sessionId);
+  }
+
+  /** context 引擎会话桥：持久化会话（压缩标记/摘要消息/压缩历史写入后调用） */
+  persistSessionForContext(session: import('../context/types').ContextSessionLike): void {
+    this.sessions.persistSession(session as Session);
   }
 
   /** 获取会话最近一次 run 统计（供 GET /api/session/:id 刷新恢复前端指标栏） */
@@ -828,28 +860,62 @@ export class AgentEngineImpl implements AgentEngine {
       toolCallId,
     });
 
-    // 解析参数
-    let args: unknown;
-    try {
-      args = JSON.parse(tc.arguments || '{}');
-    } catch {
-      args = {};
+    // 参数解析 + 自愈（context 引擎：JSON 修复/工具名纠正/schema 修正）
+    // 服务不可用时回退旧行为（静默 {}）；修复失败回传结构化错误让模型自纠
+    let args: unknown = {};
+    let healedName = tc.name;
+    let healLogText = '';
+    const contextEngine = this.services.tryResolve<ContextEngine>(ServiceNames.CONTEXT_ENGINE);
+    if (contextEngine) {
+      const heal = contextEngine.healToolCall(tc.name, tc.arguments || '');
+      healedName = heal.toolName;
+      args = heal.args;
+      if (!heal.executable) {
+        // 修复失败：结构化错误回传（含修复尝试与正确用法），模型下轮自纠
+        const errorText = heal.errorText ?? `Error: tool call "${tc.name}" could not be repaired`;
+        this.sessions.addToolMessage(
+          this.sessions.get(sessionId)!,
+          toolCallId,
+          errorText,
+          healedName,
+          { isError: true },
+        );
+        onEvent({
+          type: 'tool-call-end',
+          sessionId,
+          toolName: healedName,
+          toolCallId,
+          result: { content: [{ type: 'text', text: errorText }], isError: true },
+        });
+        this.notifyHealed(sessionId, toolCallId, heal.healLog);
+        return;
+      }
+      if (heal.healLog.length > 0) {
+        healLogText = `\n\n[自愈] ${heal.healLog.map(h => h.detail).join('; ')}`;
+        this.notifyHealed(sessionId, toolCallId, heal.healLog);
+      }
+    } else {
+      try {
+        args = JSON.parse(tc.arguments || '{}');
+      } catch {
+        args = {};
+      }
     }
 
-    // 判断是否是 MCP 工具（mcp__server__tool 前缀）
-    const mcpMatch = tc.name.match(/^mcp__([^_]+)__(.+)$/);
+    // 判断是否是 MCP 工具（mcp__server__tool 前缀；用自愈纠正后的名字）
+    const mcpMatch = healedName.match(/^mcp__([^_]+)__(.+)$/);
     let result: ToolResult;
     try {
       if (mcpMatch) {
         result = await this.executeMcpTool(mcpMatch[1], mcpMatch[2], args, ctx);
       } else {
-        result = await this.executeBuiltinTool(tc.name, args, ctx);
+        result = await this.executeBuiltinTool(healedName, args, ctx);
       }
     } catch (err) {
       // 工具执行抛异常时，补一个错误 ToolResult，确保 addToolMessage 一定执行
       // 否则 assistant 消息已带 tool_calls 但缺少对应 tool 结果，session 复用时会触发 HTTP 400
       result = {
-        content: [{ type: 'text', text: `Error executing tool ${tc.name}: ${err instanceof Error ? err.message : String(err)}` }],
+        content: [{ type: 'text', text: `Error executing tool ${healedName}: ${err instanceof Error ? err.message : String(err)}` }],
         isError: true,
       };
     }
@@ -869,21 +935,42 @@ export class AgentEngineImpl implements AgentEngine {
     this.sessions.addToolMessage(
       this.sessions.get(sessionId)!,
       toolCallId,
-      resultText,
-      tc.name,
+      resultText + healLogText,
+      healedName,
       { isError: result.isError, metadata: result.metadata },
     );
 
     onEvent({
       type: 'tool-call-end',
       sessionId,
-      toolName: tc.name,
+      toolName: healedName,
       toolCallId,
       result,
     });
 
     // 阶段5.1：工具执行副作用 WS 推送（todo-updated / context-updated / file-*）
-    this.notifyToolSideEffects(tc.name, args, sessionId, toolCallId);
+    this.notifyToolSideEffects(healedName, args, sessionId, toolCallId);
+  }
+
+  /** 工具调用自愈 WS 通知（context-healed：修复明细推前端） */
+  private notifyHealed(
+    sessionId: string,
+    toolCallId: string,
+    healLog: Array<{ kind: string; detail: string }>,
+  ): void {
+    if (healLog.length === 0) return;
+    const server = this.services.tryResolve<{
+      sendToSession: (sid: string, msg: unknown) => void;
+    }>(ServiceNames.SERVER_INSTANCE);
+    try {
+      server?.sendToSession(sessionId, {
+        type: 'context-healed',
+        sessionId,
+        payload: { sessionId, toolCallId, healLog },
+      });
+    } catch {
+      // WS 不可用：静默
+    }
   }
 
   /**
@@ -1267,6 +1354,34 @@ export class AgentEngineImpl implements AgentEngine {
   }
 
   /**
+   * 降级 fallback：context 引擎服务不可用/异常时的最小拼接逻辑。
+   * 复用 context/compiler 纯函数（静态提示 + 视图构建），不含压缩/遥测——
+   * 保证主循环永不因基础设施故障而中断。
+   */
+  private buildFallbackMessages(
+    session: Session,
+    cwd: string,
+    model: string,
+    modelDisplayName: string,
+  ): UnifiedMessage[] {
+    const skillName =
+      session.activeSkill?.mode === 'system' ? session.activeSkill.name : undefined;
+    const skillPrompt = skillName ? this.resolveSkillPrompt(skillName) : null;
+    const systemContent = buildStaticSystemPrompt(
+      this.env,
+      cwd,
+      model,
+      modelDisplayName,
+      skillPrompt,
+    );
+    const view = buildRequestView(session, systemContent, {
+      toolPruning: DEFAULT_TOOL_PRUNING_CONFIG,
+      resolveSkillPrompt: name => this.resolveSkillPrompt(name),
+    });
+    return view.messages;
+  }
+
+  /**
    * skill 模式处理（/ 菜单触发，会话级持久）。
    * 规则（用户确认的设计）：
    *   - 首次激活：skill 内容（不含元数据）注入系统提示词后（activeSkill.mode='system'）
@@ -1290,7 +1405,7 @@ export class AgentEngineImpl implements AgentEngine {
         m => !(m.role === 'system' && m.name === 'skill-inject'),
       );
     }
-    // system 模式的卸载 = activeSkill 置空后 toUnifiedMessages 不再拼接
+    // system 模式的卸载 = activeSkill 置空后视图构建不再拼接
     session.activeSkill = undefined;
 
     // 2. 退出模式

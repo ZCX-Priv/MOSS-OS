@@ -30,6 +30,7 @@ import type {
   SidebarTabType,
   PermissionMode,
   RunStats,
+  ContextStats,
 } from '../types/api';
 import { DEFAULT_RENDER_SETTINGS, isValidRenderSettings, type RenderSettings } from '../render/core/types';
 
@@ -85,6 +86,8 @@ interface UIState {
     string,
     { files: ContextFile[]; totalTokens: number; maxTokens: number }
   >;
+  /** 上下文引擎统计（token 构成/缓存命中/压缩状态/系统分段；context-stats-updated 事件维护） */
+  contextStatsBySession: Record<string, ContextStats | undefined>;
 
   // --- 自动化 ---
   automations: AutomationItem[];
@@ -216,6 +219,8 @@ interface UIActions {
     sessionId: string,
     ctx: { files: ContextFile[]; totalTokens: number; maxTokens: number },
   ) => void;
+  /** 更新会话上下文引擎统计（stats API / context-stats-updated 事件） */
+  setContextStats: (sessionId: string, stats: ContextStats) => void;
 
   // 自动化
   setAutomations: (a: AutomationItem[]) => void;
@@ -363,6 +368,7 @@ export const useStore = create<Store>((set) => ({
   // --- Todo / Context ---
   todosBySession: {},
   contextBySession: {},
+  contextStatsBySession: {},
 
   // --- 自动化 ---
   automations: [],
@@ -593,6 +599,10 @@ export const useStore = create<Store>((set) => ({
   setContext: (sessionId, ctx) =>
     set((state) => ({
       contextBySession: { ...state.contextBySession, [sessionId]: ctx },
+    })),
+  setContextStats: (sessionId, stats) =>
+    set((state) => ({
+      contextStatsBySession: { ...state.contextStatsBySession, [sessionId]: stats },
     })),
 
   // --- Actions: 自动化 ---

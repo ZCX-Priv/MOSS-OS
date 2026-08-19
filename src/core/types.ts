@@ -183,6 +183,7 @@ import type { ToolsConfig } from '../modules/tools/manifest';
 import type { FileHistoryConfig } from '../modules/file-history/types';
 import type { FilesysConfig } from '../modules/filesys/types';
 import type { SafetyConfig } from '../modules/safety/types';
+import type { ContextEngineConfig } from '../modules/context/types';
 
 /** 应用配置（config.json）的结构 —— 由 config-service 中 Zod schema 严格校验 */
 export interface AppConfig {
@@ -242,6 +243,8 @@ export interface AppConfig {
   filesys?: FilesysConfig;
   /** 统一权限决策配置（由 safety 模块消费：模式/规则/危险拦截/保护路径） */
   safety?: SafetyConfig;
+  /** 上下文引擎配置（由 context 模块消费：压缩/修剪/自愈/遥测） */
+  context?: ContextEngineConfig;
 }
 
 export type ApiConfig = {
@@ -353,6 +356,8 @@ export const ServiceNames = {
   FILESYS: 'file.sys',
   /** 安全服务（由 safety 模块注册：统一权限决策 + 会话规则 + 规则建议） */
   SAFETY: 'safety.service',
+  /** 上下文引擎（由 context 模块注册：拼接/压缩/自愈/预算/治理/遥测） */
+  CONTEXT_ENGINE: 'context.engine',
   /** 日志服务（由内核注册：日志文件枚举 / 查询 / 清理 / 级别调整） */
   LOGGER: 'kernel.logger',
 } as const;

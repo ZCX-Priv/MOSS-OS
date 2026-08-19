@@ -96,6 +96,13 @@ import {
   createUpdateRootsHandler,
   createReadFileHandler,
 } from './routes/filesystem';
+import {
+  createContextStatsHandler,
+  createContextCompactionsHandler,
+  createCompactPreviewHandler,
+  createManualCompactHandler,
+  createSummaryModelsHandler,
+} from './routes/context';
 import { McpExpose } from '../mcp/expose';
 
 interface BunServer {
@@ -289,6 +296,13 @@ class ServerModule implements Module {
     this.router.addRoute({ method: 'GET', pattern: '/api/logs/files', handler: createLogFilesHandler(services), auth: true });
     this.router.addRoute({ method: 'GET', pattern: '/api/logs', handler: createQueryLogsHandler(services), auth: true });
     this.router.addRoute({ method: 'POST', pattern: '/api/logs/cleanup', handler: createCleanupLogsHandler(services), auth: true });
+
+    // context（上下文引擎：统计 / 压缩历史 / 手动压缩 / 摘要模型列表）
+    this.router.addRoute({ method: 'GET', pattern: '/api/context/summary-models', handler: createSummaryModelsHandler(services), auth: true });
+    this.router.addRoute({ method: 'GET', pattern: '/api/context/:sessionId/stats', handler: createContextStatsHandler(services), auth: true });
+    this.router.addRoute({ method: 'GET', pattern: '/api/context/:sessionId/compactions', handler: createContextCompactionsHandler(services), auth: true });
+    this.router.addRoute({ method: 'GET', pattern: '/api/context/:sessionId/compact-preview', handler: createCompactPreviewHandler(services), auth: true });
+    this.router.addRoute({ method: 'POST', pattern: '/api/context/:sessionId/compact', handler: createManualCompactHandler(services), auth: true });
   }
 
   private async startServer(): Promise<void> {

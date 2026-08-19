@@ -77,6 +77,8 @@ export interface TaskMessage {
   todoSnapshot?: TodoItem[];
   /** 是否为错误消息（用于错误卡片渲染） */
   isError?: boolean;
+  /** 压缩卡片数据（上下文引擎压缩完成时插入消息流；驱动 CompactionCard 渲染） */
+  compaction?: CompactionRecord;
 }
 
 export interface Session {
@@ -103,6 +105,8 @@ export interface AppConfig {
   security: { authToken: string; bindLocalhostOnly: boolean };
   /** 统一权限决策配置（safety 模块；可选，旧 config 无此段时用默认值） */
   safety?: SafetyConfig;
+  /** 上下文引擎配置（context 模块；可选，旧 config 无此段时用默认值） */
+  context?: ContextEngineConfig;
 }
 
 /** 日志级别（与后端 LogLevel 对齐） */
@@ -146,6 +150,118 @@ export interface SafetyConfig {
 }
 
 export type ThinkingEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+
+// ============================================================================
+// 上下文引擎类型（与后端 src/modules/context/types.ts 对齐）
+// ============================================================================
+
+/** config.context.compaction 段 */
+export interface CompactionConfig {
+  enabled: boolean;
+  compactRatio: number;
+  tailKeepRatio: number;
+  summaryMaxTokens: number;
+  minFoldTokens: number;
+  /** 'inherit' = 主模型；否则为模型 id */
+  summaryModel: string;
+}
+
+/** config.context.toolPruning 段 */
+export interface ToolPruningConfig {
+  enabled: boolean;
+  thresholdChars: number;
+  keepHeadChars: number;
+  keepTailChars: number;
+}
+
+/** config.context.healer 段 */
+export interface HealerConfig {
+  enabled: boolean;
+  toolNameFuzzy: boolean;
+  schemaFix: boolean;
+}
+
+/** config.context 段 */
+export interface ContextEngineConfig {
+  compaction: CompactionConfig;
+  toolPruning: ToolPruningConfig;
+  healer: HealerConfig;
+  telemetry: { enabled: boolean };
+}
+
+/** 压缩历史记录（session.compactions 元素 / GET /api/context/:id/compactions） */
+export interface CompactionRecord {
+  id: string;
+  at: string;
+  trigger: 'auto' | 'manual';
+  beforeTokens: number;
+  afterTokens: number;
+  compactedCount: number;
+  summary: string;
+  boundaryTimestamp?: string;
+  summaryModel: string;
+  durationMs: number;
+}
+
+/** token 构成分解 */
+export interface ContextBreakdown {
+  system: number;
+  env: number;
+  summary: number;
+  history: number;
+  total: number;
+}
+
+/** 缓存命中样本 */
+export interface CacheHitSample {
+  at: string;
+  promptTokens: number;
+  cachedTokens: number;
+  hitRate: number;
+}
+
+/** 系统上下文分段（「系统」标签页折叠栏数据） */
+export interface SystemSection {
+  id: string;
+  title: string;
+  tokens: number;
+  content: string;
+  defaultOpen?: boolean;
+}
+
+/** GET /api/context/:sessionId/stats 响应 */
+export interface ContextStats {
+  sessionId: string;
+  breakdown: ContextBreakdown;
+  windowTokens: number;
+  usedPercent: number;
+  compaction: {
+    enabled: boolean;
+    compactRatio: number;
+    compactedMessages: number;
+    activeSummaryTokens: number;
+    lastCompaction?: CompactionRecord;
+  };
+  cacheHits: CacheHitSample[];
+  avgHitRate: number | null;
+  systemSections: SystemSection[];
+}
+
+/** GET /api/context/:sessionId/compact-preview 响应（确认框数据） */
+export interface CompactPreview {
+  sessionId: string;
+  compactableCount: number;
+  compactableTokens: number;
+  tailKeepCount: number;
+  estimatedAfterTokens: number;
+}
+
+/** POST /api/context/:sessionId/compact 响应 */
+export interface ManualCompactResult {
+  ok: boolean;
+  compaction?: CompactionRecord;
+  error?: string;
+}
 
 export interface ModelConfig {
   /** 内部唯一 id（如 "model_1734..."） */

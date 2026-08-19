@@ -36,6 +36,7 @@ import safety from '../modules/safety';
 import fileHistory from '../modules/file-history';
 import daemon from '../modules/daemon';
 import automation from '../modules/automation';
+import context from '../modules/context';
 
 const MODULE_INIT_TIMEOUT_MS = 30_000;
 const MODULE_DESTROY_TIMEOUT_MS = 10_000;
@@ -45,7 +46,8 @@ const MODULE_DESTROY_TIMEOUT_MS = 10_000;
  * - llm / tools / mcp / server / agents / update：无依赖
  * - filesys → 无服务依赖（agent 构造时订阅其事件总线，须先于 agent 注册）
  * - safety → 无服务依赖（agent 执行工具前统一权限决策，须先于 agent 注册）
- * - agent → llm, tools, filesys, safety
+ * - context → llm（压缩摘要调用 LLMRouter；agent 每轮请求经其流水线，须先于 agent 注册）
+ * - agent → llm, tools, filesys, safety, context
  * - file-history → tools, filesys（shell 快照回填运行时 tryResolve）
  * - daemon → server
  * - automation → agent, server
@@ -59,6 +61,7 @@ const MODULE_FACTORIES: Array<{ name: string; create: () => Module }> = [
   { name: 'update', create: update },
   { name: 'filesys', create: filesys },
   { name: 'safety', create: safety },
+  { name: 'context', create: context },
   { name: 'agent', create: agent },
   { name: 'file-history', create: fileHistory },
   { name: 'daemon', create: daemon },

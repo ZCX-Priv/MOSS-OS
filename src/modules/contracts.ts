@@ -66,6 +66,57 @@ export interface ToolRegistry {
 }
 
 // ============================================================================
+// Context Engine（由 Context 插件注册，ServiceNames.CONTEXT_ENGINE）
+// ============================================================================
+
+import type {
+  CompactPreview,
+  CompactionRecord,
+  ContextSessionLike,
+  ContextStats,
+  HealResult,
+  ManualCompactResult,
+  PreparedRequest,
+  SessionStoreBridge,
+} from './context/types';
+
+/** agent 引擎调用 prepareRequest 的输入参数 */
+export interface ContextPrepareOptions {
+  cwd: string;
+  /** 主模型请求名 */
+  model: string;
+  modelDisplayName: string;
+  /** 上下文窗口 token（缺省由引擎从模型配置解析） */
+  windowTokens?: number;
+}
+
+/**
+ * 上下文引擎服务契约（基础设施级：拼接/压缩/自愈/预算/治理/遥测）。
+ * agent 模块为调用方：run 循环每轮调用 prepareRequest，工具执行前调用 healToolCall。
+ */
+export interface ContextEngine {
+  /** 每轮 LLM 请求前的统一流水线（env 保障 → 压缩决策 → 视图构建） */
+  prepareRequest(session: ContextSessionLike, opts: ContextPrepareOptions): Promise<PreparedRequest>;
+  /** 工具调用自愈：参数修复 → 工具名纠正 → schema 校验修正 */
+  healToolCall(toolName: string, args: string): HealResult;
+  /** agent 模块注入会话存取桥（get/persist；依赖方向 agent → context） */
+  bindSessionStore(bridge: SessionStoreBridge): void;
+  /** run 开始/结束的 busy 标记（手动压缩仅空闲可用） */
+  markBusy(sessionId: string): void;
+  markIdle(sessionId: string): void;
+  /** engine 每轮流结束后上报 usage（缓存命中采样 + tokPerChar 校准） */
+  onTurnUsage(sessionId: string, usage: { promptTokens: number; cachedTokens: number }): void;
+  /** 手动压缩（空闲时；focus 为附加焦点） */
+  manualCompact(sessionId: string, focus?: string): Promise<ManualCompactResult>;
+  /** 手动压缩预览（确认框数据） */
+  previewCompact(sessionId: string): CompactPreview | null;
+  /** 会话上下文统计（token 构成/缓存命中/压缩状态/系统分段） */
+  getStats(sessionId: string): ContextStats | null;
+  /** 压缩历史 */
+  getCompactions(sessionId: string): CompactionRecord[];
+}
+
+// ============================================================================
 // Agent Engine（由 Agent 插件注册，ServiceNames.AGENT_ENGINE）
 // ============================================================================
 
