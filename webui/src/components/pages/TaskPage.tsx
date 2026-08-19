@@ -32,6 +32,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { resolveToolIcon } from '@/lib/tool-icons';
+import { MarkdownRenderer } from '../../render';
 import type { OverlayType } from '../../types';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -751,6 +752,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
           <TaskInput
             variant="task"
             isGenerating={isGenerating}
+            showDirectoryBadge={messages.length === 0 && !isGenerating}
             onAbort={() => abort(taskId)}
             onOpenOverlay={onOpenOverlay}
             onSend={handleSend}
@@ -902,7 +904,7 @@ const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap,
   if (message.role === 'user') {
     return (
       <div className="group flex flex-col items-end gap-1">
-        <div className="max-w-[80%] rounded-2xl border border-border bg-indigo-100 px-3 py-2 text-sm text-foreground shadow-sm break-words dark:bg-blue-600 dark:text-white dark:shadow-[0_2px_14px_rgba(37,99,235,0.35)]">
+        <div className="max-w-[80%] rounded-2xl border border-border bg-indigo-100 px-3 py-2 text-sm text-foreground shadow-sm break-words whitespace-pre-wrap dark:bg-blue-600 dark:text-white dark:shadow-[0_2px_14px_rgba(37,99,235,0.35)]">
         {displayContent}
       </div>
       {overLimit && (
@@ -956,15 +958,15 @@ const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap,
             )}
             <span>{message.thinkingStreaming ? t('task.thinkingStreaming') : t('task.thinkingDone')}</span>
           </summary>
-          <div className="mt-1 text-xs text-muted-foreground">
-            {message.thinking}
+          <div className="mt-1">
+            <MarkdownRenderer text={message.thinking} streaming={!!message.thinkingStreaming} variant="compact" />
           </div>
         </details>
       )}
       {/* 正文 */}
       {message.content && !message.isError && (
-        <div className="whitespace-pre-wrap break-words text-sm text-foreground">
-          {displayContent}
+        <div className="text-sm text-foreground">
+          <MarkdownRenderer text={displayContent} streaming={!!message.streaming} />
           {message.streaming && (
             <Loader2 className="ml-1 inline size-3 animate-spin" />
           )}

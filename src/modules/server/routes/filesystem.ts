@@ -15,9 +15,11 @@ import type { HttpRequest, HttpResponse, RouteHandler } from '../types';
 import type { ConfigService, Environment, ServiceRegistry } from '../../../core/types';
 import { ServiceNames } from '../../../core/types';
 import { readdirSync, existsSync, statSync, type Dirent } from 'node:fs';
-import { isAbsolute, join, normalize } from 'node:path';
+import { isAbsolute, join, normalize, extname } from 'node:path';
 import * as nfd from 'nativefiledialog-for-bun';
 import { ErrorCode } from '../../../core/error-codes';
+import { SYSTEM_SCOPE } from '../../filesys/roots';
+import type { FilesysService } from '../../filesys/types';
 
 interface ResolveBody {
   folderName?: string;
@@ -244,5 +246,74 @@ export function createUpdateRootsHandler(
         body: { error: err instanceof Error ? err.message : String(err) },
       };
     }
+  };
+}
+
+// ============================================================================
+// GET /api/filesystem/raw?path=<绝对路径>&cwd=<可选，默认 SYSTEM_SCOPE>
+// 只读返回文件二进制内容（WebUI 渲染模块预览 docx/pdf/图片/3D 模型等）。
+// 走 filesys.resolve 权限体系（与 read 工具同一套边界：roots 越权 / .moss 硬屏蔽 → 403）；
+// 扩展名白名单（未知名 415）防止退化为任意文件下载器；大小上限 100MB（413）。
+// ============================================================================
+
+/** 预览扩展名白名单 → MIME */
+const RAW_MIME_MAP: Record<string, string> = {
+  pdf: 'application/pdf',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  glb: 'model/gltf-binary',
+  gltf: 'model/gltf+json',
+  obj: 'text/plain; charset=utf-8',
+  stl: 'text/plain; charset=utf-8',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  svg: 'image/svg+xml',
+  txt: 'text/plain; charset=utf-8',
+  md: 'text/plain; charset=utf-8',
+};
+
+const RAW_MAX_BYTES = 100 * 1024 * 1024;
+
+export function createReadFileHandler(services: ServiceRegistry): RouteHandler {
+  return async (req: HttpRequest): Promise<HttpResponse> => {
+    const rawPath = (req.query.path ?? '').trim();
+    if (!rawPath) {
+      return { status: 400, body: { error: 'path is required' } };
+    }
+    const cwd = (req.query.cwd ?? '').trim() || SYSTEM_SCOPE;
+
+    const filesys = services.tryResolve<FilesysService>(ServiceNames.FILESYS);
+    if (!filesys) {
+      return { status: 503, body: { error: 'filesys service unavailable' } };
+    }
+
+    const absPath = filesys.resolve(rawPath, cwd);
+    if (!absPath) {
+      return { status: 403, body: { error: 'Access denied: path outside allowed roots or blocked' } };
+    }
+
+    const ext = extname(absPath).slice(1).toLowerCase();
+    const mime = RAW_MIME_MAP[ext];
+    if (!mime) {
+      return { status: 415, body: { error: `Unsupported preview type: .${ext || '(none)'}` } };
+    }
+
+    const result = filesys.readFile(absPath);
+    if (!result) {
+      return { status: 404, body: { error: 'File not found (or not a regular file)' } };
+    }
+    if (result.size > RAW_MAX_BYTES) {
+      return { status: 413, body: { error: `File too large for preview (limit ${RAW_MAX_BYTES} bytes)` } };
+    }
+
+    return {
+      status: 200,
+      headers: { 'Content-Type': mime, 'Cache-Control': 'no-store' },
+      body: new Uint8Array(result.rawBuffer),
+    };
   };
 }

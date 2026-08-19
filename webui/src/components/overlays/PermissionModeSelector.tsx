@@ -62,7 +62,7 @@ const MODE_CONFIG: ModeConfig[] = [
   },
 ];
 
-export function PermissionModeSelector() {
+export function PermissionModeSelector({ fullLabel = false }: { fullLabel?: boolean }) {
   const { t } = useTranslation();
   const activeSessionId = useStore((s) => s.activeSessionId);
   const globalMode = useStore((s) => s.permissionMode);
@@ -84,7 +84,7 @@ export function PermissionModeSelector() {
           title={t('permissionMode.title')}
         >
           <CurrentIcon className={cn('size-3 shrink-0', currentConfig.iconClass)} />
-          <span className={cn('min-w-0 flex-1 truncate hidden sm:inline whitespace-nowrap', currentConfig.iconClass)}>
+          <span className={cn('min-w-0 flex-1 truncate whitespace-nowrap', !fullLabel && 'hidden sm:inline', currentConfig.iconClass)}>
             {t(currentConfig.labelKey)}
           </span>
           <ChevronDown className="size-3 shrink-0 opacity-70" />

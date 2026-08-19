@@ -24,8 +24,10 @@ import {
   ToolsSettings,
   SpecsSettings,
   SafetySettings,
+  LogsSettings,
   AboutSettings,
   PlaceholderSection,
+  RenderSettingsSection,
 } from './components/pages/SettingsPage';
 import { SearchModal } from './components/overlays/SearchModal';
 import { AgentSwitchMenu } from './components/overlays/AgentSwitchMenu';
@@ -119,11 +121,13 @@ export default function App() {
               <Route index element={<Navigate to="general" replace />} />
               <Route path="general" element={<GeneralSettings />} />
               <Route path="appearance" element={<PlaceholderSection section="appearance" />} />
+              <Route path="render" element={<RenderSettingsSection />} />
               <Route path="agent" element={<AgentSettings />} />
               <Route path="model" element={<ModelSettings />} />
               <Route path="tools" element={<ToolsSettings />} />
               <Route path="specs" element={<SpecsSettings />} />
               <Route path="safety" element={<SafetySettings />} />
+              <Route path="logs" element={<LogsSettings />} />
               <Route path="about" element={<AboutSettings />} />
               <Route path="task" element={<PlaceholderSection section="task" />} />
               <Route path="index" element={<PlaceholderSection section="index" />} />

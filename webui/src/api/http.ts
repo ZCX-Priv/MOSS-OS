@@ -29,6 +29,9 @@ import type {
   ResolveDirectoryResult,
   SuggestPath,
   RunStats,
+  LogFileInfo,
+  LogQueryResult,
+  LogLevel,
 } from '../types/api';
 import i18n from '../i18n';
 
@@ -350,6 +353,22 @@ export const api = {
     request<{ todos: TodoItem[] }>('GET', `/api/todos/${sessionId}`),
   setTodos: (sessionId: string, todos: TodoItem[]) =>
     request<{ todos: TodoItem[] }>('PUT', `/api/todos/${sessionId}`, { todos }),
+
+  // ==========================================================================
+  // 日志（文件列表 / 行查询过滤 / 过期清理）
+  // ==========================================================================
+  listLogFiles: () => request<{ files: LogFileInfo[] }>('GET', '/api/logs/files'),
+  queryLogs: (opts: { file?: string; minLevel?: LogLevel; search?: string; limit?: number; offset?: number }) => {
+    const qs = new URLSearchParams();
+    if (opts.file) qs.set('file', opts.file);
+    if (opts.minLevel) qs.set('minLevel', opts.minLevel);
+    if (opts.search) qs.set('search', opts.search);
+    if (opts.limit !== undefined) qs.set('limit', String(opts.limit));
+    if (opts.offset !== undefined) qs.set('offset', String(opts.offset));
+    const q = qs.toString();
+    return request<LogQueryResult>('GET', `/api/logs${q ? `?${q}` : ''}`);
+  },
+  cleanupLogs: () => request<{ removed: number }>('POST', '/api/logs/cleanup'),
 
   // ==========================================================================
   // 版本（见文档 3.2.11）

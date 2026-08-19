@@ -31,6 +31,7 @@ import type {
   PermissionMode,
   RunStats,
 } from '../types/api';
+import { DEFAULT_RENDER_SETTINGS, isValidRenderSettings, type RenderSettings } from '../render/core/types';
 
 // ============================================================================
 // State
@@ -130,6 +131,9 @@ interface UIState {
   // --- 右侧边栏标签页（全局，IndexedDB 持久化） ---
   sidebarTabs: SidebarTab[];
   activeSidebarTabId: string | null;
+
+  // --- 渲染设置（render 模块，IndexedDB 持久化） ---
+  renderSettings: RenderSettings;
 }
 
 /** 从 IndexedDB 预填充后写入 store 的持久化状态（各字段可选，值非法时忽略） */
@@ -140,6 +144,7 @@ export interface PersistedState {
   permissionMode?: PermissionMode;
   sidebarTabs?: SidebarTab[];
   activeSidebarTabId?: string;
+  renderSettings?: RenderSettings;
 }
 
 // ============================================================================
@@ -273,6 +278,9 @@ interface UIActions {
   // 执行权限模式
   setPermissionMode: (v: UIState['permissionMode'], sessionId?: string) => void;
 
+  // 渲染设置（render 模块）
+  setRenderSetting: <K extends keyof RenderSettings>(key: K, value: RenderSettings[K]) => void;
+
   // 模型菜单"添加自定义模型"跳转设置页并打开弹窗的信号
   modelDialogRequest: boolean;
   requestModelDialog: () => void;
@@ -390,6 +398,9 @@ export const useStore = create<Store>((set) => ({
   // --- 执行权限模式 ---
   permissionMode: 'ask',
   permissionModeBySession: {},
+
+  // --- 渲染设置（render 模块，IndexedDB 持久化） ---
+  renderSettings: DEFAULT_RENDER_SETTINGS,
 
   // 模型菜单"添加自定义模型"跳转设置页并打开弹窗的信号
   modelDialogRequest: false,
@@ -716,6 +727,15 @@ export const useStore = create<Store>((set) => ({
     set({ permissionMode });
   },
 
+  // --- Actions: 渲染设置（render 模块） ---
+  setRenderSetting: (key, value) => {
+    set((state) => {
+      const renderSettings = { ...state.renderSettings, [key]: value };
+      void idbSet('moss-render-settings', renderSettings);
+      return { renderSettings };
+    });
+  },
+
   // --- Actions: 模型添加弹窗信号 ---
   requestModelDialog: () => set({ modelDialogRequest: true }),
   clearModelDialogRequest: () => set({ modelDialogRequest: false }),
@@ -807,6 +827,9 @@ export const useStore = create<Store>((set) => ({
       }
       if (typeof patch.activeSidebarTabId === 'string' && patch.activeSidebarTabId.length > 0) {
         next.activeSidebarTabId = patch.activeSidebarTabId;
+      }
+      if (isValidRenderSettings(patch.renderSettings)) {
+        next.renderSettings = patch.renderSettings;
       }
       return next;
     }),

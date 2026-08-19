@@ -21,6 +21,46 @@ export interface Logger {
   getLevel(): LogLevel;
 }
 
+/** 日志文件元信息 */
+export interface LogFileInfo {
+  name: string;
+  /** 字节数 */
+  size: number;
+  /** 最后修改时间（毫秒时间戳） */
+  mtime: number;
+}
+
+/** 日志查询选项（人类可读文本行按正则解析过滤） */
+export interface LogQueryOptions {
+  /** 指定日志文件名（如 moss-2026-08-18.log）；缺省 = 最新一个文件 */
+  file?: string;
+  /** 最低级别过滤（>=，如 warn 表示保留 warn/error/fatal） */
+  minLevel?: LogLevel;
+  /** 关键词子串过滤（大小写不敏感） */
+  search?: string;
+  /** 分页大小，默认 200，上限 1000 */
+  limit?: number;
+  /** 分页偏移（最新优先序） */
+  offset?: number;
+}
+
+export interface LogQueryResult {
+  /** 过滤+分页后的日志行（最新优先） */
+  lines: string[];
+  /** 过滤后总行数（分页前） */
+  total: number;
+}
+
+/** 日志服务（由内核注册为 kernel.logger：文件枚举 / 查询 / 清理 / 级别调整） */
+export interface LogService {
+  getLogFiles(): LogFileInfo[];
+  readLogs(opts: LogQueryOptions): LogQueryResult;
+  /** 立即按保留策略清理过期日志，返回删除文件数 */
+  cleanupNow(): number;
+  setLevel(level: LogLevel): void;
+  getLevel(): LogLevel;
+}
+
 // ============================================================================
 // 环境检测
 // ============================================================================
@@ -155,7 +195,12 @@ export interface AppConfig {
   };
   daemon: {
     enabled: boolean;
-    logLevel: LogLevel;
+  };
+  /** 日志系统配置（级别 / 保留天数 / 单文件大小上限），由 core/logger 消费 */
+  logs: {
+    level: LogLevel;
+    retentionDays: number;
+    maxFileMb: number;
   };
   update: {
     autoCheck: boolean;
@@ -308,4 +353,6 @@ export const ServiceNames = {
   FILESYS: 'file.sys',
   /** 安全服务（由 safety 模块注册：统一权限决策 + 会话规则 + 规则建议） */
   SAFETY: 'safety.service',
+  /** 日志服务（由内核注册：日志文件枚举 / 查询 / 清理 / 级别调整） */
+  LOGGER: 'kernel.logger',
 } as const;

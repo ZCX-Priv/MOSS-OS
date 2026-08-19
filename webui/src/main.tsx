@@ -6,6 +6,7 @@ import { ThemeProvider } from './contexts/ThemeContext'
 import { I18nProvider } from './contexts/I18nContext'
 import { idbGet, idbSet, migrateLegacyDatabase } from './utils/idb'
 import { useStore, type PersistedState, LEGACY_DEFAULT_WORKING_DIRECTORY, DEFAULT_WORKING_DIRECTORY } from './store'
+import { isValidRenderSettings } from './render/core/types'
 import i18n, { type Locale, LOCALE_STORAGE_KEY } from './i18n'
 import './styles/global.css'
 
@@ -43,6 +44,7 @@ const PERSISTED_KEYS = [
   'moss-permission-mode',
   'moss-sidebar-tabs',
   'moss-active-sidebar-tab',
+  'moss-render-settings',
 ] as const;
 
 /**
@@ -110,6 +112,9 @@ function buildPersistedState(data: Record<string, unknown>): PersistedState {
       typeof data['moss-active-sidebar-tab'] === 'string'
         ? (data['moss-active-sidebar-tab'] as string)
         : undefined,
+    renderSettings: isValidRenderSettings(data['moss-render-settings'])
+      ? data['moss-render-settings']
+      : undefined,
   };
 }
 

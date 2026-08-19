@@ -83,6 +83,13 @@ const safetySchema = z.object({
   protectedPaths: z.array(z.string()).default(['~/.ssh', '~/.gnupg', '~/.aws']),
 });
 
+// logs：日志系统配置（内层全 .default() 自愈；外层 .default({}) 使旧 config.json 缺段自动补全）
+const logsSchema = z.object({
+  level: logLevelSchema.default('info'),
+  retentionDays: z.number().int().min(1).max(365).default(14),
+  maxFileMb: z.number().min(1).max(100).default(10),
+});
+
 const appConfigSchema = z.object({
   version: z.number().int().positive(),
   server: z.object({
@@ -93,8 +100,9 @@ const appConfigSchema = z.object({
   }),
   daemon: z.object({
     enabled: z.boolean(),
-    logLevel: logLevelSchema,
   }),
+  // 日志系统配置（缺段时自动补全默认值；旧版 daemon.logLevel 在读取前迁移）
+  logs: logsSchema.default({}),
   update: z.object({
     autoCheck: z.boolean(),
     channel: z.enum(['stable', 'beta']),
@@ -150,7 +158,8 @@ export function defaultAppConfig(): AppConfig {
   return {
     version: 1,
     server: { host: '127.0.0.1', port: 7766, autoPort: true, locale: 'zh' },
-    daemon: { enabled: true, logLevel: 'info' },
+    daemon: { enabled: true },
+    logs: { level: 'info', retentionDays: 14, maxFileMb: 10 },
     update: { autoCheck: true, channel: 'stable', checkIntervalHours: 24 },
     agent: {
       defaultModel: '',
@@ -364,6 +373,9 @@ class ConfigServiceImpl implements ConfigService {
     } catch (err) {
       throw new Error(t('config.configJsonInvalid', { error: err instanceof Error ? err.message : String(err) }));
     }
+    // 一次性迁移：旧版 daemon.logLevel → logs.level（仅当 logs.level 未显式设置时）；
+    // 迁移后删除旧字段，下次写盘自然落盘为新结构
+    migrateLegacyLogLevel(raw as Record<string, unknown>);
     const result = appConfigSchema.safeParse(raw);
     if (!result.success) {
       const issues = result.error.issues
@@ -426,6 +438,19 @@ class ConfigServiceImpl implements ConfigService {
 
 function deepClone<T>(obj: T): T {
   return JSON.parse(JSON.stringify(obj)) as T;
+}
+
+/** 旧版 daemon.logLevel → logs.level 迁移（原地修改 raw 对象） */
+function migrateLegacyLogLevel(raw: Record<string, unknown> | null): void {
+  if (!raw || typeof raw !== 'object') return;
+  const daemon = raw.daemon as Record<string, unknown> | undefined;
+  if (!daemon || typeof daemon.logLevel !== 'string') return;
+  const logs = (raw.logs as Record<string, unknown> | undefined) ?? {};
+  if (logs.level === undefined) {
+    logs.level = daemon.logLevel;
+    raw.logs = logs;
+  }
+  delete daemon.logLevel;
 }
 
 function deepMerge(target: unknown, patch: unknown): unknown {

@@ -6,11 +6,13 @@ import { reloadBackendResources, setBackendLocale, t } from './i18n';
 import { detectEnvironment } from './env';
 import { watch, existsSync, type FSWatcher } from 'node:fs';
 import { join } from 'node:path';
-import { createRootLogger } from './logger';
+import { createRootLogger, type RootLogger } from './logger';
 import { createEventBus } from './event-bus';
 import { createServiceRegistry } from './service-registry';
 import { createConfigService } from './config-service';
+import { ServiceNames } from './types';
 import type {
+  AppConfig,
   KernelContext,
   Logger,
   EventBus,
@@ -81,6 +83,7 @@ export interface KernelStartOptions {
 export class Microkernel {
   private env: Environment | null = null;
   private logger: Logger | null = null;
+  private rootLogger: RootLogger | null = null;
   private eventBus: EventBus | null = null;
   private services: ServiceRegistry | null = null;
   private config: ConfigService | null = null;
@@ -95,7 +98,8 @@ export class Microkernel {
 
     // 1. 初始化内核服务
     this.env = detectEnvironment();
-    this.logger = createRootLogger(this.env, options.logLevel ?? 'info');
+    this.rootLogger = createRootLogger(this.env, options.logLevel ?? 'info');
+    this.logger = this.rootLogger.logger;
     this.logger.info(t('kernel.starting'), {
       platform: this.env.platform,
       arch: this.env.arch,
@@ -114,19 +118,26 @@ export class Microkernel {
       setBackendLocale(this.config.getAppConfig().server.locale === 'en' ? 'en' : 'zh');
       // 启动 i18n 资源目录 watcher，实现运行期文案就地热重载
       this.startBackendI18nWatcher();
-      // 应用配置中的日志级别
-      const cfgLevel = this.config.getAppConfig().daemon.logLevel;
-      this.logger.setLevel(cfgLevel);
-      this.logger.info(t('kernel.configLoaded'), { logLevel: cfgLevel });
+      // 应用配置中的日志级别与文件策略，并清理一次过期日志
+      const logsCfg = this.config.getAppConfig().logs;
+      this.applyLogsConfig(logsCfg);
+      const removed = this.rootLogger.writer.cleanupNow();
+      this.logger.info(t('kernel.configLoaded'), { logLevel: logsCfg.level, expiredLogsRemoved: removed });
     } catch (err) {
       this.logger.error(t('kernel.configLoadFailed'), {
         error: err instanceof Error ? err.message : String(err),
       });
       // 真正回退到默认配置，避免后续所有模块因 "Config not loaded" 连锁失败
       this.config.loadDefaults();
-      const cfgLevel = this.config.getAppConfig().daemon.logLevel;
-      this.logger.setLevel(cfgLevel);
+      this.applyLogsConfig(this.config.getAppConfig().logs);
     }
+
+    // 订阅 config:changed：日志级别/文件策略热更新（无需重启）
+    this.eventBus.onAction('config:changed', (data) => {
+      const which = (data as { which?: string } | null)?.which;
+      if (which && which !== 'app') return;
+      this.applyLogsConfig(this.config!.getAppConfig().logs);
+    });
 
     // 3. 构建模块上下文（完整能力）
     const moduleCtx: ModuleContext = {
@@ -169,6 +180,9 @@ export class Microkernel {
       },
       { scope: 'kernel' },
     );
+
+    // 暴露日志服务（供 /api/logs 路由使用：文件枚举 / 查询过滤 / 清理 / 级别调整）
+    this.services.register(ServiceNames.LOGGER, this.rootLogger.service, { scope: 'kernel' });
 
     this.started = true;
     await this.eventBus.broadcast('kernel:ready', { pid: this.env.pid });
@@ -220,6 +234,18 @@ export class Microkernel {
 
   isStarted(): boolean {
     return this.started;
+  }
+
+  /** 应用 config.logs（级别 + 文件策略）到根日志器（启动与 config:changed 热更新共用） */
+  private applyLogsConfig(logsCfg: AppConfig['logs']): void {
+    if (!this.logger || !this.rootLogger) return;
+    if (this.logger.getLevel() !== logsCfg.level) {
+      this.logger.setLevel(logsCfg.level);
+    }
+    this.rootLogger.writer.setPolicy({
+      maxFileBytes: Math.round(logsCfg.maxFileMb * 1024 * 1024),
+      retentionDays: logsCfg.retentionDays,
+    });
   }
 
   /**

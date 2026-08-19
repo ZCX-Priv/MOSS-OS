@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, type ReactNode } from 'react';
 import { Outlet } from 'react-router-dom';
 import type { LucideIcon } from 'lucide-react';
 import {
@@ -31,6 +31,9 @@ import {
   FileCode,
   Pencil,
   ShieldCheck,
+  ScrollText,
+  RefreshCw,
+  Eye,
   X,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -81,7 +84,7 @@ import { useConfig } from '../../hooks/useConfig';
 import { useStore } from '../../store';
 import { api } from '../../api/http';
 import { TOOL_ICON_MAP } from '../../lib/tool-icons';
-import type { ModelItem, ThinkingEffort, SpecDetail, SafetyConfig } from '../../types/api';
+import type { ModelItem, ThinkingEffort, SpecDetail, SafetyConfig, LogLevel, LogsConfig, LogFileInfo } from '../../types/api';
 
 export interface NavItem {
   id: SettingsSection;
@@ -92,11 +95,13 @@ export interface NavItem {
 export const settingsNavItems: NavItem[] = [
   { id: 'general', labelKey: 'settings.nav.general', Icon: Settings },
   { id: 'appearance', labelKey: 'settings.nav.appearance', Icon: Palette },
+  { id: 'render', labelKey: 'settings.nav.render', Icon: Eye },
   { id: 'agent', labelKey: 'settings.nav.agent', Icon: Bot },
   { id: 'model', labelKey: 'settings.nav.model', Icon: Brain },
   { id: 'tools', labelKey: 'settings.nav.tools', Icon: Wrench },
   { id: 'specs', labelKey: 'settings.nav.specs', Icon: FileCode },
   { id: 'safety', labelKey: 'settings.nav.safety', Icon: ShieldCheck },
+  { id: 'logs', labelKey: 'settings.nav.logs', Icon: ScrollText },
   { id: 'task', labelKey: 'settings.nav.task', Icon: MessageSquare },
   { id: 'index', labelKey: 'settings.nav.index', Icon: Layers },
   { id: 'docs', labelKey: 'settings.nav.docs', Icon: FileText },
@@ -117,11 +122,19 @@ export const settingsSearchIndex: SearchableSetting[] = [
   // 页面级（导航项 + placeholder 页面描述）
   { labelKey: 'settings.nav.general', section: 'general' },
   { labelKey: 'settings.nav.appearance', section: 'appearance' },
+  { labelKey: 'settings.nav.render', section: 'render' },
+  { labelKey: 'settings.render.markdown', descriptionKey: 'settings.render.markdownDesc', section: 'render' },
+  { labelKey: 'settings.render.math', descriptionKey: 'settings.render.mathDesc', section: 'render' },
+  { labelKey: 'settings.render.mathFallback', descriptionKey: 'settings.render.mathFallbackDesc', section: 'render' },
+  { labelKey: 'settings.render.mermaid', descriptionKey: 'settings.render.mermaidDesc', section: 'render' },
+  { labelKey: 'settings.render.codeHighlight', descriptionKey: 'settings.render.codeHighlightDesc', section: 'render' },
+  { labelKey: 'settings.render.filePreview', descriptionKey: 'settings.render.filePreviewDesc', section: 'render' },
   { labelKey: 'settings.nav.agent', section: 'agent' },
   { labelKey: 'settings.nav.model', section: 'model' },
   { labelKey: 'settings.nav.tools', section: 'tools' },
   { labelKey: 'settings.nav.specs', section: 'specs' },
   { labelKey: 'settings.nav.safety', section: 'safety' },
+  { labelKey: 'settings.nav.logs', section: 'logs' },
   { labelKey: 'settings.safety.defaultMode', descriptionKey: 'settings.safety.defaultModeDesc', section: 'safety' },
   { labelKey: 'settings.safety.confirmTimeout', descriptionKey: 'settings.safety.confirmTimeoutDesc', section: 'safety' },
   { labelKey: 'settings.safety.sandboxTitle', descriptionKey: 'settings.safety.sandboxDesc', section: 'safety' },
@@ -171,6 +184,91 @@ export function SettingsPage() {
     <section className="flex-1 overflow-auto">
       <Outlet />
     </section>
+  );
+}
+
+/* ===== 渲染设置（render 模块：markdown/公式/图表/高亮/文件预览） ===== */
+
+/** 单行开关卡片（渲染设置通用行） */
+function RenderSettingRow({
+  titleKey,
+  descKey,
+  checked,
+  disabled,
+  onCheckedChange,
+  children,
+}: {
+  titleKey: string;
+  descKey: string;
+  checked: boolean;
+  disabled?: boolean;
+  onCheckedChange: (v: boolean) => void;
+  children?: ReactNode;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="flex flex-col gap-2 border-b border-border/60 py-3 last:border-b-0 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <span className="text-sm font-medium text-foreground">{t(titleKey)}</span>
+        <span className="text-xs text-muted-foreground">{t(descKey)}</span>
+        {children}
+      </div>
+      <Switch checked={checked} disabled={disabled} onCheckedChange={onCheckedChange} />
+    </div>
+  );
+}
+
+export function RenderSettingsSection() {
+  const { t } = useTranslation();
+  const renderSettings = useStore((s) => s.renderSettings);
+  const setRenderSetting = useStore((s) => s.setRenderSetting);
+
+  return (
+    <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 p-4 md:p-6">
+      <h1 className="text-xl font-semibold text-foreground">{t('settings.nav.render')}</h1>
+
+      <Card className="p-4 md:p-5">
+        <RenderSettingRow
+          titleKey="settings.render.markdown"
+          descKey="settings.render.markdownDesc"
+          checked={renderSettings.markdownEnabled}
+          onCheckedChange={(v) => setRenderSetting('markdownEnabled', v)}
+        />
+        <RenderSettingRow
+          titleKey="settings.render.math"
+          descKey="settings.render.mathDesc"
+          checked={renderSettings.mathEnabled}
+          onCheckedChange={(v) => setRenderSetting('mathEnabled', v)}
+        />
+        <RenderSettingRow
+          titleKey="settings.render.mathFallback"
+          descKey="settings.render.mathFallbackDesc"
+          checked={renderSettings.mathFallback}
+          disabled={!renderSettings.mathEnabled}
+          onCheckedChange={(v) => setRenderSetting('mathFallback', v)}
+        />
+        <RenderSettingRow
+          titleKey="settings.render.mermaid"
+          descKey="settings.render.mermaidDesc"
+          checked={renderSettings.mermaidEnabled}
+          onCheckedChange={(v) => setRenderSetting('mermaidEnabled', v)}
+        />
+        <RenderSettingRow
+          titleKey="settings.render.codeHighlight"
+          descKey="settings.render.codeHighlightDesc"
+          checked={renderSettings.codeHighlightEnabled}
+          onCheckedChange={(v) => setRenderSetting('codeHighlightEnabled', v)}
+        />
+        <RenderSettingRow
+          titleKey="settings.render.filePreview"
+          descKey="settings.render.filePreviewDesc"
+          checked={renderSettings.filePreviewEnabled}
+          onCheckedChange={(v) => setRenderSetting('filePreviewEnabled', v)}
+        />
+      </Card>
+
+      <p className="text-xs text-muted-foreground">{t('settings.render.footerNote')}</p>
+    </div>
   );
 }
 
@@ -464,6 +562,261 @@ export function SafetySettings() {
             accentClass="bg-emerald-500"
           />
         </div>
+      </div>
+    </div>
+  );
+}
+
+/* ===== 日志设置 ===== */
+const LOG_LEVELS: LogLevel[] = ['debug', 'info', 'warn', 'error', 'fatal'];
+const LOGS_FALLBACK: LogsConfig = { level: 'info', retentionDays: 14, maxFileMb: 10 };
+const LOG_LINE_RE = /^(\S+)\s+(DEBUG|INFO|WARN|ERROR|FATAL)\s*\[([^\]]*)\]\s?(.*)$/;
+const LEVEL_BADGE_CLASS: Record<string, string> = {
+  DEBUG: 'bg-muted text-muted-foreground',
+  INFO: 'bg-sky-500/15 text-sky-600 dark:text-sky-400',
+  WARN: 'bg-amber-500/15 text-amber-600 dark:text-amber-400',
+  ERROR: 'bg-red-500/15 text-red-600 dark:text-red-400',
+  FATAL: 'bg-purple-500/15 text-purple-600 dark:text-purple-400',
+};
+
+export function LogsSettings() {
+  const { t } = useTranslation();
+  const { appConfig, updateAppConfig } = useConfig();
+  const logs = appConfig?.logs ?? LOGS_FALLBACK;
+
+  const [files, setFiles] = useState<LogFileInfo[]>([]);
+  const [file, setFile] = useState('');
+  const [minLevel, setMinLevel] = useState<'all' | LogLevel>('all');
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
+  const [lines, setLines] = useState<string[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const PAGE = 200;
+
+  const patchLogs = (p: Partial<LogsConfig>) => {
+    void updateAppConfig({ logs: { ...logs, ...p } }).catch(() => {
+      // toast 已在 useConfig 内处理
+    });
+  };
+
+  const loadFiles = useCallback(async (autoPick: boolean) => {
+    try {
+      const resp = await api.listLogFiles();
+      setFiles(resp.files);
+      if (autoPick) {
+        setFile((prev) =>
+          prev && resp.files.some((f) => f.name === prev) ? prev : (resp.files[0]?.name ?? ''),
+        );
+      }
+    } catch {
+      // 后端未就绪静默
+    }
+  }, []);
+
+  const query = useCallback(
+    async (offset: number) => {
+      setLoading(true);
+      try {
+        const resp = await api.queryLogs({
+          file: file || undefined,
+          minLevel: minLevel === 'all' ? undefined : minLevel,
+          search: search || undefined,
+          limit: PAGE,
+          offset,
+        });
+        setLines((prev) => (offset === 0 ? resp.lines : [...prev, ...resp.lines]));
+        setTotal(resp.total);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : String(err));
+      } finally {
+        setLoading(false);
+      }
+    },
+    [file, minLevel, search],
+  );
+
+  useEffect(() => {
+    void loadFiles(true);
+  }, [loadFiles]);
+
+  // file / minLevel / search 变化时自动重查（offset=0）
+  useEffect(() => {
+    void query(0);
+  }, [query]);
+
+  const handleCleanup = async () => {
+    try {
+      const resp = await api.cleanupLogs();
+      if (resp.removed > 0) {
+        toast.success(t('settings.logs.cleanupDone', { count: resp.removed }));
+      } else {
+        toast.info(t('settings.logs.cleanupNone'));
+      }
+      void loadFiles(true);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const fmtSize = (n: number): string =>
+    n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${(n / 1024).toFixed(1)} KB`;
+
+  return (
+    <div className="flex flex-col gap-6 p-6">
+      <h1 className="text-xl font-semibold text-foreground">{t('settings.logs.title')}</h1>
+
+      {/* 日志配置 */}
+      <div className="flex flex-col gap-3">
+        <div className="text-sm font-medium text-foreground">{t('settings.logs.configTitle')}</div>
+        <div className="flex flex-col divide-y divide-border">
+          <div className="flex items-center justify-between gap-4 py-3">
+            <div className="flex min-w-0 flex-col gap-0.5">
+              <span className="text-sm text-foreground">{t('settings.logs.level')}</span>
+              <span className="text-xs text-muted-foreground">{t('settings.logs.levelDesc')}</span>
+            </div>
+            <Select value={logs.level} onValueChange={(v) => patchLogs({ level: v as LogLevel })}>
+              <SelectTrigger className="h-8 w-36 shrink-0">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent position="popper" align="start">
+                {LOG_LEVELS.map((l) => (
+                  <SelectItem key={l} value={l}>
+                    {l.toUpperCase()}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex items-center justify-between gap-4 py-3">
+            <div className="flex min-w-0 flex-col gap-0.5">
+              <span className="text-sm text-foreground">{t('settings.logs.retentionDays')}</span>
+              <span className="text-xs text-muted-foreground">{t('settings.logs.retentionDaysDesc')}</span>
+            </div>
+            <Input
+              type="number"
+              min={1}
+              max={365}
+              value={logs.retentionDays}
+              onChange={(e) => {
+                const v = Math.max(1, Math.min(365, Number(e.target.value) || 1));
+                patchLogs({ retentionDays: v });
+              }}
+              className="h-8 w-24 shrink-0 text-right"
+            />
+          </div>
+          <div className="flex items-center justify-between gap-4 py-3">
+            <div className="flex min-w-0 flex-col gap-0.5">
+              <span className="text-sm text-foreground">{t('settings.logs.maxFileMb')}</span>
+              <span className="text-xs text-muted-foreground">{t('settings.logs.maxFileMbDesc')}</span>
+            </div>
+            <Input
+              type="number"
+              min={1}
+              max={100}
+              value={logs.maxFileMb}
+              onChange={(e) => {
+                const v = Math.max(1, Math.min(100, Number(e.target.value) || 1));
+                patchLogs({ maxFileMb: v });
+              }}
+              className="h-8 w-24 shrink-0 text-right"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* 日志查看 */}
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center justify-between">
+          <div className="text-sm font-medium text-foreground">{t('settings.logs.viewerTitle')}</div>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" className="h-7 gap-1.5" onClick={() => { void loadFiles(true); void query(0); }}>
+              <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
+              {t('settings.logs.refresh')}
+            </Button>
+            <Button variant="ghost" size="sm" className="h-7 gap-1.5" onClick={() => void handleCleanup()}>
+              <Trash2 className="h-3.5 w-3.5" />
+              {t('settings.logs.cleanup')}
+            </Button>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Select value={file} onValueChange={setFile}>
+            <SelectTrigger className="h-8 w-64 shrink-0">
+              <SelectValue placeholder={t('settings.logs.file')} />
+            </SelectTrigger>
+            <SelectContent position="popper" align="start">
+              {files.map((f) => (
+                <SelectItem key={f.name} value={f.name}>
+                  {f.name}（{fmtSize(f.size)}）
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={minLevel} onValueChange={(v) => setMinLevel(v as 'all' | LogLevel)}>
+            <SelectTrigger className="h-8 w-32 shrink-0">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent position="popper" align="start">
+              <SelectItem value="all">{t('settings.logs.allLevels')}</SelectItem>
+              {LOG_LEVELS.map((l) => (
+                <SelectItem key={l} value={l}>
+                  {l.toUpperCase()}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Input
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') setSearch(searchInput.trim());
+            }}
+            onBlur={() => setSearch(searchInput.trim())}
+            placeholder={t('settings.logs.searchPlaceholder')}
+            className="h-8 w-56"
+          />
+          <span className="text-xs text-muted-foreground">
+            {t('settings.logs.totalLines', { total })} · {t('settings.logs.newestFirst')}
+          </span>
+        </div>
+
+        <div className="max-h-[480px] overflow-auto rounded-md border border-border bg-muted/30 p-3">
+          {lines.length === 0 && !loading ? (
+            <div className="py-8 text-center text-sm text-muted-foreground">{t('settings.logs.noLogs')}</div>
+          ) : (
+            <div className="flex flex-col gap-1 font-mono text-xs leading-relaxed">
+              {lines.map((l, i) => {
+                const m = LOG_LINE_RE.exec(l);
+                if (!m) {
+                  return (
+                    <div key={i} className="whitespace-pre-wrap break-all text-foreground/80">
+                      {l}
+                    </div>
+                  );
+                }
+                const [, ts, level, scope, rest] = m;
+                return (
+                  <div key={i} className="flex items-start gap-2 whitespace-pre-wrap break-all">
+                    <span className="shrink-0 text-muted-foreground">{ts}</span>
+                    <Badge variant="secondary" className={cn('shrink-0 px-1.5 font-mono text-[10px] font-semibold', LEVEL_BADGE_CLASS[level])}>
+                      {level}
+                    </Badge>
+                    {scope && <span className="shrink-0 text-muted-foreground/70">[{scope}]</span>}
+                    <span className="min-w-0 text-foreground/90">{rest}</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {lines.length < total && (
+          <Button variant="outline" size="sm" className="self-center" disabled={loading} onClick={() => void query(lines.length)}>
+            {t('settings.logs.loadMore')}
+          </Button>
+        )}
       </div>
     </div>
   );

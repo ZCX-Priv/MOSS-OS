@@ -93,7 +93,9 @@ export interface Session {
 export interface AppConfig {
   version: number;
   server: { host: string; port: number; autoPort: boolean; locale?: string };
-  daemon: { enabled: boolean; logLevel: string };
+  daemon: { enabled: boolean };
+  /** 日志系统配置（级别 / 保留天数 / 单文件大小上限） */
+  logs: LogsConfig;
   update: { autoCheck: boolean; channel: 'stable' | 'beta'; checkIntervalHours: number };
   agent: { defaultModel: string; maxTokens: number; maxTurns: number; workingDirectory: string };
   tools: Record<string, { enabled: boolean; requireConfirmation?: boolean; timeout?: number }>;
@@ -101,6 +103,29 @@ export interface AppConfig {
   security: { authToken: string; bindLocalhostOnly: boolean };
   /** 统一权限决策配置（safety 模块；可选，旧 config 无此段时用默认值） */
   safety?: SafetyConfig;
+}
+
+/** 日志级别（与后端 LogLevel 对齐） */
+export type LogLevel = 'debug' | 'info' | 'warn' | 'error' | 'fatal';
+
+/** config.logs 段（与后端 Zod schema 对齐） */
+export interface LogsConfig {
+  level: LogLevel;
+  retentionDays: number;
+  maxFileMb: number;
+}
+
+/** 日志文件元信息（GET /api/logs/files） */
+export interface LogFileInfo {
+  name: string;
+  size: number;
+  mtime: number;
+}
+
+/** 日志行查询结果（GET /api/logs） */
+export interface LogQueryResult {
+  lines: string[];
+  total: number;
 }
 
 /** 权限规则表（与后端 config.safety.rules 对齐） */

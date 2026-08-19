@@ -27,6 +27,8 @@ interface TaskInputProps {
   variant?: 'home' | 'task';
   onSend?: (text: string) => void;
   isGenerating?: boolean;
+  /** 仅首屏空白（会话无消息且未生成）时显示工作目录 Badge */
+  showDirectoryBadge?: boolean;
   onAbort?: () => void;
 }
 
@@ -36,6 +38,7 @@ export function TaskInput({
   variant = 'home',
   onSend,
   isGenerating = false,
+  showDirectoryBadge = true,
   onAbort,
 }: TaskInputProps) {
   const { t } = useTranslation();
@@ -81,6 +84,7 @@ export function TaskInput({
   const isSystemScope = !workingDirectory || workingDirectory === SYSTEM_WORKING_DIRECTORY;
   const folderLabel =
     resolveWorkingDirectoryName(workingDirectory) ?? t('directoryPicker.system');
+  const showDirBadge = showDirectoryBadge && !isGenerating;
 
   const dirName = (path: string) => {
     const seg = path.split(/[\\/]/).filter(Boolean).pop();
@@ -120,7 +124,8 @@ export function TaskInput({
           <Button variant="ghost" size="icon-sm" title={t('common.attachment')}>
             <Plus />
           </Button>
-          <PermissionModeSelector />
+          <PermissionModeSelector fullLabel={!showDirBadge} />
+          {showDirBadge && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Badge
@@ -169,6 +174,7 @@ export function TaskInput({
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          )}
           <input
             ref={inputRef}
             type="file"

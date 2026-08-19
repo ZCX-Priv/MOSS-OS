@@ -44,6 +44,11 @@ import {
   createReorderModelsHandler,
 } from './routes/models';
 import { createListTodosHandler, createReplaceTodosHandler } from './routes/todos';
+import {
+  createLogFilesHandler,
+  createQueryLogsHandler,
+  createCleanupLogsHandler,
+} from './routes/logs';
 import { createTruncatePreviewHandler, createTruncateHandler, createTruncateRestoreHandler } from './routes/truncate';
 import {
   createListFileHistoryHandler,
@@ -89,6 +94,7 @@ import {
   createPickDirectoryHandler,
   createGetRootsHandler,
   createUpdateRootsHandler,
+  createReadFileHandler,
 } from './routes/filesystem';
 import { McpExpose } from '../mcp/expose';
 
@@ -272,10 +278,17 @@ class ServerModule implements Module {
     this.router.addRoute({ method: 'POST', pattern: '/api/filesystem/pick-directory', handler: createPickDirectoryHandler(env), auth: true });
     this.router.addRoute({ method: 'POST', pattern: '/api/filesystem/resolve-directory', handler: createResolveDirectoryHandler(env), auth: true });
     this.router.addRoute({ method: 'GET', pattern: '/api/filesystem/suggest-paths', handler: createSuggestPathsHandler(env), auth: true });
+    // 文件只读预览（渲染模块取 docx/pdf/图片/3D 模型二进制；走 filesys roots 权限 + 白名单）
+    this.router.addRoute({ method: 'GET', pattern: '/api/filesystem/raw', handler: createReadFileHandler(this.ctx.services), auth: true });
 
     // filesys roots（虚拟文件系统授权目录管理）
     this.router.addRoute({ method: 'GET', pattern: '/api/filesys/roots', handler: createGetRootsHandler(this.ctx.services), auth: true });
     this.router.addRoute({ method: 'PUT', pattern: '/api/filesys/roots', handler: createUpdateRootsHandler(this.ctx.services, this.ctx.config), auth: true });
+
+    // logs（日志文件列表 / 行查询过滤 / 过期清理）
+    this.router.addRoute({ method: 'GET', pattern: '/api/logs/files', handler: createLogFilesHandler(services), auth: true });
+    this.router.addRoute({ method: 'GET', pattern: '/api/logs', handler: createQueryLogsHandler(services), auth: true });
+    this.router.addRoute({ method: 'POST', pattern: '/api/logs/cleanup', handler: createCleanupLogsHandler(services), auth: true });
   }
 
   private async startServer(): Promise<void> {

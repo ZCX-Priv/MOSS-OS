@@ -1,7 +1,31 @@
 // src/core/logger.ts
 // 分级日志服务：控制台 + 文件输出，支持 scope 前缀。
+// 文件写入：appendFileSync 同步追加（永不覆盖、进程退出不丢数据），
+// 支持按天滚动、单文件大小上限滚动、过期自动清理、查询过滤。
+//
+// 历史教训：此前用 Bun.write(Bun.file(path, { create: true }), line) 写日志，
+// Bun.write 是覆盖写入（截断后写），导致每次写日志清空整个文件，
+// 日志文件最终只剩 0~1 条残缺记录。切勿回退到该写法。
 
-import type { Environment, LogLevel, Logger } from './types';
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  unlinkSync,
+} from 'node:fs';
+import { join } from 'node:path';
+import type {
+  Environment,
+  LogFileInfo,
+  Logger,
+  LogLevel,
+  LogQueryOptions,
+  LogQueryResult,
+  LogService,
+} from './types';
 
 const LEVEL_ORDER: Record<LogLevel, number> = {
   debug: 10,
@@ -28,18 +52,258 @@ interface LogEntry {
   context?: Record<string, unknown>;
 }
 
+/** 日志行解析：`<ts> <LEVEL padEnd5> [<scope>] <message> [context-json]` */
+const LOG_LINE_RE = /^(\S+)\s+(DEBUG|INFO|WARN|ERROR|FATAL)\s*\[([^\]]*)\]\s?(.*)$/;
+/** 合法日志文件名：moss-YYYY-MM-DD.log 或 moss-YYYY-MM-DD-N.log */
+const LOG_FILE_RE = /^moss-\d{4}-\d{2}-\d{2}(?:-\d+)?\.log$/;
+
+const DEFAULT_MAX_FILE_BYTES = 10 * 1024 * 1024;
+const DEFAULT_RETENTION_DAYS = 14;
+
+/** 本地日期 YYYY-MM-DD（文件名与行内时间戳统一本地时区，字典序可排序） */
+function localDate(d: Date = new Date()): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+/** 本地时间戳 YYYY-MM-DDTHH:mm:ss.SSS */
+function localTimestamp(d: Date = new Date()): string {
+  const h = String(d.getHours()).padStart(2, '0');
+  const mi = String(d.getMinutes()).padStart(2, '0');
+  const s = String(d.getSeconds()).padStart(2, '0');
+  const ms = String(d.getMilliseconds()).padStart(3, '0');
+  return `${localDate(d)}T${h}:${mi}:${s}.${ms}`;
+}
+
+// ============================================================================
+// FileLogWriter：同步追加 + 滚动 + 清理 + 查询
+// ============================================================================
+
+export interface LogPolicy {
+  /** 单文件大小上限（字节） */
+  maxFileBytes: number;
+  /** 过期保留天数 */
+  retentionDays: number;
+}
+
+export class FileLogWriter {
+  private readonly logsDir: string;
+  private policy: LogPolicy;
+  private currentDate = '';
+  private currentSeq = 0;
+  private currentFile = '';
+  private currentSize = 0;
+  private failureReported = false;
+
+  constructor(logsDir: string, policy: Partial<LogPolicy> = {}) {
+    this.logsDir = logsDir;
+    this.policy = {
+      maxFileBytes: policy.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES,
+      retentionDays: policy.retentionDays ?? DEFAULT_RETENTION_DAYS,
+    };
+    try {
+      mkdirSync(this.logsDir, { recursive: true });
+    } catch (err) {
+      this.reportFailure('mkdir', err);
+    }
+    this.currentDate = localDate();
+    this.openFile();
+  }
+
+  /** 运行期更新策略（config 热更新） */
+  setPolicy(policy: Partial<LogPolicy>): void {
+    if (policy.maxFileBytes !== undefined && policy.maxFileBytes > 0) {
+      this.policy.maxFileBytes = policy.maxFileBytes;
+    }
+    if (policy.retentionDays !== undefined && policy.retentionDays > 0) {
+      this.policy.retentionDays = policy.retentionDays;
+    }
+  }
+
+  getRetentionDays(): number {
+    return this.policy.retentionDays;
+  }
+
+  /** 追加一行日志（同步，含跨天/超限滚动检测） */
+  append(line: string): void {
+    const today = localDate();
+    if (today !== this.currentDate) {
+      // 跨天：切换新文件 + 懒清理过期日志
+      this.currentDate = today;
+      this.openFile();
+      this.cleanup(this.policy.retentionDays);
+    } else {
+      const bytes = Buffer.byteLength(line, 'utf8');
+      if (this.currentSize + bytes > this.policy.maxFileBytes) {
+        // 超限：滚动到下一序号文件
+        this.currentSeq += 1;
+        this.openFile();
+      }
+    }
+    try {
+      appendFileSync(this.currentFile, line, 'utf8');
+      this.currentSize += Buffer.byteLength(line, 'utf8');
+    } catch (err) {
+      this.reportFailure('append', err);
+    }
+  }
+
+  /** 删除超过保留期的日志文件，返回删除数 */
+  cleanup(retentionDays: number): number {
+    try {
+      const names = readdirSync(this.logsDir);
+      const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+      let removed = 0;
+      for (const name of names) {
+        if (!LOG_FILE_RE.test(name)) continue;
+        const full = join(this.logsDir, name);
+        try {
+          const st = statSync(full);
+          if (st.mtimeMs < cutoff) {
+            unlinkSync(full);
+            removed += 1;
+          }
+        } catch {
+          // 单文件失败跳过
+        }
+      }
+      return removed;
+    } catch {
+      return 0;
+    }
+  }
+
+  cleanupNow(): number {
+    return this.cleanup(this.policy.retentionDays);
+  }
+
+  /** 列出全部日志文件（mtime 降序 = 最新优先） */
+  getLogFiles(): LogFileInfo[] {
+    try {
+      const names = readdirSync(this.logsDir).filter((n) => LOG_FILE_RE.test(n));
+      const files: LogFileInfo[] = [];
+      for (const name of names) {
+        try {
+          const st = statSync(join(this.logsDir, name));
+          files.push({ name, size: st.size, mtime: st.mtimeMs });
+        } catch {
+          // 跳过不可 stat 的文件
+        }
+      }
+      files.sort((a, b) => b.mtime - a.mtime);
+      return files;
+    } catch {
+      return [];
+    }
+  }
+
+  /** 读取并过滤日志行（最新优先）。文件名经白名单校验防路径穿越。 */
+  readLogs(opts: LogQueryOptions): LogQueryResult {
+    const file = opts.file ?? this.pickDefaultFile();
+    if (!file || !LOG_FILE_RE.test(file)) return { lines: [], total: 0 };
+    const full = join(this.logsDir, file);
+    if (!existsSync(full)) return { lines: [], total: 0 };
+
+    let text: string;
+    try {
+      text = readFileSync(full, 'utf8');
+    } catch {
+      return { lines: [], total: 0 };
+    }
+
+    let lines = text.split('\n');
+    if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
+    // 文件内正序 → 反转为最新优先
+    lines.reverse();
+
+    if (opts.minLevel) {
+      const minOrder = LEVEL_ORDER[opts.minLevel] ?? 0;
+      lines = lines.filter((l) => {
+        const m = LOG_LINE_RE.exec(l);
+        if (!m) return false; // 无法解析级别的行在级别过滤时排除
+        const level = m[2].toLowerCase() as LogLevel;
+        return (LEVEL_ORDER[level] ?? 0) >= minOrder;
+      });
+    }
+    if (opts.search) {
+      const q = opts.search.toLowerCase();
+      lines = lines.filter((l) => l.toLowerCase().includes(q));
+    }
+
+    const total = lines.length;
+    const limit = Math.min(Math.max(opts.limit ?? 200, 1), 1000);
+    const offset = Math.max(opts.offset ?? 0, 0);
+    return { lines: lines.slice(offset, offset + limit), total };
+  }
+
+  private pickDefaultFile(): string | null {
+    const files = this.getLogFiles();
+    return files.length > 0 ? files[0].name : null;
+  }
+
+  /** 打开（或切换）当前写入文件：序号=当天已有最大序号，大小 statSync 实际校准 */
+  private openFile(): void {
+    this.currentSeq = this.scanMaxSeq(this.currentDate);
+    this.currentFile = join(this.logsDir, this.fileName(this.currentDate, this.currentSeq));
+    try {
+      const st = statSync(this.currentFile);
+      this.currentSize = st.size;
+    } catch {
+      this.currentSize = 0;
+    }
+  }
+
+  private scanMaxSeq(date: string): number {
+    let max = 0;
+    try {
+      for (const name of readdirSync(this.logsDir)) {
+        const m = /^moss-(\d{4}-\d{2}-\d{2})(?:-(\d+))?\.log$/.exec(name);
+        if (m && m[1] === date) {
+          const seq = m[2] ? parseInt(m[2], 10) : 0;
+          if (seq > max) max = seq;
+        }
+      }
+    } catch {
+      // 目录读取失败按 0 处理
+    }
+    return max;
+  }
+
+  private fileName(date: string, seq: number): string {
+    return seq > 0 ? `moss-${date}-${seq}.log` : `moss-${date}.log`;
+  }
+
+  /** 写入失败一次性 stderr 告警（绝不调 logger 自身，防死循环） */
+  private reportFailure(op: string, err: unknown): void {
+    if (this.failureReported) return;
+    this.failureReported = true;
+    const msg = err instanceof Error ? err.message : String(err);
+    try {
+      process.stderr.write(`[logger] file ${op} failed: ${msg} (further errors suppressed)\n`);
+    } catch {
+      // 连 stderr 都失败则彻底静默
+    }
+  }
+}
+
+// ============================================================================
+// LoggerImpl
+// ============================================================================
+
 class LoggerImpl implements Logger {
   private level: LogLevel;
   private readonly scope: string;
   private readonly env: Environment;
-  private readonly fileWriter: (entry: LogEntry) => void;
+  private readonly fileWriter: FileLogWriter;
   private readonly colorize: boolean;
 
   constructor(
     env: Environment,
     scope: string,
     level: LogLevel,
-    fileWriter: (entry: LogEntry) => void,
+    fileWriter: FileLogWriter,
     colorize: boolean,
   ) {
     this.env = env;
@@ -75,14 +339,14 @@ class LoggerImpl implements Logger {
   private write(level: LogLevel, message: string, context?: Record<string, unknown>): void {
     if (!this.shouldLog(level)) return;
     const entry: LogEntry = {
-      ts: new Date().toISOString(),
+      ts: localTimestamp(),
       level,
       scope: this.scope,
       message,
       context,
     };
     this.writeConsole(entry);
-    this.fileWriter(entry);
+    this.writeToFile(entry);
   }
 
   private writeConsole(entry: LogEntry): void {
@@ -91,7 +355,6 @@ class LoggerImpl implements Logger {
     const scopeStr = entry.scope ? `[${entry.scope}]` : '';
     const ctxStr = entry.context ? ' ' + JSON.stringify(entry.context) : '';
     const line = `${color}${entry.ts}${reset} ${color}${entry.level.toUpperCase().padEnd(5)}${reset} ${scopeStr} ${entry.message}${ctxStr}`;
-    // eslint-disable-next-line no-console
     if (entry.level === 'error' || entry.level === 'fatal') {
       console.error(line);
     } else if (entry.level === 'warn') {
@@ -99,6 +362,14 @@ class LoggerImpl implements Logger {
     } else {
       console.log(line);
     }
+  }
+
+  private writeToFile(entry: LogEntry): void {
+    const line =
+      `${entry.ts} ${entry.level.toUpperCase().padEnd(5)} [${entry.scope}] ${entry.message}` +
+      (entry.context ? ' ' + JSON.stringify(entry.context) : '') +
+      '\n';
+    this.fileWriter.append(line);
   }
 
   debug(message: string, context?: Record<string, unknown>): void {
@@ -118,56 +389,61 @@ class LoggerImpl implements Logger {
   }
 }
 
+// ============================================================================
+// LogService：暴露给 server 路由的查询/清理/级别能力
+// ============================================================================
+
+class LogServiceImpl implements LogService {
+  private readonly writer: FileLogWriter;
+  private readonly logger: Logger;
+
+  constructor(writer: FileLogWriter, logger: Logger) {
+    this.writer = writer;
+    this.logger = logger;
+  }
+
+  getLogFiles(): LogFileInfo[] {
+    return this.writer.getLogFiles();
+  }
+
+  readLogs(opts: LogQueryOptions): LogQueryResult {
+    return this.writer.readLogs(opts);
+  }
+
+  cleanupNow(): number {
+    return this.writer.cleanupNow();
+  }
+
+  setLevel(level: LogLevel): void {
+    this.logger.setLevel(level);
+  }
+
+  getLevel(): LogLevel {
+    return this.logger.getLevel();
+  }
+}
+
+// ============================================================================
+// 工厂
+// ============================================================================
+
+export interface RootLogger {
+  logger: Logger;
+  /** 供 kernel 注册为 kernel.logger 服务 */
+  service: LogService;
+  /** 供 kernel 应用 config.logs 策略（保留天数 / 大小上限） */
+  writer: FileLogWriter;
+}
+
 /**
- * 创建根日志器。
- * 在 Bun 环境下使用 Bun.write 追加到文件。
+ * 创建根日志器：控制台彩色输出 + 同步追加文件（按天/大小滚动）。
  */
 export function createRootLogger(
   env: Environment,
   initialLevel: LogLevel = 'info',
-): Logger {
-  // 确保日志目录存在
-  ensureDir(env.logsDir);
-
-  const logFile = `${env.logsDir}/moss-${new Date().toISOString().slice(0, 10)}.log`;
+): RootLogger {
+  const writer = new FileLogWriter(env.logsDir);
   const colorize = env.isWindows ? process.stdout.isTTY ?? false : true;
-
-  const fileWriter = (entry: LogEntry) => {
-    const line =
-      `${entry.ts} ${entry.level.toUpperCase().padEnd(5)} [${entry.scope}] ${entry.message}` +
-      (entry.context ? ' ' + JSON.stringify(entry.context) : '') +
-      '\n';
-    // Bun.write 追加模式（'a'）
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const BunAny = Bun as any;
-      BunAny.write(BunAny.file(logFile, { create: true }), line).catch(() => {
-        // 文件写入失败静默处理，避免日志循环
-      });
-    } catch {
-      // 静默
-    }
-  };
-
-  return new LoggerImpl(env, '', initialLevel, fileWriter, colorize);
-}
-
-function ensureDir(dir: string): void {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const fs = (Bun as any).fs ?? null;
-    if (fs && fs.mkdirSync) {
-      fs.mkdirSync(dir, { recursive: true });
-      return;
-    }
-  } catch {
-    // 回退到 node:fs
-  }
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const nodeFs = require('node:fs');
-    nodeFs.mkdirSync(dir, { recursive: true });
-  } catch {
-    // 静默
-  }
+  const logger = new LoggerImpl(env, '', initialLevel, writer, colorize);
+  return { logger, service: new LogServiceImpl(writer, logger), writer };
 }
