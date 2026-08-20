@@ -229,15 +229,15 @@ interface ModelItem {
 
 #### 3.2.3 Agent 管理（AgentSwitchMenu + SettingsPage-Agent）
 
-> 需新建 `src/modules/agents/` 模组，注册 `agents.registry` 服务，持久化到 `~/.moss/agents.json`。
+> 需新建 `src/modules/agenteam/` 模组，注册 `agenteam.registry` 服务，持久化到 `~/.moss/agenteam.json`。
 
 ```
-GET    /api/agents                     → { agents: AgentItem[]; default: string }
-GET    /api/agents/:id                 → AgentDetail
-POST   /api/agents                     ← { name: string; systemPrompt?: string; model?: string; tools?: string[] } → AgentItem
-PATCH  /api/agents/:id                 ← Partial<AgentDetail> → AgentItem
-DELETE /api/agents/:id                 → { deleted: boolean }
-PUT    /api/agents/default             ← { id: string } → { default: string }
+GET    /api/agenteam                     → { agents: AgentItem[]; default: string }
+GET    /api/agenteam/:id                 → AgentDetail
+POST   /api/agenteam                     ← { name: string; systemPrompt?: string; model?: string; tools?: string[] } → AgentItem
+PATCH  /api/agenteam/:id                 ← Partial<AgentDetail> → AgentItem
+DELETE /api/agenteam/:id                 → { deleted: boolean }
+PUT    /api/agenteam/default             ← { id: string } → { default: string }
 ```
 
 **类型定义**：
@@ -709,9 +709,9 @@ webui/src/
 
 ## 七、后端需新增的模组
 
-### 7.1 `src/modules/agents/` 模组（新建）
+### 7.1 `src/modules/agenteam/` 模组（新建）
 
-**职责**：自定义 Agent 的 CRUD，持久化到 `~/.moss/agents.json`。
+**职责**：自定义 Agent 的 CRUD，持久化到 `~/.moss/agenteam.json`。
 
 **清单** `module.json`：
 ```json
@@ -724,10 +724,10 @@ webui/src/
 }
 ```
 
-**注册服务**：`agents.registry`（`AgentRegistry` 接口：list/get/create/update/delete/setDefault）
+**注册服务**：`agenteam.registry`（`AgentRegistry` 接口：list/get/create/update/delete/setDefault）
 
 **路由**（在 server 模组注册）：
-- `GET/POST /api/agents`、`GET/PATCH/DELETE /api/agents/:id`、`PUT /api/agents/default`
+- `GET/POST /api/agenteam`、`GET/PATCH/DELETE /api/agenteam/:id`、`PUT /api/agenteam/default`
 
 ### 7.2 `src/modules/automation/` 模组（新建）
 
@@ -775,7 +775,7 @@ webui/src/
 | 路径 | 用途 | 格式 | 负责模组 |
 |---|---|---|---|
 | `~/.moss/tasks.json` | 任务元信息（分组、标题） | JSON | agent 模组扩展 |
-| `~/.moss/agents.json` | 自定义 Agent 列表 | JSON | agents 模组（新） |
+| `~/.moss/agenteam.json` | 自定义 Agent 列表 | JSON | agents 模组（新） |
 | `~/.moss/automations.json` | 自动化任务 | JSON | automation 模组（新） |
 | `~/.moss/automations-history.json` | 自动化运行历史 | JSON | automation 模组（新） |
 | `~/.moss/extensions.json` | 扩展启用/禁用配置 | JSON | kernel / server |
@@ -805,7 +805,7 @@ webui/src/
 12. agent 模组扩展任务元信息持久化，新增 `routes/tasks.ts` + `routes/search.ts`
 
 ### 阶段 4：新模组
-13. 新建 `src/modules/agents/` 模组 + `routes/agents.ts`，对接 AgentSwitchMenu + SettingsPage-Agent
+13. 新建 `src/modules/agenteam/` 模组 + `routes/agents.ts`，对接 AgentSwitchMenu + SettingsPage-Agent
 14. 新建 `src/modules/automation/` 模组 + `routes/automations.ts`，对接 AutomationPage
 
 ### 阶段 5：WS 增强
@@ -833,7 +833,7 @@ webui/src/
 | 任务分组 | GET/POST/PATCH/DELETE | /api/task-groups, /api/task-groups/:id | 🆕 新增 |
 | 搜索 | GET | /api/search | 🆕 新增 |
 | 模型 | GET/PUT/POST/PATCH/DELETE | /api/models, /api/models/current, /api/models/:id | 🆕 新增 |
-| Agent | GET/POST/GET/PATCH/DELETE/PUT | /api/agents, /api/agents/:id, /api/agents/default | 🆕 新增 |
+| Agent | GET/POST/GET/PATCH/DELETE/PUT | /api/agenteam, /api/agenteam/:id, /api/agenteam/default | 🆕 新增 |
 | 插件 | GET/GET/PATCH | /api/plugins, /api/plugins/:id | 🆕 新增 |
 | Skills | GET/GET | /api/skills, /api/skills/:name | 🆕 新增 |
 | Specs | GET/GET | /api/specs, /api/specs/:id | 🆕 新增 |

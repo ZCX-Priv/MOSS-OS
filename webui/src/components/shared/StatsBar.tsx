@@ -1,8 +1,14 @@
-// 运行指标栏：任务输入框下方的一行统计（会话级累计口径，跨消息持续累加，刷新后恢复）。
-// 常驻显示（无数据时按 0 值渲染）。指标：N轮·M步 | LLM 耗时 | 工具调用耗时 | 缓存命中 | 输入/输出 token
+// 运行指标栏：任务输入框下方的一行统计。混合口径：
+//   轮·步 | LLM 耗时 | 工具耗时 —— 会话生命周期累计（runStats，跨消息持续累加，刷新后恢复）
+//   缓存命中 | 输入/输出 token —— 上下文引擎真实数据（contextStats：最近一次请求的 LLM usage
+//   与近样本平均命中率，与右侧上下文面板同源同刻）；引擎不可用/无样本时降级 runStats 累计值
+// 常驻显示（无数据时按 0 值渲染）。
 
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { RunStats } from '../../types/api';
+import { cn } from '@/lib/utils';
+import { useStore } from '../../store';
+import type { RunStats, ContextStats } from '../../types/api';
 
 function fmtMs(ms: number): string {
   if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`;
@@ -15,10 +21,24 @@ function fmtTokens(n: number): string {
   return String(n);
 }
 
-function StatItem({ label, value }: { label: string; value: string }) {
+/** 数值项：值变化时短暂高亮脉冲（细腻反馈；流式期间与动画关闭时跳过防闪烁） */
+function StatItem({ label, value, pulse }: { label: string; value: string; pulse?: boolean }) {
+  const [hot, setHot] = useState(false);
+  const prev = useRef(value);
+  useEffect(() => {
+    if (prev.current === value) return;
+    prev.current = value;
+    if (!pulse) return;
+    setHot(true);
+    const timer = setTimeout(() => setHot(false), 400);
+    return () => clearTimeout(timer);
+  }, [value, pulse]);
   return (
-    <span className="whitespace-nowrap tabular-nums">
-      {label} <span className="text-foreground/80">{value}</span>
+    <span className="anim-stat whitespace-nowrap tabular-nums">
+      {label}{' '}
+      <span className={cn('text-foreground/80 transition-colors duration-150', hot && 'text-primary')}>
+        {value}
+      </span>
     </span>
   );
 }
@@ -41,24 +61,41 @@ const EMPTY_STATS: RunStats = {
   cachedTokens: 0,
 };
 
-export function StatsBar({ stats }: { stats?: RunStats }) {
+export function StatsBar({ stats, contextStats }: { stats?: RunStats; contextStats?: ContextStats }) {
   const { t } = useTranslation();
   const s = stats ?? EMPTY_STATS;
-  const cacheHitPct = s.inputTokens > 0 ? Math.round((s.cachedTokens / s.inputTokens) * 100) : 0;
+  // 数值脉冲开关：动画分开关开启（总开且非系统减弱动态）且当前会话非流式生成
+  const statAnimOn = useStore(
+    (st) => st.animationSettings.enabled && st.animationSettings.stat && !st.prefersReducedMotion,
+  );
+  const generating = useStore(
+    (st) => st.generatingBySession[st.activeSessionId ?? ''] ?? false,
+  );
+  const pulse = statAnimOn && !generating;
+  // 引擎数据优先：缓存命中用 avgHitRate（与右侧面板徽章同源）；无样本降级累计口径
+  const cacheHitPct =
+    contextStats?.avgHitRate != null
+      ? Math.round(contextStats.avgHitRate * 100)
+      : s.inputTokens > 0
+        ? Math.round((s.cachedTokens / s.inputTokens) * 100)
+        : 0;
+  // 输入/输出：引擎最近一次请求真实 usage；无样本降级 runStats 累计
+  const inputTokens = contextStats?.lastUsage?.promptTokens ?? s.inputTokens;
+  const outputTokens = contextStats?.lastUsage?.completionTokens ?? s.outputTokens;
 
   return (
     <div className="flex w-full flex-wrap items-center justify-center gap-x-2.5 gap-y-0.5 px-3 pb-1 pt-0.5 text-[11px] text-muted-foreground">
-      <StatItem label="" value={t('stats.turnsSteps', { turns: s.turns, steps: s.steps })} />
+      <StatItem label="" value={t('stats.turnsSteps', { turns: s.turns, steps: s.steps })} pulse={pulse} />
       <Separator />
-      <StatItem label={t('stats.llmLabel')} value={fmtMs(s.llmMs)} />
+      <StatItem label={t('stats.llmLabel')} value={fmtMs(s.llmMs)} pulse={pulse} />
       <Separator />
-      <StatItem label={t('stats.toolLabel')} value={fmtMs(s.toolMs)} />
+      <StatItem label={t('stats.toolLabel')} value={fmtMs(s.toolMs)} pulse={pulse} />
       <Separator />
-      <StatItem label={t('stats.cacheLabel')} value={t('stats.percent', { pct: cacheHitPct })} />
+      <StatItem label={t('stats.cacheLabel')} value={t('stats.percent', { pct: cacheHitPct })} pulse={pulse} />
       <Separator />
-      <StatItem label={t('stats.inputLabel')} value={t('stats.tokCount', { count: fmtTokens(s.inputTokens) })} />
+      <StatItem label={t('stats.inputLabel')} value={t('stats.tokCount', { count: fmtTokens(inputTokens) })} pulse={pulse} />
       <Separator />
-      <StatItem label={t('stats.outputLabel')} value={t('stats.tokCount', { count: fmtTokens(s.outputTokens) })} />
+      <StatItem label={t('stats.outputLabel')} value={t('stats.tokCount', { count: fmtTokens(outputTokens) })} pulse={pulse} />
     </div>
   );
 }

@@ -128,7 +128,7 @@ export function ConfirmPromptCard({ confirm, className }: ConfirmPromptCardProps
                 <ChevronDown className="size-3 opacity-70" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" side="top" sideOffset={4} collisionPadding={8} className="min-w-[14rem] p-1">
+            <DropdownMenuContent align="start" side="bottom" sideOffset={4} collisionPadding={8} className="min-w-[14rem] p-1">
               <DropdownMenuItem onSelect={() => handle(true, 'session')} className="gap-2 px-2 py-1.5">
                 <Clock3 className="size-3.5 shrink-0" />
                 <div className="flex min-w-0 flex-1 flex-col gap-0.5">

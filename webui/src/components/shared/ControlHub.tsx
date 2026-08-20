@@ -2,7 +2,7 @@
 // 折叠态 = 一行状态区 + 模块 chips（badge 徽标提醒）；点击 chip 展开模块内容面板。
 // 背景透明（不遮挡后方），保留边框轮廓。
 
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { LucideIcon } from 'lucide-react';
 import { ChevronDown } from 'lucide-react';
@@ -29,7 +29,14 @@ interface ControlHubProps {
 
 export function ControlHub({ status, modules, activeModuleId, onActiveModuleChange }: ControlHubProps) {
   const { t } = useTranslation();
+  // 收起后仍保持最后激活模块渲染：高度 0fr→1fr 过渡需要内容在场（卸载则无过渡可言）
+  const [lastModuleId, setLastModuleId] = useState<string | null>(null);
+  useEffect(() => {
+    if (activeModuleId) setLastModuleId(activeModuleId);
+  }, [activeModuleId]);
   const activeModule = modules.find((m) => m.id === activeModuleId);
+  const expanded = !!activeModule;
+  const panelModule = modules.find((m) => m.id === (activeModuleId ?? lastModuleId));
 
   return (
     <div
@@ -74,21 +81,34 @@ export function ControlHub({ status, modules, activeModuleId, onActiveModuleChan
           })}
         </div>
       </div>
-      {activeModule && (
-        <div className="border-t border-border p-2.5">
-          {activeModule.render()}
-          <div className="mt-1.5 flex justify-end">
-            <button
-              type="button"
-              onClick={() => onActiveModuleChange(null)}
-              className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-            >
-              <ChevronDown className="size-3" />
-              {t('hub.collapse')}
-            </button>
+      {/* 高度过渡容器：grid 0fr↔1fr（高度动画到 auto 的标准方案）+ opacity + visibility 离散过渡
+          （收起动画播完才隐藏、展开立即显示；invisible 防收起后内部聚焦/命中） */}
+      <div
+        className={cn(
+          'anim-hub grid transition-[grid-template-rows,opacity,visibility] duration-200 ease-out',
+          expanded ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0 invisible',
+        )}
+      >
+        <div className="overflow-hidden">
+          {/* 模块切换（A→B）时 key 变化 remount 轻淡入；border-t 放内容层随裁切（放 grid 容器上收起时 1px 边线仍可见） */}
+          <div
+            key={panelModule?.id}
+            className="animate-in fade-in duration-200 border-t border-border p-2.5"
+          >
+            {panelModule?.render()}
+            <div className="mt-1.5 flex justify-end">
+              <button
+                type="button"
+                onClick={() => onActiveModuleChange(null)}
+                className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                <ChevronDown className="size-3" />
+                {t('hub.collapse')}
+              </button>
+            </div>
           </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }

@@ -12,7 +12,6 @@ import type {
 import { ServiceNames } from '../../../core/types';
 import type { LLMRouter, ToolRegistry, MCPManager } from '../../contracts';
 import type {
-  CacheHitSample,
   CompactPreview,
   CompactionRecord,
   ContextBreakdown,
@@ -28,8 +27,9 @@ import type {
 // 注：ContextStatsEventPayload 已删除——部分形状类型合法化了不完整 payload（白屏缺陷共犯）
 import { DEFAULT_CONTEXT_CONFIG, TELEMETRY_BUFFER_SIZE as BUFFER_SIZE } from '../types';
 import { TokenCalibrator } from '../budgeter/calibration';
-import { messagesChars, parseContextWindow } from '../budgeter/estimator';
-import { buildStaticSystemPrompt, getSystemSections } from '../compiler';
+import { estimateTextTokens, messagesChars, parseContextWindow } from '../budgeter/estimator';
+import { buildStaticSystemPrompt, buildRequestView, getSystemSections } from '../compiler';
+import { ENV_CONTEXT_MSG_NAME } from '../compiler/env-context';
 import { healToolCall, type HealRegistryLike } from '../healer';
 import {
   prepareRequest as governorPrepare,
@@ -51,9 +51,9 @@ interface McpManagerLike {
   listTools(): Array<{ server: string; name: string; description?: string; inputSchema?: unknown }>;
 }
 
-/** 会话级遥测状态 */
+/** 会话级遥测状态（发送视图内存缓存；真实 usage/命中样本的单一真源在
+ *  session.contextTelemetry——持久化，重启恢复） */
 interface SessionTelemetry {
-  cacheHits: CacheHitSample[];
   lastBreakdown: ContextBreakdown | null;
   lastWindowTokens: number;
   lastSystemSections: SystemSection[];
@@ -310,6 +310,10 @@ export class ContextEngineServiceImpl {
     if (!session) return null;
     const t = this.ensureTelemetry(sessionId);
     const config = this.getConfig();
+    // 重启后内存缓存缺失：按当前 session 状态惰性重算发送视图（纯估算，无 LLM 调用）
+    if (!t.lastBreakdown) {
+      this.recomputeView(session, t);
+    }
     const breakdown =
       t.lastBreakdown ??
       ({ system: 0, env: 0, summary: 0, history: 0, total: 0 } as ContextBreakdown);
@@ -319,16 +323,23 @@ export class ContextEngineServiceImpl {
       m => m.name === 'compaction-summary' && !m.compacted && !m.deletedAt,
     );
     const summaryTokens = activeSummary ? Math.ceil(activeSummary.content.length * 0.4) : 0;
+    // 真实 usage 与命中样本：session.contextTelemetry 单一真源（持久化，重启恢复）
+    const cacheHits = session.contextTelemetry?.cacheHits ?? [];
     const avgHitRate =
-      t.cacheHits.length > 0
-        ? t.cacheHits.reduce((s, x) => s + x.hitRate, 0) / t.cacheHits.length
+      cacheHits.length > 0
+        ? cacheHits.reduce((s, x) => s + x.hitRate, 0) / cacheHits.length
         : null;
+    // 统一口径：占用优先用真实 promptTokens（与前端 StatsBar"输入"同源同值）
+    const usedTokens = session.contextTelemetry?.lastUsage?.promptTokens ?? breakdown.total;
+    const modelId = this.resolveMainModel();
 
     return {
       sessionId,
+      model: { id: modelId, name: this.lookupModelName(modelId) },
       breakdown,
       windowTokens,
-      usedPercent: windowTokens > 0 ? Math.round((breakdown.total / windowTokens) * 100) : 0,
+      usedPercent: windowTokens > 0 ? Math.round((usedTokens / windowTokens) * 100) : 0,
+      lastUsage: session.contextTelemetry?.lastUsage ?? null,
       compaction: {
         enabled: config.compaction.enabled,
         compactRatio: config.compaction.compactRatio,
@@ -338,9 +349,9 @@ export class ContextEngineServiceImpl {
           ? { lastCompaction: session.compactions[session.compactions.length - 1] }
           : {}),
       },
-      cacheHits: [...t.cacheHits],
+      cacheHits: [...cacheHits],
       avgHitRate,
-      systemSections: t.lastSystemSections,
+      systemSections: this.appendDynamicSections(t.lastSystemSections, session),
     };
   }
 
@@ -350,20 +361,37 @@ export class ContextEngineServiceImpl {
     return session?.compactions ? [...session.compactions] : [];
   }
 
-  /** engine 每轮流结束后上报 usage（缓存命中采样 + tokPerChar 校准） */
-  onTurnUsage(sessionId: string, usage: { promptTokens: number; cachedTokens: number }): void {
+  /** engine 每轮流结束后上报 usage（持久化遥测 + tokPerChar 校准 + WS 推送） */
+  onTurnUsage(
+    sessionId: string,
+    usage: { promptTokens: number; cachedTokens: number; completionTokens?: number },
+  ): void {
     const t = this.ensureTelemetry(sessionId);
     const promptTokens = Math.max(0, usage.promptTokens);
     const cachedTokens = Math.max(0, Math.min(usage.cachedTokens, promptTokens));
+    const completionTokens = Math.max(0, usage.completionTokens ?? 0);
     const hitRate = promptTokens > 0 ? cachedTokens / promptTokens : 0;
-    t.cacheHits.push({
-      at: new Date().toISOString(),
-      promptTokens,
-      cachedTokens,
-      hitRate,
-    });
-    if (t.cacheHits.length > BUFFER_SIZE) {
-      t.cacheHits.splice(0, t.cacheHits.length - BUFFER_SIZE);
+    const lastUsage = { promptTokens, completionTokens, cachedTokens };
+    // 持久化遥测：真实 usage + 命中样本写入 session.contextTelemetry（单一真源）
+    // 并随 session 落盘——后端重启后侧边栏进度条与指标栏数据恢复
+    const session = this.sessionStore?.get(sessionId);
+    if (session) {
+      const cacheHits = [
+        ...(session.contextTelemetry?.cacheHits ?? []),
+        { at: new Date().toISOString(), promptTokens, cachedTokens, hitRate },
+      ];
+      if (cacheHits.length > BUFFER_SIZE) {
+        cacheHits.splice(0, cacheHits.length - BUFFER_SIZE);
+      }
+      session.contextTelemetry = { lastUsage, cacheHits };
+      try {
+        this.sessionStore?.persist(session);
+      } catch (err) {
+        this.logger.warn('context: persist telemetry failed', {
+          sessionId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
     // tokPerChar 校准（chars 口径：最近一次发送内容）
     this.calibrator.calibrate(promptTokens, t.lastSentChars);
@@ -405,20 +433,11 @@ export class ContextEngineServiceImpl {
       persistSession: session => this.sessionStore?.persist(session),
       emitWs: (sessionId, message) => this.emitWs(sessionId, message),
       onCompaction: sessionId => {
-        // 压缩后立即刷新 stats 推送
+        // 压缩后立即刷新 stats 推送（全量：与 onTurnUsage / stats API 同一数据源 getStats，
+        // 避免部分形状 payload 覆盖前端 store 导致渲染崩溃——白屏缺陷根治点）
         const stats = this.getStats(sessionId);
         if (stats) {
-          this.emitWs(sessionId, {
-            type: 'context-stats-updated',
-            sessionId,
-            payload: {
-              sessionId,
-              breakdown: stats.breakdown,
-              windowTokens: stats.windowTokens,
-              usedPercent: stats.usedPercent,
-              avgHitRate: stats.avgHitRate,
-            },
-          });
+          this.emitWs(sessionId, { type: 'context-stats-updated', sessionId, payload: stats });
         }
       },
       onDegraded: (sessionId, reason) => {
@@ -452,7 +471,6 @@ export class ContextEngineServiceImpl {
     let t = this.telemetry.get(sessionId);
     if (!t) {
       t = {
-        cacheHits: [],
         lastBreakdown: null,
         lastWindowTokens: 0,
         lastSystemSections: [],
@@ -463,6 +481,43 @@ export class ContextEngineServiceImpl {
     return t;
   }
 
+  /** 重算发送视图（重启后内存遥测缺失时惰性重建；纯估算，无 LLM 调用）。
+   *  breakdown 为"下一次发送的预估占用"——与 prepareRequest 同一确定性函数 */
+  private recomputeView(session: ContextSessionLike, t: SessionTelemetry): void {
+    try {
+      const model = this.resolveMainModel();
+      const cwd = this.lastCwd ?? process.cwd();
+      const skillName =
+        session.activeSkill?.mode === 'system' ? session.activeSkill.name : undefined;
+      const staticSystemPrompt = buildStaticSystemPrompt(
+        this.env,
+        cwd,
+        model,
+        model,
+        this.resolveSkillPrompt(skillName),
+      );
+      const view = buildRequestView(session, staticSystemPrompt, {
+        toolPruning: this.getConfig().toolPruning,
+        resolveSkillPrompt: name => this.resolveSkillPrompt(name),
+      });
+      t.lastBreakdown = view.breakdown;
+      t.lastWindowTokens = this.resolveWindowTokens(model);
+      t.lastSystemSections = getSystemSections(
+        this.env,
+        cwd,
+        model,
+        model,
+        skillName,
+        name => this.resolveSkillPrompt(name),
+      );
+    } catch (err) {
+      this.logger.warn('context: recompute view failed', {
+        sessionId: session.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   /** 解析主模型请求名（agent.defaultModel） */
   private resolveMainModel(): string {
     try {
@@ -470,6 +525,55 @@ export class ContextEngineServiceImpl {
     } catch {
       return 'unknown';
     }
+  }
+
+  /** 模型显示名（apiConfig.models 按 id 查找；缺失回退 id） */
+  private lookupModelName(id: string): string {
+    try {
+      return this.config.getApiConfig().models.find(m => m.id === id)?.name ?? id;
+    } catch {
+      return id;
+    }
+  }
+
+  /** 在系统提示词分段之后追加动态段（工具清单 / 环境上下文），供「系统」标签页展示 */
+  private appendDynamicSections(
+    sections: SystemSection[],
+    session: ContextSessionLike,
+  ): SystemSection[] {
+    const out = [...sections];
+    // 工具清单：实际注入 LLM tools 参数的定义（系统提示词中已移除硬编码工具列表的可视化替代）
+    try {
+      const schemas = this.buildHealRegistry().listSchemas();
+      if (schemas.length > 0) {
+        const mcpCount = schemas.filter(s => s.name.startsWith('mcp__')).length;
+        const lines = schemas.map(
+          s => `- ${s.name}：${(s.description ?? '').replace(/\s+/g, ' ').trim()}`,
+        );
+        const content = `共 ${schemas.length} 个（内置 ${schemas.length - mcpCount} · MCP ${mcpCount}），经请求 tools 参数动态注入，不在系统提示词中。\n\n${lines.join('\n')}`;
+        out.push({
+          id: 'tools',
+          title: '工具定义（LLM tools 参数注入）',
+          tokens: estimateTextTokens(content),
+          content,
+          defaultOpen: false,
+        });
+      }
+    } catch {
+      // registry 不可用：跳过该段
+    }
+    // 环境上下文消息（会话首条锚定消息的实际内容）
+    const envMsg = session.messages.find(m => m.name === ENV_CONTEXT_MSG_NAME);
+    if (envMsg) {
+      out.push({
+        id: 'env',
+        title: '环境上下文消息',
+        tokens: estimateTextTokens(envMsg.content),
+        content: envMsg.content,
+        defaultOpen: false,
+      });
+    }
+    return out;
   }
 
   /** 从模型配置解析上下文窗口 */
@@ -483,7 +587,8 @@ export class ContextEngineServiceImpl {
     }
   }
 
-  private resolveSkillPrompt(name: string): string | null {
+  private resolveSkillPrompt(name: string | undefined): string | null {
+    if (!name) return null;
     const registry = this.services.tryResolve<{
       get(n: string): { prompt: string } | null;
       isEnabled(n: string): boolean;

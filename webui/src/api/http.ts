@@ -284,11 +284,12 @@ export const api = {
     request<{ reordered: boolean; tasks: TaskItem[] }>('PUT', '/api/tasks/reorder', { taskIds }),
 
   listTaskGroups: () => request<{ groups: TaskGroup[] }>('GET', '/api/task-groups'),
-  createTaskGroup: (name: string) => request<TaskGroup>('POST', '/api/task-groups', { name }),
+  createTaskGroup: (name: string, source?: 'folder' | 'manual') =>
+    request<TaskGroup>('POST', '/api/task-groups', { name, source }),
   updateTaskGroup: (id: string, patch: { name?: string }) =>
     request<TaskGroup>('PATCH', `/api/task-groups/${id}`, patch),
-  deleteTaskGroup: (id: string, moveTasksTo?: string) =>
-    request<{ deleted: boolean }>('DELETE', `/api/task-groups/${id}`, { moveTasksTo }),
+  deleteTaskGroup: (id: string, moveTasksTo?: string, deleteTasks?: boolean) =>
+    request<{ deleted: boolean }>('DELETE', `/api/task-groups/${id}`, { moveTasksTo, deleteTasks }),
 
   // 搜索
   search: (q: string) =>
@@ -326,15 +327,15 @@ export const api = {
   // ==========================================================================
   // Agent 管理（见文档 3.2.3）
   // ==========================================================================
-  listAgents: () => request<{ agents: AgentItem[]; default: string }>('GET', '/api/agents'),
-  getAgent: (id: string) => request<AgentDetail>('GET', `/api/agents/${id}`),
+  listAgents: () => request<{ agents: AgentItem[]; default: string }>('GET', '/api/agenteam'),
+  getAgent: (id: string) => request<AgentDetail>('GET', `/api/agenteam/${id}`),
   createAgent: (data: { name: string; systemPrompt?: string; model?: string; tools?: string[] }) =>
-    request<AgentItem>('POST', '/api/agents', data),
+    request<AgentItem>('POST', '/api/agenteam', data),
   updateAgent: (id: string, patch: Partial<AgentDetail>) =>
-    request<AgentItem>('PATCH', `/api/agents/${id}`, patch),
-  deleteAgent: (id: string) => request<{ deleted: boolean }>('DELETE', `/api/agents/${id}`),
+    request<AgentItem>('PATCH', `/api/agenteam/${id}`, patch),
+  deleteAgent: (id: string) => request<{ deleted: boolean }>('DELETE', `/api/agenteam/${id}`),
   setDefaultAgent: (id: string) =>
-    request<{ default: string }>('PUT', '/api/agents/default', { id }),
+    request<{ default: string }>('PUT', '/api/agenteam/default', { id }),
 
   // ==========================================================================
   // Skills / Specs（见文档 3.2.5 / 3.2.6）

@@ -22,7 +22,7 @@ import {
   ShieldCheck,
   Circle,
   CircleAlert,
-  Archive,
+  Package,
   Zap,
 } from 'lucide-react';
 import {
@@ -69,6 +69,8 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { TaskInput } from '../shared/TaskInput';
+import { ScrollToBottomButton } from '../shared/ScrollToBottomButton';
+import { useAutoScroll } from '../../hooks/useAutoScroll';
 import { TodoProgressCard, TodoRow } from '../shared/TodoProgressCard';
 import { AskPromptCard } from '../shared/AskPromptCard';
 import { ConfirmPromptCard } from '../shared/ConfirmPromptCard';
@@ -80,7 +82,7 @@ import { useStore } from '../../store';
 import { useTask } from '../../hooks/useTask';
 import { api } from '../../api/http';
 import { wsClient } from '../../api/ws';
-import type { TaskMessage, TodoItem, SidebarTab, CompactPreview } from '../../types/api';
+import type { TaskMessage, TodoItem, SidebarTab, CompactPreview, ContextStats } from '../../types/api';
 
 // 稳定引用的空数组，避免 useStore 选择器每次返回新 [] 触发 useSyncExternalStore 无限循环
 const EMPTY_MESSAGES: TaskMessage[] = [];
@@ -143,25 +145,123 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
   const hubActiveModule = useStore((s) => s.hubActiveModuleBySession[taskId]);
   const setHubActiveModule = useStore((s) => s.setHubActiveModule);
 
-  // ask 分类是动态模块（有待回答提问才出现）：提问清空后若仍处于展开态则自动折叠，
-  // 避免残留 hubActiveModule='ask' 导致下次提问出现时意外自动展开
-  useEffect(() => {
-    if (
-      hubActiveModule === 'ask' &&
-      !pendingAsks.some((a) => a.sessionId === taskId)
-    ) {
-      setHubActiveModule(taskId, null);
+  // ===== 中控岛自动展开/折叠 =====
+  // 竞态防护：用户手动操作（chips/折叠按钮）经 handleHubModuleChange 记录时间戳并取消
+  // 自动折叠定时器；程序化 setHubActiveModule 不经过包装，不会误标为用户操作
+  const prevAskCountRef = useRef(0);
+  const prevConfirmCountRef = useRef(0);
+  /** todo 签名（id:status 列表）；null = 未初始化（首次跳过，防挂载误触发） */
+  const prevTodoSigRef = useRef<string | null>(null);
+  /** 上一次处理的会话 id（切换会话时重置基准，防跨会话比较误触发） */
+  const lastHubTaskIdRef = useRef('');
+  /** todo 自动折叠定时器（变更后展示 3s） */
+  const todoCollapseTimerRef = useRef<number | null>(null);
+  /** 用户最近一次手动操作时间（自动折叠前校验，防止与用户操作打架） */
+  const lastUserActionAtRef = useRef(0);
+  /** 最近一次自动展开时间 */
+  const autoExpandAtRef = useRef(0);
+
+  const clearTodoCollapseTimer = useCallback(() => {
+    if (todoCollapseTimerRef.current !== null) {
+      window.clearTimeout(todoCollapseTimerRef.current);
+      todoCollapseTimerRef.current = null;
     }
-  }, [hubActiveModule, pendingAsks, taskId, setHubActiveModule]);
+  }, []);
+
+  /** 用户手动切换模块（chips 点击/折叠按钮）：标记操作时间并取消待执行的自动折叠 */
+  const handleHubModuleChange = useCallback(
+    (moduleId: string | null) => {
+      lastUserActionAtRef.current = Date.now();
+      clearTodoCollapseTimer();
+      setHubActiveModule(taskId, moduleId);
+    },
+    [clearTodoCollapseTimer, setHubActiveModule, taskId],
+  );
+
+  // 自动行为：新提问/权限确认到达 → 自动展开并切换对应类别；回答/处理后 → 默认折叠；
+  // todo 变更 → 展开展示 3s 后自动折叠（不抢占待处理的提问/权限）
+  useEffect(() => {
+    if (!taskId) return;
+    // 会话切换：重置基准状态（在比较前执行，避免旧会话计数/签名误触发）
+    if (lastHubTaskIdRef.current !== taskId) {
+      lastHubTaskIdRef.current = taskId;
+      prevAskCountRef.current = 0;
+      prevConfirmCountRef.current = 0;
+      prevTodoSigRef.current = null;
+      clearTodoCollapseTimer();
+    }
+    const askCount = pendingAsks.filter((a) => a.sessionId === taskId).length;
+    const confirmCount = pendingConfirms.filter((c) => c.sessionId === taskId).length;
+    const todoSig = todos.map((td) => `${td.id}:${td.status}`).join('|');
+    const prevAsk = prevAskCountRef.current;
+    const prevConfirm = prevConfirmCountRef.current;
+    const prevTodoSig = prevTodoSigRef.current;
+    prevAskCountRef.current = askCount;
+    prevConfirmCountRef.current = confirmCount;
+    prevTodoSigRef.current = todoSig;
+
+    // 新提问到达：切换/展开 ask（阻塞 agent，最高优先级）
+    if (askCount > prevAsk) {
+      clearTodoCollapseTimer();
+      setHubActiveModule(taskId, 'ask');
+      autoExpandAtRef.current = Date.now();
+      return;
+    }
+    // 提问清空（已回答）：默认折叠；仍有待确认权限则切过去
+    if (prevAsk > 0 && askCount === 0 && hubActiveModule === 'ask') {
+      setHubActiveModule(taskId, confirmCount > 0 ? 'permission' : null);
+      return;
+    }
+    // 新权限确认到达：切换/展开 permission
+    if (confirmCount > prevConfirm) {
+      clearTodoCollapseTimer();
+      setHubActiveModule(taskId, 'permission');
+      autoExpandAtRef.current = Date.now();
+      return;
+    }
+    // 权限确认清空（已处理）：默认折叠；仍有待答提问则切回去
+    if (prevConfirm > 0 && confirmCount === 0 && hubActiveModule === 'permission') {
+      setHubActiveModule(taskId, askCount > 0 ? 'ask' : null);
+      return;
+    }
+    // todo 变更（跳过首次初始化）：无阻塞项时展开展示 3s 后自动折叠
+    if (
+      prevTodoSig !== null &&
+      todoSig !== prevTodoSig &&
+      askCount === 0 &&
+      confirmCount === 0
+    ) {
+      clearTodoCollapseTimer();
+      setHubActiveModule(taskId, 'todo');
+      autoExpandAtRef.current = Date.now();
+      todoCollapseTimerRef.current = window.setTimeout(() => {
+        todoCollapseTimerRef.current = null;
+        const s = useStore.getState();
+        // 竞态防护：仅当仍处于 todo 模块且自动展开后用户无手动干预时才折叠
+        if (
+          s.hubActiveModuleBySession[taskId] === 'todo' &&
+          lastUserActionAtRef.current <= autoExpandAtRef.current
+        ) {
+          s.setHubActiveModule(taskId, null);
+        }
+      }, 3000);
+    }
+  }, [
+    pendingAsks,
+    pendingConfirms,
+    todos,
+    hubActiveModule,
+    taskId,
+    setHubActiveModule,
+    clearTodoCollapseTimer,
+  ]);
 
   // ===== 消息撤回（截断）状态机 =====
   /** 待确认的撤回目标（用户消息） */
   const [truncateTarget, setTruncateTarget] = useState<TaskMessage | null>(null);
   // ===== 滚动控制 =====
-  /** 滚动容器 ref（.task-scroll-area） */
+  /** 滚动容器 ref（.task-scroll-area）；跟随状态机见 useAutoScroll */
   const scrollRef = useRef<HTMLDivElement>(null);
-  /** 本会话是否已执行过首次滚底（历史加载完成后强制定位最新消息；切会话重置） */
-  const hasAutoScrolledRef = useRef(false);
   /** 预览加载中 */
   const [truncateLoading, setTruncateLoading] = useState(false);
   /** 预览结果 */
@@ -202,7 +302,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
   // 防止覆盖流式 UI 状态。store 已有消息时先显示旧值，拉到后替换，无闪烁。
   useEffect(() => {
     if (!taskId) return; // 空 taskId 守卫：避免污染 store 的 activeSessionId/activeTaskId
-    hasAutoScrolledRef.current = false; // 会话切换：重置首次滚底标记
+    // 滚动状态重置由 useAutoScroll 的 resetKey(taskId) 驱动
     void api
       .getSessionHistory(taskId)
       .then((resp) => {
@@ -289,6 +389,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
     return () => {
       // 卸载时若 activeSessionId 仍指向自己，清除之，防止 useWebSocket 误用旧 session。
       // 注意：不停止后端 agent.run（任务可在后台继续），仅防状态污染。
+      clearTodoCollapseTimer(); // 清理待执行的 todo 自动折叠定时器
       const cur = useStore.getState().activeSessionId;
       if (cur === taskId) {
         useStore.getState().setActiveSession(null);
@@ -297,34 +398,54 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [taskId]);
 
-  // ===== 自动滚动 =====
-  // 首次（历史加载完成）：强制定位到最新消息；此后仅在用户已处于底部附近时跟随滚底
-  // （流式追加/新消息），用户上翻查看历史时不打扰。
+  // ===== 自动滚动（状态机 hook）=====
+  // 发送后自动滚底；流式期间用户上滑（wheel/触摸/拖滚动条）即时脱离跟随、绝不被拉回；
+  // 滚回底部附近自动恢复跟随；切会话由 resetKey 重置并强滚底。
   const lastMessage = messages[messages.length - 1];
   const lastContentLength = lastMessage?.content.length ?? 0;
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el || messages.length === 0) return;
-    if (!hasAutoScrolledRef.current) {
-      el.scrollTop = el.scrollHeight;
-      hasAutoScrolledRef.current = true;
-      return;
-    }
-    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 160;
-    if (nearBottom) {
-      el.scrollTop = el.scrollHeight;
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages.length, lastContentLength, isGenerating]);
+  const { atBottom, pin, scrollToBottom } = useAutoScroll(scrollRef, {
+    resetKey: taskId,
+    scrollDeps: [messages.length, lastContentLength, isGenerating],
+  });
 
   const contextFiles = context?.files ?? [];
   const totalTokens = context?.totalTokens ?? 0;
   const maxTokens = context?.maxTokens ?? 1;
   const contextPercent = maxTokens > 0 ? Math.round((totalTokens / maxTokens) * 100) : 0;
 
+  // ===== 右侧面板 Tab 切换状态机 =====
+  // 默认"系统"；仅当 LLM 真实读取文件（WS context-updated，read/grep/glob）时自动切到"文件"；
+  // 用户手动切换后不再自动切换（尊重用户操作）；切换会话时重置回"系统"。
+  const [contextTab, setContextTab] = useState('system');
+  const contextTabUserTouchedRef = useRef(false);
+  const prevTaskIdRef = useRef(taskId);
+  const contextFileReadSeq = useStore((s) => s.contextFileReadSeqBySession[taskId]);
+  // LLM 新读取文件（seq 递增）且用户未手动切换过 → 自动切到"文件"
+  useEffect(() => {
+    if (contextFileReadSeq == null || contextFileReadSeq < 1) return;
+    if (contextTabUserTouchedRef.current) return;
+    setContextTab('files');
+  }, [contextFileReadSeq]);
+  // 会话切换：重置为默认"系统"，恢复自动切换能力
+  useEffect(() => {
+    if (prevTaskIdRef.current === taskId) return;
+    prevTaskIdRef.current = taskId;
+    contextTabUserTouchedRef.current = false;
+    setContextTab('system');
+  }, [taskId]);
+  // 受控值防御：contextTab 指向的条件 tab（skill/summary）消失时回退"系统"
+  const contextTabValue =
+    (contextTab === 'skill' && !activeSkill) ||
+    (contextTab === 'summary' && !contextStats?.breakdown?.summary)
+      ? 'system'
+      : contextTab;
+
   // 空状态：发送消息后创建任务并跳转；任务态：直接发送到当前 session
   const handleSend = useCallback(
     async (text: string) => {
+      // 发送即回底：恢复跟随并立即滚底（后续由 scrollDeps effect 兜底，双保险且幂等）
+      pin();
+      scrollToBottom('auto');
       if (taskId) {
         sendMessage(text, { taskId });
       } else {
@@ -332,7 +453,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
         if (newTaskId) navigate(`/task/${newTaskId}`);
       }
     },
-    [taskId, sendMessage, navigate],
+    [taskId, sendMessage, navigate, pin, scrollToBottom],
   );
 
   // ===== 消息撤回流程 =====
@@ -485,7 +606,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
               <Plus />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" sideOffset={4} collisionPadding={8}>
+          <DropdownMenuContent align="start" sideOffset={4} collisionPadding={8}>
             {!hasSummaryTab && (
               <DropdownMenuItem
                 onSelect={() => addSidebarTab('summary', 'task.taskSummary')}
@@ -529,7 +650,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
                   title={isGenerating ? t('context.compressDisabledRunning') : t('context.compressHint')}
                   onClick={handleCompactClick}
                 >
-                  {compacting ? <Loader2 className="size-3.5 animate-spin" /> : <Archive className="size-3.5" />}
+                  {compacting ? <Loader2 className="size-3.5 animate-spin" /> : <Package className="size-3.5" />}
                   {t('task.compress')}
                 </Button>
               </div>
@@ -537,10 +658,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
               {/* token 构成堆叠条 + 百分比 + 缓存命中率徽章 */}
               <div className="flex items-center gap-2">
                 {contextStats ? (
-                  <ContextStackedBar
-                    breakdown={contextStats.breakdown}
-                    windowTokens={contextStats.windowTokens}
-                  />
+                  <ContextStackedBar stats={contextStats} />
                 ) : (
                   <>
                     <Progress value={contextPercent} className="flex-1" />
@@ -562,8 +680,15 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
                 )}
               </div>
 
-              {/* 动态标签：默认 系统 | 文件；有活跃技能/压缩摘要时动态追加 */}
-              <Tabs defaultValue="files" className="flex flex-1 flex-col gap-2 overflow-hidden">
+              {/* 动态标签：默认 系统；LLM 读取文件后自动切到 文件；有活跃技能/压缩摘要时动态追加 */}
+              <Tabs
+                value={contextTabValue}
+                onValueChange={(v) => {
+                  contextTabUserTouchedRef.current = true;
+                  setContextTab(v);
+                }}
+                className="flex flex-1 flex-col gap-2 overflow-hidden"
+              >
                 <TabsList>
                   <TabsTrigger value="system">{t('context.tabSystem')}</TabsTrigger>
                   <TabsTrigger value="files">{t('task.files')}</TabsTrigger>
@@ -575,7 +700,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
                   ) : null}
                 </TabsList>
 
-                {/* 系统标签页：折叠栏展示系统上下文各段（身份/规则/规范引导/环境/技能） */}
+                {/* 系统标签页：折叠栏展示系统上下文各段（身份/规则/规范引导/环境/工具定义/技能） */}
                 <TabsContent value="system" className="flex-1 min-h-0 overflow-hidden">
                   <ScrollArea className="h-full">
                     <div className="flex flex-col gap-1 pr-1">
@@ -703,37 +828,45 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
           </Button>
         </div>
 
-        {/* Task Messages */}
-        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto task-scroll-area">
-          <div className="flex min-h-full flex-col gap-4 p-4">
-            {messages.length === 0 && !isGenerating && (
-              <div className="flex flex-1 flex-col items-center justify-center gap-6">
-                <img src="/MOSS.png" alt="MOSS" className="size-16 rounded-2xl object-cover" />
-                <p className="text-lg text-muted-foreground">
-                  {t(getGreetingKey())}{t('task.greeting.prompt')}
-                </p>
-              </div>
-            )}
-            {messages.map((msg) => (
-              <div className="message-cv" key={msg.id}>
-                <MessageBubble
-                  message={msg}
-                  todos={todos}
-                  toolIconMap={toolIconMap}
-                  truncateDisabled={isGenerating}
-                  onTruncate={handleTruncateClick}
-                  onCopy={handleCopyMessage}
-                />
-              </div>
-            ))}
-            {isGenerating && messages[messages.length - 1]?.role !== 'assistant' && (
-              <div className="flex items-center gap-2 text-muted-foreground">
-                <Loader2 className="size-4 animate-spin" />
-                <span className="text-sm">{t('task.thinking')}</span>
-              </div>
-            )}
-            {/* ask/confirm 卡片已迁移至任务输入框上方的中控岛（ControlHub 权限模块） */}
+        {/* Task Messages（relative wrapper：返回底部按钮悬浮于滚动区上方、不随内容滚动） */}
+        <div className="relative min-h-0 flex-1">
+          <div ref={scrollRef} className="h-full overflow-y-auto task-scroll-area">
+            <div className="flex min-h-full flex-col gap-4 p-4">
+              {messages.length === 0 && !isGenerating && (
+                <div className="flex flex-1 flex-col items-center justify-center gap-6">
+                  <img src="/MOSS.png" alt="MOSS" className="size-16 rounded-2xl object-cover" />
+                  <p className="text-lg text-muted-foreground">
+                    {t(getGreetingKey())}{t('task.greeting.prompt')}
+                  </p>
+                </div>
+              )}
+              {messages.map((msg) => (
+                <div className="message-cv anim-msg animate-in fade-in slide-in-from-bottom-2 duration-200" key={msg.id}>
+                  <MessageBubble
+                    message={msg}
+                    todos={todos}
+                    toolIconMap={toolIconMap}
+                    truncateDisabled={isGenerating}
+                    onTruncate={handleTruncateClick}
+                    onCopy={handleCopyMessage}
+                  />
+                </div>
+              ))}
+              {isGenerating && messages[messages.length - 1]?.role !== 'assistant' && (
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <Loader2 className="size-4 animate-spin" />
+                  <span className="text-sm">{t('task.thinking')}</span>
+                </div>
+              )}
+              {/* ask/confirm 卡片已迁移至任务输入框上方的中控岛（ControlHub 权限模块） */}
+            </div>
           </div>
+          {/* 返回底部按钮：不在底部时显示；流式生成中显示顺时针跑马灯；点击滚底并恢复跟随 */}
+          <ScrollToBottomButton
+            visible={!atBottom}
+            streaming={isGenerating}
+            onClick={() => scrollToBottom('smooth')}
+          />
         </div>
 
         {/* 消息撤回确认弹窗（预览卡片：将删除的消息 + 将回滚的文件变更） */}
@@ -831,7 +964,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
           <DialogContent className="max-w-md">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-1.5">
-                <Archive className="size-4 text-primary" />
+                <Package className="size-4 text-primary" />
                 {t('context.compactDialogTitle')}
               </DialogTitle>
               <DialogDescription>{t('context.compactDialogDesc')}</DialogDescription>
@@ -894,7 +1027,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
                 onClick={handleCompactConfirm}
                 disabled={compacting || compactPreviewLoading || !compactPreview || compactPreview.compactableCount === 0}
               >
-                {compacting ? <Loader2 className="size-3.5 animate-spin" /> : <Archive className="size-3.5" />}
+                {compacting ? <Loader2 className="size-3.5 animate-spin" /> : <Package className="size-3.5" />}
                 {t('context.compactConfirm')}
               </Button>
             </DialogFooter>
@@ -918,7 +1051,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
               )
             }
             activeModuleId={hubActiveModule}
-            onActiveModuleChange={(moduleId) => setHubActiveModule(taskId, moduleId)}
+            onActiveModuleChange={handleHubModuleChange}
             modules={[
               {
                 id: 'todo',
@@ -1024,8 +1157,8 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
             onOpenOverlay={onOpenOverlay}
             onSend={handleSend}
           />
-          {/* 运行指标栏（会话级累计口径） */}
-          <StatsBar stats={runStats} />
+          {/* 运行指标栏（轮/步/耗时累计 + 引擎实时 token/命中） */}
+          <StatsBar stats={runStats} contextStats={contextStats} />
         </div>
       </div>
 
@@ -1045,18 +1178,26 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
           </SheetContent>
         </Sheet>
       ) : (
-        rightPanelOpen && (
-          <aside
-            className="relative flex flex-col border-l border-border bg-card"
-            style={{ width: rightPanelWidth }}
-          >
-            <div
-              {...rightResize.bind}
-              className="absolute inset-y-0 -left-[3px] z-10 w-1.5 cursor-col-resize touch-none select-none after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] after:-translate-x-1/2 after:bg-transparent hover:after:bg-border"
-            />
+        // 常驻渲染 + 宽度过渡（替代条件挂载的瞬跳）：收起时 width=0 由 overflow-hidden 裁切。
+        // 拖拽调宽时移除 transition 保证跟手；invisible 离散过渡：收起动画播完才隐藏、展开立即显示
+        <aside
+          className={cn(
+            'anim-panel relative flex flex-col overflow-hidden border-l border-border bg-card',
+            !rightResize.resizing && 'transition-[width,visibility] duration-200 ease-out',
+            !rightPanelOpen && 'invisible',
+          )}
+          style={{ width: rightPanelOpen ? rightPanelWidth : 0 }}
+          aria-hidden={!rightPanelOpen}
+        >
+          <div
+            {...rightResize.bind}
+            className="absolute inset-y-0 -left-[3px] z-10 w-1.5 cursor-col-resize touch-none select-none after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] after:-translate-x-1/2 after:bg-transparent hover:after:bg-border"
+          />
+          {/* 内容固定宽度 wrapper：宽度动画期间内容不被挤压变形（外层裁切） */}
+          <div className="flex h-full min-h-0 flex-col overflow-hidden" style={{ width: rightPanelWidth }}>
             {rightPanelContent}
-          </aside>
-        )
+          </div>
+        </aside>
       )}
     </div>
   );
@@ -1152,30 +1293,63 @@ function formatPercent(ratio: number): string {
 }
 
 /** token 构成堆叠条：system/env/summary/history 分段配色 + 占用百分比。
- *  分段宽度基于上下文窗口：各段之和 = 实际占用，剩余空白 = 未占用 */
-function ContextStackedBar({
-  breakdown,
-  windowTokens,
-}: {
-  breakdown: { system: number; env: number; summary: number; history: number; total: number };
-  windowTokens: number;
-}) {
+ *  分段宽度基于上下文窗口：各段之和 = 实际占用，剩余空白 = 未占用。
+ *  统一口径：usedTokens（LLM 真实上报 promptTokens）优先于 breakdown 估算，
+ *  与底部 StatsBar"输入"同源同值；无样本时回退发送视图估算。
+ *  悬停显示完整占用明细：分段构成/剩余可用/上次请求/缓存命中/自动压缩阈值 */
+function ContextStackedBar({ stats }: { stats: ContextStats }) {
   const { t } = useTranslation();
+  const { breakdown, windowTokens, lastUsage, avgHitRate, compaction } = stats;
   const window = Math.max(1, windowTokens);
+  const usedTokens = lastUsage?.promptTokens ?? null;
+  const total = usedTokens && usedTokens > 0 ? usedTokens : breakdown.total;
+  // 分段按 breakdown 占比缩放到 total（真实占用与估算存在系统性偏差时保持构成比例）
+  const scale = breakdown.total > 0 ? total / breakdown.total : 0;
   const segments = [
     { key: 'system', value: breakdown.system, color: 'bg-indigo-500', label: t('context.segSystem') },
     { key: 'env', value: breakdown.env, color: 'bg-teal-500', label: t('context.segEnv') },
     { key: 'summary', value: breakdown.summary, color: 'bg-amber-500', label: t('context.segSummary') },
     { key: 'history', value: breakdown.history, color: 'bg-blue-400', label: t('context.segHistory') },
   ];
-  const percentText = formatPercent(breakdown.total / window);
-  const usedText = formatTokens(breakdown.total);
+  const percentText = formatPercent(total / window);
+  const usedText = formatTokens(total);
   const windowText = formatTokens(windowTokens);
-  // 进度条 hover：完整占用信息（原生 title 支持 \n 多行）
-  const barTitle = [
+  // 悬停完整明细（原生 title 支持 \n 多行）：占用 + 分段 + 剩余 + 上次请求 + 缓存命中 + 压缩阈值
+  const titleLines: string[] = [
     t('context.usageTitle', { used: usedText, total: windowText, percent: percentText }),
     ...segments.map((s) => `${s.label}: ${formatTokens(s.value)}`),
-  ].join('\n');
+    t('context.hoverRemaining', { remaining: formatTokens(Math.max(0, window - total)) }),
+  ];
+  if (lastUsage) {
+    titleLines.push(
+      t('context.hoverLastUsage', {
+        prompt: formatTokens(lastUsage.promptTokens),
+        completion: formatTokens(lastUsage.completionTokens),
+        cached: formatTokens(lastUsage.cachedTokens),
+      }),
+    );
+  }
+  if (lastUsage && avgHitRate != null) {
+    titleLines.push(
+      t('context.hoverCacheHit', {
+        rate: formatPercent(lastUsage.promptTokens > 0 ? lastUsage.cachedTokens / lastUsage.promptTokens : 0),
+        avg: formatPercent(avgHitRate),
+      }),
+    );
+  }
+  if (compaction?.enabled) {
+    const threshold = window * compaction.compactRatio;
+    const left = threshold - total;
+    titleLines.push(
+      left >= 0
+        ? t('context.hoverCompactThreshold', {
+            threshold: formatTokens(threshold),
+            left: formatTokens(left),
+          })
+        : t('context.hoverCompactReached', { threshold: formatTokens(threshold) }),
+    );
+  }
+  const barTitle = titleLines.join('\n');
   return (
     <div className="flex flex-1 items-center gap-2">
       <div
@@ -1186,13 +1360,13 @@ function ContextStackedBar({
           <div
             key={s.key}
             className={s.color}
-            style={{ width: `${Math.min(100, (s.value / window) * 100)}%` }}
+            style={{ width: `${Math.min(100, ((s.value * scale) / window) * 100)}%` }}
           />
         ))}
       </div>
       <span
         className="text-xs tabular-nums text-muted-foreground"
-        title={t('context.usageHint', { used: usedText, total: windowText })}
+        title={barTitle}
       >
         {percentText}
       </span>

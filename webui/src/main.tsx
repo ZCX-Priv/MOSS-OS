@@ -7,6 +7,7 @@ import { I18nProvider } from './contexts/I18nContext'
 import { idbGet, idbSet, migrateLegacyDatabase } from './utils/idb'
 import { useStore, type PersistedState, LEGACY_DEFAULT_WORKING_DIRECTORY, DEFAULT_WORKING_DIRECTORY } from './store'
 import { isValidRenderSettings } from './render/core/types'
+import { isValidAnimationSettings } from './types/animation'
 import i18n, { type Locale, LOCALE_STORAGE_KEY } from './i18n'
 import './styles/global.css'
 
@@ -45,6 +46,7 @@ const PERSISTED_KEYS = [
   'moss-sidebar-tabs',
   'moss-active-sidebar-tab',
   'moss-render-settings',
+  'moss-animation-settings',
 ] as const;
 
 /**
@@ -114,6 +116,9 @@ function buildPersistedState(data: Record<string, unknown>): PersistedState {
         : undefined,
     renderSettings: isValidRenderSettings(data['moss-render-settings'])
       ? data['moss-render-settings']
+      : undefined,
+    animationSettings: isValidAnimationSettings(data['moss-animation-settings'])
+      ? data['moss-animation-settings']
       : undefined,
   };
 }

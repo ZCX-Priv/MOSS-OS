@@ -78,9 +78,21 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { UserMenu } from '../overlays/UserMenu';
 import { ConfirmDialog } from '../overlays/ConfirmDialog';
 import { useTasks } from '../../hooks/useTasks';
+import { api } from '../../api/http';
 import { settingsNavItems, settingsSearchIndex } from '../pages/SettingsPage';
 
 interface SidebarProps {
@@ -91,7 +103,7 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { pathname } = useLocation();
-  const { tasks, taskGroups, updateTask, deleteTask, reorderTasks, createTaskGroup, updateTaskGroup, deleteTaskGroup } = useTasks();
+  const { tasks, taskGroups, updateTask, deleteTask, reorderTasks, createTaskGroup, updateTaskGroup, deleteTaskGroup, reload } = useTasks();
   const isSettingsRoute = pathname.startsWith('/settings');
   const [settingsSearch, setSettingsSearch] = useState('');
   const { isMobile, setOpenMobile } = useSidebar();
@@ -117,6 +129,8 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
   const [renameGroup, setRenameGroup] = useState<TaskGroup | null>(null);
   const [renameGroupName, setRenameGroupName] = useState('');
   const [deleteGroupId, setDeleteGroupId] = useState<string | null>(null);
+  // 删除分组时是否连同组内所有任务一并删除（否则任务迁回默认分组）
+  const [deleteGroupAlsoTasks, setDeleteGroupAlsoTasks] = useState(false);
 
   const toggleGroup = (groupId: string) => {
     setGroupExpanded((prev) => ({ ...prev, [groupId]: !(prev[groupId] ?? true) }));
@@ -139,8 +153,8 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
 
   const handleDeleteGroup = async () => {
     if (deleteGroupId) {
-      // 后端将组内任务（含 session 文件）迁回默认分组
-      await deleteTaskGroup(deleteGroupId, 'default');
+      // 勾选：连组内任务（含 session 文件）一并删除；未勾选：组内任务迁回默认分组
+      await deleteTaskGroup(deleteGroupId, 'default', deleteGroupAlsoTasks);
       setDeleteGroupId(null);
     }
   };
@@ -175,11 +189,18 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
   };
 
   const handleBatchDelete = async () => {
+    // 逐个直调 API + 本地移除，最后统一刷新（避免 N 次全量加载；同时感知空文件夹分组的自动销毁）
     for (const id of selectedIds) {
-      await deleteTask(id);
+      try {
+        await api.deleteTask(id);
+        useStore.getState().removeTask(id);
+      } catch (err) {
+        console.warn('batch deleteTask failed:', err);
+      }
     }
     setSelectedIds(new Set());
     setBatchDeleteOpen(false);
+    await reload();
   };
 
   // 跨组拖拽碰撞检测：指针下有任务（sortable item）时优先任务（保证组内精确排序），
@@ -461,51 +482,60 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
                 collisionDetection={collisionDetection}
                 onDragEnd={handleDragEnd}
               >
-              {taskGroups.map((group) => {
+              {taskGroups
+                // 默认分组为空时隐藏整个条目（常驻分组，持有任务才显示）
+                .filter((group) => group.id !== 'default' || tasks.some((task) => task.groupId === 'default'))
+                .map((group) => {
                 const groupTasks = tasks.filter((task) => task.groupId === group.id);
                 const groupTaskIds = groupTasks.map((t) => t.id);
                 const expanded = groupExpanded[group.id] ?? true;
                 const GroupIcon = expanded ? FolderOpen : Folder;
+                // 默认分组为常驻分组：文案固定且随语言本地化
+                const groupLabel = group.id === 'default' ? t('sidebar.defaultGroup') : group.name;
                 return (
-                  <Collapsible key={group.id} open={expanded} onOpenChange={() => toggleGroup(group.id)}>
+                  <Collapsible
+                    key={group.id}
+                    open={expanded}
+                    onOpenChange={() => toggleGroup(group.id)}
+                    className="anim-list animate-in fade-in duration-150"
+                  >
                     <SidebarMenuItem>
                       <div className="group/group-item relative">
                         <CollapsibleTrigger asChild>
                           <SidebarMenuButton>
                             <GroupIcon className="size-4 shrink-0 text-muted-foreground" />
-                            <span className="truncate pr-6">{group.name}</span>
+                            <span className="truncate pr-6">{groupLabel}</span>
                           </SidebarMenuButton>
                         </CollapsibleTrigger>
-                        {/* 分组计数：与 ellipsis 同盒（right-0 size-6 居中），中心精确对齐；hover/菜单打开时让位给 ellipsis */}
-                        <span className="pointer-events-none absolute right-0 top-1/2 z-[5] flex size-6 -translate-y-1/2 items-center justify-center text-xs text-muted-foreground/70 transition-opacity group-hover/group-item:opacity-0 group-has-data-[state=open]/group-item:opacity-0">
-                          {groupTasks.length}
-                        </span>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon-xs"
-                              className="absolute right-0 top-1/2 z-10 size-6 -translate-y-1/2 opacity-0 transition-opacity group-hover/group-item:opacity-100 data-[state=open]:opacity-100"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <MoreHorizontal className="size-3.5" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" side="right" sideOffset={4} collisionPadding={8}>
-                            <DropdownMenuItem
-                              onSelect={() => { setRenameGroupName(group.name); setRenameGroup(group); }}
-                            >
-                              <Pencil className="size-3.5" />
-                              {t('sidebar.renameGroup')}
-                            </DropdownMenuItem>
-                            {group.id !== 'default' && (
-                              <DropdownMenuItem variant="destructive" onSelect={() => setDeleteGroupId(group.id)}>
+                        {group.id !== 'default' && (
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon-xs"
+                                className="absolute right-0 top-1/2 z-10 size-6 -translate-y-1/2 opacity-0 transition-opacity group-hover/group-item:opacity-100 data-[state=open]:opacity-100"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <MoreHorizontal className="size-3.5" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="start" side="bottom" sideOffset={4} collisionPadding={8}>
+                              <DropdownMenuItem
+                                onSelect={() => { setRenameGroupName(group.name); setRenameGroup(group); }}
+                              >
+                                <Pencil className="size-3.5" />
+                                {t('sidebar.renameGroup')}
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                variant="destructive"
+                                onSelect={() => { setDeleteGroupAlsoTasks(false); setDeleteGroupId(group.id); }}
+                              >
                                 <Trash2 className="size-3.5" />
                                 {t('sidebar.deleteGroup')}
                               </DropdownMenuItem>
-                            )}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        )}
                       </div>
                       <CollapsibleContent>
                         {/* 组级 droppable：拖入组内任意位置（含空白/空组）即移入该组 */}
@@ -600,17 +630,47 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
       </DialogContent>
     </Dialog>
 
-    {/* 删除分组确认弹窗 */}
-    <ConfirmDialog
+    {/* 删除分组确认弹窗：可选连组内任务一并删除，或迁回默认分组 */}
+    <AlertDialog
       open={!!deleteGroupId}
-      onOpenChange={(o) => !o && setDeleteGroupId(null)}
-      title={t('sidebar.deleteGroup')}
-      description={t('sidebar.deleteGroupDesc')}
-      variant="danger"
-      confirmText={t('sidebar.delete')}
-      cancelText={t('common.cancel')}
-      onConfirm={handleDeleteGroup}
-    />
+      onOpenChange={(o) => {
+        if (!o) setDeleteGroupId(null);
+      }}
+    >
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <div className="flex items-start gap-3">
+            <CircleAlert className="size-5 shrink-0 translate-y-0.5 text-destructive" />
+            <div className="flex flex-col gap-1">
+              <AlertDialogTitle>{t('sidebar.deleteGroup')}</AlertDialogTitle>
+              <AlertDialogDescription>
+                {t('sidebar.deleteGroupDesc')}{' '}
+                {deleteGroupAlsoTasks ? t('sidebar.deleteGroupPurgeDesc') : t('sidebar.deleteGroupMoveDesc')}
+              </AlertDialogDescription>
+            </div>
+          </div>
+        </AlertDialogHeader>
+        <label className="flex cursor-pointer items-center gap-2 rounded-md px-1 py-1 text-sm select-none">
+          <Checkbox
+            checked={deleteGroupAlsoTasks}
+            onCheckedChange={(v) => setDeleteGroupAlsoTasks(v === true)}
+          />
+          {t('sidebar.deleteGroupAlsoDeleteTasks')}
+        </label>
+        <AlertDialogFooter>
+          <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+          <AlertDialogAction
+            onClick={(e) => {
+              e.preventDefault();
+              void handleDeleteGroup();
+            }}
+            className="bg-destructive text-white hover:bg-destructive/90 focus-visible:ring-destructive/20"
+          >
+            {t('sidebar.delete')}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
 
     {/* 重命名弹窗 */}
     <Dialog open={!!renameTask} onOpenChange={(o) => !o && setRenameTask(null)}>
@@ -690,6 +750,7 @@ function TaskRow({
   onDelete,
 }: TaskRowProps) {
   const { t } = useTranslation();
+  const { pathname } = useLocation();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: task.id });
   // 状态指示器：运行中（转圈）/ 出错（红警示），空闲不显示；WS 事件流驱动
   const sid = task.sessionId ?? task.id;
@@ -708,7 +769,7 @@ function TaskRow({
       <li
         ref={setNodeRef}
         style={style}
-        className="group/menu-item relative group/item flex w-full min-w-0 items-center gap-1.5"
+        className="anim-list animate-in fade-in duration-150 group/menu-item relative group/item flex w-full min-w-0 items-center gap-1.5"
       >
         <button
           type="button"
@@ -740,8 +801,9 @@ function TaskRow({
   }
 
   return (
-    <li ref={setNodeRef} style={style} className="group/menu-item relative group/item">
+    <li ref={setNodeRef} style={style} className="anim-list animate-in fade-in duration-150 group/menu-item relative group/item">
       <SidebarMenuButton
+        isActive={pathname === `/task/${task.id}`}
         onClick={() => onNavigate(task.id)}
       >
         <span className="truncate pr-5">{task.title}</span>
@@ -778,7 +840,7 @@ function TaskRow({
             <MoreHorizontal className="size-3.5" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" side="right" sideOffset={4} collisionPadding={8}>
+        <DropdownMenuContent align="start" side="bottom" sideOffset={4} collisionPadding={8}>
           <DropdownMenuItem onSelect={() => onRename(task)}>
             <Pencil className="size-3.5" />
             {t('sidebar.rename')}

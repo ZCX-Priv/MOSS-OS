@@ -405,7 +405,7 @@ export class McpClient {
   // ========================================================================
 
   private async createStdioTransport(): Promise<McpSdkTransport> {
-    const stdioMod = (await import('@modelcontextprotocol/sdk/client/stdio')) as McpSdkModule;
+    const stdioMod = (await import('@modelcontextprotocol/sdk/client/stdio.js')) as McpSdkModule;
     const StdioTransport = stdioMod.StdioClientTransport;
     if (!StdioTransport) throw new Error(t('mcp.stdioTransportNotFound'));
     if (!this.config.command) throw new Error(t('mcp.stdioRequiresCommand'));
@@ -428,7 +428,7 @@ export class McpClient {
   }
 
   private async createHttpTransport(): Promise<McpSdkTransport> {
-    const httpMod = (await import('@modelcontextprotocol/sdk/client/streamableHttp')) as McpSdkModule;
+    const httpMod = (await import('@modelcontextprotocol/sdk/client/streamableHttp.js')) as McpSdkModule;
     const HttpTransport = httpMod.StreamableHTTPClientTransport;
     if (!HttpTransport) throw new Error(t('mcp.httpTransportNotFound'));
     if (!this.config.url) throw new Error(t('mcp.httpRequiresUrl'));
@@ -438,7 +438,7 @@ export class McpClient {
   }
 
   private async createSseTransport(): Promise<McpSdkTransport> {
-    const sseMod = (await import('@modelcontextprotocol/sdk/client/sse')) as McpSdkModule;
+    const sseMod = (await import('@modelcontextprotocol/sdk/client/sse.js')) as McpSdkModule;
     const SseTransport = sseMod.SSEClientTransport;
     if (!SseTransport) throw new Error(t('mcp.sseTransportNotFound'));
     if (!this.config.url) throw new Error(t('mcp.sseRequiresUrl'));

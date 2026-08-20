@@ -37,7 +37,8 @@ async function ensureTaskGroup(name: string): Promise<string | undefined> {
     const { groups } = await api.listTaskGroups();
     const found = groups.find((g) => g.name.toLowerCase() === name.toLowerCase());
     if (found) return found.id;
-    const created = await api.createTaskGroup(name);
+    // 文件夹来源分组：空时由后端自动销毁
+    const created = await api.createTaskGroup(name, 'folder');
     useStore.getState().addTaskGroup(created);
     return created.id;
   } catch {

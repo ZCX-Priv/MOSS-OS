@@ -409,12 +409,12 @@ export const zh = {
     restored: '已恢复文件: {{path}}',
     undoFailed: '撤销失败: {{error}}',
   },
-  agents: {
-    saveFailed: '保存 agents.json 失败',
+  agenteam: {
+    saveFailed: '保存 agenteam.json 失败',
     agentCreated: 'Agent 已创建: {{id}} ({{name}})',
     agentRemoved: 'Agent 已移除: {{id}}',
     defaultSet: '默认 Agent 已设置: {{id}}',
-    moduleInitialized: 'Agents 模块已初始化',
+    moduleInitialized: 'AgentTeam 模块已初始化',
   },
   automation: {
     schedulerStarted: '自动化调度器已启动',

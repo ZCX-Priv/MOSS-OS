@@ -409,12 +409,12 @@ export const en = {
     restored: 'Restored file: {{path}}',
     undoFailed: 'Undo failed: {{error}}',
   },
-  agents: {
-    saveFailed: 'Failed to save agents.json',
+  agenteam: {
+    saveFailed: 'Failed to save agenteam.json',
     agentCreated: 'Agent created: {{id}} ({{name}})',
     agentRemoved: 'Agent removed: {{id}}',
     defaultSet: 'Default agent set: {{id}}',
-    moduleInitialized: 'Agents module initialized',
+    moduleInitialized: 'AgentTeam module initialized',
   },
   automation: {
     schedulerStarted: 'Automation scheduler started',

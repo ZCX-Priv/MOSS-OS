@@ -88,7 +88,7 @@ export function createUpdateSpecHandler(
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const fs = require('node:fs');
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { isPathInside } = require('../../../../utils/fs');
+    const { isPathInside } = require('../../../utils/fs');
     const specRoot = path.resolve(env.dataDir, 'agent', 'prompts', 'main', 'spec');
     const target = path.resolve(spec.sourceFile);
     if (!isPathInside(target, specRoot)) {

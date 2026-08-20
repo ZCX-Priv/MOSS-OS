@@ -104,8 +104,11 @@ export interface ContextEngine {
   /** run 开始/结束的 busy 标记（手动压缩仅空闲可用） */
   markBusy(sessionId: string): void;
   markIdle(sessionId: string): void;
-  /** engine 每轮流结束后上报 usage（缓存命中采样 + tokPerChar 校准） */
-  onTurnUsage(sessionId: string, usage: { promptTokens: number; cachedTokens: number }): void;
+  /** engine 每轮流结束后上报 usage（缓存命中采样 + tokPerChar 校准 + 最近一次真实 usage 记录） */
+  onTurnUsage(
+    sessionId: string,
+    usage: { promptTokens: number; cachedTokens: number; completionTokens?: number },
+  ): void;
   /** 手动压缩（空闲时；focus 为附加焦点） */
   manualCompact(sessionId: string, focus?: string): Promise<ManualCompactResult>;
   /** 手动压缩预览（确认框数据） */

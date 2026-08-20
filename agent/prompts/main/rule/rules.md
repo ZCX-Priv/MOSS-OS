@@ -16,21 +16,7 @@
 
 ## 工具选择
 
-| 需求 | 工具 |
-|------|------|
-| 读已知路径的文件 | read |
-| 按文件名/模式找文件 | glob |
-| 按内容搜代码 | grep |
-| 运行命令 | shell |
-| 新建文件 | write |
-| 精确编辑现有文件 | edit |
-| 查看可用规范/读取规范 | list_spec / get_spec |
-| 使用技能 | use_skill |
-| 调用 MCP 服务 | use_mcp |
-| 记录/更新待办 | todo |
-| 向用户提问 | ask |
-
-不要用 shell 的 cat/head/tail 读文件（用 read）、find/ls 找文件（用 glob）、grep/Select-String 搜内容（用 grep）、sed/awk 改文件（用 edit）。
+优先使用专用工具而非 shell 的通用命令等价物；工具的具体映射与决策见规范文档（`spec/tool-usage`）。
 
 ## 长任务规则
 

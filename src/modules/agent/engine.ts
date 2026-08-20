@@ -75,8 +75,12 @@ export class AgentEngineImpl implements AgentEngine {
     this.eventBus = deps.eventBus;
     this.logger = deps.logger;
     this.env = deps.env;
-    this.sessions = new SessionStore(deps.env, deps.logger);
+    // TaskStore 先建：SessionStore 路径解析依赖总管索引（task↔session 归属）。
+    // 不注入时 resolveGroupId 恒 null，非 default 组新建的 session 文件会错落到 default/
     this.tasks = new TaskStore(deps.env, deps.logger);
+    this.sessions = new SessionStore(deps.env, deps.logger, {
+      resolveGroupId: (sid) => this.tasks.getGroupIdOf(sid),
+    });
 
     // 订阅 filesys 变更事件总线：file-created/edited/deleted/moved/shell-changed 统一转 WS，
     // delete/move/copy 的路径进 contextFiles（修复旧版无任何通知的割裂）。
@@ -396,11 +400,12 @@ export class AgentEngineImpl implements AgentEngine {
         stats.inputTokens += turnUsage.prompt;
         stats.outputTokens += turnUsage.completion;
         stats.cachedTokens += turnUsage.cached;
-        // 上下文引擎 usage 上报（缓存命中采样 + tokPerChar 校准 + WS 推送）
+        // 上下文引擎 usage 上报（缓存命中采样 + tokPerChar 校准 + 最近一次真实 usage + WS 推送）
         if (turnUsage.prompt > 0) {
           contextEngine?.onTurnUsage(sessionId, {
             promptTokens: turnUsage.prompt,
             cachedTokens: turnUsage.cached,
+            completionTokens: turnUsage.completion,
           });
         }
         pushStats();
@@ -789,16 +794,23 @@ export class AgentEngineImpl implements AgentEngine {
     return this.tasks.listGroups();
   }
 
-  createTaskGroup(name: string): TaskGroup {
-    return this.tasks.createGroup(name);
+  createTaskGroup(name: string, source?: 'folder' | 'manual'): TaskGroup {
+    return this.tasks.createGroup(name, source);
   }
 
   updateTaskGroup(id: string, patch: { name?: string }): TaskGroup | null {
     return this.tasks.updateGroup(id, patch);
   }
 
-  deleteTaskGroup(id: string, moveTasksTo?: string): boolean {
-    return this.tasks.deleteGroup(id, moveTasksTo);
+  deleteTaskGroup(id: string, opts?: { moveTasksTo?: string; deleteTasks?: boolean }): boolean {
+    // 连任务一起删：先逐个删除 session 文件（文件路径依赖任务总管 index 定位，
+    // 必须先于 deleteGroup 清索引执行），再删除分组定义与整组目录
+    if (opts?.deleteTasks) {
+      for (const tk of this.tasks.listTasks().filter(item => item.groupId === id)) {
+        this.deleteSession(tk.id);
+      }
+    }
+    return this.tasks.deleteGroup(id, opts);
   }
 
   /** 搜索任务标题 + 会话消息内容 */

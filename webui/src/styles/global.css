@@ -228,3 +228,65 @@ pre,
 ::view-transition-new(root) {
   z-index: 2;
 }
+
+/* ============================================================
+   返回底部按钮：跑马灯（追逐式边缘灯光）
+   光弧（dash 段）沿按钮胶囊边缘一圈圈顺时针奔跑：
+   SVG pathLength=100 归一化，dashoffset 0→-100 恰好跑一整圈；
+   drop-shadow 辉光增强"灯"感；只动 stroke-dashoffset，
+   小元素重绘开销可忽略。减弱动效：停止奔跑，保留静态光弧。
+   ============================================================ */
+@keyframes marquee-run {
+  to {
+    stroke-dashoffset: -100;
+  }
+}
+.marquee-run {
+  stroke: var(--primary);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-dasharray: 14 86;
+  filter: drop-shadow(0 0 3px var(--primary));
+  animation: marquee-run 1.2s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .marquee-run {
+    animation: none;
+  }
+}
+
+/* ============================================================
+   动画开关（设置 → 外观 → 动画）
+   ============================================================
+   机制：useAnimationClass 把开关状态映射到 <html> class——
+     anim-off        总关（用户关闭总开关 或 系统减弱动态效果）
+     anim-<cat>-off  分关（route/message/list/stat/hub）
+   禁用方式：时长压缩到 0.01ms（而非 animation:none），
+   保留最终帧/填充状态，避免停用动画时的布局与可见性跳变。
+   系统级 prefers-reduced-motion 由 JS 实时监听驱动开关禁用态，
+   此处 @media 兜底作为最后一道防线。 */
+html.anim-off *,
+html.anim-off *::before,
+html.anim-off *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}
+html.anim-route-off .anim-route,
+html.anim-msg-off .anim-msg,
+html.anim-list-off .anim-list,
+html.anim-stat-off .anim-stat,
+html.anim-hub-off .anim-hub,
+html.anim-panel-off .anim-panel {
+  animation-duration: 0.01ms !important;
+  transition-duration: 0.01ms !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

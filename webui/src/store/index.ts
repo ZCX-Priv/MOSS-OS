@@ -33,6 +33,7 @@ import type {
   ContextStats,
 } from '../types/api';
 import { DEFAULT_RENDER_SETTINGS, isValidRenderSettings, type RenderSettings } from '../render/core/types';
+import { DEFAULT_ANIMATION_SETTINGS, isValidAnimationSettings, type AnimationSettings } from '../types/animation';
 
 // ============================================================================
 // State
@@ -88,6 +89,8 @@ interface UIState {
   >;
   /** 上下文引擎统计（token 构成/缓存命中/压缩状态/系统分段；context-stats-updated 事件维护） */
   contextStatsBySession: Record<string, ContextStats | undefined>;
+  /** LLM 文件读取信号（每次 WS context-updated，即真实 read/grep/glob 调用，递增；历史恢复不触发） */
+  contextFileReadSeqBySession: Record<string, number>;
 
   // --- 自动化 ---
   automations: AutomationItem[];
@@ -137,6 +140,10 @@ interface UIState {
 
   // --- 渲染设置（render 模块，IndexedDB 持久化） ---
   renderSettings: RenderSettings;
+  /** 动画设置（总开关+分开关；IndexedDB 持久化） */
+  animationSettings: AnimationSettings;
+  /** 系统是否开启"减弱动态效果"（matchMedia 实时监听；true 时强制停用全部动画） */
+  prefersReducedMotion: boolean;
 }
 
 /** 从 IndexedDB 预填充后写入 store 的持久化状态（各字段可选，值非法时忽略） */
@@ -148,6 +155,7 @@ export interface PersistedState {
   sidebarTabs?: SidebarTab[];
   activeSidebarTabId?: string;
   renderSettings?: RenderSettings;
+  animationSettings?: AnimationSettings;
 }
 
 // ============================================================================
@@ -221,6 +229,8 @@ interface UIActions {
   ) => void;
   /** 更新会话上下文引擎统计（stats API / context-stats-updated 事件） */
   setContextStats: (sessionId: string, stats: ContextStats) => void;
+  /** 递增会话的 LLM 文件读取信号（仅 WS context-updated 真实读取时调用） */
+  bumpContextFileReadSeq: (sessionId: string) => void;
 
   // 自动化
   setAutomations: (a: AutomationItem[]) => void;
@@ -285,6 +295,10 @@ interface UIActions {
 
   // 渲染设置（render 模块）
   setRenderSetting: <K extends keyof RenderSettings>(key: K, value: RenderSettings[K]) => void;
+
+  // 动画设置（总开关+分开关；IndexedDB 持久化）与系统减弱动态偏好
+  setAnimationSetting: <K extends keyof AnimationSettings>(key: K, value: AnimationSettings[K]) => void;
+  setPrefersReducedMotion: (v: boolean) => void;
 
   // 模型菜单"添加自定义模型"跳转设置页并打开弹窗的信号
   modelDialogRequest: boolean;
@@ -369,6 +383,7 @@ export const useStore = create<Store>((set) => ({
   todosBySession: {},
   contextBySession: {},
   contextStatsBySession: {},
+  contextFileReadSeqBySession: {},
 
   // --- 自动化 ---
   automations: [],
@@ -407,6 +422,8 @@ export const useStore = create<Store>((set) => ({
 
   // --- 渲染设置（render 模块，IndexedDB 持久化） ---
   renderSettings: DEFAULT_RENDER_SETTINGS,
+  animationSettings: DEFAULT_ANIMATION_SETTINGS,
+  prefersReducedMotion: false,
 
   // 模型菜单"添加自定义模型"跳转设置页并打开弹窗的信号
   modelDialogRequest: false,
@@ -425,6 +442,7 @@ export const useStore = create<Store>((set) => ({
       const { [id]: _omitGen, ...restGen } = state.generatingBySession;
       const { [id]: _omitTodos, ...restTodos } = state.todosBySession;
       const { [id]: _omitCtx, ...restCtx } = state.contextBySession;
+      const { [id]: _omitReadSeq, ...restReadSeq } = state.contextFileReadSeqBySession;
       const { [id]: _omitSkill, ...restSkill } = state.activeSkillBySession;
       const { [id]: _omitPerm, ...restPermModes } = state.permissionModeBySession;
       const { [id]: _omitBackup, ...restBackups } = state.truncateBackups;
@@ -436,6 +454,7 @@ export const useStore = create<Store>((set) => ({
         generatingBySession: restGen,
         todosBySession: restTodos,
         contextBySession: restCtx,
+        contextFileReadSeqBySession: restReadSeq,
         activeSkillBySession: restSkill,
         permissionModeBySession: restPermModes,
         truncateBackups: restBackups,
@@ -604,6 +623,13 @@ export const useStore = create<Store>((set) => ({
     set((state) => ({
       contextStatsBySession: { ...state.contextStatsBySession, [sessionId]: stats },
     })),
+  bumpContextFileReadSeq: (sessionId) =>
+    set((state) => ({
+      contextFileReadSeqBySession: {
+        ...state.contextFileReadSeqBySession,
+        [sessionId]: (state.contextFileReadSeqBySession[sessionId] ?? 0) + 1,
+      },
+    })),
 
   // --- Actions: 自动化 ---
   setAutomations: (automations) => set({ automations }),
@@ -746,6 +772,16 @@ export const useStore = create<Store>((set) => ({
     });
   },
 
+  setAnimationSetting: (key, value) => {
+    set((state) => {
+      const animationSettings = { ...state.animationSettings, [key]: value };
+      void idbSet('moss-animation-settings', animationSettings);
+      return { animationSettings };
+    });
+  },
+
+  setPrefersReducedMotion: (v) => set({ prefersReducedMotion: v }),
+
   // --- Actions: 模型添加弹窗信号 ---
   requestModelDialog: () => set({ modelDialogRequest: true }),
   clearModelDialogRequest: () => set({ modelDialogRequest: false }),
@@ -840,6 +876,9 @@ export const useStore = create<Store>((set) => ({
       }
       if (isValidRenderSettings(patch.renderSettings)) {
         next.renderSettings = patch.renderSettings;
+      }
+      if (isValidAnimationSettings(patch.animationSettings)) {
+        next.animationSettings = patch.animationSettings;
       }
       return next;
     }),

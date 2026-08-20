@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+import { VitePWA } from 'vite-plugin-pwa'
 import path from 'node:path'
 
 // https://vite.dev/config/
@@ -11,7 +12,33 @@ const backendHttp = `http://127.0.0.1:${backendPort}`;
 const backendWs = `ws://127.0.0.1:${backendPort}`;
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [
+    react(),
+    tailwindcss(),
+    // PWA：manifest + service worker（autoUpdate 静默更新）。
+    // 预缓存全部静态资源（hashed 文件名长缓存）；/api 与 /ws 永不缓存；
+    // dev 模式不启用 SW（避免开发期缓存干扰）
+    VitePWA({
+      registerType: 'autoUpdate',
+      includeAssets: ['MOSS.png'],
+      manifest: {
+        name: 'MOSS',
+        short_name: 'MOSS',
+        description: 'MOSS - AI 工作台',
+        start_url: '/',
+        scope: '/',
+        display: 'standalone',
+        background_color: '#09090b',
+        theme_color: '#18181b',
+        icons: [{ src: 'MOSS.png', sizes: '1254x1254', type: 'image/png', purpose: 'any' }],
+      },
+      workbox: {
+        globPatterns: ['**/*.{js,css,png,svg,ico,woff2}'],
+        navigateFallbackDenylist: [/^\/api\//, /^\/ws/],
+      },
+      devOptions: { enabled: true },
+    }),
+  ],
   resolve: {
     alias: {
       '@': path.resolve(import.meta.dirname, './src'),

@@ -1,13 +1,13 @@
 import { useState, useEffect, useRef, useCallback, type ReactNode } from 'react';
-import { Outlet } from 'react-router-dom';
+import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import type { LucideIcon } from 'lucide-react';
 import {
   Settings,
   Bot,
   Brain,
-  MessageSquare,
+  Activity,
   Globe,
-  FileText,
+  Notebook,
   Palette,
   ClipboardList,
   Webhook,
@@ -34,6 +34,7 @@ import {
   ScrollText,
   RefreshCw,
   Eye,
+  Sparkles,
   X,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -67,6 +68,7 @@ import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import {
   Dialog,
@@ -81,6 +83,7 @@ import { useAgents } from '../../hooks/useAgents';
 import { useTools } from '../../hooks/useTools';
 import { useSpecs } from '../../hooks/useSpecs';
 import { useConfig } from '../../hooks/useConfig';
+import { useReducedMotion } from '../../hooks/useAnimationClass';
 import { useStore } from '../../store';
 import { api } from '../../api/http';
 import { TOOL_ICON_MAP } from '../../lib/tool-icons';
@@ -95,20 +98,13 @@ export interface NavItem {
 export const settingsNavItems: NavItem[] = [
   { id: 'general', labelKey: 'settings.nav.general', Icon: Settings },
   { id: 'appearance', labelKey: 'settings.nav.appearance', Icon: Palette },
-  { id: 'render', labelKey: 'settings.nav.render', Icon: Eye },
   { id: 'agent', labelKey: 'settings.nav.agent', Icon: Bot },
   { id: 'model', labelKey: 'settings.nav.model', Icon: Brain },
   { id: 'context', labelKey: 'settings.nav.context', Icon: Database },
   { id: 'tools', labelKey: 'settings.nav.tools', Icon: Wrench },
-  { id: 'specs', labelKey: 'settings.nav.specs', Icon: FileCode },
   { id: 'safety', labelKey: 'settings.nav.safety', Icon: ShieldCheck },
   { id: 'logs', labelKey: 'settings.nav.logs', Icon: ScrollText },
-  { id: 'task', labelKey: 'settings.nav.task', Icon: MessageSquare },
-  { id: 'index', labelKey: 'settings.nav.index', Icon: Layers },
-  { id: 'docs', labelKey: 'settings.nav.docs', Icon: FileText },
   { id: 'commands', labelKey: 'settings.nav.commands', Icon: Terminal },
-  { id: 'rules', labelKey: 'settings.nav.rules', Icon: ClipboardList },
-  { id: 'memory', labelKey: 'settings.nav.memory', Icon: Database },
   { id: 'hooks', labelKey: 'settings.nav.hooks', Icon: Webhook },
   { id: 'about', labelKey: 'settings.nav.about', Icon: Info },
 ];
@@ -130,6 +126,14 @@ export const settingsSearchIndex: SearchableSetting[] = [
   { labelKey: 'settings.render.mermaid', descriptionKey: 'settings.render.mermaidDesc', section: 'render' },
   { labelKey: 'settings.render.codeHighlight', descriptionKey: 'settings.render.codeHighlightDesc', section: 'render' },
   { labelKey: 'settings.render.filePreview', descriptionKey: 'settings.render.filePreviewDesc', section: 'render' },
+  { labelKey: 'settings.nav.anim', section: 'anim' },
+  { labelKey: 'settings.anim.master', descriptionKey: 'settings.anim.masterDesc', section: 'anim' },
+  { labelKey: 'settings.anim.route', descriptionKey: 'settings.anim.routeDesc', section: 'anim' },
+  { labelKey: 'settings.anim.message', descriptionKey: 'settings.anim.messageDesc', section: 'anim' },
+  { labelKey: 'settings.anim.list', descriptionKey: 'settings.anim.listDesc', section: 'anim' },
+  { labelKey: 'settings.anim.stat', descriptionKey: 'settings.anim.statDesc', section: 'anim' },
+  { labelKey: 'settings.anim.hub', descriptionKey: 'settings.anim.hubDesc', section: 'anim' },
+  { labelKey: 'settings.anim.panel', descriptionKey: 'settings.anim.panelDesc', section: 'anim' },
   { labelKey: 'settings.nav.agent', section: 'agent' },
   { labelKey: 'settings.nav.model', section: 'model' },
   { labelKey: 'settings.nav.context', section: 'context' },
@@ -144,9 +148,7 @@ export const settingsSearchIndex: SearchableSetting[] = [
   { labelKey: 'settings.safety.confirmTimeout', descriptionKey: 'settings.safety.confirmTimeoutDesc', section: 'safety' },
   { labelKey: 'settings.safety.sandboxTitle', descriptionKey: 'settings.safety.sandboxDesc', section: 'safety' },
   { labelKey: 'settings.safety.rulesTitle', descriptionKey: 'settings.safety.rulesDesc', section: 'safety' },
-  { labelKey: 'settings.placeholder.taskTitle', descriptionKey: 'settings.placeholder.taskDesc', section: 'task' },
   { labelKey: 'settings.placeholder.indexTitle', descriptionKey: 'settings.placeholder.indexDesc', section: 'index' },
-  { labelKey: 'settings.placeholder.docsTitle', descriptionKey: 'settings.placeholder.docsDesc', section: 'docs' },
   { labelKey: 'settings.placeholder.commandsTitle', descriptionKey: 'settings.placeholder.commandsDesc', section: 'commands' },
   { labelKey: 'settings.placeholder.rulesTitle', descriptionKey: 'settings.placeholder.rulesDesc', section: 'rules' },
   { labelKey: 'settings.placeholder.memoryTitle', descriptionKey: 'settings.placeholder.memoryDesc', section: 'memory' },
@@ -185,40 +187,100 @@ export const settingsSearchIndex: SearchableSetting[] = [
 ];
 
 export function SettingsPage() {
+  const { pathname } = useLocation();
   return (
-    <section className="flex-1 overflow-auto">
+    <section
+      key={pathname}
+      className="anim-route animate-in fade-in slide-in-from-bottom-1 duration-200 flex-1 overflow-auto"
+    >
       <Outlet />
     </section>
   );
 }
 
+/** 外观设置：Tab 容器（外观/渲染/动画；路由驱动） */
+export function AppearanceSettings() {
+  const { t } = useTranslation();
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const tab = pathname.startsWith('/settings/appearance/render')
+    ? 'render'
+    : pathname.startsWith('/settings/appearance/anim')
+      ? 'anim'
+      : 'appearance';
+  return (
+    <div className="flex h-full flex-col overflow-hidden">
+      <div className="px-6 py-4">
+        <h1 className="text-xl font-semibold text-foreground">{t('settings.nav.appearance')}</h1>
+      </div>
+      <Tabs
+        value={tab}
+        onValueChange={(v) =>
+          navigate(
+            v === 'appearance'
+              ? '/settings/appearance'
+              : v === 'render'
+                ? '/settings/appearance/render'
+                : '/settings/appearance/anim',
+          )
+        }
+      >
+        <div className="px-6 py-3">
+          <TabsList>
+            <TabsTrigger value="appearance" className="gap-1.5">
+              <Palette className="size-3.5" />
+              {t('settings.nav.appearance')}
+            </TabsTrigger>
+            <TabsTrigger value="render" className="gap-1.5">
+              <Eye className="size-3.5" />
+              {t('settings.nav.render')}
+            </TabsTrigger>
+            <TabsTrigger value="anim" className="gap-1.5">
+              <Sparkles className="size-3.5" />
+              {t('settings.nav.anim')}
+            </TabsTrigger>
+          </TabsList>
+        </div>
+      </Tabs>
+      {/* 分区切换入场动画（key=pathname：Tab 切换时重播） */}
+      <div
+        key={pathname}
+        className="anim-route animate-in fade-in slide-in-from-bottom-1 duration-200 flex-1 overflow-auto"
+      >
+        <Outlet />
+      </div>
+    </div>
+  );
+}
+
 /* ===== 渲染设置（render 模块：markdown/公式/图表/高亮/文件预览） ===== */
 
-/** 单行开关卡片（渲染设置通用行） */
-function RenderSettingRow({
-  titleKey,
-  descKey,
+/** 通用设置行（与 GeneralSettings 行结构对齐：divide-y 分隔 + py-3；children 渲染在描述下方） */
+function SettingRow({
+  title,
+  desc,
   checked,
   disabled,
   onCheckedChange,
   children,
 }: {
-  titleKey: string;
-  descKey: string;
-  checked: boolean;
+  title: string;
+  desc?: string;
+  checked?: boolean;
   disabled?: boolean;
-  onCheckedChange: (v: boolean) => void;
+  onCheckedChange?: (v: boolean) => void;
   children?: ReactNode;
 }) {
-  const { t } = useTranslation();
   return (
-    <div className="flex flex-col gap-2 border-b border-border/60 py-3 last:border-b-0 sm:flex-row sm:items-center sm:justify-between">
+    <div className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex min-w-0 flex-col gap-0.5">
-        <span className="text-sm font-medium text-foreground">{t(titleKey)}</span>
-        <span className="text-xs text-muted-foreground">{t(descKey)}</span>
+        <span className="text-sm text-foreground">{title}</span>
+        {desc && <span className="text-xs text-muted-foreground">{desc}</span>}
         {children}
       </div>
-      <Switch checked={checked} disabled={disabled} onCheckedChange={onCheckedChange} />
+      {onCheckedChange && (
+        <Switch checked={checked} disabled={disabled} onCheckedChange={onCheckedChange} />
+      )}
     </div>
   );
 }
@@ -229,50 +291,126 @@ export function RenderSettingsSection() {
   const setRenderSetting = useStore((s) => s.setRenderSetting);
 
   return (
-    <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 p-4 md:p-6">
-      <h1 className="text-xl font-semibold text-foreground">{t('settings.nav.render')}</h1>
+    <div className="flex flex-col gap-6 p-6">
+      <div className="flex flex-col gap-3">
+        <div className="text-sm font-medium text-foreground">{t('settings.render.contentTitle')}</div>
+        <div className="flex flex-col divide-y divide-border">
+          <SettingRow
+            title={t('settings.render.markdown')}
+            desc={t('settings.render.markdownDesc')}
+            checked={renderSettings.markdownEnabled}
+            onCheckedChange={(v) => setRenderSetting('markdownEnabled', v)}
+          />
+          <SettingRow
+            title={t('settings.render.math')}
+            desc={t('settings.render.mathDesc')}
+            checked={renderSettings.mathEnabled}
+            onCheckedChange={(v) => setRenderSetting('mathEnabled', v)}
+          />
+          <SettingRow
+            title={t('settings.render.mathFallback')}
+            desc={t('settings.render.mathFallbackDesc')}
+            checked={renderSettings.mathFallback}
+            disabled={!renderSettings.mathEnabled}
+            onCheckedChange={(v) => setRenderSetting('mathFallback', v)}
+          />
+          <SettingRow
+            title={t('settings.render.mermaid')}
+            desc={t('settings.render.mermaidDesc')}
+            checked={renderSettings.mermaidEnabled}
+            onCheckedChange={(v) => setRenderSetting('mermaidEnabled', v)}
+          />
+          <SettingRow
+            title={t('settings.render.codeHighlight')}
+            desc={t('settings.render.codeHighlightDesc')}
+            checked={renderSettings.codeHighlightEnabled}
+            onCheckedChange={(v) => setRenderSetting('codeHighlightEnabled', v)}
+          />
+          <SettingRow
+            title={t('settings.render.filePreview')}
+            desc={t('settings.render.filePreviewDesc')}
+            checked={renderSettings.filePreviewEnabled}
+            onCheckedChange={(v) => setRenderSetting('filePreviewEnabled', v)}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
 
-      <Card className="p-4 md:p-5">
-        <RenderSettingRow
-          titleKey="settings.render.markdown"
-          descKey="settings.render.markdownDesc"
-          checked={renderSettings.markdownEnabled}
-          onCheckedChange={(v) => setRenderSetting('markdownEnabled', v)}
-        />
-        <RenderSettingRow
-          titleKey="settings.render.math"
-          descKey="settings.render.mathDesc"
-          checked={renderSettings.mathEnabled}
-          onCheckedChange={(v) => setRenderSetting('mathEnabled', v)}
-        />
-        <RenderSettingRow
-          titleKey="settings.render.mathFallback"
-          descKey="settings.render.mathFallbackDesc"
-          checked={renderSettings.mathFallback}
-          disabled={!renderSettings.mathEnabled}
-          onCheckedChange={(v) => setRenderSetting('mathFallback', v)}
-        />
-        <RenderSettingRow
-          titleKey="settings.render.mermaid"
-          descKey="settings.render.mermaidDesc"
-          checked={renderSettings.mermaidEnabled}
-          onCheckedChange={(v) => setRenderSetting('mermaidEnabled', v)}
-        />
-        <RenderSettingRow
-          titleKey="settings.render.codeHighlight"
-          descKey="settings.render.codeHighlightDesc"
-          checked={renderSettings.codeHighlightEnabled}
-          onCheckedChange={(v) => setRenderSetting('codeHighlightEnabled', v)}
-        />
-        <RenderSettingRow
-          titleKey="settings.render.filePreview"
-          descKey="settings.render.filePreviewDesc"
-          checked={renderSettings.filePreviewEnabled}
-          onCheckedChange={(v) => setRenderSetting('filePreviewEnabled', v)}
-        />
-      </Card>
+/* ===== 动画设置（外观页「动画」Tab：总开关 + 分开关 + 系统减弱动态联动） ===== */
 
-      <p className="text-xs text-muted-foreground">{t('settings.render.footerNote')}</p>
+export function AnimSettingsSection() {
+  const { t } = useTranslation();
+  const animationSettings = useStore((s) => s.animationSettings);
+  const setAnimationSetting = useStore((s) => s.setAnimationSetting);
+  // 系统开启"减弱动态效果"：全部动画强制停用，开关禁用并显示为关（实时生效）
+  const reduced = useReducedMotion();
+  const masterOff = !animationSettings.enabled;
+  const catDisabled = reduced || masterOff;
+  const catChecked = (v: boolean) => v && !catDisabled;
+
+  return (
+    <div className="flex flex-col gap-6 p-6">
+      {reduced && (
+        <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+          {t('settings.anim.reducedMotionNotice')}
+        </div>
+      )}
+      <div className="flex flex-col gap-3">
+        <div className="text-sm font-medium text-foreground">{t('settings.anim.groupTitle')}</div>
+        <div className="flex flex-col divide-y divide-border">
+          <SettingRow
+            title={t('settings.anim.master')}
+            desc={t('settings.anim.masterDesc')}
+            checked={animationSettings.enabled && !reduced}
+            disabled={reduced}
+            onCheckedChange={(v) => setAnimationSetting('enabled', v)}
+          />
+          <SettingRow
+            title={t('settings.anim.route')}
+            desc={t('settings.anim.routeDesc')}
+            checked={catChecked(animationSettings.route)}
+            disabled={catDisabled}
+            onCheckedChange={(v) => setAnimationSetting('route', v)}
+          />
+          <SettingRow
+            title={t('settings.anim.message')}
+            desc={t('settings.anim.messageDesc')}
+            checked={catChecked(animationSettings.message)}
+            disabled={catDisabled}
+            onCheckedChange={(v) => setAnimationSetting('message', v)}
+          />
+          <SettingRow
+            title={t('settings.anim.list')}
+            desc={t('settings.anim.listDesc')}
+            checked={catChecked(animationSettings.list)}
+            disabled={catDisabled}
+            onCheckedChange={(v) => setAnimationSetting('list', v)}
+          />
+          <SettingRow
+            title={t('settings.anim.stat')}
+            desc={t('settings.anim.statDesc')}
+            checked={catChecked(animationSettings.stat)}
+            disabled={catDisabled}
+            onCheckedChange={(v) => setAnimationSetting('stat', v)}
+          />
+          <SettingRow
+            title={t('settings.anim.hub')}
+            desc={t('settings.anim.hubDesc')}
+            checked={catChecked(animationSettings.hub)}
+            disabled={catDisabled}
+            onCheckedChange={(v) => setAnimationSetting('hub', v)}
+          />
+          <SettingRow
+            title={t('settings.anim.panel')}
+            desc={t('settings.anim.panelDesc')}
+            checked={catChecked(animationSettings.panel)}
+            disabled={catDisabled}
+            onCheckedChange={(v) => setAnimationSetting('panel', v)}
+          />
+        </div>
+      </div>
     </div>
   );
 }
@@ -609,7 +747,66 @@ function ContextSettingRow({
   );
 }
 
+/** 上下文设置：Tab 容器（引擎/规范/索引/规则/记忆；路由驱动） */
 export function ContextSettings() {
+  const { t } = useTranslation();
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const suffix = pathname.startsWith('/settings/context/')
+    ? pathname.slice('/settings/context/'.length)
+    : '';
+  const tab = ['specs', 'index', 'rules', 'memory'].includes(suffix)
+    ? suffix
+    : 'engine';
+  return (
+    <div className="flex h-full flex-col overflow-hidden">
+      <div className="px-6 py-4">
+        <h1 className="text-xl font-semibold text-foreground">{t('settings.nav.context')}</h1>
+      </div>
+      <Tabs
+        value={tab}
+        onValueChange={(v) =>
+          navigate(v === 'engine' ? '/settings/context' : `/settings/context/${v}`)
+        }
+      >
+        <div className="px-6 py-3">
+          <TabsList>
+            <TabsTrigger value="engine" className="gap-1.5">
+              <Activity className="size-3.5" />
+              {t('settings.context.tabEngine')}
+            </TabsTrigger>
+            <TabsTrigger value="specs" className="gap-1.5">
+              <FileCode className="size-3.5" />
+              {t('settings.nav.specs')}
+            </TabsTrigger>
+            <TabsTrigger value="index" className="gap-1.5">
+              <Layers className="size-3.5" />
+              {t('settings.nav.index')}
+            </TabsTrigger>
+            <TabsTrigger value="rules" className="gap-1.5">
+              <ClipboardList className="size-3.5" />
+              {t('settings.nav.rules')}
+            </TabsTrigger>
+            <TabsTrigger value="memory" className="gap-1.5">
+              <Notebook className="size-3.5" />
+              {t('settings.nav.memory')}
+            </TabsTrigger>
+          </TabsList>
+        </div>
+      </Tabs>
+      {/* 分区切换入场动画（key=pathname：Tab 切换时重播） */}
+      <div
+        key={pathname}
+        className="anim-route animate-in fade-in slide-in-from-bottom-1 duration-200 flex-1 overflow-auto"
+      >
+        <Outlet />
+      </div>
+    </div>
+  );
+}
+
+/** 引擎设置（上下文压缩 / 摘要模型 / 工具结果修剪 / 自愈） */
+export function ContextEngineSettings() {
   const { t } = useTranslation();
   const { appConfig, apiConfig, updateAppConfig } = useConfig();
   const context = appConfig?.context ?? CONTEXT_FALLBACK;
@@ -626,8 +823,6 @@ export function ContextSettings() {
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <h1 className="text-xl font-semibold text-foreground">{t('settings.nav.context')}</h1>
-      <p className="-mt-4 text-xs text-muted-foreground">{t('settings.context.pageDesc')}</p>
 
       {/* 上下文压缩 */}
       <div className="flex flex-col gap-1">
@@ -1893,7 +2088,7 @@ export function SpecsSettings() {
 
   return (
     <div className="flex flex-col gap-4 p-6">
-      <h1 className="text-xl font-semibold text-foreground">{t('settings.nav.specs')}</h1>
+      {/* 规范设置（上下文页「规范」Tab 内容；标题由外层 Tab 示名） */}
 
       <div className="relative w-64">
         <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -1971,9 +2166,7 @@ export function SpecsSettings() {
 
 /* ===== 占位 section 路由组件（按 section 查表渲染 PlaceholderSettings） ===== */
 const PLACEHOLDER_SECTION_KEYS: Record<string, { titleKey: string; descKey: string }> = {
-  task: { titleKey: 'settings.placeholder.taskTitle', descKey: 'settings.placeholder.taskDesc' },
   index: { titleKey: 'settings.placeholder.indexTitle', descKey: 'settings.placeholder.indexDesc' },
-  docs: { titleKey: 'settings.placeholder.docsTitle', descKey: 'settings.placeholder.docsDesc' },
   appearance: { titleKey: 'settings.placeholder.appearanceTitle', descKey: 'settings.placeholder.appearanceDesc' },
   commands: { titleKey: 'settings.placeholder.commandsTitle', descKey: 'settings.placeholder.commandsDesc' },
   rules: { titleKey: 'settings.placeholder.rulesTitle', descKey: 'settings.placeholder.rulesDesc' },
@@ -1981,20 +2174,29 @@ const PLACEHOLDER_SECTION_KEYS: Record<string, { titleKey: string; descKey: stri
   hooks: { titleKey: 'settings.placeholder.hooksTitle', descKey: 'settings.placeholder.hooksDesc' },
 };
 
-export function PlaceholderSection({ section }: { section: string }) {
+export function PlaceholderSection({ section, embedded }: { section: string; embedded?: boolean }) {
   const { t } = useTranslation();
-  const keys = PLACEHOLDER_SECTION_KEYS[section] ?? PLACEHOLDER_SECTION_KEYS.task;
-  return <PlaceholderSettings title={t(keys.titleKey)} description={t(keys.descKey)} />;
+  const keys = PLACEHOLDER_SECTION_KEYS[section] ?? PLACEHOLDER_SECTION_KEYS.hooks;
+  return <PlaceholderSettings title={t(keys.titleKey)} description={t(keys.descKey)} embedded={embedded} />;
 }
 
 /* ===== 占位页面（用于未详细设计的设置子页面） ===== */
-function PlaceholderSettings({ title, description }: { title: string; description: string }) {
+function PlaceholderSettings({
+  title,
+  description,
+  embedded,
+}: {
+  title: string;
+  description: string;
+  /** Tab 内嵌模式：不渲染 h1（标题由外层 Tab 示名） */
+  embedded?: boolean;
+}) {
   const { t } = useTranslation();
   const [enabled, setEnabled] = useState<boolean>(true);
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <h1 className="text-xl font-semibold text-foreground">{title}</h1>
+      {!embedded && <h1 className="text-xl font-semibold text-foreground">{title}</h1>}
 
       <div className="flex flex-col gap-3">
         <div className="text-sm font-medium text-foreground">{t('settings.placeholder.baseSettings')}</div>

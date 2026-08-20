@@ -1,9 +1,9 @@
-// src/modules/agents/index.ts
-// Agents 模块入口：实现 AgentRegistry，注册 agents.registry 服务。
-// 持久化到 ~/.moss/agents.json，预置 1 个内置 Agent（name:"Agent", builtIn:true, default:true）。
+// src/modules/agenteam/index.ts
+// AgentTeam 模块入口：实现 AgentRegistry，注册 agenteam.registry 服务。
+// 持久化到 ~/.moss/agenteam.json，预置 1 个内置 Agent（name:"Agent", builtIn:true, default:true）。
 
 import { t } from '../../core/i18n';
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import type { Module, ModuleContext, Environment, Logger } from '../../core/types';
 import { ServiceNames } from '../../core/types';
@@ -64,8 +64,19 @@ class AgentRegistryImpl implements AgentRegistry {
   private data: AgentsStoreData;
 
   constructor(env: Environment, logger: Logger) {
-    this.storePath = join(env.dataDir, 'agents.json');
+    this.storePath = join(env.dataDir, 'agenteam.json');
     this.logger = logger;
+    // 存量迁移：旧 agents.json → agenteam.json（幂等；失败不阻断启动，下次重试）
+    const legacyPath = join(env.dataDir, 'agents.json');
+    try {
+      if (existsSync(legacyPath) && !existsSync(this.storePath)) {
+        renameSync(legacyPath, this.storePath);
+      }
+    } catch (err) {
+      logger.warn('agenteam migrate failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
     this.data = this.load();
   }
 
@@ -109,7 +120,7 @@ class AgentRegistryImpl implements AgentRegistry {
       mkdirSync(dirname(this.storePath), { recursive: true });
       writeFileSync(this.storePath, JSON.stringify(this.data, null, 2), 'utf8');
     } catch (err) {
-      this.logger.error(t('agents.saveFailed'), {
+      this.logger.error(t('agenteam.saveFailed'), {
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -157,7 +168,7 @@ class AgentRegistryImpl implements AgentRegistry {
     };
     this.data.agents.push(agent);
     this.save();
-    this.logger.info(t('agents.agentCreated', { id, name: data.name }));
+    this.logger.info(t('agenteam.agentCreated', { id, name: data.name }));
     return {
       id: agent.id,
       name: agent.name,
@@ -190,7 +201,7 @@ class AgentRegistryImpl implements AgentRegistry {
     if (this.data.defaultAgentId === id) return false; // 默认 Agent 不允许删除
     this.data.agents.splice(idx, 1);
     this.save();
-    this.logger.info(t('agents.agentRemoved', { id }));
+    this.logger.info(t('agenteam.agentRemoved', { id }));
     return true;
   }
 
@@ -209,7 +220,7 @@ class AgentRegistryImpl implements AgentRegistry {
     if (!exists) return false;
     this.data.defaultAgentId = id;
     this.save();
-    this.logger.info(t('agents.defaultSet', { id }));
+    this.logger.info(t('agenteam.defaultSet', { id }));
     return true;
   }
 }
@@ -218,18 +229,18 @@ class AgentRegistryImpl implements AgentRegistry {
 // Module 入口
 // ============================================================================
 
-class AgentsModule implements Module {
+class AgentTeamModule implements Module {
 
   async initialize(ctx: ModuleContext): Promise<void> {
     const registry = new AgentRegistryImpl(ctx.env, ctx.logger);
-    ctx.services.register(ServiceNames.AGENTS_REGISTRY, registry, {
-      scope: 'agents',
+    ctx.services.register(ServiceNames.AGENTTEAM_REGISTRY, registry, {
+      scope: 'agenteam',
     });
-    ctx.logger.info(t('agents.moduleInitialized'), {
+    ctx.logger.info(t('agenteam.moduleInitialized'), {
       agentCount: registry.list().length,
       defaultAgent: registry.getDefault().id,
     });
   }
 }
 
-export default (): Module => new AgentsModule();
+export default (): Module => new AgentTeamModule();

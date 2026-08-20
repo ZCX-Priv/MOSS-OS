@@ -4,14 +4,14 @@
 // TaskStore 总管索引解析，engine 注入 resolveGroupId），启动时全量加载到内存。
 
 import { t } from '../../core/i18n';
-import { existsSync, readFileSync, readdirSync, unlinkSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, renameSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { safeSessionId, writeJsonStore } from '../filesys/store-io';
 import type { AgentMessage, RunStats } from '../contracts';
 import type { TodoItem } from '../tools/todo/shared/store';
 import type { PermissionMode } from '../safety/types';
 import type { Environment, Logger } from '../../core/types';
-import type { CompactionRecord, EnvContextInfo } from '../context/types';
+import type { CompactionRecord, EnvContextInfo, SessionContextTelemetry } from '../context/types';
 
 /** 上下文文件轨迹（与前端 ContextFile 对齐） */
 export interface ContextFile {
@@ -57,6 +57,8 @@ export interface Session {
   envContext?: EnvContextInfo;
   /** 压缩历史（context 引擎：每次压缩的记录，含摘要全文；前端压缩卡片数据源） */
   compactions?: CompactionRecord[];
+  /** 持久化上下文遥测（context 引擎：真实 usage + 命中样本；重启恢复侧边栏/指标栏数据） */
+  contextTelemetry?: SessionContextTelemetry;
   /** 最近一次 run 的运行统计（run 级口径：每次发送消息重置；中控台指标栏刷新恢复用） */
   lastRunStats?: RunStats;
   /** 最近一次消息撤回（截断）的恢复信息（redo 用；新撤回覆盖旧的） */
@@ -89,7 +91,8 @@ export class SessionStore {
     this.loadAll();
   }
 
-  /** 启动时全量加载所有 session 文件到内存（损坏文件跳过，目录不存在则跳过） */
+  /** 启动时全量加载所有 session 文件到内存（损坏文件跳过，目录不存在则跳过）。
+   *  同时自愈存量错位文件：物理目录 ≠ 索引组时按索引搬移归位（历史 bug 修复后一次性迁移） */
   private loadAll(): void {
     try {
       if (!existsSync(this.tasksDir)) return;
@@ -99,6 +102,8 @@ export class SessionStore {
           // 组内 task.json 是任务元信息（TaskStore 管），其余 .json 文件名即 sessionId
           if (!name.endsWith('.json') || name === 'task.json') continue;
           const sessionId = name.slice(0, -'.json'.length);
+          // 错位自愈：索引指向其他组时搬到索引组（目标已存在则跳过，防覆盖）
+          this.healMisplacedFile(sessionId, entry.name, name);
           if (!this.loadFromDisk(sessionId)) {
             this.logger.warn(t('agent.loadSessionFailed'), { file: `${entry.name}/${name}` });
           }
@@ -108,6 +113,37 @@ export class SessionStore {
     } catch (err) {
       this.logger.warn(t('agent.scanSessionsDirFailed'), {
         dir: this.tasksDir,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /** 错位文件搬移：物理目录 ≠ 索引组且索引有效时，把文件搬到索引组目录。失败仅告警不阻断启动 */
+  private healMisplacedFile(sessionId: string, physicalDir: string, fileName: string): void {
+    const indexedGid = this.resolveGroupId(sessionId);
+    if (!indexedGid) return; // 索引缺失（任务已删/孤儿文件）：保持原位
+    const destDir = this.safeDirName(indexedGid);
+    if (destDir === physicalDir) return;
+    const src = join(this.tasksDir, physicalDir, fileName);
+    const dest = join(this.tasksDir, destDir, fileName);
+    try {
+      if (existsSync(dest)) {
+        this.logger.warn(t('agent.loadSessionFailed'), {
+          file: `${physicalDir}/${fileName}`,
+          reason: `dest exists: ${destDir}/${fileName}`,
+        });
+        return;
+      }
+      renameSync(src, dest);
+      this.logger.info(t('agent.taskStoreMigrated', { count: 1 }), {
+        sessionId,
+        from: physicalDir,
+        to: destDir,
+      });
+    } catch (err) {
+      // 搬移失败保留原位：sessionFilePath 的磁盘扫描兜底仍可正确加载
+      this.logger.warn(t('agent.taskStoreCleanupFailed'), {
+        sessionId,
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -127,13 +163,24 @@ export class SessionStore {
 
   /**
    * session 文件路径：tasks/<groupId>/<sessionId>.json。
-   * groupId 优先取 TaskStore 总管索引；索引未命中（孤儿 session/任务已删）时兜底扫描
-   * 磁盘定位既有文件；均未命中落到默认组。sessionId 经 safeSessionId 清洗防路径穿越。
+   * 解析顺序：索引组文件存在 → 用索引组；否则磁盘扫描定位既有文件（存量错位文件
+   * 自愈的关键：索引与物理位置不一致时按物理位置读写，下次 saveSession 自动归位）；
+   * 均未命中落到默认组（新建 session）。sessionId 经 safeSessionId 清洗防路径穿越。
    */
   private sessionFilePath(sessionId: string): string {
     const sid = safeSessionId(sessionId);
-    const gid = this.resolveGroupId(sessionId) ?? this.findGroupIdOnDisk(sid) ?? 'default';
-    return join(this.tasksDir, gid, `${sid}.json`);
+    const indexedGid = this.resolveGroupId(sessionId);
+    if (indexedGid) {
+      const indexed = join(this.tasksDir, this.safeDirName(indexedGid), `${sid}.json`);
+      if (existsSync(indexed)) return indexed;
+    }
+    const diskGid = this.findGroupIdOnDisk(sid);
+    return join(this.tasksDir, diskGid ?? 'default', `${sid}.json`);
+  }
+
+  /** 组目录名清洗：与 TaskStore.safeGroupId 保持一致（防 `../` 等路径穿越） */
+  private safeDirName(id: string): string {
+    return id.replace(/[^a-zA-Z0-9_-]/g, '');
   }
 
   /** 兜底扫描：在各分组目录（tasks 下）定位 <sid>.json 既有文件，返回其所在组目录名；未找到返回 null */

@@ -232,9 +232,17 @@ export interface SystemSection {
 /** GET /api/context/:sessionId/stats 响应 */
 export interface ContextStats {
   sessionId: string;
+  /** 当前会话模型（模型与配置摘要行数据源） */
+  model: { id: string; name: string };
   breakdown: ContextBreakdown;
   windowTokens: number;
   usedPercent: number;
+  /** 最近一次请求的真实 usage（LLM 上报；无样本为 null；实时指标栏数据源） */
+  lastUsage: {
+    promptTokens: number;
+    completionTokens: number;
+    cachedTokens: number;
+  } | null;
   compaction: {
     enabled: boolean;
     compactRatio: number;
@@ -341,6 +349,8 @@ export interface TaskGroup {
   name: string;
   expanded?: boolean;
   taskCount?: number;
+  /** 分组来源：folder = 按工作目录自动创建（空时后端自动销毁）；manual = 手动新建（允许空状态） */
+  source?: 'folder' | 'manual';
 }
 
 export interface TodoItem {

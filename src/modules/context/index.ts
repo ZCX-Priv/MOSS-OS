@@ -45,6 +45,7 @@ export type {
   HealResult,
   HealLogEntry,
   PreparedRequest,
+  SessionContextTelemetry,
   SessionStoreBridge,
   SystemSection,
 } from './types';

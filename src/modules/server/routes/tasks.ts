@@ -61,11 +61,12 @@ type AgentEngineWithTasks = AgentEngine & {
     expanded?: boolean;
     taskCount?: number;
   }>;
-  createTaskGroup?: (name: string) => {
+  createTaskGroup?: (name: string, source?: 'folder' | 'manual') => {
     id: string;
     name: string;
     expanded?: boolean;
     taskCount?: number;
+    source?: 'folder' | 'manual';
   };
   updateTaskGroup?: (id: string, patch: { name?: string }) => {
     id: string;
@@ -73,7 +74,10 @@ type AgentEngineWithTasks = AgentEngine & {
     expanded?: boolean;
     taskCount?: number;
   } | null;
-  deleteTaskGroup?: (id: string, moveTasksTo?: string) => boolean;
+  deleteTaskGroup?: (
+    id: string,
+    opts?: { moveTasksTo?: string; deleteTasks?: boolean },
+  ) => boolean;
   getHistory?: (id: string) => unknown[];
   getActiveSkill?: (id: string) => { name: string; mode: 'system' | 'message'; content: string } | undefined;
   /** 获取会话权限模式（前端刷新后恢复 PermissionModeSelector 徽章） */
@@ -245,11 +249,11 @@ export function createCreateTaskGroupHandler(services: ServiceRegistry): RouteHa
     if (!engine?.createTaskGroup) {
       return { status: 503, body: { error: ErrorCode.AGENT_ENGINE_UNAVAILABLE } };
     }
-    const body = (req.body ?? {}) as { name?: string };
+    const body = (req.body ?? {}) as { name?: string; source?: 'folder' | 'manual' };
     if (!body.name) {
       return { status: 400, body: { error: ErrorCode.TASK_NAME_REQUIRED } };
     }
-    const group = engine.createTaskGroup(body.name);
+    const group = engine.createTaskGroup(body.name, body.source);
     return { status: 201, body: group };
   };
 }
@@ -283,8 +287,11 @@ export function createDeleteTaskGroupHandler(services: ServiceRegistry): RouteHa
     if (!engine?.deleteTaskGroup) {
       return { status: 503, body: { error: ErrorCode.AGENT_ENGINE_UNAVAILABLE } };
     }
-    const body = (req.body ?? {}) as { moveTasksTo?: string };
-    const deleted = engine.deleteTaskGroup(id, body.moveTasksTo);
+    const body = (req.body ?? {}) as { moveTasksTo?: string; deleteTasks?: boolean };
+    const deleted = engine.deleteTaskGroup(id, {
+      moveTasksTo: body.moveTasksTo,
+      deleteTasks: body.deleteTasks,
+    });
     if (!deleted) {
       return {
         status: 404,

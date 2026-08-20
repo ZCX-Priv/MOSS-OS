@@ -38,6 +38,8 @@ export interface TaskGroup {
   name: string;
   expanded?: boolean;
   taskCount?: number;
+  /** 分组来源：folder = 按工作目录自动创建（空时自动销毁）；manual = 手动新建（允许空状态）。旧数据无该字段视为 manual */
+  source?: 'folder' | 'manual';
 }
 
 /** 总管 task.json 结构 */
@@ -150,8 +152,10 @@ export class TaskStore {
     const oldGid = task.groupId;
     if (patch.title !== undefined) task.title = patch.title;
     if (patch.groupId !== undefined && this.validGroupId(patch.groupId) && patch.groupId !== oldGid) {
-      // 移动分组：从旧组移除、加入新组，并同步搬移磁盘上的 session 文件
+      // 移动分组：从旧组移除、加入新组，并同步搬移磁盘上的 session 文件。
+      // 搬移失败（源文件存在但 renameSync 异常）时回滚内存状态，保证索引与文件不错位
       const newGid = patch.groupId;
+      const oldOrder = task.order;
       const oldList = this.tasksByGroup.get(oldGid) ?? [];
       this.tasksByGroup.set(oldGid, oldList.filter(tk => tk.id !== id));
       task.groupId = newGid;
@@ -162,11 +166,26 @@ export class TaskStore {
       const newList = this.tasksByGroup.get(newGid) ?? [];
       newList.push(task);
       this.tasksByGroup.set(newGid, newList);
-      this.index[id] = { groupId: newGid, sessionId: task.sessionId ?? id };
-      this.moveSessionFile(id, oldGid, newGid);
+      const moveResult = this.moveSessionFile(id, oldGid, newGid);
+      if (moveResult === 'failed') {
+        // 回滚：任务留在原组（title 更新保留），索引/组列表/顺序恢复
+        this.tasksByGroup.set(newGid, (this.tasksByGroup.get(newGid) ?? []).filter(tk => tk.id !== id));
+        task.groupId = oldGid;
+        task.order = oldOrder;
+        const rollbackList = this.tasksByGroup.get(oldGid) ?? [];
+        rollbackList.push(task);
+        this.tasksByGroup.set(oldGid, rollbackList);
+        this.index[id] = { groupId: oldGid, sessionId: task.sessionId ?? id };
+        this.logger.warn(t('agent.taskStoreCleanupFailed'), { taskId: id, reason: 'move rolled back' });
+      } else {
+        // moved / absent（新会话未落盘）均视为成功：absent 时文件由后续 saveSession 按新索引写
+        this.index[id] = { groupId: newGid, sessionId: task.sessionId ?? id };
+      }
       this.saveGroupTasks(oldGid);
       this.saveGroupTasks(newGid);
       this.saveRoot();
+      // 移出后源组若为空文件夹分组则自动销毁
+      this.pruneEmptyFolderGroups();
     } else {
       this.saveGroupTasks(oldGid);
     }
@@ -202,6 +221,8 @@ export class TaskStore {
     delete this.index[id];
     this.saveGroupTasks(gid);
     this.saveRoot();
+    // 删除后源组若为空文件夹分组则自动销毁
+    this.pruneEmptyFolderGroups();
     return true;
   }
 
@@ -246,12 +267,13 @@ export class TaskStore {
     }));
   }
 
-  createGroup(name: string): TaskGroup {
+  createGroup(name: string, source?: 'folder' | 'manual'): TaskGroup {
     const id = crypto.randomUUID();
     const group: TaskGroup = {
       id,
       name: name || '新分组',
       expanded: true,
+      ...(source ? { source } : {}),
     };
     this.groups.push(group);
     this.tasksByGroup.set(id, []);
@@ -267,39 +289,105 @@ export class TaskStore {
     return { ...group, taskCount: (this.tasksByGroup.get(id) ?? []).length };
   }
 
-  deleteGroup(id: string, moveTasksTo?: string): boolean {
+  deleteGroup(id: string, opts?: { moveTasksTo?: string; deleteTasks?: boolean }): boolean {
     // 不允许删除默认分组
     if (id === DEFAULT_GROUP_ID) return false;
     const idx = this.groups.findIndex(g => g.id === id);
     if (idx === -1) return false;
 
+    // 连任务一起删：清索引与组列表，整组目录（task.json + session 文件）一并物理删除。
+    // session 文件已由 engine 层先于本方法逐个删除（依赖 index 定位），此处 rmSync 兜底清理残留
+    if (opts?.deleteTasks) {
+      for (const task of this.tasksByGroup.get(id) ?? []) {
+        delete this.index[task.id];
+      }
+      this.tasksByGroup.delete(id);
+      this.groups.splice(idx, 1);
+      this.saveRoot();
+      try {
+        rmSync(join(this.tasksDir, safeGroupId(id)), { recursive: true, force: true });
+      } catch (err) {
+        this.logger.warn(t('agent.taskStoreCleanupFailed'), {
+          dir: id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+      return true;
+    }
+
     // 迁移任务到目标分组或默认分组（组文件 + session 文件一并搬移）
-    const targetGroup = this.validGroupId(moveTasksTo) ? moveTasksTo! : DEFAULT_GROUP_ID;
+    const targetGroup = this.validGroupId(opts?.moveTasksTo) ? opts!.moveTasksTo! : DEFAULT_GROUP_ID;
     const moving = this.tasksByGroup.get(id) ?? [];
     const targetList = this.tasksByGroup.get(targetGroup) ?? [];
     const now = new Date().toISOString();
+    let failedMoves = 0;
     for (const task of moving) {
       task.groupId = targetGroup;
       task.updatedAt = now;
       targetList.push(task);
       this.index[task.id] = { groupId: targetGroup, sessionId: task.sessionId ?? task.id };
-      this.moveSessionFile(task.id, id, targetGroup);
+      // 搬移失败保留索引原指向（回退本任务的组归属，与磁盘物理位置保持一致）
+      const moveResult = this.moveSessionFile(task.id, id, targetGroup);
+      if (moveResult === 'failed') {
+        failedMoves++;
+        task.groupId = id;
+        this.index[task.id] = { groupId: id, sessionId: task.sessionId ?? task.id };
+      }
     }
-    this.tasksByGroup.set(targetGroup, targetList);
-    this.tasksByGroup.delete(id);
+    // 搬移失败的任务回退后仍留在原组列表（不随组删除）
+    const failedTasks = targetList.filter(tk => tk.groupId === id);
+    this.tasksByGroup.set(targetGroup, targetList.filter(tk => tk.groupId !== id));
+    this.tasksByGroup.set(id, failedTasks);
+    if (this.tasksByGroup.get(id)!.length === 0) {
+      this.tasksByGroup.delete(id);
+    }
     this.groups.splice(idx, 1);
     this.saveGroupTasks(targetGroup);
+    if (failedMoves === 0) this.saveGroupTasks(id);
     this.saveRoot();
-    // 清理旧组目录（session 文件已搬走，仅剩组 task.json 与空目录）
-    try {
-      rmSync(join(this.tasksDir, id), { recursive: true, force: true });
-    } catch (err) {
+    // 仅在全部 session 文件搬移成功时清理旧组目录；失败时保留（防物理删除未搬走的
+    // session JSON），残留文件由 SessionStore.loadAll 错位自愈在下次启动归位
+    if (failedMoves === 0) {
+      try {
+        rmSync(join(this.tasksDir, id), { recursive: true, force: true });
+      } catch (err) {
+        this.logger.warn(t('agent.taskStoreCleanupFailed'), {
+          dir: id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    } else {
       this.logger.warn(t('agent.taskStoreCleanupFailed'), {
         dir: id,
-        error: err instanceof Error ? err.message : String(err),
+        reason: `${failedMoves} session files failed to move; directory kept`,
       });
     }
     return true;
+  }
+
+  /**
+   * 销毁空的文件夹分组（source='folder' 且无任务）：
+   * 任务移出/删除后即时调用；load 时兜底清理「创建后从未有任务」的残留空组。
+   * 手动分组（manual / 旧数据无 source）与默认分组不在清理范围。
+   */
+  private pruneEmptyFolderGroups(): void {
+    const doomed = this.groups.filter(
+      g => g.source === 'folder' && (this.tasksByGroup.get(g.id) ?? []).length === 0,
+    );
+    if (doomed.length === 0) return;
+    this.groups = this.groups.filter(g => !doomed.find(d => d.id === g.id));
+    for (const g of doomed) {
+      this.tasksByGroup.delete(g.id);
+      try {
+        rmSync(join(this.tasksDir, safeGroupId(g.id)), { recursive: true, force: true });
+      } catch (err) {
+        this.logger.warn(t('agent.taskStoreCleanupFailed'), {
+          dir: g.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    this.saveRoot();
   }
 
   // ==========================================================================
@@ -466,6 +554,8 @@ export class TaskStore {
       }
     }
     if (dirty) this.saveRoot();
+    // 启动兜底：清理「创建后从未有任务」的残留空文件夹分组
+    this.pruneEmptyFolderGroups();
   }
 
   /** 写总管 task.json（分组定义 + task↔session 索引） */
@@ -495,20 +585,23 @@ export class TaskStore {
     }
   }
 
-  /** 搬移磁盘 session 文件 tasks/<fromGid>/<sid>.json → tasks/<toGid>/<sid>.json（不存在则跳过） */
-  private moveSessionFile(sessionId: string, fromGid: string, toGid: string): void {
+  /** 搬移磁盘 session 文件 tasks/<fromGid>/<sid>.json → tasks/<toGid>/<sid>.json。
+   *  返回三态：'moved' 成功搬移 / 'absent' 源不存在（新会话未落盘，非失败） / 'failed' 搬移异常 */
+  private moveSessionFile(sessionId: string, fromGid: string, toGid: string): 'moved' | 'absent' | 'failed' {
     try {
       const sid = sessionId;
       const src = join(this.tasksDir, safeGroupId(fromGid), `${sid}.json`);
-      if (!existsSync(src)) return;
+      if (!existsSync(src)) return 'absent';
       const destDir = join(this.tasksDir, safeGroupId(toGid));
       mkdirSync(destDir, { recursive: true });
       renameSync(src, join(destDir, `${sid}.json`));
+      return 'moved';
     } catch (err) {
       this.logger.warn(t('agent.taskStoreCleanupFailed'), {
         sessionId,
         error: err instanceof Error ? err.message : String(err),
       });
+      return 'failed';
     }
   }
 

@@ -76,7 +76,7 @@ import {
   createUpdateAgentHandler,
   createDeleteAgentHandler,
   createSetDefaultAgentHandler,
-} from './routes/agents';
+} from './routes/agenteam';
 import { createListAutomationsHandler,
   createCreateAutomationHandler,
   createGetAutomationHandler,
@@ -261,13 +261,13 @@ class ServerModule implements Module {
     // 搜索
     this.router.addRoute({ method: 'GET', pattern: '/api/search', handler: createSearchHandler(services), auth: true });
 
-    // agents
-    this.router.addRoute({ method: 'GET', pattern: '/api/agents', handler: createListAgentsHandler(services), auth: true });
-    this.router.addRoute({ method: 'POST', pattern: '/api/agents', handler: createCreateAgentHandler(services), auth: true });
-    this.router.addRoute({ method: 'GET', pattern: '/api/agents/:id', handler: createGetAgentHandler(services), auth: true });
-    this.router.addRoute({ method: 'PATCH', pattern: '/api/agents/:id', handler: createUpdateAgentHandler(services), auth: true });
-    this.router.addRoute({ method: 'DELETE', pattern: '/api/agents/:id', handler: createDeleteAgentHandler(services), auth: true });
-    this.router.addRoute({ method: 'PUT', pattern: '/api/agents/default', handler: createSetDefaultAgentHandler(services), auth: true });
+    // agenteam
+    this.router.addRoute({ method: 'GET', pattern: '/api/agenteam', handler: createListAgentsHandler(services), auth: true });
+    this.router.addRoute({ method: 'POST', pattern: '/api/agenteam', handler: createCreateAgentHandler(services), auth: true });
+    this.router.addRoute({ method: 'GET', pattern: '/api/agenteam/:id', handler: createGetAgentHandler(services), auth: true });
+    this.router.addRoute({ method: 'PATCH', pattern: '/api/agenteam/:id', handler: createUpdateAgentHandler(services), auth: true });
+    this.router.addRoute({ method: 'DELETE', pattern: '/api/agenteam/:id', handler: createDeleteAgentHandler(services), auth: true });
+    this.router.addRoute({ method: 'PUT', pattern: '/api/agenteam/default', handler: createSetDefaultAgentHandler(services), auth: true });
 
     // automations
     this.router.addRoute({ method: 'GET', pattern: '/api/automations', handler: createListAutomationsHandler(services), auth: true });

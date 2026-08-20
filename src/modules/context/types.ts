@@ -148,9 +148,23 @@ export interface ContextSessionLike {
   messages: ContextMessage[];
   envContext?: EnvContextInfo;
   compactions?: CompactionRecord[];
+  /** 会话级持久化遥测（真实 usage + 命中样本；随 session 落盘，重启恢复） */
+  contextTelemetry?: SessionContextTelemetry;
   /** 会话级活跃 skill（system 模式拼系统提示后；message 模式替换 skill-inject 占位） */
   activeSkill?: { name: string; mode: 'system' | 'message' };
   updatedAt: string;
+}
+
+/** 会话级持久化遥测（agent Session 内嵌字段；lastUsage/cacheHits 的单一真源） */
+export interface SessionContextTelemetry {
+  /** 最近一次请求的真实 usage（LLM 上报；无样本为 null） */
+  lastUsage: {
+    promptTokens: number;
+    completionTokens: number;
+    cachedTokens: number;
+  } | null;
+  /** 缓存命中样本环形缓冲（上限 TELEMETRY_BUFFER_SIZE） */
+  cacheHits: CacheHitSample[];
 }
 
 /** agent 模块注入的会话存取回调（bind 注入，保持依赖方向 agent → context） */
@@ -237,10 +251,18 @@ export interface SystemSection {
 
 export interface ContextStats {
   sessionId: string;
+  /** 当前会话模型（模型与配置摘要行数据源） */
+  model: { id: string; name: string };
   breakdown: ContextBreakdown;
   windowTokens: number;
   /** 本轮发送估算 token 占窗口百分比 */
   usedPercent: number;
+  /** 最近一次请求的真实 usage（LLM 上报；无样本为 null；前端实时指标栏数据源） */
+  lastUsage: {
+    promptTokens: number;
+    completionTokens: number;
+    cachedTokens: number;
+  } | null;
   compaction: {
     enabled: boolean;
     compactRatio: number;

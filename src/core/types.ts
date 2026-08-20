@@ -346,8 +346,8 @@ export const ServiceNames = {
   SKILL_REGISTRY: 'skill.registry',
   /** Spec 注册表（由 tools 模块注册） */
   SPEC_REGISTRY: 'spec.registry',
-  /** Agent 注册表（由 agents 模块注册） */
-  AGENTS_REGISTRY: 'agents.registry',
+  /** Agent 注册表（由 agenteam 模块注册） */
+  AGENTTEAM_REGISTRY: 'agenteam.registry',
   /** 自动化任务服务（由 automation 模块注册） */
   AUTOMATION_SERVICE: 'automation.service',
   /** 文件历史服务（由 file-history 模块注册：Track Edit + Snapshot + undo） */

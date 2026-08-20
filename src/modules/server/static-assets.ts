@@ -22,7 +22,8 @@ const MIME: Record<string, string> = {
   '.woff2': 'font/woff2',
   '.ttf': 'font/ttf',
   '.map': 'application/json',
-  '.txt': 'text/plain; charset=utf-8',
+  '.txt': 'text/plain',
+  '.webmanifest': 'application/manifest+json',
 };
 
 export class StaticAssets {
@@ -73,11 +74,16 @@ export class StaticAssets {
     const body = readFileSync(filePath);
     const ext = extname(filePath).toLowerCase();
     const mime = MIME[ext] ?? 'application/octet-stream';
+    // SW 注册脚本与 manifest 固定文件名（无 hash）：强制 no-cache 保证新版本及时生效；
+    // index.html 同理；其余（hashed 资源名）长缓存
+    const fileName = filePath.split(/[\\/]/).pop() ?? '';
+    const noCache =
+      ext === '.html' || fileName === 'sw.js' || fileName === 'registerSW.js' || fileName === 'manifest.webmanifest';
     return {
       status: 200,
       headers: {
         'Content-Type': mime,
-        'Cache-Control': ext === '.html' ? 'no-cache' : 'public, max-age=86400',
+        'Cache-Control': noCache ? 'no-cache' : 'public, max-age=86400',
       },
       body,
     };

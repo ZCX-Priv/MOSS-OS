@@ -22,6 +22,8 @@ import {
   AgentSettings,
   ModelSettings,
   ContextSettings,
+  ContextEngineSettings,
+  AppearanceSettings,
   ToolsSettings,
   SpecsSettings,
   SafetySettings,
@@ -29,6 +31,7 @@ import {
   AboutSettings,
   PlaceholderSection,
   RenderSettingsSection,
+  AnimSettingsSection,
 } from './components/pages/SettingsPage';
 import { SearchModal } from './components/overlays/SearchModal';
 import { AgentSwitchMenu } from './components/overlays/AgentSwitchMenu';
@@ -42,6 +45,7 @@ import { Toaster } from '@/components/ui/sonner';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useConfig } from './hooks/useConfig';
 import { useTools } from './hooks/useTools';
+import { useAnimationClass } from './hooks/useAnimationClass';
 
 export default function App() {
   // 阶段1.6：WS 连接初始化 + 事件分发（单例，全应用只调用一次）
@@ -50,6 +54,8 @@ export default function App() {
   useConfig();
   // 拉取工具图标映射（toolName → icon 字符串），供工具调用卡片渲染
   useTools();
+  // 动画开关 → <html> class 桥接（含 prefers-reduced-motion 实时监听）
+  useAnimationClass();
 
   const [overlay, setOverlay] = useState<OverlayType>(null);
   const { pathname } = useLocation();
@@ -102,7 +108,13 @@ export default function App() {
               </div>
             </header>
           )}
-          <Routes>
+          {/* 路由切换入场动画：按顶层路由段 remount 重播（/task/a→/task/b 同路由参数变化不重播；设置内部分区切换由各 Outlet 容器负责）。
+              flex flex-col：保持父级（SidebarInset）到页面根元素的 flex 纵向链路，页面 flex-1 撑满（缺失会导致页面高度塌陷） */}
+          <div
+            key={pathname.split('/')[1] ?? 'home'}
+            className="anim-route animate-in fade-in slide-in-from-bottom-1 duration-200 flex min-h-0 flex-1 flex-col"
+          >
+            <Routes>
             <Route path="/" element={<TaskPage onOpenOverlay={openOverlay} />} />
             <Route path="/task/:taskId" element={<TaskPage onOpenOverlay={openOverlay} />} />
             <Route path="/plugins" element={<PluginMarketPage />}>
@@ -121,27 +133,40 @@ export default function App() {
             <Route path="/settings" element={<SettingsPage />}>
               <Route index element={<Navigate to="general" replace />} />
               <Route path="general" element={<GeneralSettings />} />
-              <Route path="appearance" element={<PlaceholderSection section="appearance" />} />
-              <Route path="render" element={<RenderSettingsSection />} />
+              {/* 外观：Tab 容器（外观占位 / 渲染设置 / 动画设置） */}
+              <Route path="appearance" element={<AppearanceSettings />}>
+                <Route index element={<PlaceholderSection section="appearance" embedded />} />
+                <Route path="render" element={<RenderSettingsSection />} />
+                <Route path="anim" element={<AnimSettingsSection />} />
+              </Route>
               <Route path="agent" element={<AgentSettings />} />
               <Route path="model" element={<ModelSettings />} />
-              <Route path="context" element={<ContextSettings />} />
+              {/* 上下文：Tab 容器（引擎 / 规范 / 索引 / 规则 / 记忆） */}
+              <Route path="context" element={<ContextSettings />}>
+                <Route index element={<ContextEngineSettings />} />
+                <Route path="specs" element={<SpecsSettings />} />
+                <Route path="index" element={<PlaceholderSection section="index" embedded />} />
+                <Route path="rules" element={<PlaceholderSection section="rules" embedded />} />
+                <Route path="memory" element={<PlaceholderSection section="memory" embedded />} />
+              </Route>
               <Route path="tools" element={<ToolsSettings />} />
-              <Route path="specs" element={<SpecsSettings />} />
               <Route path="safety" element={<SafetySettings />} />
               <Route path="logs" element={<LogsSettings />} />
               <Route path="about" element={<AboutSettings />} />
-              <Route path="task" element={<PlaceholderSection section="task" />} />
-              <Route path="index" element={<PlaceholderSection section="index" />} />
-              <Route path="docs" element={<PlaceholderSection section="docs" />} />
               <Route path="commands" element={<PlaceholderSection section="commands" />} />
-              <Route path="rules" element={<PlaceholderSection section="rules" />} />
-              <Route path="memory" element={<PlaceholderSection section="memory" />} />
               <Route path="hooks" element={<PlaceholderSection section="hooks" />} />
+              {/* 旧路径重定向（并入 Tab 后保留兼容：搜索索引/书签仍指向旧地址） */}
+              <Route path="render" element={<Navigate to="/settings/appearance/render" replace />} />
+              <Route path="anim" element={<Navigate to="/settings/appearance/anim" replace />} />
+              <Route path="specs" element={<Navigate to="/settings/context/specs" replace />} />
+              <Route path="index" element={<Navigate to="/settings/context/index" replace />} />
+              <Route path="rules" element={<Navigate to="/settings/context/rules" replace />} />
+              <Route path="memory" element={<Navigate to="/settings/context/memory" replace />} />
               <Route path="*" element={<Navigate to="general" replace />} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
+            </Routes>
+          </div>
         </SidebarInset>
 
         {/* 受控 overlay：各组件自带 Dialog/Sheet，由 overlay state 驱动开关 */}

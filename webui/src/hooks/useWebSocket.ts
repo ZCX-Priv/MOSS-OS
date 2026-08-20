@@ -548,6 +548,8 @@ export function useWebSocket(): void {
           totalTokens: payload.totalTokens ?? 0,
           maxTokens: payload.maxTokens ?? 0,
         });
+        // 递增"LLM 真实读取文件"信号（TaskPage 据此自动切到文件 tab；HTTP 历史恢复不经过此处）
+        useStore.getState().bumpContextFileReadSeq(sessionId);
         break;
       }
       // ====================================================================
@@ -564,10 +566,12 @@ export function useWebSocket(): void {
             ...(cur ?? {}),
             ...payload,
             sessionId: payload.sessionId ?? sessionId,
+            model: payload.model ?? cur?.model ?? { id: '', name: '' },
             breakdown: payload.breakdown ?? cur?.breakdown,
             windowTokens: payload.windowTokens ?? cur?.windowTokens ?? 0,
             usedPercent: payload.usedPercent ?? cur?.usedPercent ?? 0,
             avgHitRate: payload.avgHitRate ?? cur?.avgHitRate ?? null,
+            lastUsage: payload.lastUsage ?? cur?.lastUsage ?? null,
             compaction:
               payload.compaction ??
               cur?.compaction ?? {

@@ -28,7 +28,7 @@ import llm from '../modules/llm';
 import tools from '../modules/tools';
 import mcp from '../modules/mcp';
 import server from '../modules/server';
-import agents from '../modules/agents';
+import agenteam from '../modules/agenteam';
 import update from '../modules/update';
 import agent from '../modules/agent';
 import filesys from '../modules/filesys';
@@ -43,7 +43,7 @@ const MODULE_DESTROY_TIMEOUT_MS = 10_000;
 
 /**
  * 静态模块注册表：固定初始化顺序满足依赖关系（被依赖者在前）。
- * - llm / tools / mcp / server / agents / update：无依赖
+ * - llm / tools / mcp / server / agenteam / update：无依赖
  * - filesys → 无服务依赖（agent 构造时订阅其事件总线，须先于 agent 注册）
  * - safety → 无服务依赖（agent 执行工具前统一权限决策，须先于 agent 注册）
  * - context → llm（压缩摘要调用 LLMRouter；agent 每轮请求经其流水线，须先于 agent 注册）
@@ -57,7 +57,7 @@ const MODULE_FACTORIES: Array<{ name: string; create: () => Module }> = [
   { name: 'tools', create: tools },
   { name: 'mcp', create: mcp },
   { name: 'server', create: server },
-  { name: 'agents', create: agents },
+  { name: 'agenteam', create: agenteam },
   { name: 'update', create: update },
   { name: 'filesys', create: filesys },
   { name: 'safety', create: safety },
