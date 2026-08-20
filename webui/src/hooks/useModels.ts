@@ -47,6 +47,11 @@ export function useModels() {
       endpoint: string;
       apiKey: string;
       contextWindow?: string;
+      inputTokens?: number;
+      outputTokens?: number;
+      temperature?: number;
+      topP?: number;
+      topK?: number;
       thinking?: ModelItem['thinking'];
     }) => {
       try {

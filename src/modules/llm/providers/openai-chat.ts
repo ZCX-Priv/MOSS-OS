@@ -30,9 +30,13 @@ export class OpenAIChatProvider implements LLMProvider {
     if (req.stream) {
       body.stream_options = { include_usage: true };
     }
-    if (req.temperature !== undefined) body.temperature = req.temperature;
-    if (req.max_tokens !== undefined) body.max_tokens = req.max_tokens;
-    if (req.top_p !== undefined) body.top_p = req.top_p;
+    // 采样参数：请求级优先，模型配置兜底（OpenAI 不支持 top_k，忽略）
+    const temperature = req.temperature ?? cfg.temperature;
+    if (temperature !== undefined) body.temperature = temperature;
+    const maxTokens = req.max_tokens ?? cfg.outputTokens;
+    if (maxTokens !== undefined) body.max_tokens = maxTokens;
+    const topP = req.top_p ?? cfg.topP;
+    if (topP !== undefined) body.top_p = topP;
     if (req.tools && req.tools.length > 0) {
       body.tools = req.tools.map(t => ({
         type: 'function',

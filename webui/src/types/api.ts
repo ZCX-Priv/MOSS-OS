@@ -271,6 +271,16 @@ export interface ManualCompactResult {
   error?: string;
 }
 
+/** 模型 thinking 配置：effort 为预设档或自定义字符串 */
+export interface ModelThinking {
+  enabled: boolean;
+  /** 思考强度：预设档（low/medium/high 等）或自定义值 */
+  effort?: string;
+  /** 自定义等级显示名（预设档无此字段） */
+  label?: string;
+  budgetTokens?: number;
+}
+
 export interface ModelConfig {
   /** 内部唯一 id（如 "model_1734..."） */
   id: string;
@@ -281,9 +291,19 @@ export interface ModelConfig {
   format: 'openai-chat' | 'openai-responses' | 'anthropic' | 'gemini';
   endpoint: string;
   apiKey: string;
-  thinking: { enabled: boolean; effort?: ThinkingEffort; budgetTokens?: number };
-  /** 上下文窗口档位，如 '200k' / '400k' / '1m'；可选 */
+  thinking: ModelThinking;
+  /** 上下文窗口档位（旧格式，如 '200k'）；读取时 inputTokens 优先 */
   contextWindow?: string;
+  /** 输入窗口 token 数（context 引擎压缩预算） */
+  inputTokens?: number;
+  /** 输出窗口 token 数（请求 max_tokens 默认值） */
+  outputTokens?: number;
+  /** 模型温度 0-2 */
+  temperature?: number;
+  /** Top P 0-1 */
+  topP?: number;
+  /** Top K 0-100；0 表示不发送 */
+  topK?: number;
 }
 
 export interface ApiConfig {
@@ -381,13 +401,19 @@ export interface ModelItem {
   format: 'openai-chat' | 'openai-responses' | 'anthropic' | 'gemini';
   endpoint: string;
   apiKey: string;
-  /** 上下文窗口档位，如 '200k' / '400k' / '1m'；可选 */
+  /** 上下文窗口档位（旧格式，如 '200k'）；读取时 inputTokens 优先 */
   contextWindow?: string;
-  thinking: {
-    enabled: boolean;
-    effort?: ThinkingEffort;
-    budgetTokens?: number;
-  };
+  /** 输入窗口 token 数（context 引擎压缩预算） */
+  inputTokens?: number;
+  /** 输出窗口 token 数（请求 max_tokens 默认值） */
+  outputTokens?: number;
+  /** 模型温度 0-2 */
+  temperature?: number;
+  /** Top P 0-1 */
+  topP?: number;
+  /** Top K 0-100；0 表示不发送 */
+  topK?: number;
+  thinking: ModelThinking;
 }
 
 // ============================================================================

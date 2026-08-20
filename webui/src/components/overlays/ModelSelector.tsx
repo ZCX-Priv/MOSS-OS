@@ -23,10 +23,15 @@ import {
   PopoverAnchor,
   PopoverContent,
 } from '@/components/ui/popover';
-import { Badge } from '@/components/ui/badge';
-import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import {
   Sheet,
   SheetContent,
@@ -34,19 +39,10 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
+import { toEffortLevel } from '../../lib/model-utils';
 import { useModels } from '../../hooks/useModels';
 import { useIsMobile } from '../../hooks/use-mobile';
-import type { ThinkingEffort, ModelItem } from '../../types/api';
-
-/** 后端 effort → 前端档位：xhigh→max, high→high, 其余(含 undefined)→max */
-function toUiLevel(effort?: ThinkingEffort): 'high' | 'max' {
-  return effort === 'high' ? 'high' : 'max';
-}
-
-/** 前端档位 → 后端 effort：max→xhigh, high→high */
-function toBackendEffort(level: 'high' | 'max'): ThinkingEffort {
-  return level === 'max' ? 'xhigh' : 'high';
-}
+import type { ModelItem } from '../../types/api';
 
 export function ModelSelector() {
   const { t } = useTranslation();
@@ -94,83 +90,86 @@ export function ModelSelector() {
   /** 渲染模型参数设置区（桌面子菜单与移动端内联共用） */
   const renderSettings = (model: ModelItem) => {
     const thinking = model.thinking;
-    const thinkingEnabled = thinking?.enabled ?? false;
-    const uiLevel = toUiLevel(thinking?.effort);
-    const ctx = model.contextWindow ?? '1m';
+    const level = toEffortLevel(thinking);
+    const customText = `${t('settings.model.thinkingCustom')} · ${thinking?.label ?? thinking?.effort ?? ''}`;
     return (
       <>
-        {/* 上下文窗口 */}
-        <div className="flex flex-col gap-2">
-          <label className="text-sm font-medium text-foreground">
-            {t('modelSelector.contextWindow')}
-          </label>
-          <ToggleGroup
-            type="single"
-            value={ctx}
-            onValueChange={(v) =>
-              v && void updateModel(model.id, { contextWindow: v })
-            }
-            variant="outline"
-            className="w-full"
-          >
-            <ToggleGroupItem value="200k" className="flex-1">
-              200K
-            </ToggleGroupItem>
-            <ToggleGroupItem value="400k" className="flex-1">
-              400K
-            </ToggleGroupItem>
-            <ToggleGroupItem value="1m" className="flex-1">
-              1M
-            </ToggleGroupItem>
-          </ToggleGroup>
-          {ctx === '200k' && (
-            <Badge variant="secondary" className="w-fit font-normal">
-              {t('modelSelector.default')}
-            </Badge>
-          )}
-        </div>
-
-        {/* 思考模式 */}
-        <div className="mt-4 flex flex-col gap-2">
-          <div className="flex items-center justify-between">
+        {/* 上下文窗口：输入 / 输出 */}
+        <div className="grid grid-cols-2 gap-2">
+          <div className="flex flex-col gap-1.5">
             <label className="text-sm font-medium text-foreground">
-              {t('modelSelector.thinkingMode')}
+              {t('settings.model.inputWindow')}
             </label>
-            <Switch
-              checked={thinkingEnabled}
-              onCheckedChange={(next) =>
+            <Input
+              type="number"
+              min={1}
+              defaultValue={model.inputTokens ?? ''}
+              placeholder="200000"
+              onBlur={(e) => {
+                const v = e.target.value.trim();
                 void updateModel(model.id, {
-                  thinking: { ...thinking, enabled: next },
-                })
-              }
+                  inputTokens: v ? Math.max(1, Math.floor(Number(v))) : undefined,
+                });
+              }}
             />
           </div>
-          <ToggleGroup
-            type="single"
-            value={uiLevel}
-            onValueChange={(v) =>
-              v &&
-              void updateModel(model.id, {
-                thinking: {
-                  ...thinking,
-                  effort: toBackendEffort(v as 'high' | 'max'),
-                },
-              })
-            }
-            variant="outline"
-            disabled={!thinkingEnabled}
-            className="w-full"
+          <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium text-foreground">
+              {t('settings.model.outputWindow')}
+            </label>
+            <Input
+              type="number"
+              min={1}
+              defaultValue={model.outputTokens ?? ''}
+              placeholder="8192"
+              onBlur={(e) => {
+                const v = e.target.value.trim();
+                void updateModel(model.id, {
+                  outputTokens: v ? Math.max(1, Math.floor(Number(v))) : undefined,
+                });
+              }}
+            />
+          </div>
+        </div>
+
+        {/* 思考强度 */}
+        <div className="mt-4 flex flex-col gap-2">
+          <label className="text-sm font-medium text-foreground">
+            {t('settings.model.thinkingLevel')}
+          </label>
+          <Select
+            value={level}
+            onValueChange={(v) => {
+              const next = v as 'off' | 'low' | 'medium' | 'high' | 'custom';
+              if (next === 'off') {
+                void updateModel(model.id, {
+                  thinking: { ...thinking, enabled: false },
+                });
+              } else if (next === 'custom') {
+                // 保持现有自定义值（effort/label），仅启用
+                void updateModel(model.id, {
+                  thinking: { ...thinking, enabled: true },
+                });
+              } else {
+                void updateModel(model.id, {
+                  thinking: { ...thinking, enabled: true, effort: next },
+                });
+              }
+            }}
           >
-            <ToggleGroupItem value="high" className="flex-1">
-              high
-            </ToggleGroupItem>
-            <ToggleGroupItem value="max" className="flex-1 gap-1">
-              max
-              <Badge variant="secondary" className="font-normal">
-                {t('modelSelector.default')}
-              </Badge>
-            </ToggleGroupItem>
-          </ToggleGroup>
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="off">{t('settings.model.thinkingOff')}</SelectItem>
+              <SelectItem value="low">{t('settings.model.thinkingLow')}</SelectItem>
+              <SelectItem value="medium">{t('settings.model.thinkingMedium')}</SelectItem>
+              <SelectItem value="high">{t('settings.model.thinkingHigh')}</SelectItem>
+              <SelectItem value="custom">
+                {level === 'custom' ? customText : t('settings.model.thinkingCustom')}
+              </SelectItem>
+            </SelectContent>
+          </Select>
         </div>
       </>
     );

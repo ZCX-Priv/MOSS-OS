@@ -38,11 +38,16 @@ export class GeminiProvider implements LLMProvider {
       body.systemInstruction = { parts: [{ text: systemText }] };
     }
 
-    // generationConfig
+    // generationConfig（采样参数：请求级优先，模型配置兜底）
     const genConfig: Record<string, unknown> = {};
-    if (req.temperature !== undefined) genConfig.temperature = req.temperature;
-    if (req.max_tokens !== undefined) genConfig.maxOutputTokens = req.max_tokens;
-    if (req.top_p !== undefined) genConfig.topP = req.top_p;
+    const temperature = req.temperature ?? cfg.temperature;
+    if (temperature !== undefined) genConfig.temperature = temperature;
+    const maxTokens = req.max_tokens ?? cfg.outputTokens;
+    if (maxTokens !== undefined) genConfig.maxOutputTokens = maxTokens;
+    const topP = req.top_p ?? cfg.topP;
+    if (topP !== undefined) genConfig.topP = topP;
+    const topK = req.top_k ?? cfg.topK;
+    if (topK) genConfig.topK = topK;
 
     // 思考控制
     const thinking = mergeThinking(cfg.thinking, req.thinking);

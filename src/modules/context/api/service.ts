@@ -576,12 +576,12 @@ export class ContextEngineServiceImpl {
     return out;
   }
 
-  /** 从模型配置解析上下文窗口 */
+  /** 从模型配置解析上下文窗口（inputTokens 优先，回退旧 contextWindow 档位） */
   private resolveWindowTokens(model: string): number {
     try {
       const models = this.config.getApiConfig().models;
       const found = models.find(m => m.id === model || m.model === model);
-      return parseContextWindow(found?.contextWindow);
+      return found?.inputTokens ?? parseContextWindow(found?.contextWindow);
     } catch {
       return parseContextWindow(undefined);
     }

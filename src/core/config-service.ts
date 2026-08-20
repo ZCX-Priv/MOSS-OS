@@ -29,9 +29,8 @@ const logLevelSchema = z.enum(['debug', 'info', 'warn', 'error', 'fatal']);
 
 const providerThinkingSchema = z.object({
   enabled: z.boolean(),
-  effort: z
-    .enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh'])
-    .optional(),
+  effort: z.string().optional(),
+  label: z.string().optional(),
   budgetTokens: z.number().int().positive().optional(),
 });
 
@@ -44,6 +43,11 @@ const modelConfigSchema: z.ZodType<ModelConfig> = z.object({
   apiKey: z.string(),
   thinking: providerThinkingSchema,
   contextWindow: z.string().optional(),
+  inputTokens: z.number().int().positive().optional(),
+  outputTokens: z.number().int().positive().optional(),
+  temperature: z.number().min(0).max(2).optional(),
+  topP: z.number().min(0).max(1).optional(),
+  topK: z.number().int().min(0).max(100).optional(),
 });
 
 const fileHistorySchema = z.object({

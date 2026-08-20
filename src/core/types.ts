@@ -264,11 +264,24 @@ export interface ModelConfig {
   apiKey: string;
   thinking: {
     enabled: boolean;
-    effort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+    /** 思考强度：预设档（low/medium/high 等）或自定义字符串 */
+    effort?: string;
+    /** 自定义等级显示名（预设档无此字段） */
+    label?: string;
     budgetTokens?: number;
   };
-  /** 上下文窗口档位，如 '200k' / '400k' / '1m'；可选 */
+  /** 上下文窗口档位（旧格式，如 '200k'）；读取时 inputTokens 优先 */
   contextWindow?: string;
+  /** 输入窗口 token 数（context 引擎压缩预算） */
+  inputTokens?: number;
+  /** 输出窗口 token 数（请求 max_tokens 默认值） */
+  outputTokens?: number;
+  /** 模型温度 0-2 */
+  temperature?: number;
+  /** Top P 0-1 */
+  topP?: number;
+  /** Top K 0-100；0 表示不发送 */
+  topK?: number;
 }
 
 export interface ConfigService {

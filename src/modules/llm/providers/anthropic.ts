@@ -37,12 +37,17 @@ export class AnthropicProvider implements LLMProvider {
     const body: Record<string, unknown> = {
       model: req.model,
       messages,
-      max_tokens: req.max_tokens ?? 4096,
+      max_tokens: req.max_tokens ?? cfg.outputTokens ?? 4096,
       stream: req.stream,
     };
     if (systemText) body.system = systemText;
-    if (req.temperature !== undefined) body.temperature = req.temperature;
-    if (req.top_p !== undefined) body.top_p = req.top_p;
+    // 采样参数：请求级优先，模型配置兜底
+    const temperature = req.temperature ?? cfg.temperature;
+    if (temperature !== undefined) body.temperature = temperature;
+    const topP = req.top_p ?? cfg.topP;
+    if (topP !== undefined) body.top_p = topP;
+    const topK = req.top_k ?? cfg.topK;
+    if (topK) body.top_k = topK;
 
     // 工具
     if (req.tools && req.tools.length > 0) {

@@ -13,6 +13,7 @@ import {
   Webhook,
   Info,
   ChevronDown,
+  ChevronRight,
   Check,
   Sun,
   Moon,
@@ -69,7 +70,8 @@ import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible';
+import { Slider } from '@/components/ui/slider';
 import {
   Dialog,
   DialogContent,
@@ -87,7 +89,8 @@ import { useReducedMotion } from '../../hooks/useAnimationClass';
 import { useStore } from '../../store';
 import { api } from '../../api/http';
 import { TOOL_ICON_MAP } from '../../lib/tool-icons';
-import type { ModelItem, ThinkingEffort, SpecDetail, SafetyConfig, LogLevel, LogsConfig, LogFileInfo, ContextEngineConfig } from '../../types/api';
+import { parseLegacyWindow, toEffortLevel } from '../../lib/model-utils';
+import type { ModelItem, SpecDetail, SafetyConfig, LogLevel, LogsConfig, LogFileInfo, ContextEngineConfig } from '../../types/api';
 
 export interface NavItem {
   id: SettingsSection;
@@ -179,7 +182,7 @@ export const settingsSearchIndex: SearchableSetting[] = [
   { labelKey: 'settings.model.apiFormat', section: 'model' },
   { labelKey: 'settings.model.endpoint', section: 'model' },
   { labelKey: 'settings.model.apiKey', section: 'model' },
-  { labelKey: 'settings.model.defaultThinkingEffort', descriptionKey: 'settings.model.defaultThinkingEffortDesc', section: 'model' },
+  { labelKey: 'settings.model.thinkingLevel', descriptionKey: 'settings.model.thinkingModeDesc', section: 'model' },
 
   // 关于设置详细项
   { labelKey: 'settings.about.relatedLinks', section: 'about' },
@@ -211,7 +214,10 @@ export function AppearanceSettings() {
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <div className="px-6 py-4">
-        <h1 className="text-xl font-semibold text-foreground">{t('settings.nav.appearance')}</h1>
+        <div className="flex flex-col gap-1">
+          <h1 className="text-xl font-semibold text-foreground">{t('settings.nav.appearance')}</h1>
+          <p className="text-sm text-muted-foreground">{t('settings.appearance.subtitle')}</p>
+        </div>
       </div>
       <Tabs
         value={tab}
@@ -538,7 +544,10 @@ export function SafetySettings() {
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <h1 className="text-xl font-semibold text-foreground">{t('settings.safety.title')}</h1>
+      <div className="flex flex-col gap-1">
+        <h1 className="text-xl font-semibold text-foreground">{t('settings.safety.title')}</h1>
+        <p className="text-sm text-muted-foreground">{t('settings.safety.subtitle')}</p>
+      </div>
 
       {/* 权限模式 */}
       <div className="flex flex-col gap-3">
@@ -761,7 +770,10 @@ export function ContextSettings() {
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <div className="px-6 py-4">
-        <h1 className="text-xl font-semibold text-foreground">{t('settings.nav.context')}</h1>
+        <div className="flex flex-col gap-1">
+          <h1 className="text-xl font-semibold text-foreground">{t('settings.nav.context')}</h1>
+          <p className="text-sm text-muted-foreground">{t('settings.context.subtitle')}</p>
+        </div>
       </div>
       <Tabs
         value={tab}
@@ -1052,6 +1064,12 @@ export function LogsSettings() {
     void loadFiles(true);
   }, [loadFiles]);
 
+  // 实时搜索：输入防抖 300ms 后自动应用查询（无需回车）
+  useEffect(() => {
+    const timer = setTimeout(() => setSearch(searchInput.trim()), 300);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
+
   // file / minLevel / search 变化时自动重查（offset=0）
   useEffect(() => {
     void query(0);
@@ -1076,7 +1094,10 @@ export function LogsSettings() {
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <h1 className="text-xl font-semibold text-foreground">{t('settings.logs.title')}</h1>
+      <div className="flex flex-col gap-1">
+        <h1 className="text-xl font-semibold text-foreground">{t('settings.logs.title')}</h1>
+        <p className="text-sm text-muted-foreground">{t('settings.logs.subtitle')}</p>
+      </div>
 
       {/* 日志配置 */}
       <div className="flex flex-col gap-3">
@@ -1182,10 +1203,6 @@ export function LogsSettings() {
           <Input
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') setSearch(searchInput.trim());
-            }}
-            onBlur={() => setSearch(searchInput.trim())}
             placeholder={t('settings.logs.searchPlaceholder')}
             className="h-8 w-56"
           />
@@ -1246,7 +1263,10 @@ export function GeneralSettings() {
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <h1 className="text-xl font-semibold text-foreground">{t('settings.general.title')}</h1>
+      <div className="flex flex-col gap-1">
+        <h1 className="text-xl font-semibold text-foreground">{t('settings.general.title')}</h1>
+        <p className="text-sm text-muted-foreground">{t('settings.general.subtitle')}</p>
+      </div>
 
       <div className="flex flex-col gap-3">
         <div className="text-sm font-medium text-foreground">{t('settings.general.basicSettings')}</div>
@@ -1435,7 +1455,10 @@ export function AgentSettings() {
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <h1 className="text-xl font-semibold text-foreground">{t('settings.agent.title')}</h1>
+      <div className="flex flex-col gap-1">
+        <h1 className="text-xl font-semibold text-foreground">{t('settings.agent.title')}</h1>
+        <p className="text-sm text-muted-foreground">{t('settings.agent.subtitle')}</p>
+      </div>
 
       <div className="flex flex-col gap-3">
         <div className="text-sm font-medium text-foreground">{t('settings.agent.builtIn')}</div>
@@ -1474,6 +1497,8 @@ export function ModelSettings() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingModel, setEditingModel] = useState<ModelItem | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+  const [formatFilter, setFormatFilter] = useState<'all' | ModelItem['format']>('all');
   const modelDialogRequest = useStore((s) => s.modelDialogRequest);
   const clearModelDialogRequest = useStore((s) => s.clearModelDialogRequest);
 
@@ -1535,6 +1560,14 @@ export function ModelSettings() {
     void reorderModels(newOrder);
   };
 
+  // 搜索 + API 格式筛选（实时本地过滤）
+  const q = query.trim().toLowerCase();
+  const visibleModels = models.filter((m) => {
+    const matchQ = !q || m.name.toLowerCase().includes(q) || m.model.toLowerCase().includes(q);
+    const matchF = formatFilter === 'all' || m.format === formatFilter;
+    return matchQ && matchF;
+  });
+
   return (
     <div className="flex flex-col gap-6 p-6">
       {/* 页头 */}
@@ -1549,16 +1582,49 @@ export function ModelSettings() {
         </Button>
       </div>
 
+      {/* 搜索与筛选：桌面端筛选在左、搜索在右、整体靠右；移动端搜索在上、筛选在下 */}
+      <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end">
+        <Select
+          value={formatFilter}
+          onValueChange={(v) => setFormatFilter(v as 'all' | ModelItem['format'])}
+        >
+          <SelectTrigger className="w-full sm:w-40">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">{t('settings.model.allFormats')}</SelectItem>
+            <SelectItem value="openai-chat">OpenAI Chat</SelectItem>
+            <SelectItem value="openai-responses">OpenAI Responses</SelectItem>
+            <SelectItem value="anthropic">Anthropic</SelectItem>
+            <SelectItem value="gemini">Gemini</SelectItem>
+          </SelectContent>
+        </Select>
+        <div className="relative w-full sm:max-w-64">
+          <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            type="text"
+            placeholder={t('settings.model.searchPlaceholder')}
+            className="pl-8"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        </div>
+      </div>
+
       {/* 卡片列表 */}
       {models.length === 0 ? (
         <div className="flex items-center justify-center rounded-xl border border-dashed border-border p-8 text-sm text-muted-foreground">
           {t('settings.model.empty')}
         </div>
+      ) : visibleModels.length === 0 ? (
+        <div className="flex items-center justify-center rounded-xl border border-dashed border-border p-8 text-sm text-muted-foreground">
+          {t('settings.model.noMatch')}
+        </div>
       ) : (
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-          <SortableContext items={models.map((m) => m.id)} strategy={verticalListSortingStrategy}>
+          <SortableContext items={visibleModels.map((m) => m.id)} strategy={verticalListSortingStrategy}>
             <div className="flex flex-col gap-2">
-              {models.map((model) => (
+              {visibleModels.map((model) => (
                 <SortableModelCard
                   key={model.id}
                   model={model}
@@ -1735,9 +1801,14 @@ function AddModelDialog({
   const [format, setFormat] = useState<ModelItem['format']>('openai-chat');
   const [endpoint, setEndpoint] = useState('');
   const [apiKey, setApiKey] = useState('');
-  const [contextWindow, setContextWindow] = useState<string>('200k');
-  const [thinkingEnabled, setThinkingEnabled] = useState(false);
-  const [thinkingEffort, setThinkingEffort] = useState<'high' | 'xhigh'>('xhigh');
+  const [inputTokens, setInputTokens] = useState('');
+  const [outputTokens, setOutputTokens] = useState('');
+  const [temperature, setTemperature] = useState(1.0);
+  const [topP, setTopP] = useState(1.0);
+  const [topK, setTopK] = useState(0);
+  const [effortLevel, setEffortLevel] = useState<'off' | 'low' | 'medium' | 'high' | 'custom'>('off');
+  const [customLabel, setCustomLabel] = useState('');
+  const [customEffort, setCustomEffort] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   // 弹窗打开时同步表单数据
@@ -1749,24 +1820,41 @@ function AddModelDialog({
       setFormat(editingModel.format);
       setEndpoint(editingModel.endpoint);
       setApiKey(editingModel.apiKey);
-      setContextWindow(editingModel.contextWindow ?? '200k');
-      setThinkingEnabled(editingModel.thinking?.enabled ?? false);
-      setThinkingEffort(editingModel.thinking?.effort === 'high' ? 'high' : 'xhigh');
+      setInputTokens(
+        String(editingModel.inputTokens ?? parseLegacyWindow(editingModel.contextWindow) ?? ''),
+      );
+      setOutputTokens(String(editingModel.outputTokens ?? ''));
+      setTemperature(editingModel.temperature ?? 1.0);
+      setTopP(editingModel.topP ?? 1.0);
+      setTopK(editingModel.topK ?? 0);
+      const lv = toEffortLevel(editingModel.thinking);
+      setEffortLevel(lv);
+      setCustomLabel(lv === 'custom' ? (editingModel.thinking?.label ?? '') : '');
+      setCustomEffort(lv === 'custom' ? (editingModel.thinking?.effort ?? '') : '');
     } else {
       setName('');
       setModel('');
       setFormat('openai-chat');
       setEndpoint('');
       setApiKey('');
-      setContextWindow('200k');
-      setThinkingEnabled(false);
-      setThinkingEffort('xhigh');
+      setInputTokens('');
+      setOutputTokens('');
+      setTemperature(1.0);
+      setTopP(1.0);
+      setTopK(0);
+      setEffortLevel('off');
+      setCustomLabel('');
+      setCustomEffort('');
     }
   }, [open, editingModel]);
 
   const handleSubmit = async () => {
     if (!name.trim() || !model.trim() || !endpoint.trim()) {
       toast.error(t('settings.model.empty'));
+      return;
+    }
+    if (effortLevel === 'custom' && !customEffort.trim()) {
+      toast.error(t('settings.model.customEffortRequired'));
       return;
     }
     setSubmitting(true);
@@ -1777,8 +1865,23 @@ function AddModelDialog({
         format,
         endpoint: endpoint.trim(),
         apiKey: apiKey.trim(),
-        contextWindow,
-        thinking: { enabled: thinkingEnabled, effort: thinkingEffort as ThinkingEffort },
+        inputTokens: inputTokens.trim() ? Math.max(1, Math.floor(Number(inputTokens))) : undefined,
+        outputTokens: outputTokens.trim()
+          ? Math.max(1, Math.floor(Number(outputTokens)))
+          : undefined,
+        temperature,
+        topP,
+        topK,
+        thinking:
+          effortLevel === 'off'
+            ? { enabled: false }
+            : effortLevel === 'custom'
+              ? {
+                  enabled: true,
+                  effort: customEffort.trim(),
+                  ...(customLabel.trim() ? { label: customLabel.trim() } : {}),
+                }
+              : { enabled: true, effort: effortLevel },
       };
       if (isEdit && editingModel) {
         await updateModel(editingModel.id, payload);
@@ -1861,62 +1964,130 @@ function AddModelDialog({
               placeholder={t('settings.model.apiKeyPlaceholder')}
             />
           </div>
-          {/* 上下文窗口 */}
-          <div className="flex flex-col gap-1.5">
-            <Label>{t('settings.model.contextWindow')}</Label>
-            <Select value={contextWindow} onValueChange={setContextWindow}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="200k">200k</SelectItem>
-                <SelectItem value="400k">400k</SelectItem>
-                <SelectItem value="1m">1m</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          {/* 思考模式 */}
-          <div className="flex items-center justify-between gap-4 py-1">
-            <div className="flex flex-col gap-0.5">
-              <div className="text-sm text-foreground">{t('settings.model.thinkingMode')}</div>
-              <div className="text-xs text-muted-foreground">
-                {t('settings.model.thinkingModeDesc')}
-              </div>
-            </div>
-            <Switch
-              checked={thinkingEnabled}
-              onCheckedChange={setThinkingEnabled}
-              aria-label={t('settings.model.thinkingMode')}
-            />
-          </div>
-          {/* 默认思考强度 */}
-          {thinkingEnabled && (
-            <div className="flex flex-col gap-2">
-              <div className="flex flex-col gap-0.5">
-                <Label>{t('settings.model.defaultThinkingEffort')}</Label>
-                <div className="text-xs text-muted-foreground">
-                  {t('settings.model.defaultThinkingEffortDesc')}
+          {/* 高级配置（默认折叠） */}
+          <Collapsible defaultOpen={false}>
+            <CollapsibleTrigger className="group flex w-full items-center gap-1 rounded-md py-1 text-sm text-muted-foreground transition-colors hover:text-foreground data-[state=open]:text-foreground">
+              <ChevronRight className="size-3.5 transition-transform group-data-[state=open]:rotate-90" />
+              <span>{t('settings.model.advancedConfig')}</span>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <div className="flex flex-col gap-3 pt-1">
+                {/* 上下文窗口：输入 / 输出 */}
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor="model-input-tokens">{t('settings.model.inputWindow')}</Label>
+                    <Input
+                      id="model-input-tokens"
+                      type="number"
+                      min={1}
+                      value={inputTokens}
+                      onChange={(e) => setInputTokens(e.target.value)}
+                      placeholder="200000"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor="model-output-tokens">{t('settings.model.outputWindow')}</Label>
+                    <Input
+                      id="model-output-tokens"
+                      type="number"
+                      min={1}
+                      value={outputTokens}
+                      onChange={(e) => setOutputTokens(e.target.value)}
+                      placeholder="8192"
+                    />
+                  </div>
                 </div>
+                {/* 模型温度 */}
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <Label>{t('settings.model.temperature')}</Label>
+                    <span className="text-sm tabular-nums text-muted-foreground">
+                      {temperature.toFixed(1)}
+                    </span>
+                  </div>
+                  <Slider
+                    value={[temperature]}
+                    min={0}
+                    max={2}
+                    step={0.1}
+                    onValueChange={(v) => setTemperature(v[0] ?? 1)}
+                  />
+                </div>
+                {/* Top P */}
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <Label>{t('settings.model.topP')}</Label>
+                    <span className="text-sm tabular-nums text-muted-foreground">
+                      {topP.toFixed(2)}
+                    </span>
+                  </div>
+                  <Slider
+                    value={[topP]}
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    onValueChange={(v) => setTopP(v[0] ?? 1)}
+                  />
+                </div>
+                {/* Top K */}
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <Label>{t('settings.model.topK')}</Label>
+                    <span className="text-sm tabular-nums text-muted-foreground">{topK}</span>
+                  </div>
+                  <Slider
+                    value={[topK]}
+                    min={0}
+                    max={100}
+                    step={1}
+                    onValueChange={(v) => setTopK(Math.round(v[0] ?? 0))}
+                  />
+                </div>
+                {/* 思考强度 */}
+                <div className="flex flex-col gap-1.5">
+                  <Label>{t('settings.model.thinkingLevel')}</Label>
+                  <Select
+                    value={effortLevel}
+                    onValueChange={(v) => setEffortLevel(v as typeof effortLevel)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="off">{t('settings.model.thinkingOff')}</SelectItem>
+                      <SelectItem value="low">{t('settings.model.thinkingLow')}</SelectItem>
+                      <SelectItem value="medium">{t('settings.model.thinkingMedium')}</SelectItem>
+                      <SelectItem value="high">{t('settings.model.thinkingHigh')}</SelectItem>
+                      <SelectItem value="custom">{t('settings.model.thinkingCustom')}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {/* 自定义等级：名称 + 参数 */}
+                {effortLevel === 'custom' && (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="flex flex-col gap-1.5">
+                      <Label htmlFor="model-custom-label">{t('settings.model.customName')}</Label>
+                      <Input
+                        id="model-custom-label"
+                        value={customLabel}
+                        onChange={(e) => setCustomLabel(e.target.value)}
+                        placeholder="Deep"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <Label htmlFor="model-custom-effort">{t('settings.model.customEffort')}</Label>
+                      <Input
+                        id="model-custom-effort"
+                        value={customEffort}
+                        onChange={(e) => setCustomEffort(e.target.value)}
+                        placeholder="xhigh"
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
-              <ToggleGroup
-                type="single"
-                value={thinkingEffort}
-                onValueChange={(v) => v && setThinkingEffort(v as 'high' | 'xhigh')}
-                variant="outline"
-                className="w-full"
-              >
-                <ToggleGroupItem value="high" className="flex-1">
-                  high
-                </ToggleGroupItem>
-                <ToggleGroupItem value="xhigh" className="flex-1 gap-1">
-                  max
-                  <Badge variant="secondary" className="font-normal">
-                    {t('modelSelector.default')}
-                  </Badge>
-                </ToggleGroupItem>
-              </ToggleGroup>
-            </div>
-          )}
+            </CollapsibleContent>
+          </Collapsible>
         </div>
 
         <DialogFooter>
@@ -1937,7 +2108,10 @@ export function AboutSettings() {
   const { t } = useTranslation();
   return (
     <div className="flex flex-col gap-6 p-6">
-      <h1 className="text-xl font-semibold text-foreground">{t('settings.about.title')}</h1>
+      <div className="flex flex-col gap-1">
+        <h1 className="text-xl font-semibold text-foreground">{t('settings.about.title')}</h1>
+        <p className="text-sm text-muted-foreground">{t('settings.about.subtitle')}</p>
+      </div>
 
       <div className="flex flex-col items-center gap-2 py-6">
         <div className="size-16 overflow-hidden rounded-2xl">
@@ -1988,17 +2162,22 @@ export function ToolsSettings() {
 
   return (
     <div className="flex flex-col gap-4 p-6">
-      <h1 className="text-xl font-semibold text-foreground">{t('settings.nav.tools')}</h1>
-
-      <div className="relative w-64">
-        <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          type="text"
-          placeholder={t('settings.tools.searchPlaceholder')}
-          className="pl-8"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
+      {/* 页头：说明与搜索同一行（移动端换行堆叠） */}
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-1">
+          <h1 className="text-xl font-semibold text-foreground">{t('settings.nav.tools')}</h1>
+          <p className="text-sm text-muted-foreground">{t('settings.tools.subtitle')}</p>
+        </div>
+        <div className="relative w-full sm:w-64 sm:shrink-0">
+          <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            type="text"
+            placeholder={t('settings.tools.searchPlaceholder')}
+            className="pl-8"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        </div>
       </div>
 
       <div className="flex flex-col gap-2">
@@ -2196,7 +2375,12 @@ function PlaceholderSettings({
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      {!embedded && <h1 className="text-xl font-semibold text-foreground">{title}</h1>}
+      {!embedded && (
+        <div className="flex flex-col gap-1">
+          <h1 className="text-xl font-semibold text-foreground">{title}</h1>
+          <p className="text-sm text-muted-foreground">{description}</p>
+        </div>
+      )}
 
       <div className="flex flex-col gap-3">
         <div className="text-sm font-medium text-foreground">{t('settings.placeholder.baseSettings')}</div>

@@ -10,7 +10,10 @@ export type ThinkingEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'x
 
 export interface ThinkingConfig {
   enabled: boolean;
-  effort?: ThinkingEffort;
+  /** 思考强度：预设枚举值或自定义字符串（直接透传给 provider） */
+  effort?: string;
+  /** 自定义等级显示名 */
+  label?: string;
   /** 思考 token 预算（仅 Anthropic budget_tokens / Gemini thinkingBudget 使用） */
   budgetTokens?: number;
 }
@@ -57,6 +60,8 @@ export interface UnifiedRequest {
   temperature?: number;
   max_tokens?: number;
   top_p?: number;
+  /** Top K（仅 Anthropic top_k / Gemini topK 支持；OpenAI 忽略） */
+  top_k?: number;
   stream: boolean;
   thinking?: ThinkingConfig;
   /** 强制使用工具 */
@@ -106,6 +111,16 @@ export interface ModelConfig {
   apiKey: string;
   model: string;
   thinking: ThinkingConfig;
+  /** 输入窗口 token 数（context 引擎压缩预算；provider 不直接使用） */
+  inputTokens?: number;
+  /** 输出窗口 token 数（请求 max_tokens 默认值） */
+  outputTokens?: number;
+  /** 模型温度 0-2 */
+  temperature?: number;
+  /** Top P 0-1 */
+  topP?: number;
+  /** Top K 0-100；0 表示不发送 */
+  topK?: number;
 }
 
 export interface LLMProvider {

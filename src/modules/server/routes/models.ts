@@ -18,7 +18,8 @@ function generateModelId(): string {
 
 type ThinkingPatch = {
   enabled?: boolean;
-  effort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+  effort?: string;
+  label?: string;
   budgetTokens?: number;
 };
 
@@ -33,6 +34,9 @@ function mergeThinking(
   };
   if (patch.effort !== undefined || existing.effort !== undefined) {
     out.effort = patch.effort !== undefined ? patch.effort : existing.effort;
+  }
+  if (patch.label !== undefined || existing.label !== undefined) {
+    out.label = patch.label !== undefined ? patch.label : existing.label;
   }
   if (patch.budgetTokens !== undefined || existing.budgetTokens !== undefined) {
     out.budgetTokens = patch.budgetTokens !== undefined ? patch.budgetTokens : existing.budgetTokens;
@@ -83,6 +87,11 @@ export function createCreateModelHandler(config: ConfigService): RouteHandler {
       endpoint?: string;
       apiKey?: string;
       contextWindow?: string;
+      inputTokens?: number;
+      outputTokens?: number;
+      temperature?: number;
+      topP?: number;
+      topK?: number;
       thinking?: ThinkingPatch;
     };
     if (!body.name || !body.model || !body.format || !body.endpoint) {
@@ -99,6 +108,11 @@ export function createCreateModelHandler(config: ConfigService): RouteHandler {
         apiKey: body.apiKey ?? '',
         thinking: mergeThinking({ enabled: false }, body.thinking),
         ...(body.contextWindow !== undefined ? { contextWindow: body.contextWindow } : {}),
+        ...(body.inputTokens !== undefined ? { inputTokens: body.inputTokens } : {}),
+        ...(body.outputTokens !== undefined ? { outputTokens: body.outputTokens } : {}),
+        ...(body.temperature !== undefined ? { temperature: body.temperature } : {}),
+        ...(body.topP !== undefined ? { topP: body.topP } : {}),
+        ...(body.topK !== undefined ? { topK: body.topK } : {}),
       };
       await config.updateApiConfig({ models: [...apiConfig.models, newModel] });
       return { status: 201, body: newModel };
@@ -137,7 +151,7 @@ export function createDeleteModelHandler(config: ConfigService): RouteHandler {
 
 /**
  * PATCH /api/models/:id —— 更新模型属性。
- * body 可含 name/model/format/endpoint/apiKey/contextWindow/thinking 的任意子集。
+ * body 可含 name/model/format/endpoint/apiKey/contextWindow/采样参数/thinking 的任意子集。
  * thinking 为部分更新（合并到现有值），其余字段直接覆盖。
  */
 export function createUpdateModelHandler(config: ConfigService): RouteHandler {
@@ -153,6 +167,11 @@ export function createUpdateModelHandler(config: ConfigService): RouteHandler {
       endpoint?: string;
       apiKey?: string;
       contextWindow?: string;
+      inputTokens?: number;
+      outputTokens?: number;
+      temperature?: number;
+      topP?: number;
+      topK?: number;
       thinking?: ThinkingPatch;
     };
     try {
@@ -174,6 +193,31 @@ export function createUpdateModelHandler(config: ConfigService): RouteHandler {
           ? { contextWindow: body.contextWindow }
           : existing.contextWindow !== undefined
             ? { contextWindow: existing.contextWindow }
+            : {}),
+        ...(body.inputTokens !== undefined
+          ? { inputTokens: body.inputTokens }
+          : existing.inputTokens !== undefined
+            ? { inputTokens: existing.inputTokens }
+            : {}),
+        ...(body.outputTokens !== undefined
+          ? { outputTokens: body.outputTokens }
+          : existing.outputTokens !== undefined
+            ? { outputTokens: existing.outputTokens }
+            : {}),
+        ...(body.temperature !== undefined
+          ? { temperature: body.temperature }
+          : existing.temperature !== undefined
+            ? { temperature: existing.temperature }
+            : {}),
+        ...(body.topP !== undefined
+          ? { topP: body.topP }
+          : existing.topP !== undefined
+            ? { topP: existing.topP }
+            : {}),
+        ...(body.topK !== undefined
+          ? { topK: body.topK }
+          : existing.topK !== undefined
+            ? { topK: existing.topK }
             : {}),
       };
       const newModels = [...apiConfig.models];
