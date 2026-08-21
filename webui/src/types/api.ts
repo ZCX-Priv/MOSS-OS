@@ -386,7 +386,9 @@ export interface TodoItem {
 export interface ContextFile {
   path: string;
   tokens?: number;
-  reason?: 'read' | 'edit' | 'write' | 'grep' | 'glob';
+  reason?: 'read' | 'edit' | 'write' | 'grep' | 'glob' | 'delete' | 'move' | 'copy';
+  /** 后端存在性校验标记：文件已被删除/移走（HTTP 恢复与 WS 推送时计算） */
+  missing?: boolean;
 }
 
 // ============================================================================

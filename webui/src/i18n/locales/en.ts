@@ -396,6 +396,7 @@ export const en = {
     backToBottom: 'Back to bottom',
     noTodos: 'No todos',
     noContextFiles: 'No context files',
+    fileRemovedFromContext: 'File removed from context',
     noOthers: 'No other context',
     todoCompleted: 'completed',
     todoClose: 'Close',

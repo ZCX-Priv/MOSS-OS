@@ -2,6 +2,8 @@
 // Agent ReAct 循环引擎。
 
 import { t } from '../../core/i18n';
+import { statSync } from 'node:fs';
+import { isAbsolute, resolve as resolvePath } from 'node:path';
 import { buildTools } from './context';
 import { SessionStore, type ContextFile, type Session, type ActiveSkill } from './session';
 import { TaskStore, type TaskItem, type TaskGroup } from './task-store';
@@ -32,6 +34,16 @@ import { DEFAULT_TOOL_PRUNING_CONFIG } from '../context/types';
 
 /** ask 超时兜底上限（即使配置异常也不会让 Promise 永久悬挂） */
 const ASK_TIMEOUT_CEILING_MS = 24 * 60 * 60 * 1000; // 24h
+
+/** 存在性校验：绝对路径直接 stat；相对路径基于 base 解析。非普通文件（目录/丢失/不可访问）视为不存在 */
+function fileExistsAsFile(p: string, base: string): boolean {
+  try {
+    const abs = isAbsolute(p) ? p : resolvePath(base, p);
+    return statSync(abs).isFile();
+  } catch {
+    return false;
+  }
+}
 
 export class AgentEngineImpl implements AgentEngine {
   private readonly sessions: SessionStore;
@@ -109,11 +121,16 @@ export class AgentEngineImpl implements AgentEngine {
     if (!server) return;
 
     try {
-      // 变更路径进 contextFiles（moved 记目标路径；delete/move/copy 首次纳入轨迹）
+      // 变更路径进 contextFiles（moved：旧路径记录迁移到新路径；delete/move/copy 首次纳入轨迹）
       const reason = e.source as ContextFile['reason'];
       if (reason === 'write' || reason === 'edit' || reason === 'delete' || reason === 'move' || reason === 'copy') {
-        this.sessions.addContextFile(e.sessionId, { path: e.destPath ?? e.absPath, reason });
-        const files = this.sessions.getContextFiles(e.sessionId);
+        if (e.kind === 'moved' && e.destPath) {
+          // move：旧路径记录（相对/绝对形态统一匹配）迁移到新路径，避免旧路径残留被误判为丢失
+          this.sessions.migrateContextFilesForMove(e.sessionId, e.absPath, e.destPath);
+        } else {
+          this.sessions.addContextFile(e.sessionId, { path: e.destPath ?? e.absPath, reason });
+        }
+        const files = this.getContextFiles(e.sessionId);
         const totalTokens = this.sessions.estimateContextTokens(e.sessionId);
         const maxTokens = this.config.getAppConfig().agent.maxTokens * 4;
         server.sendToSession(e.sessionId, {
@@ -192,6 +209,8 @@ export class AgentEngineImpl implements AgentEngine {
     const modelDisplayName = resolveModelDisplayName(apiCfg, model);
     const session = this.sessions.getOrCreate(sessionId);
     this.sessions.addUserMessage(session, userMessage);
+    // 记录本次 run 的工作目录（上下文文件相对路径的存在性校验/归一化匹配基准）
+    this.sessions.setLastCwd(session, cwd);
     // 活跃置顶：task.id 即 sessionId；无对应任务时静默返回 null
     this.tasks.touchTask(sessionId);
 
@@ -767,9 +786,11 @@ export class AgentEngineImpl implements AgentEngine {
     return this.services.tryResolve<FileHistoryService>(ServiceNames.FILE_HISTORY);
   }
 
-  /** 获取会话上下文文件轨迹（阶段5.1：供 session-context 路由回填） */
+  /** 获取会话上下文文件轨迹（阶段5.1：供 session-context 路由回填；出口附加 missing 存在性标记） */
   getContextFiles(sessionId: string): ContextFile[] {
-    return this.sessions.getContextFiles(sessionId);
+    const files = this.sessions.getContextFiles(sessionId);
+    const base = this.sessions.get(sessionId)?.lastCwd ?? process.cwd();
+    return files.map(f => ({ ...f, missing: !fileExistsAsFile(f.path, base) }));
   }
 
   /** 估算会话上下文文件累计 token 数（阶段5.1：供 session-context 路由回填） */
@@ -1044,7 +1065,7 @@ export class AgentEngineImpl implements AgentEngine {
           if (!path) break;
           const file: ContextFile = { path, reason: toolName as ContextFile['reason'] };
           this.sessions.addContextFile(sessionId, file);
-          const files = this.sessions.getContextFiles(sessionId);
+          const files = this.getContextFiles(sessionId);
           const totalTokens = this.sessions.estimateContextTokens(sessionId);
           const maxTokens = this.config.getAppConfig().agent.maxTokens * 4;
           server.sendToSession(sessionId, {

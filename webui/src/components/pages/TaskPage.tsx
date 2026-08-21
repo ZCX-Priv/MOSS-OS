@@ -764,17 +764,24 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
                           {t('task.noContextFiles')}
                         </span>
                       ) : (
-                        contextFiles.map((file) => (
-                          <Button
-                            key={file.path}
-                            variant="ghost"
-                            size="xs"
-                            className="justify-start gap-1.5 font-normal"
-                          >
-                            <FileText className="size-3.5 text-primary" />
-                            <span className="truncate">{file.path}</span>
-                          </Button>
-                        ))
+                        contextFiles.map((file) => {
+                          // 文件已被删除（事件 reason）或磁盘上不存在（后端存在性校验 missing）→ 灰色 + 删除线
+                          const removed = file.reason === 'delete' || file.missing === true;
+                          return (
+                            <Button
+                              key={file.path}
+                              variant="ghost"
+                              size="xs"
+                              className={cn('justify-start gap-1.5 font-normal', removed && 'opacity-60')}
+                              title={removed ? t('task.fileRemovedFromContext') : undefined}
+                            >
+                              <FileText className={cn('size-3.5', removed ? 'text-muted-foreground' : 'text-primary')} />
+                              <span className={cn('truncate', removed && 'text-muted-foreground line-through')}>
+                                {file.path}
+                              </span>
+                            </Button>
+                          );
+                        })
                       )}
                     </div>
                   </ScrollArea>

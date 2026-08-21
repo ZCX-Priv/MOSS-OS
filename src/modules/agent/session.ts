@@ -5,7 +5,7 @@
 
 import { t } from '../../core/i18n';
 import { existsSync, readFileSync, readdirSync, renameSync, unlinkSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 import { safeSessionId, writeJsonStore } from '../filesys/store-io';
 import type { AgentMessage, RunStats } from '../contracts';
 import type { TodoItem } from '../tools/todo/shared/store';
@@ -18,6 +18,8 @@ export interface ContextFile {
   path: string;
   tokens?: number;
   reason?: 'read' | 'edit' | 'write' | 'grep' | 'glob' | 'delete' | 'move' | 'copy';
+  /** 运行时存在性标记（engine 出口校验磁盘后附加；不持久化，前端据此显示灰色删除线） */
+  missing?: boolean;
 }
 
 export interface ActiveSkill {
@@ -49,6 +51,8 @@ export interface Session {
   totalTokens: number;
   /** 上下文文件轨迹（read/edit/write/grep/glob 工具累积），随 session 持久化 */
   contextFiles: ContextFile[];
+  /** 最近一次 run 的工作目录（相对路径的存在性校验与归一化匹配基准；旧记录无此字段时回退 process.cwd()） */
+  lastCwd?: string;
   /** 当前激活的 skill 模式（会话级持久；/ 菜单触发） */
   activeSkill?: ActiveSkill;
   /** 会话级权限模式（ask/auto/skip；前端 PermissionModeSelector 切换，随 run 持久化，刷新恢复） */
@@ -382,18 +386,78 @@ export class SessionStore {
   // 上下文文件轨迹（供 WS context-updated 推送使用）
   // ========================================================================
 
-  /** 追加/更新上下文文件轨迹（同 path 存在则更新 reason） */
+  /** 追加/更新上下文文件轨迹（归一化匹配：相对/绝对形态指向同一文件视为同一条记录，更新 reason 不改 path） */
   addContextFile(sessionId: string, file: ContextFile): void {
     const session = this.get(sessionId);
     if (!session) return;
     const list = session.contextFiles;
-    const existing = list.find(f => f.path === file.path);
+    const base = session.lastCwd ?? process.cwd();
+    const key = this.pathKey(file.path, base);
+    const existing = list.find(f => this.pathKey(f.path, base) === key);
     if (existing) {
       existing.reason = file.reason;
     } else {
-      list.push({ ...file });
+      // 显式字段拷贝：防止调用方传入的运行时字段（missing）被持久化进 session
+      list.push({ path: file.path, reason: file.reason, tokens: file.tokens });
     }
     this.markDirty(session);
+  }
+
+  /**
+   * move 迁移：轨迹中解析后等于 oldAbs 的记录（相对/绝对形态统一匹配）更新为新路径
+   * （保持原记录的相对/绝对形态），reason 置 'move'；无匹配时新增新路径记录（旧版行为）。
+   * 匹配多条（相对+绝对双形态并存）时合并为一条，防止旧路径残留被误判为丢失。
+   */
+  migrateContextFilesForMove(sessionId: string, oldAbs: string, newAbs: string): void {
+    const session = this.get(sessionId);
+    if (!session) return;
+    const list = session.contextFiles;
+    const base = session.lastCwd ?? process.cwd();
+    const oldKey = this.pathKey(oldAbs, base);
+    const matched = list.filter(f => this.pathKey(f.path, base) === oldKey);
+    if (matched.length === 0) {
+      list.push({ path: newAbs, reason: 'move' });
+    } else {
+      const first = matched[0];
+      first.path = this.sameFormPath(first.path, newAbs, base);
+      first.reason = 'move';
+      for (let i = list.length - 1; i >= 0; i--) {
+        if (list[i] !== first && this.pathKey(list[i].path, base) === oldKey) {
+          list.splice(i, 1);
+        }
+      }
+    }
+    this.markDirty(session);
+  }
+
+  /** 记录最近一次 run 的工作目录（变化时持久化；相对路径校验/匹配的基准） */
+  setLastCwd(session: Session, cwd: string): void {
+    if (!cwd || session.lastCwd === cwd) return;
+    session.lastCwd = cwd;
+    this.markDirty(session);
+  }
+
+  /** 路径归一化键：相对路径基于 base 解析为绝对路径；Windows 下大小写不敏感（对齐 roots.ts 先例） */
+  private pathKey(p: string, base: string): string {
+    try {
+      const abs = isAbsolute(p) ? p : resolve(base, p);
+      return process.platform === 'win32' ? abs.toLowerCase() : abs;
+    } catch {
+      return process.platform === 'win32' ? p.toLowerCase() : p;
+    }
+  }
+
+  /** 形态保持：旧记录为相对路径且新绝对路径仍在 base 下时，新路径转相对形态；否则用绝对路径 */
+  private sameFormPath(oldPath: string, newAbs: string, base: string): string {
+    if (!isAbsolute(oldPath)) {
+      try {
+        const rel = relative(base, newAbs);
+        if (rel && !rel.startsWith('..') && !isAbsolute(rel)) return rel;
+      } catch {
+        // 转换失败回退绝对路径
+      }
+    }
+    return newAbs;
   }
 
   /** 获取某 session 的上下文文件列表 */

@@ -396,6 +396,7 @@ export const zh = {
     backToBottom: '返回底部',
     noTodos: '暂无待办',
     noContextFiles: '暂无上下文文件',
+    fileRemovedFromContext: '文件已移出上下文',
     noOthers: '暂无其他上下文',
     todoCompleted: '已完成',
     todoClose: '关闭',
