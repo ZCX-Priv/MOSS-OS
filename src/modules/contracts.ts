@@ -212,6 +212,8 @@ export interface AgentRunInput {
 export interface RunStats {
   runId?: string;
   turns: number;
+  /** 本次 run 的轮数（每次 run 重置；与 turns 的会话级累计口径区分，供 X/N 进度显示） */
+  runTurns: number;
   steps: number;
   llmMs: number;
   toolMs: number;
@@ -240,7 +242,8 @@ export type AgentEvent =
 
 export interface AgentRunResult {
   sessionId: string;
-  finishReason: 'stop' | 'length' | 'error' | 'aborted';
+  /** max_turns = 达到工具调用最大轮数上限（agent.maxTurns） */
+  finishReason: 'stop' | 'length' | 'error' | 'aborted' | 'max_turns';
   finalText: string;
   /** 完整的会话历史（含本轮） */
   history: AgentMessage[];

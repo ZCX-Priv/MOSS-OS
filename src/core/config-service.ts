@@ -151,7 +151,8 @@ const appConfigSchema = z.object({
   agent: z.object({
     defaultModel: z.string(),
     maxTokens: z.number().int().positive(),
-    maxTurns: z.number().int().positive(),
+    // 0 = 不限制（无限轮）；1-199 仍合法（向后兼容存量配置，UI 侧最小 200）
+    maxTurns: z.number().int().min(0),
     workingDirectory: z.string(),
   }),
   // tools schema 从 manifest 自动构建（单一真相源），新增工具无需手动改此文件
@@ -206,7 +207,7 @@ export function defaultAppConfig(): AppConfig {
     agent: {
       defaultModel: '',
       maxTokens: 8192,
-      maxTurns: 25,
+      maxTurns: 0,
       workingDirectory: '',
     },
     // tools 默认值从 manifest 自动构建（单一真相源）

@@ -408,6 +408,7 @@ export function useWebSocket(): void {
       }
       case 'done': {
         flushPending(); // 确保流式文本在终止前全部写入
+        const doneEvent = (msg.payload ?? {}) as Extract<AgentEvent, { type: 'done' }>;
         if (sessionId) {
           // 兜底：清理该 session 所有流式残留（pending 丢失/被删时 pending 分支不执行）
           s.finalizeStreamingMessages(sessionId);
@@ -424,6 +425,23 @@ export function useWebSocket(): void {
           // agent.run 结束，后端兜底 reject 未完成的 ask/confirm；前端清空该 session 的待答提问与待确认请求
           useStore.getState().clearPendingAsksBySession(sessionId);
           useStore.getState().clearPendingConfirmsBySession(sessionId);
+          // 轮数触顶：插入提示卡（maxTurnsNotice 驱动卡片渲染 + 继续按钮；
+          // 与后端持久化消息同构，刷新后由 history 恢复同一渲染路径，幂等防重）
+          if (doneEvent.finishReason === 'max_turns') {
+            const st = useStore.getState();
+            const maxTurns = st.appConfig?.agent.maxTurns ?? 0;
+            const cardMessage: TaskMessage = {
+              id: `max_turns_${doneEvent.runId ?? Date.now()}`,
+              role: 'assistant',
+              content: '',
+              timestamp: new Date().toISOString(),
+              maxTurnsNotice: { maxTurns },
+            };
+            const existing = st.messagesBySession[sessionId] ?? [];
+            if (!existing.some((m) => m.id === cardMessage.id)) {
+              st.setMessages(sessionId, [...existing, cardMessage]);
+            }
+          }
         }
         break;
       }

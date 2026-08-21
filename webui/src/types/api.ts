@@ -79,6 +79,8 @@ export interface TaskMessage {
   isError?: boolean;
   /** 压缩卡片数据（上下文引擎压缩完成时插入消息流；驱动 CompactionCard 渲染） */
   compaction?: CompactionRecord;
+  /** 轮数触顶提示卡数据（达到 agent.maxTurns 上限时插入；驱动 MaxTurnsNoticeCard 渲染 + 继续按钮） */
+  maxTurnsNotice?: { maxTurns: number };
 }
 
 export interface Session {
@@ -563,6 +565,8 @@ export interface WSMessage {
 export interface RunStats {
   runId?: string;
   turns: number;
+  /** 本次 run 的轮数（每次 run 重置；X/N 进度显示用） */
+  runTurns: number;
   steps: number;
   llmMs: number;
   toolMs: number;

@@ -78,6 +78,7 @@ import { TerminalView } from '../shared/TerminalView';
 import { ControlHub } from '../shared/ControlHub';
 import { StatsBar } from '../shared/StatsBar';
 import { CompactionCard } from '../shared/CompactionCard';
+import { MaxTurnsNoticeCard } from '../shared/MaxTurnsNoticeCard';
 import { useStore } from '../../store';
 import { useTask } from '../../hooks/useTask';
 import { api } from '../../api/http';
@@ -849,6 +850,8 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
                     truncateDisabled={isGenerating}
                     onTruncate={handleTruncateClick}
                     onCopy={handleCopyMessage}
+                    onContinue={() => void handleSend(t('task.maxTurnsContinue'))}
+                    continueDisabled={isGenerating}
                   />
                 </div>
               ))}
@@ -1405,8 +1408,12 @@ interface MessageBubbleProps {
   truncateDisabled?: boolean;
   onTruncate?: (message: TaskMessage) => void;
   onCopy?: (content: string) => void;
+  /** 轮数触顶卡「继续执行」：发送继续消息起新 run（轮数重新计数） */
+  onContinue?: () => void;
+  /** 生成中禁用继续按钮（防并发 run） */
+  continueDisabled?: boolean;
 }
-const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap, truncateDisabled, onTruncate, onCopy }: MessageBubbleProps) {
+const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap, truncateDisabled, onTruncate, onCopy, onContinue, continueDisabled }: MessageBubbleProps) {
   const { t } = useTranslation();
   // 超长正文截断渲染（防止单条巨型文本布局卡死）；展开后完整渲染。
   // 流式生成中超限时显示尾部（正在生成的内容在末尾），结束后恢复头部截断。
@@ -1432,6 +1439,16 @@ const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap,
   // 上下文压缩卡片：独立于普通气泡的居中卡片（前后 token 对比 + 摘要可展开）
   if (message.compaction) {
     return <CompactionCard compaction={message.compaction} />;
+  }
+  // 轮数触顶提示卡：居中卡片（上限说明 + 继续执行按钮）
+  if (message.maxTurnsNotice) {
+    return (
+      <MaxTurnsNoticeCard
+        notice={message.maxTurnsNotice}
+        onContinue={onContinue}
+        disabled={continueDisabled}
+      />
+    );
   }
   // 防御：tool 已被适配层合并进 assistant；此处不应出现
   if (message.role === 'tool') return null;

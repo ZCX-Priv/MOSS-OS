@@ -115,13 +115,14 @@ export async function compactSession(
     return { record: null, reason: `summarization failed: ${msg}` };
   }
 
-  // 5. 标记被压缩消息（引用同一对象，session.messages 同步生效）
+  // 5. 物理折叠被压缩区间（体积治理：原文不再保留，session 文件与内存有界）。
+  // 原实现仅标记 compacted=true，原文永久驻留内存与磁盘，小时级长任务下只增不减；
+  // 现直接从 session.messages 移除被压缩消息，由摘要消息替代（业界 /compact 标准做法）。
+  // 工具结果保持全文（用户要求：利好 LLM 读大文件）——折叠的只是已退出请求视图的旧消息。
   const compactedSet = new Set(region);
-  for (const m of region) {
-    m.compacted = true;
-  }
 
-  // 6. 摘要消息插入：紧跟被压缩区间最后一条消息之后（保持消息流时序）
+  // 6. 摘要消息插入：紧跟被压缩区间最后一条消息之后（保持消息流时序）。
+  // 插入点必须在物理删除前计算（lastRegionMsg 定位）
   const lastRegionMsg = region[region.length - 1];
   const insertAt = session.messages.lastIndexOf(lastRegionMsg) + 1;
   const summaryMessage: ContextMessage = {
@@ -131,6 +132,9 @@ export async function compactSession(
     timestamp: new Date().toISOString(),
   };
   session.messages.splice(insertAt, 0, summaryMessage);
+  // 按对象身份移除被压缩消息（保护消息 skill-inject/env-context 与已删除死消息不受影响；
+  // 摘要消息不在 removeSet 中自然保留，落在被折叠区间原位）
+  session.messages = session.messages.filter(m => !compactedSet.has(m));
 
   // 7. 压缩后估算（env-context + 新摘要 + 尾部）
   const afterActive = session.messages.filter(m => !m.deletedAt && !m.compacted);
@@ -144,6 +148,7 @@ export async function compactSession(
     beforeTokens,
     afterTokens,
     compactedCount: compactedSet.size,
+    foldedMessageCount: compactedSet.size,
     summary,
     boundaryTimestamp: lastRegionMsg.timestamp,
     summaryModel: input.summaryModelConfigured,

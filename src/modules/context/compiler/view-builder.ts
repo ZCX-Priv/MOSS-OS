@@ -21,6 +21,8 @@ import { ENV_CONTEXT_MSG_NAME } from './env-context';
 export const COMPACTION_SUMMARY_MSG_NAME = 'compaction-summary';
 /** skill message 模式占位消息 name（与 agent engine 一致） */
 export const SKILL_INJECT_MSG_NAME = 'skill-inject';
+/** 轮数触顶提示消息 name（agent engine 写入 session；纯 UI 展示，永不发给 LLM） */
+export const MAX_TURNS_NOTICE_MSG_NAME = 'max-turns-notice';
 
 export interface BuildViewOptions {
   toolPruning: ToolPruningConfig;
@@ -56,8 +58,10 @@ export function buildRequestView(
   staticSystemPrompt: string,
   opts: BuildViewOptions,
 ): BuiltView {
-  // ===== 1. 可见消息（未软删、未压缩） =====
-  const visible = session.messages.filter(m => !m.deletedAt && !m.compacted);
+  // ===== 1. 可见消息（未软删、未压缩；触顶提示消息纯 UI 不发 LLM） =====
+  const visible = session.messages.filter(
+    m => !m.deletedAt && !m.compacted && m.name !== MAX_TURNS_NOTICE_MSG_NAME,
+  );
 
   // ===== 2. 视图消息准备（微压缩 + skill 占位替换；全部新建对象不动原消息） =====
   const prepared: ContextMessage[] = visible.map(m => {

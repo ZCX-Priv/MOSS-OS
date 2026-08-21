@@ -18,7 +18,7 @@
   "agent": {
     "defaultModel": "deepseek-chat",
     "maxTokens": 8192,
-    "maxTurns": 25,
+    "maxTurns": 0,
     "workingDirectory": ""
   },
   "context": {

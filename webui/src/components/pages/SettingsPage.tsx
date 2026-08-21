@@ -144,6 +144,7 @@ export const settingsSearchIndex: SearchableSetting[] = [
   { labelKey: 'settings.context.summaryModel', descriptionKey: 'settings.context.summaryModelDesc', section: 'context' },
   { labelKey: 'settings.context.healerTitle', descriptionKey: 'settings.context.healerDesc', section: 'context' },
   { labelKey: 'settings.nav.tools', section: 'tools' },
+  { labelKey: 'settings.tools.maxTurnsLabel', descriptionKey: 'settings.tools.maxTurnsDesc', section: 'tools' },
   { labelKey: 'settings.nav.specs', section: 'specs' },
   { labelKey: 'settings.nav.safety', section: 'safety' },
   { labelKey: 'settings.nav.logs', section: 'logs' },
@@ -2146,11 +2147,49 @@ export function AboutSettings() {
   );
 }
 
-/* ===== 工具设置（内置/自定义工具启停） ===== */
+/* ===== 工具设置（内置/自定义工具启停 + 执行策略） ===== */
 export function ToolsSettings() {
   const { t } = useTranslation();
   const [query, setQuery] = useState('');
   const { tools, toggleTool } = useTools();
+  const { appConfig, updateAppConfig } = useConfig();
+  const [maxTurnsDraft, setMaxTurnsDraft] = useState('');
+
+  const agentCfg = appConfig?.agent;
+  const maxTurns = agentCfg?.maxTurns ?? 0;
+  const unlimited = maxTurns === 0;
+
+  // config 外部变更（含 WS 热更新）时回填输入框草稿
+  useEffect(() => {
+    setMaxTurnsDraft(maxTurns === 0 ? '' : String(maxTurns));
+  }, [maxTurns]);
+
+  const patchMaxTurns = async (v: number) => {
+    if (!agentCfg || v === maxTurns) return;
+    try {
+      await updateAppConfig({ agent: { ...agentCfg, maxTurns: v } });
+    } catch {
+      // toast 已在 useConfig 内处理
+    }
+  };
+
+  /** 失焦/回车提交：clamp 到 [200, 100000]；未变化或非法则回退显示原值 */
+  const commitMaxTurnsDraft = () => {
+    if (unlimited) return;
+    const raw = maxTurnsDraft.trim();
+    if (raw === '' || raw === String(maxTurns)) {
+      setMaxTurnsDraft(String(maxTurns));
+      return;
+    }
+    const n = Math.round(Number(raw));
+    if (!Number.isFinite(n) || n <= 0) {
+      setMaxTurnsDraft(String(maxTurns));
+      return;
+    }
+    const clamped = Math.max(200, Math.min(100000, n));
+    setMaxTurnsDraft(String(clamped));
+    void patchMaxTurns(clamped);
+  };
 
   const q = query.trim().toLowerCase();
   const filteredTools = q
@@ -2179,6 +2218,46 @@ export function ToolsSettings() {
           />
         </div>
       </div>
+
+      {/* 执行策略：工具调用最大轮数（面向小时级长程任务） */}
+      <Card className="flex flex-col gap-3 p-4">
+        <div className="text-sm font-medium text-foreground">{t('settings.tools.execPolicyTitle')}</div>
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex min-w-0 flex-col gap-0.5">
+            <span className="text-sm text-foreground">{t('settings.tools.maxTurnsLabel')}</span>
+            <span className="text-xs text-muted-foreground">{t('settings.tools.maxTurnsDesc')}</span>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {unlimited ? (
+              <span className="text-sm tabular-nums text-muted-foreground">
+                {t('settings.tools.maxTurnsUnlimited')}
+              </span>
+            ) : (
+              <Input
+                type="number"
+                min={200}
+                max={100000}
+                value={maxTurnsDraft}
+                onChange={(e) => setMaxTurnsDraft(e.target.value)}
+                onBlur={commitMaxTurnsDraft}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') e.currentTarget.blur();
+                }}
+                className="h-8 w-24 text-right"
+                aria-label={t('settings.tools.maxTurnsLabel')}
+              />
+            )}
+            <Switch
+              checked={unlimited}
+              onCheckedChange={(v) => void patchMaxTurns(v ? 0 : 200)}
+              aria-label={t('settings.tools.maxTurnsUnlimited')}
+            />
+          </div>
+        </div>
+        {!unlimited && (
+          <div className="text-xs text-muted-foreground">{t('settings.tools.maxTurnsMinHint')}</div>
+        )}
+      </Card>
 
       <div className="flex flex-col gap-2">
         {filteredTools.length === 0 && (

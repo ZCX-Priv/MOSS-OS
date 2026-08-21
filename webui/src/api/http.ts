@@ -102,6 +102,18 @@ function adaptAgentMessages(raw: unknown[]): TaskMessage[] {
     // 压缩摘要消息（compaction-summary）与 day-rollover/env-context 不进消息流：
     // 压缩卡片由 getCompactions 历史恢复（TaskPage 合并），其余为引擎内部锚定消息
     if (m.name === 'compaction-summary' || m.name === 'env-context' || m.name === 'day-rollover') continue;
+    // 轮数触顶提示消息：转为提示卡（maxTurnsNotice 驱动卡片渲染 + 继续按钮）
+    if (m.name === 'max-turns-notice') {
+      const noticeMeta = m.metadata as { maxTurns?: number } | undefined;
+      result.push({
+        id: `${i}-max-turns-notice`,
+        role: 'assistant',
+        content: m.content ?? '',
+        maxTurnsNotice: { maxTurns: typeof noticeMeta?.maxTurns === 'number' ? noticeMeta.maxTurns : 0 },
+        timestamp: m.timestamp ?? new Date().toISOString(),
+      });
+      continue;
+    }
     if (m.role === 'tool') {
       // 合并到前一条 assistant 的 toolResults；孤立 tool 消息（前一条非 assistant）丢弃
       const prev = result[result.length - 1];

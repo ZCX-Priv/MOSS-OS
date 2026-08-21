@@ -80,6 +80,23 @@ export class SessionStore {
   /** sessionId → groupId 解析器（TaskStore 总管索引；未注入/未知返回 null → 兜底扫描/默认组） */
   private readonly resolveGroupId: (sessionId: string) => string | null;
 
+  // ========================================================================
+  // 写盘降载（面向小时级长程任务）：消息级写入只标脏，防抖批量刷盘。
+  // 原实现每条消息全量重写 session 文件 + fsync，长任务下写盘量 O(M²) 平方级增长；
+  // 现改为 2s 防抖 + 10 条消息硬上限，崩溃窗口内丢失的尾部消息由
+  // loadFromDisk 的悬挂 tool_calls 自愈兜底（防 provider 400）。
+  // ========================================================================
+  /** 脏 session 集：sessionId → { session, 脏期间新增消息数 } */
+  private readonly dirtySessions = new Map<string, { session: Session; msgCount: number }>();
+  /** 防抖刷盘定时器 */
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
+  /** dispose 后不再走防抖（直接写盘） */
+  private disposed = false;
+  /** 防抖刷盘延迟（ms） */
+  private static readonly FLUSH_DELAY_MS = 2000;
+  /** 脏期间新增消息数硬上限（超限立即刷，限制崩溃丢失窗口） */
+  private static readonly FLUSH_MSG_THRESHOLD = 10;
+
   constructor(
     env: Environment,
     logger: Logger,
@@ -149,8 +166,9 @@ export class SessionStore {
     }
   }
 
-  /** 把单个 session 持久化到磁盘（store-io 统一原子写：tmp+fsync+rename+EXDEV 回退） */
-  private saveSession(session: Session): void {
+  /** 把单个 session 立即持久化到磁盘（store-io 统一原子写：tmp+fsync+rename+EXDEV 回退）。
+   * 关键路径专用：run 结束 / 撤回 / 压缩持久化 / 启动迁移 / dispose 后写入 */
+  private saveSessionNow(session: Session): void {
     try {
       writeJsonStore(this.sessionFilePath(session.id), session);
     } catch (err) {
@@ -159,6 +177,51 @@ export class SessionStore {
         error: err instanceof Error ? err.message : String(err),
       });
     }
+  }
+
+  /** 防抖标脏：消息级写入（user/assistant/tool/contextFiles 等）只标记待写，
+   * 由定时器（2s）或消息计数硬上限（10 条）统一刷盘 */
+  private markDirty(session: Session): void {
+    if (this.disposed) {
+      this.saveSessionNow(session);
+      return;
+    }
+    const cur = this.dirtySessions.get(session.id);
+    if (cur) {
+      cur.msgCount++;
+      if (cur.msgCount >= SessionStore.FLUSH_MSG_THRESHOLD) {
+        this.dirtySessions.delete(session.id);
+        this.saveSessionNow(session);
+        return;
+      }
+    } else {
+      this.dirtySessions.set(session.id, { session, msgCount: 1 });
+    }
+    if (!this.flushTimer) {
+      this.flushTimer = setTimeout(() => {
+        this.flushTimer = null;
+        this.flushAllDirty();
+      }, SessionStore.FLUSH_DELAY_MS);
+    }
+  }
+
+  /** 批量刷盘：遍历所有脏 session 立即写盘（saveSessionNow 内部捕获错误） */
+  private flushAllDirty(): void {
+    if (this.dirtySessions.size === 0) return;
+    for (const [id, entry] of Array.from(this.dirtySessions.entries())) {
+      this.dirtySessions.delete(id);
+      this.saveSessionNow(entry.session);
+    }
+  }
+
+  /** 释放资源（engine.destroy 调用链）：停定时器并强制刷盘全部脏 session */
+  dispose(): void {
+    this.disposed = true;
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+    this.flushAllDirty();
   }
 
   /**
@@ -244,10 +307,16 @@ export class SessionStore {
           ...(parsed.lastRunStats ? { lastRunStats: parsed.lastRunStats } : {}),
           ...(parsed.lastTruncation ? { lastTruncation: parsed.lastTruncation } : {}),
         };
+        // 崩溃自愈：防抖落盘窗口内进程崩溃可能丢尾部 tool 结果——补错误结果
+        // 恢复 tool_use/tool_result 配对（否则 session 复用时 provider 报 HTTP 400）
+        const healedCount = healDanglingToolCalls(session.messages);
+        if (healedCount > 0) {
+          this.logger.warn(t('agent.healedDanglingToolCalls', { count: healedCount }), { sessionId });
+        }
         this.sessions.set(session.id, session);
-        if (dirty) {
-          // 重写瘦身：旧 systemPrompt 等废弃字段不再写入，自然消失
-          this.saveSession(session);
+        if (dirty || healedCount > 0) {
+          // 重写瘦身：旧 systemPrompt 等废弃字段不再写入，自然消失；自愈结果同步落盘
+          this.saveSessionNow(session);
         }
         return session;
       }
@@ -274,7 +343,7 @@ export class SessionStore {
         contextFiles: [],
       };
       this.sessions.set(sessionId, session);
-      this.saveSession(session);
+      this.markDirty(session);
       this.logger.debug(t('agent.sessionCreated', { sessionId }));
     }
     return session;
@@ -295,6 +364,7 @@ export class SessionStore {
 
   delete(sessionId: string): void {
     this.sessions.delete(sessionId);
+    this.dirtySessions.delete(sessionId);
     try {
       const filePath = this.sessionFilePath(sessionId);
       if (existsSync(filePath)) {
@@ -317,13 +387,13 @@ export class SessionStore {
     const session = this.get(sessionId);
     if (!session) return;
     const list = session.contextFiles;
-    const existing = list.find((f) => f.path === file.path);
+    const existing = list.find(f => f.path === file.path);
     if (existing) {
       existing.reason = file.reason;
     } else {
       list.push({ ...file });
     }
-    this.saveSession(session);
+    this.markDirty(session);
   }
 
   /** 获取某 session 的上下文文件列表 */
@@ -346,7 +416,7 @@ export class SessionStore {
   addUserMessage(session: Session, content: string): void {
     session.messages.push({ role: 'user', content, timestamp: new Date().toISOString() });
     session.updatedAt = new Date().toISOString();
-    this.saveSession(session);
+    this.markDirty(session);
   }
 
   /** 设置会话级权限模式（变化时持久化；引擎每次 run 解析后调用） */
@@ -354,7 +424,7 @@ export class SessionStore {
     if (session.permissionMode === mode) return;
     session.permissionMode = mode;
     session.updatedAt = new Date().toISOString();
-    this.saveSession(session);
+    this.markDirty(session);
   }
 
   /** 写入最近一次 run 统计（不落盘，由调用方按需 persistSession） */
@@ -377,7 +447,7 @@ export class SessionStore {
       timestamp: new Date().toISOString(),
     });
     session.updatedAt = new Date().toISOString();
-    this.saveSession(session);
+    this.markDirty(session);
   }
 
   /** 添加工具结果消息 */
@@ -398,7 +468,7 @@ export class SessionStore {
       timestamp: new Date().toISOString(),
     });
     session.updatedAt = new Date().toISOString();
-    this.saveSession(session);
+    this.markDirty(session);
   }
 
   // ========================================================================
@@ -446,7 +516,7 @@ export class SessionStore {
     session.messages = session.messages.filter(m => !m.deletedAt);
     if (session.messages.length !== before) {
       session.lastTruncation = undefined;
-      this.saveSession(session);
+      this.saveSessionNow(session);
     }
   }
 
@@ -466,7 +536,7 @@ export class SessionStore {
     }
     if (count > 0) {
       session.updatedAt = now;
-      this.saveSession(session);
+      this.saveSessionNow(session);
     }
     return count;
   }
@@ -483,14 +553,14 @@ export class SessionStore {
     session.lastTruncation = undefined;
     if (restored > 0) {
       session.updatedAt = new Date().toISOString();
-      this.saveSession(session);
+      this.saveSessionNow(session);
     }
     return restored;
   }
 
-  /** 公共持久化入口（供 engine 在截断后写入 lastTruncation） */
+  /** 公共持久化入口（供 engine 在 run 结束/截断后写入；立即落盘保证关键状态持久） */
   persistSession(session: Session): void {
-    this.saveSession(session);
+    this.saveSessionNow(session);
   }
 
   /**
@@ -512,7 +582,46 @@ export class SessionStore {
     }
     if (wrote) {
       session.updatedAt = new Date().toISOString();
-      this.saveSession(session);
+      this.markDirty(session);
     }
   }
+}
+
+/**
+ * 崩溃自愈：修复悬挂 tool_calls（assistant 带 toolCalls 但缺少对应 tool 结果消息）。
+ * 场景：防抖落盘窗口内进程崩溃丢尾部消息 / 旧版中断未补结果。
+ * 为每个缺失的 toolCall 补一条 isError 错误结果（紧跟所属 assistant 消息之后），
+ * 恢复 tool_use/tool_result 配对，防 session 复用时 provider 报 HTTP 400。
+ * @returns 补写的消息数
+ */
+function healDanglingToolCalls(messages: AgentMessage[]): number {
+  const answered = new Set<string>();
+  for (const m of messages) {
+    if (m.role === 'tool' && m.toolCallId) answered.add(m.toolCallId);
+  }
+  const inserts: Array<{ index: number; msg: AgentMessage }> = [];
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
+    if (m.role !== 'assistant' || !m.toolCalls) continue;
+    for (const tc of m.toolCalls) {
+      if (answered.has(tc.id)) continue;
+      answered.add(tc.id);
+      inserts.push({
+        index: i + 1,
+        msg: {
+          role: 'tool',
+          toolCallId: tc.id,
+          name: tc.name,
+          content: 'Error: result lost due to crash (auto-healed)',
+          isError: true,
+          timestamp: m.timestamp ?? new Date().toISOString(),
+        },
+      });
+    }
+  }
+  // 倒序插入保证索引稳定（同索引多条错误结果之间的相对顺序无意义）
+  for (let k = inserts.length - 1; k >= 0; k--) {
+    messages.splice(inserts[k].index, 0, inserts[k].msg);
+  }
+  return inserts.length;
 }

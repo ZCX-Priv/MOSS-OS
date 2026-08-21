@@ -211,6 +211,7 @@ export interface AppConfig {
   agent: {
     defaultModel: string;
     maxTokens: number;
+    /** 单次 run 的最大轮数；0 = 不限制（无限轮） */
     maxTurns: number;
     workingDirectory: string;
   };

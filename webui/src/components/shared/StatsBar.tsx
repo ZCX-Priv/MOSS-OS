@@ -22,7 +22,7 @@ function fmtTokens(n: number): string {
 }
 
 /** 数值项：值变化时短暂高亮脉冲（细腻反馈；流式期间与动画关闭时跳过防闪烁） */
-function StatItem({ label, value, pulse }: { label: string; value: string; pulse?: boolean }) {
+function StatItem({ label, value, pulse, warning }: { label: string; value: string; pulse?: boolean; warning?: boolean }) {
   const [hot, setHot] = useState(false);
   const prev = useRef(value);
   useEffect(() => {
@@ -36,7 +36,13 @@ function StatItem({ label, value, pulse }: { label: string; value: string; pulse
   return (
     <span className="anim-stat whitespace-nowrap tabular-nums">
       {label}{' '}
-      <span className={cn('text-foreground/80 transition-colors duration-150', hot && 'text-primary')}>
+      <span
+        className={cn(
+          'text-foreground/80 transition-colors duration-150',
+          warning && 'text-amber-500 dark:text-amber-400',
+          hot && 'text-primary',
+        )}
+      >
         {value}
       </span>
     </span>
@@ -50,6 +56,7 @@ function Separator() {
 /** 无数据时的全 0 兜底（常驻显示） */
 const EMPTY_STATS: RunStats = {
   turns: 0,
+  runTurns: 0,
   steps: 0,
   llmMs: 0,
   toolMs: 0,
@@ -72,6 +79,11 @@ export function StatsBar({ stats, contextStats }: { stats?: RunStats; contextSta
     (st) => st.generatingBySession[st.activeSessionId ?? ''] ?? false,
   );
   const pulse = statAnimOn && !generating;
+  // 轮数上限（agent.maxTurns；0=无限）：有限时第一项切换为本次 run 进度 X/N
+  const maxTurns = useStore((st) => st.appConfig?.agent.maxTurns) ?? 0;
+  const finiteTurns = maxTurns > 0;
+  const runTurns = s.runTurns ?? 0;
+  const nearTurnLimit = finiteTurns && runTurns / maxTurns >= 0.9;
   // 引擎数据优先：缓存命中用 avgHitRate（与右侧面板徽章同源）；无样本降级累计口径
   const cacheHitPct =
     contextStats?.avgHitRate != null
@@ -85,7 +97,16 @@ export function StatsBar({ stats, contextStats }: { stats?: RunStats; contextSta
 
   return (
     <div className="flex w-full flex-wrap items-center justify-center gap-x-2.5 gap-y-0.5 px-3 pb-1 pt-0.5 text-[11px] text-muted-foreground">
-      <StatItem label="" value={t('stats.turnsSteps', { turns: s.turns, steps: s.steps })} pulse={pulse} />
+      <StatItem
+        label=""
+        value={
+          finiteTurns
+            ? t('stats.turnsProgress', { current: runTurns, max: maxTurns })
+            : t('stats.turnsSteps', { turns: s.turns, steps: s.steps })
+        }
+        pulse={pulse}
+        warning={nearTurnLimit}
+      />
       <Separator />
       <StatItem label={t('stats.llmLabel')} value={fmtMs(s.llmMs)} pulse={pulse} />
       <Separator />

@@ -27,7 +27,7 @@ import { ServiceNames } from '../../core/types';
 import type { AskOutcome, AskPayload, ToolResult } from '../tools/types';
 import type { SkillRegistry } from '../tools/use_skill/registry';
 import { readSessionTodoStore, getSessionTodoPath } from '../tools/todo/shared/store';
-import { buildStaticSystemPrompt, buildRequestView } from '../context/compiler';
+import { buildStaticSystemPrompt, buildRequestView, MAX_TURNS_NOTICE_MSG_NAME } from '../context/compiler';
 import { DEFAULT_TOOL_PRUNING_CONFIG } from '../context/types';
 
 /** ask 超时兜底上限（即使配置异常也不会让 Promise 永久悬挂） */
@@ -91,12 +91,13 @@ export class AgentEngineImpl implements AgentEngine {
     }
   }
 
-  /** 释放资源（模块 destroy 时调用）：取消 filesys 事件订阅 */
+  /** 释放资源（模块 destroy 时调用）：取消 filesys 事件订阅 + 强制刷盘脏 session（写盘降载兜底） */
   dispose(): void {
     if (this.unsubFilesys) {
       this.unsubFilesys();
       this.unsubFilesys = null;
     }
+    this.sessions.dispose();
   }
 
   /** filesys 变更事件 → WS 推送 + contextFiles 轨迹 */
@@ -221,20 +222,23 @@ export class AgentEngineImpl implements AgentEngine {
     }
     const tools = buildTools(toolRegistry, mcpTools);
 
-    // ReAct 循环
+    // ReAct 循环（maxTurns=0 表示不限制 → Infinity；while 条件与触顶判断天然兼容）
     let turn = 0;
-    const maxTurns = cfg.maxTurns;
+    const maxTurns = cfg.maxTurns === 0 ? Infinity : cfg.maxTurns;
     let finalText = '';
     let finishReason: AgentRunResult['finishReason'] = 'stop';
+    // 最后一轮自然结束标记：最后一轮恰好无工具调用时是正常完成，不应判为触顶
+    let completedNaturally = false;
 
     // 会话级累计统计：以 session.lastRunStats 为种子跨 run 累加（刷新/重启后继续累计；
     // 轮/工具结束与 done 时推送 stats-updated）
     const prevStats = session.lastRunStats;
     const stats: RunStats = prevStats
-      ? { ...prevStats, runId: input.runId }
+      ? { ...prevStats, runId: input.runId, runTurns: 0 }
       : {
           runId: input.runId,
           turns: 0,
+          runTurns: 0,
           steps: 0,
           llmMs: 0,
           toolMs: 0,
@@ -280,6 +284,12 @@ export class AgentEngineImpl implements AgentEngine {
         }
       } else {
         messages = this.buildFallbackMessages(session, cwd, model, modelDisplayName);
+      }
+
+      // 最后一轮收尾提醒：有限轮数模式下，本轮是最后一个允许的轮次时注入 user 提醒
+      // （仅本次请求视图、不持久化），让 LLM 主动总结进展而非被拦腰截断
+      if (maxTurns !== Infinity && turn === maxTurns) {
+        messages = [...messages, { role: 'user', content: t('agent.finalTurnReminder') }];
       }
 
       const req: UnifiedRequest = {
@@ -393,6 +403,7 @@ export class AgentEngineImpl implements AgentEngine {
         const elapsed = performance.now() - turnStart;
         const ttft = ttftMs >= 0 ? ttftMs : elapsed;
         stats.turns++;
+        stats.runTurns = turn;
         stats.llmMs += elapsed;
         stats.ttftCount++;
         stats.ttftMsTotal += ttft;
@@ -442,6 +453,7 @@ export class AgentEngineImpl implements AgentEngine {
         if (finishReason !== 'length' && finishReason !== 'error') {
           finishReason = 'stop';
         }
+        completedNaturally = true;
         break;
       }
 
@@ -503,9 +515,18 @@ export class AgentEngineImpl implements AgentEngine {
       finalText = assistantText;
     }
 
-    if (turn >= maxTurns && finishReason === 'stop') {
+    // 触顶判定：轮数耗尽且非自然结束（最后一轮恰好完成）/错误/中断 → max_turns
+    if (turn >= maxTurns && !completedNaturally && finishReason === 'stop') {
       this.logger.warn(t('agent.reachedMaxTurns', { maxTurns }), { sessionId });
-      finishReason = 'length';
+      finishReason = 'max_turns';
+      // 触顶提示消息持久化进 session（刷新后由 history 恢复渲染；view-builder 排除不发给 LLM）
+      session.messages.push({
+        role: 'user',
+        name: MAX_TURNS_NOTICE_MSG_NAME,
+        content: t('agent.maxTurnsNotice', { maxTurns }),
+        metadata: { maxTurns },
+        timestamp: new Date().toISOString(),
+      });
     }
 
     // 持久化本次 run 统计（刷新后经 GET /api/session/:id 恢复指标栏）

@@ -132,6 +132,8 @@ export interface CompactionRecord {
   afterTokens: number;
   /** 被压缩的消息条数 */
   compactedCount: number;
+  /** 物理折叠的消息条数（新实现 = compactedCount；旧记录仅标记未折叠时缺省） */
+  foldedMessageCount?: number;
   /** 摘要全文（不含 <compaction-summary> 标签） */
   summary: string;
   /** 被压缩区间末条消息 timestamp（前端卡片定位） */
