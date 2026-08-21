@@ -137,6 +137,10 @@ interface UIState {
   // --- 右侧边栏标签页（全局，IndexedDB 持久化） ---
   sidebarTabs: SidebarTab[];
   activeSidebarTabId: string | null;
+  /** 右侧面板展开态（会话级内存态：各会话独立互不影响，重挂载不重置；'' key = 空白页） */
+  rightPanelOpenBySession: Record<string, boolean | undefined>;
+  /** 右侧面板宽度 px（全局内存态；UI 偏好跨会话共享，拖拽调宽后重挂载不重置） */
+  rightPanelWidth: number;
 
   // --- 渲染设置（render 模块，IndexedDB 持久化） ---
   renderSettings: RenderSettings;
@@ -317,6 +321,12 @@ interface UIActions {
   /** 拖拽重排标签页顺序 */
   reorderSidebarTabs: (fromId: string, toId: string) => void;
 
+  // 右侧面板展开态（会话级）/ 宽度（全局），内存态不持久化
+  setRightPanelOpen: (sessionId: string, v: boolean) => void;
+  setRightPanelWidth: (v: number) => void;
+  /** 面板开合状态随对话转移：空白页（''）发送首条消息创建新会话时继承，避免导航重挂载后收起 */
+  migrateRightPanelState: (fromSessionId: string, toSessionId: string) => void;
+
   // 持久化状态注入（main.tsx 预填充 IndexedDB 后、渲染前调用）
   hydratePersisted: (patch: PersistedState) => void;
 }
@@ -432,6 +442,10 @@ export const useStore = create<Store>((set) => ({
   sidebarTabs: [defaultSidebarTab()],
   activeSidebarTabId: 'default-summary',
 
+  // --- 右侧面板展开态/宽度（内存态；默认收起 320px） ---
+  rightPanelOpenBySession: {},
+  rightPanelWidth: 320,
+
   // --- Actions: 会话 ---
   setActiveSession: (id) => set({ activeSessionId: id }),
   setSessions: (sessions) => set({ sessions }),
@@ -448,6 +462,7 @@ export const useStore = create<Store>((set) => ({
       const { [id]: _omitBackup, ...restBackups } = state.truncateBackups;
       const { [id]: _omitStats, ...restStats } = state.runStatsBySession;
       const { [id]: _omitHub, ...restHub } = state.hubActiveModuleBySession;
+      const { [id]: _omitPanel, ...restPanel } = state.rightPanelOpenBySession;
       return {
         sessions: state.sessions.filter((s) => s.id !== id),
         messagesBySession: restMessages,
@@ -460,6 +475,7 @@ export const useStore = create<Store>((set) => ({
         truncateBackups: restBackups,
         runStatsBySession: restStats,
         hubActiveModuleBySession: restHub,
+        rightPanelOpenBySession: restPanel,
         activeSessionId: state.activeSessionId === id ? null : state.activeSessionId,
       };
     }),
@@ -843,6 +859,20 @@ export const useStore = create<Store>((set) => ({
       tabs.splice(to, 0, moved);
       void idbSet('moss-sidebar-tabs', tabs);
       return { sidebarTabs: tabs };
+    }),
+
+  // --- Actions: 右侧面板展开态/宽度（内存态，不持久化） ---
+  setRightPanelOpen: (sessionId, v) =>
+    set((state) => ({
+      rightPanelOpenBySession: { ...state.rightPanelOpenBySession, [sessionId]: v },
+    })),
+  setRightPanelWidth: (v) => set({ rightPanelWidth: v }),
+  migrateRightPanelState: (fromSessionId, toSessionId) =>
+    set((state) => {
+      if (fromSessionId === toSessionId) return state;
+      const fromOpen = state.rightPanelOpenBySession[fromSessionId] ?? false;
+      const { [fromSessionId]: _omit, ...rest } = state.rightPanelOpenBySession;
+      return { rightPanelOpenBySession: { ...rest, [toSessionId]: fromOpen } };
     }),
 
   // --- Actions: 持久化状态注入 ---

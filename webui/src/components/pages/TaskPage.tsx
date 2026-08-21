@@ -111,8 +111,13 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
   const { t } = useTranslation();
   const { taskId = '' } = useParams<{ taskId: string }>();
   const navigate = useNavigate();
-  const [rightPanelOpen, setRightPanelOpen] = useState(false);
-  const [rightPanelWidth, setRightPanelWidth] = useState(320);
+  // 右侧面板展开态（会话级）/宽度（全局）：store 内存态而非本地 state，TaskPage 因路由
+  // 切换重挂载时保持不重置；开合按会话独立（一个会话收起不影响其他会话），宽度作为
+  // UI 偏好跨会话共享；taskId 为空串（空白页）时读写 '' key，建会话时随对话转移
+  const rightPanelOpen = useStore((s) => s.rightPanelOpenBySession[taskId] ?? false);
+  const setRightPanelOpen = useStore((s) => s.setRightPanelOpen);
+  const rightPanelWidth = useStore((s) => s.rightPanelWidth);
+  const setRightPanelWidth = useStore((s) => s.setRightPanelWidth);
   const isMobile = useIsMobile();
 
   // 右侧面板拖拽调宽（仅桌面端内嵌 aside）
@@ -476,7 +481,11 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
         sendMessage(text, { taskId });
       } else {
         const newTaskId = await sendMessage(text);
-        if (newTaskId) navigate(`/task/${newTaskId}`);
+        if (newTaskId) {
+          // 空白页创建新会话：面板开合状态随对话转移到新会话，避免 navigate 重挂载后收起
+          useStore.getState().migrateRightPanelState('', newTaskId);
+          navigate(`/task/${newTaskId}`);
+        }
       }
     },
     [taskId, sendMessage, navigate, isPinned, scrollToBottom],
@@ -838,7 +847,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
             variant="ghost"
             size="icon-sm"
             className="ml-auto"
-            onClick={() => setRightPanelOpen(!rightPanelOpen)}
+            onClick={() => setRightPanelOpen(taskId, !rightPanelOpen)}
             title={rightPanelOpen ? t('task.collapseRightPanel') : t('task.expandRightPanel')}
           >
             <PanelRight />
@@ -854,7 +863,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
           <Button
             variant="ghost"
             size="icon-sm"
-            onClick={() => setRightPanelOpen(!rightPanelOpen)}
+            onClick={() => setRightPanelOpen(taskId, !rightPanelOpen)}
             title={rightPanelOpen ? t('task.collapseRightPanel') : t('task.expandRightPanel')}
           >
             <PanelRight />
@@ -1199,7 +1208,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
 
       {/* Right Panel — 移动端：Sheet 抽屉；桌面端：内嵌 aside */}
       {isMobile ? (
-        <Sheet open={rightPanelOpen} onOpenChange={setRightPanelOpen}>
+        <Sheet open={rightPanelOpen} onOpenChange={(open) => setRightPanelOpen(taskId, open)}>
           <SheetContent
             side="right"
             showCloseButton={false}
