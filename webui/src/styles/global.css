@@ -230,53 +230,42 @@ pre,
 }
 
 /* ============================================================
-   跑马灯边缘（追逐式边缘灯光，通用类 .marquee-border）
-   conic-gradient 光环经 mask 只露出 padding 一圈，形状由
-   border-radius: inherit 决定——精确贴合任意尺寸的胶囊/圆形边缘；
-   @property 注册角度变量使 from 角可动画，光弧带头亮尾沿边缘
-   顺时针奔跑；drop-shadow 辉光增强"灯"感。
-   减弱动效 / 不支持 @property 的旧浏览器：停止奔跑，保留静态光弧。
+   返回底部按钮：跑马灯（追逐式边缘灯光）
+   实测像素的 SVG rect(rx=半高) 1:1 贴合胶囊边缘；pathLength=100
+   归一化周长，dashoffset 0→-100 线性动画 ⇒ 光弧沿边缘**匀速**
+   奔跑（弧长线性，不受直线段/圆角几何差异影响）。
+   .is-on 控制随流式状态淡入淡出；熄灭时暂停奔跑省重绘；
+   减弱动效：停止奔跑，保留静态光弧。
    ============================================================ */
-@property --marquee-angle {
-  syntax: '<angle>';
-  initial-value: 0deg;
-  inherits: false;
-}
-@keyframes marquee-spin {
+@keyframes marquee-run {
   to {
-    --marquee-angle: 1turn;
+    stroke-dashoffset: -100;
   }
 }
-.marquee-border {
-  position: relative;
-}
-.marquee-border::before {
-  content: '';
+.marquee-ring {
   position: absolute;
-  inset: -1.5px;
-  border-radius: inherit;
-  padding: 2px;
-  background: conic-gradient(
-    from var(--marquee-angle),
-    transparent 0turn,
-    transparent 0.7turn,
-    var(--primary) 0.95turn,
-    var(--primary) 1turn
-  );
-  -webkit-mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  mask-composite: exclude;
-  filter: drop-shadow(0 0 3px var(--primary));
+  inset: -6px; /* 与组件 RING_PAD 一致：为描边与辉光留出外扩空间 */
+  overflow: visible;
   pointer-events: none;
-  animation: marquee-spin 1.4s linear infinite;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+.marquee-ring.is-on {
+  opacity: 1;
+}
+.marquee-ring:not(.is-on) .marquee-run {
+  animation-play-state: paused;
+}
+.marquee-run {
+  stroke: var(--primary);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-dasharray: 16 84;
+  filter: drop-shadow(0 0 3px var(--primary));
+  animation: marquee-run 1.5s linear infinite;
 }
 @media (prefers-reduced-motion: reduce) {
-  .marquee-border::before {
+  .marquee-run {
     animation: none;
   }
 }
