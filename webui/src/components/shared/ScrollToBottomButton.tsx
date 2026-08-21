@@ -1,7 +1,7 @@
 // UI/src/components/shared/ScrollToBottomButton.tsx
 // 「返回底部」悬浮按钮：定位由调用方容器决定（absolute bottom-3 left-1/2 -translate-x-1/2）。
 // - 桌面端：文字「返回底部」+ 向下箭头；移动端（<768px）：仅箭头（纯 CSS 响应式，零状态开销）。
-// - streaming && visible 时边缘出现追逐式跑马灯（光弧沿胶囊边缘顺时针奔跑，.marquee-run，见 global.css）。
+// - streaming && visible 时边缘出现追逐式跑马灯（.marquee-border 贴边光环，见 global.css）。
 // - 显隐用 opacity + translate 过渡，隐藏时 pointer-events-none，不拦截消息区交互。
 
 import { useTranslation } from 'react-i18next';
@@ -30,27 +30,14 @@ export function ScrollToBottomButton({ visible, streaming, onClick }: ScrollToBo
         visible ? 'translate-y-0 opacity-100' : 'pointer-events-none translate-y-2 opacity-0',
       )}
     >
-      {/* 跑马灯层：光弧沿胶囊边缘顺时针追逐（pathLength=100 归一化周长；
-          non-scaling-stroke 保证非均匀拉伸下描边粗细恒定） */}
-      {streaming && visible && (
-        <svg
-          className="pointer-events-none absolute -inset-[2px]"
-          viewBox="0 0 100 100"
-          preserveAspectRatio="none"
-          aria-hidden="true"
-        >
-          <circle
-            cx="50"
-            cy="50"
-            r="48"
-            fill="none"
-            pathLength={100}
-            vectorEffect="non-scaling-stroke"
-            className="marquee-run"
-          />
-        </svg>
-      )}
-      <span className="relative flex items-center gap-1.5 rounded-full border border-border bg-background/95 px-3 py-1.5 shadow-md backdrop-blur">
+      {/* 跑马灯：.marquee-border 的 ::before 光环经 mask 只露出边缘一圈，
+          border-radius: inherit 保证精确贴合胶囊边缘（见 global.css） */}
+      <span
+        className={cn(
+          'relative flex items-center gap-1.5 rounded-full border border-border bg-background/95 px-3 py-1.5 shadow-md backdrop-blur',
+          streaming && visible && 'marquee-border',
+        )}
+      >
         <ChevronDown className="size-4" />
         <span className="hidden text-xs font-medium md:inline">{t('task.backToBottom')}</span>
       </span>

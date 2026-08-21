@@ -230,27 +230,53 @@ pre,
 }
 
 /* ============================================================
-   返回底部按钮：跑马灯（追逐式边缘灯光）
-   光弧（dash 段）沿按钮胶囊边缘一圈圈顺时针奔跑：
-   SVG pathLength=100 归一化，dashoffset 0→-100 恰好跑一整圈；
-   drop-shadow 辉光增强"灯"感；只动 stroke-dashoffset，
-   小元素重绘开销可忽略。减弱动效：停止奔跑，保留静态光弧。
+   跑马灯边缘（追逐式边缘灯光，通用类 .marquee-border）
+   conic-gradient 光环经 mask 只露出 padding 一圈，形状由
+   border-radius: inherit 决定——精确贴合任意尺寸的胶囊/圆形边缘；
+   @property 注册角度变量使 from 角可动画，光弧带头亮尾沿边缘
+   顺时针奔跑；drop-shadow 辉光增强"灯"感。
+   减弱动效 / 不支持 @property 的旧浏览器：停止奔跑，保留静态光弧。
    ============================================================ */
-@keyframes marquee-run {
+@property --marquee-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+@keyframes marquee-spin {
   to {
-    stroke-dashoffset: -100;
+    --marquee-angle: 1turn;
   }
 }
-.marquee-run {
-  stroke: var(--primary);
-  stroke-width: 2.5;
-  stroke-linecap: round;
-  stroke-dasharray: 14 86;
+.marquee-border {
+  position: relative;
+}
+.marquee-border::before {
+  content: '';
+  position: absolute;
+  inset: -1.5px;
+  border-radius: inherit;
+  padding: 2px;
+  background: conic-gradient(
+    from var(--marquee-angle),
+    transparent 0turn,
+    transparent 0.7turn,
+    var(--primary) 0.95turn,
+    var(--primary) 1turn
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
   filter: drop-shadow(0 0 3px var(--primary));
-  animation: marquee-run 1.2s linear infinite;
+  pointer-events: none;
+  animation: marquee-spin 1.4s linear infinite;
 }
 @media (prefers-reduced-motion: reduce) {
-  .marquee-run {
+  .marquee-border::before {
     animation: none;
   }
 }
