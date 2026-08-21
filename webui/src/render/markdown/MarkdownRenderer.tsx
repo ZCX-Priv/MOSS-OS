@@ -8,7 +8,7 @@
 // - streaming=false 时所有块视为闭合（代码高亮/图表/公式回退链全部就位）
 // - markdownEnabled=false 回退旧纯文本渲染（whitespace-pre-wrap，样式与消息区原实现一致）
 
-import { useMemo } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { splitBlocks } from '../core/block-splitter';
 import { MarkdownBlock } from './MarkdownBlock';
 import { useRenderSettings } from '../core/settings';
@@ -21,16 +21,30 @@ export interface MarkdownRendererProps {
   className?: string;
   /** normal = 正文样式；compact = 小号弱色（思维链区） */
   variant?: 'normal' | 'compact';
+  /** 流式光标（如旋转 spinner）：渲染进文本流末尾，与最后一行文字同行
+   *  （markdown 路径依赖 .md-render > p:has(+ .md-cursor) 行内化；末块非段落时掉行为后备） */
+  cursor?: ReactNode;
 }
 
-export function MarkdownRenderer({ text, streaming = false, className, variant = 'normal' }: MarkdownRendererProps) {
+export function MarkdownRenderer({
+  text,
+  streaming = false,
+  className,
+  variant = 'normal',
+  cursor,
+}: MarkdownRendererProps) {
   const settings = useRenderSettings();
   const blocks = useMemo(() => splitBlocks(text), [text]);
   const sizeClass = variant === 'compact' ? 'text-xs text-muted-foreground' : 'text-sm text-foreground';
 
   // 总开关关闭：回退纯文本（与消息区旧渲染完全一致的样式类）
   if (!settings.markdownEnabled) {
-    return <div className={`whitespace-pre-wrap break-words ${sizeClass} ${className ?? ''}`}>{text}</div>;
+    return (
+      <div className={`whitespace-pre-wrap break-words ${sizeClass} ${className ?? ''}`}>
+        {text}
+        {cursor}
+      </div>
+    );
   }
 
   return (
@@ -38,6 +52,7 @@ export function MarkdownRenderer({ text, streaming = false, className, variant =
       {blocks.map((block) => (
         <MarkdownBlock key={block.index} raw={block.raw} closed={block.closed || !streaming} />
       ))}
+      {cursor !== undefined && <span className="md-cursor">{cursor}</span>}
     </div>
   );
 }

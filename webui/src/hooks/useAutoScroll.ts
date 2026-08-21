@@ -20,8 +20,8 @@ const USER_SCROLL_UP_DELTA = 2;
 const TOUCH_UP_THRESHOLD = 4;
 /** 程序滚动窗口期兜底时长（ms）：旧浏览器无 scrollend 时靠它关闭 */
 const PROGRAMMATIC_WINDOW_MS = 200;
-/** 平滑滚动的最大距离（px）：超过则降级瞬移，避免点了按钮半天滚不到 */
-const SMOOTH_MAX_DISTANCE = 3000;
+/** 平滑滚动的程序窗口兜底时长（ms）：smooth 动画持续约 500ms+，窗口过短会中途误报 atBottom（按钮闪烁） */
+const SMOOTH_WINDOW_MS = 1000;
 
 export interface UseAutoScrollOptions {
   /** 会话切换 key（变化时重置内部状态，下一轮 scrollDeps 触发首次强滚底） */
@@ -35,6 +35,8 @@ export interface UseAutoScrollReturn {
   atBottom: boolean;
   /** 仅恢复跟随标志（发送消息时用；滚底由 scrollDeps effect 兜底） */
   pin: () => void;
+  /** 当前是否处于底部跟随模式（读 ref，不引起重渲染）；发送消息时仅在跟随态才自动滚底 */
+  isPinned: () => boolean;
   /** 滚到底部并恢复跟随（「返回底部」按钮用） */
   scrollToBottom: (behavior?: ScrollBehavior) => void;
 }
@@ -93,15 +95,21 @@ export function useAutoScroll(
     measure();
   }, [measure]);
 
-  /** 开启程序滚动窗口（scrollend 优先关闭，200ms 超时兜底） */
-  const openProgrammaticWindow = useCallback(() => {
-    programmaticRef.current = true;
-    if (programmaticTimerRef.current !== null) clearTimeout(programmaticTimerRef.current);
-    programmaticTimerRef.current = window.setTimeout(() => {
-      programmaticTimerRef.current = null;
-      endProgrammatic();
-    }, PROGRAMMATIC_WINDOW_MS);
-  }, [endProgrammatic]);
+  /** 开启程序滚动窗口（scrollend 优先关闭，超时兜底：auto 200ms / smooth 1000ms） */
+  const openProgrammaticWindow = useCallback(
+    (behavior: ScrollBehavior) => {
+      programmaticRef.current = true;
+      if (programmaticTimerRef.current !== null) clearTimeout(programmaticTimerRef.current);
+      programmaticTimerRef.current = window.setTimeout(
+        () => {
+          programmaticTimerRef.current = null;
+          endProgrammatic();
+        },
+        behavior === 'smooth' ? SMOOTH_WINDOW_MS : PROGRAMMATIC_WINDOW_MS,
+      );
+    },
+    [endProgrammatic],
+  );
 
   /** 程序滚底：恢复跟随 + 开窗口 + 乐观置 atBottom + rAF 二次校正异步高度变化 */
   const doScrollToBottom = useCallback(
@@ -109,14 +117,17 @@ export function useAutoScroll(
       const el = scrollRef.current;
       if (!el) return;
       pinnedRef.current = true;
-      openProgrammaticWindow();
+      openProgrammaticWindow(behavior);
       el.scrollTo({ top: el.scrollHeight, behavior });
       setAtBottom(true);
+      // 二次校正仅用于 instant 路径（流式高频追加后的异步高度变化兜底）；
+      // smooth 下执行瞬时 scrollTo 会立刻截断平滑动画
+      if (behavior === 'smooth') return;
       if (correctRafRef.current !== null) cancelAnimationFrame(correctRafRef.current);
       correctRafRef.current = requestAnimationFrame(() => {
         correctRafRef.current = null;
         const el2 = scrollRef.current;
-        if (el2) el2.scrollTo({ top: el2.scrollHeight }); // instant 校正
+        if (el2 && pinnedRef.current) el2.scrollTo({ top: el2.scrollHeight }); // instant 校正
       });
     },
     [scrollRef, openProgrammaticWindow],
@@ -226,18 +237,17 @@ export function useAutoScroll(
     pinnedRef.current = true;
   }, []);
 
-  /** 滚到底部并恢复跟随；超长距离降级瞬移 */
+  /** 读当前跟随模式（ref 读取，零渲染开销） */
+  const isPinned = useCallback(() => pinnedRef.current, []);
+
+  /** 滚到底部并恢复跟随（浏览器原生 smooth 为固定时长自适应速度，长距离也只是滚得快，不降级） */
   const scrollToBottom = useCallback(
     (behavior: ScrollBehavior = 'smooth') => {
-      const el = scrollRef.current;
-      if (!el) return;
-      const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
-      const finalBehavior: ScrollBehavior =
-        behavior === 'smooth' && distance > SMOOTH_MAX_DISTANCE ? 'auto' : behavior;
-      doScrollToBottom(finalBehavior);
+      if (!scrollRef.current) return;
+      doScrollToBottom(behavior);
     },
     [scrollRef, doScrollToBottom],
   );
 
-  return { atBottom, pin, scrollToBottom };
+  return { atBottom, pin, isPinned, scrollToBottom };
 }

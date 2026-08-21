@@ -16,6 +16,13 @@
   margin-bottom: 0;
 }
 
+/* 流式 cursor（spinner）跟随末行文字：仅当 cursor 前面的块是段落时把它行内化，
+   使 cursor 与末行文字处于同一行流；末块为代码块/列表等则不匹配（cursor 独占一行，后备）。
+   :has 后向相邻选择器，旧浏览器不支持时优雅降级为掉行，不破坏布局。 */
+.md-render > p:has(+ .md-cursor) {
+  display: inline;
+}
+
 .md-p {
   margin: 0.5em 0;
 }

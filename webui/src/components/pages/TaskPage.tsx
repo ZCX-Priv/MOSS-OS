@@ -153,6 +153,12 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
   const prevConfirmCountRef = useRef(0);
   /** todo 签名（id:status 列表）；null = 未初始化（首次跳过，防挂载误触发） */
   const prevTodoSigRef = useRef<string | null>(null);
+  /** 上一次 todo 是否处于「全部完成」态（进入沿检测基准） */
+  const prevAllDoneRef = useRef(false);
+  /** 本次生成（run）内是否已执行过 todo「首次展开」；isGenerating 上升沿重置 */
+  const runTodoExpandedRef = useRef(false);
+  /** 上一次 isGenerating（上升沿检测基准） */
+  const prevGeneratingRef = useRef(false);
   /** 上一次处理的会话 id（切换会话时重置基准，防跨会话比较误触发） */
   const lastHubTaskIdRef = useRef('');
   /** todo 自动折叠定时器（变更后展示 3s） */
@@ -180,7 +186,10 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
   );
 
   // 自动行为：新提问/权限确认到达 → 自动展开并切换对应类别；回答/处理后 → 默认折叠；
-  // todo 变更 → 展开展示 3s 后自动折叠（不抢占待处理的提问/权限）
+  // todo 变更 → 仅两个时机展开（各展示 3s 后自动折叠，不抢占待处理的提问/权限）：
+  //   ① 本次生成内首次建立/变更（发送任务后 todo 首次出现/变化）
+  //   ② 进入「全部完成」态（所有项 completed 的上升沿）
+  //   中间变更不展开、不重置定时器（面板内容仍随 store 实时刷新）
   useEffect(() => {
     if (!taskId) return;
     // 会话切换：重置基准状态（在比较前执行，避免旧会话计数/签名误触发）
@@ -189,17 +198,32 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
       prevAskCountRef.current = 0;
       prevConfirmCountRef.current = 0;
       prevTodoSigRef.current = null;
+      prevAllDoneRef.current = false;
+      runTodoExpandedRef.current = false;
       clearTodoCollapseTimer();
     }
+    // 生成开始（上升沿）：重置「run 内首次展开」标志，下一次 todo 变更即为本次生成的首次
+    if (isGenerating && !prevGeneratingRef.current) {
+      runTodoExpandedRef.current = false;
+    }
+    prevGeneratingRef.current = isGenerating;
     const askCount = pendingAsks.filter((a) => a.sessionId === taskId).length;
     const confirmCount = pendingConfirms.filter((c) => c.sessionId === taskId).length;
     const todoSig = todos.map((td) => `${td.id}:${td.status}`).join('|');
     const prevAsk = prevAskCountRef.current;
     const prevConfirm = prevConfirmCountRef.current;
     const prevTodoSig = prevTodoSigRef.current;
+    const prevAllDone = prevAllDoneRef.current;
+    const wasRunTodoExpanded = runTodoExpandedRef.current;
+    const nowAllDone = todos.length > 0 && todos.every((td) => td.status === 'completed');
+    const todoChanged = prevTodoSig !== null && todoSig !== prevTodoSig;
     prevAskCountRef.current = askCount;
     prevConfirmCountRef.current = confirmCount;
     prevTodoSigRef.current = todoSig;
+    // 基准在分支前无条件推进（ask/confirm 分支提前 return 也不能让基准过期）；
+    // 分支内使用的是上方捕获的旧值 wasRunTodoExpanded / prevAllDone
+    prevAllDoneRef.current = nowAllDone;
+    runTodoExpandedRef.current = wasRunTodoExpanded || todoChanged;
 
     // 新提问到达：切换/展开 ask（阻塞 agent，最高优先级）
     if (askCount > prevAsk) {
@@ -225,27 +249,27 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
       setHubActiveModule(taskId, askCount > 0 ? 'ask' : null);
       return;
     }
-    // todo 变更（跳过首次初始化）：无阻塞项时展开展示 3s 后自动折叠
-    if (
-      prevTodoSig !== null &&
-      todoSig !== prevTodoSig &&
-      askCount === 0 &&
-      confirmCount === 0
-    ) {
-      clearTodoCollapseTimer();
-      setHubActiveModule(taskId, 'todo');
-      autoExpandAtRef.current = Date.now();
-      todoCollapseTimerRef.current = window.setTimeout(() => {
-        todoCollapseTimerRef.current = null;
-        const s = useStore.getState();
-        // 竞态防护：仅当仍处于 todo 模块且自动展开后用户无手动干预时才折叠
-        if (
-          s.hubActiveModuleBySession[taskId] === 'todo' &&
-          lastUserActionAtRef.current <= autoExpandAtRef.current
-        ) {
-          s.setHubActiveModule(taskId, null);
-        }
-      }, 3000);
+    // todo 变更（跳过首次初始化）：无阻塞项时，仅「本次生成内首次变更」或
+    // 「进入全部完成态」两个时机展开 3s 后自动折叠；中间变更静默刷新不展开
+    if (todoChanged && askCount === 0 && confirmCount === 0) {
+      const isFirstChange = !wasRunTodoExpanded;
+      const becomesAllDone = nowAllDone && !prevAllDone;
+      if (isFirstChange || becomesAllDone) {
+        clearTodoCollapseTimer();
+        setHubActiveModule(taskId, 'todo');
+        autoExpandAtRef.current = Date.now();
+        todoCollapseTimerRef.current = window.setTimeout(() => {
+          todoCollapseTimerRef.current = null;
+          const s = useStore.getState();
+          // 竞态防护：仅当仍处于 todo 模块且自动展开后用户无手动干预时才折叠
+          if (
+            s.hubActiveModuleBySession[taskId] === 'todo' &&
+            lastUserActionAtRef.current <= autoExpandAtRef.current
+          ) {
+            s.setHubActiveModule(taskId, null);
+          }
+        }, 3000);
+      }
     }
   }, [
     pendingAsks,
@@ -253,6 +277,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
     todos,
     hubActiveModule,
     taskId,
+    isGenerating,
     setHubActiveModule,
     clearTodoCollapseTimer,
   ]);
@@ -400,11 +425,11 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
   }, [taskId]);
 
   // ===== 自动滚动（状态机 hook）=====
-  // 发送后自动滚底；流式期间用户上滑（wheel/触摸/拖滚动条）即时脱离跟随、绝不被拉回；
-  // 滚回底部附近自动恢复跟随；切会话由 resetKey 重置并强滚底。
+  // 发送后仅跟随态自动滚底（看历史时不拉回）；流式期间用户上滑（wheel/触摸/拖滚动条）
+  // 即时脱离跟随、绝不被拉回；滚回底部附近自动恢复跟随；切会话由 resetKey 重置并强滚底。
   const lastMessage = messages[messages.length - 1];
   const lastContentLength = lastMessage?.content.length ?? 0;
-  const { atBottom, pin, scrollToBottom } = useAutoScroll(scrollRef, {
+  const { atBottom, isPinned, scrollToBottom } = useAutoScroll(scrollRef, {
     resetKey: taskId,
     scrollDeps: [messages.length, lastContentLength, isGenerating],
   });
@@ -444,9 +469,9 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
   // 空状态：发送消息后创建任务并跳转；任务态：直接发送到当前 session
   const handleSend = useCallback(
     async (text: string) => {
-      // 发送即回底：恢复跟随并立即滚底（后续由 scrollDeps effect 兜底，双保险且幂等）
-      pin();
-      scrollToBottom('auto');
+      // 仅跟随态才自动滚底：用户上滑看历史时发送消息，视图停留在原位不被拉回底部；
+      // 已脱离跟随时 scrollDeps effect 同样不滚底（pinnedRef=false），后续消息追加自然不打扰
+      if (isPinned()) scrollToBottom('auto');
       if (taskId) {
         sendMessage(text, { taskId });
       } else {
@@ -454,7 +479,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
         if (newTaskId) navigate(`/task/${newTaskId}`);
       }
     },
-    [taskId, sendMessage, navigate, pin, scrollToBottom],
+    [taskId, sendMessage, navigate, isPinned, scrollToBottom],
   );
 
   // ===== 消息撤回流程 =====
@@ -1517,10 +1542,12 @@ const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap,
       {/* 正文 */}
       {message.content && !message.isError && (
         <div className="text-sm text-foreground">
-          <MarkdownRenderer text={displayContent} streaming={!!message.streaming} />
-          {message.streaming && (
-            <Loader2 className="ml-1 inline size-3 animate-spin" />
-          )}
+          {/* 流式 spinner 经 cursor 渲染进文本流末尾，与最后一行文字同行（见 MarkdownRenderer / markdown.css） */}
+          <MarkdownRenderer
+            text={displayContent}
+            streaming={!!message.streaming}
+            cursor={message.streaming ? <Loader2 className="ml-1 inline size-3 animate-spin" /> : undefined}
+          />
         </div>
       )}
       {overLimit && (

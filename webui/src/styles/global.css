@@ -258,11 +258,12 @@ pre,
 }
 .marquee-run {
   stroke: var(--primary);
-  stroke-width: 2;
+  stroke-opacity: 0.85;
+  stroke-width: 1;
   stroke-linecap: round;
-  stroke-dasharray: 16 84;
-  filter: drop-shadow(0 0 3px var(--primary));
-  animation: marquee-run 1.5s linear infinite;
+  stroke-dasharray: 8 92;
+  filter: drop-shadow(0 0 1.5px var(--primary));
+  animation: marquee-run 1s linear infinite;
 }
 @media (prefers-reduced-motion: reduce) {
   .marquee-run {

@@ -1087,7 +1087,7 @@ export class AgentEngineImpl implements AgentEngine {
     }
 
     // 统一权限决策（safety 模块）：所有 builtin 工具的唯一权限入口。
-    // ALLOW→ctx 带 permissionDecision（registry 跳过内部 requireConfirmation）；
+    // ALLOW/ASK(用户同意后)→ctx 带 permissionDecision（registry 跳过内部 requireConfirmation，避免二次弹窗）；
     // ASK→confirm 卡片（带规则建议）用户同意后执行；DENY→结构化错误（模型可感知原因）。
     const safety = this.services.tryResolve<SafetyService>(ServiceNames.SAFETY);
     let permissionDecision: 'allowed' | undefined;
@@ -1118,6 +1118,8 @@ export class AgentEngineImpl implements AgentEngine {
             isError: true,
           };
         }
+        // 用户已在 safety 弹窗确认，标记放行（registry 跳过自建 requireConfirmation，避免二次弹窗）
+        permissionDecision = 'allowed';
       } else {
         permissionDecision = 'allowed';
       }

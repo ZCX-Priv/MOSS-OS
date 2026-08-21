@@ -54,7 +54,7 @@ export function ScrollToBottomButton({ visible, streaming, onClick }: ScrollToBo
     >
       <span
         ref={pillRef}
-        className="relative flex items-center gap-1.5 rounded-full border border-border bg-background/95 px-3 py-1.5 shadow-md backdrop-blur"
+        className="relative flex items-center gap-1.5 rounded-full border border-border bg-background/95 p-1.5 shadow-md backdrop-blur md:px-3"
       >
         {/* 跑马灯环：rect 周长归一化为 100，dashoffset 0→-100 恰好匀速跑一整圈；
             常驻挂载，streaming && visible 时 .is-on 淡入，否则淡出（见 global.css） */}
