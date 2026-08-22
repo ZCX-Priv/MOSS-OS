@@ -1032,11 +1032,10 @@ function GroupHeaderDrop({ groupId, children }: { groupId: string; children: Rea
   );
 }
 
-/** DragOverlay 浮起卡片：复用管理模式行视觉，加阴影反馈；宽度对齐侧边栏行宽 */
+/** DragOverlay 浮起卡片：与普通任务行样式一致（无拖拽图标），加阴影反馈；宽度对齐侧边栏行宽 */
 function TaskDragCard({ task }: { task: TaskItem }) {
   return (
-    <div className="flex h-8 w-[calc(var(--sidebar-width,16rem)_-_4rem)] cursor-grabbing items-center gap-1.5 rounded-md border border-border bg-sidebar-accent px-2 text-sm shadow-lg">
-      <GripVertical className="size-3.5 shrink-0 text-muted-foreground" />
+    <div className="flex h-8 w-[calc(var(--sidebar-width,16rem)_-_4rem)] cursor-grabbing items-center rounded-md border border-border bg-sidebar-accent px-2 text-sm shadow-lg">
       <span className="truncate">{task.title}</span>
     </div>
   );
