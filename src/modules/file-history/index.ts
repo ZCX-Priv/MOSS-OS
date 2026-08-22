@@ -9,6 +9,7 @@ import { t } from '../../core/i18n';
 import type { Module, ModuleContext, } from '../../core/types';
 import { ServiceNames } from '../../core/types';
 import { FileHistoryServiceImpl } from './service';
+import { migrateLegacyLayout } from './migrate';
 import { DEFAULT_FILE_HISTORY_CONFIG, type FileHistoryConfig } from './types';
 
 // 导出 trash 与 archive 模块，供 delete 工具直接调用
@@ -26,6 +27,24 @@ class FileHistoryModule implements Module {
 
     // 从 config 读取 fileHistory 配置（容错：缺失字段用默认值）
     const config = this.readConfig(ctx);
+
+    // 一次性目录布局迁移（幂等）：须在 service 构造前完成，
+    // 服务的 backups/transcripts/trash/ledger 路径直接指向新布局。
+    try {
+      const migration = migrateLegacyLayout(ctx.env, ctx.logger);
+      if (migration.movedDirs.length > 0 || migration.movedTranscripts > 0) {
+        ctx.logger.info(t('fileHistory.layoutMigrated', {
+          dirs: migration.movedDirs.join(', '),
+          transcripts: migration.movedTranscripts,
+          rewrites: migration.rewroteEntries,
+        }));
+      }
+    } catch (err) {
+      // 兜底：迁移函数内部已对单项失败容错，此处防御整体异常，不阻断启动
+      ctx.logger.warn(t('fileHistory.layoutMigrationFailed', {
+        error: err instanceof Error ? err.message : String(err),
+      }));
+    }
 
     this.service = new FileHistoryServiceImpl(ctx.env, ctx.logger, config);
 

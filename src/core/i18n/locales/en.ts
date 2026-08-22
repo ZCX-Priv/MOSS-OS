@@ -412,6 +412,8 @@ export const en = {
     backupCreated: 'Backup created: {{path}}',
     restored: 'Restored file: {{path}}',
     undoFailed: 'Undo failed: {{error}}',
+    layoutMigrated: 'File history layout unified: dirs moved [{{dirs}}], transcripts moved {{transcripts}}, backup paths rewritten {{rewrites}}',
+    layoutMigrationFailed: 'File history layout migration failed: {{error}}',
   },
   agenteam: {
     saveFailed: 'Failed to save agenteam.json',

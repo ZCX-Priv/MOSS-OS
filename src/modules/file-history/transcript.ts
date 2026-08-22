@@ -1,6 +1,6 @@
 // src/modules/file-history/transcript.ts
 // JSONL append-only 持久化：每行一个 FileHistoryEntry。
-// 路径：~/.moss/file-history/<sessionId>.jsonl
+// 路径：~/.moss/file-history/transcripts/<sessionId>.jsonl
 // 支持：追加、读取全部、移除最后 N 条（undo）、按 id 单条/批量移除。
 // 重写统一走 atomicWriteFile（tmp + fsync + rename），中断不损坏。
 
@@ -71,6 +71,15 @@ function rewriteEntries(transcriptPath: string, remaining: FileHistoryEntry[]): 
   } catch (err) {
     throw new Error(`transcript: failed to rewrite ${transcriptPath}: ${err instanceof Error ? err.message : err}`);
   }
+}
+
+/**
+ * 公共原子重写入口：把整个 transcript 文件重写为给定条目列表。
+ * 目录布局迁移（migrate.ts）重写 backupPath 前缀时复用，与 undo/restore
+ * 的重写路径保持同一原子写语义。
+ */
+export function rewriteAllEntries(transcriptPath: string, entries: FileHistoryEntry[]): void {
+  rewriteEntries(transcriptPath, entries);
 }
 
 /**

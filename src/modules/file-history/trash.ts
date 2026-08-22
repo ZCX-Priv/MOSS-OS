@@ -1,5 +1,5 @@
 // src/modules/file-history/trash.ts
-// 应用内回收站（~/.moss/trash）：delete 工具在系统回收站不可用时的回退目标。
+// 应用内回收站（~/.moss/file-history/trash）：delete 工具在系统回收站不可用时的回退目标。
 // 移动文件/目录到应用内回收站、清理过期 trash 项（超期自动清理，默认 7 天）。
 // 撤回/undo 恢复不走本模块（从 file-history 备份恢复到原路径），此处仅负责"删得进、存得住、到期清"。
 
@@ -96,7 +96,7 @@ function moveEntry(src: string, dest: string): void {
  * 同名冲突时追加时间戳后缀（仿 Finder），仍冲突则继续追加序号。
  *
  * @param absPath 要移入回收站的文件/目录绝对路径
- * @param trashDir 回收站目录（~/.moss/trash）
+ * @param trashDir 回收站目录（~/.moss/file-history/trash）
  */
 export function moveToTrash(absPath: string, trashDir: string): TrashEntry {
   mkdirSync(trashDir, { recursive: true });

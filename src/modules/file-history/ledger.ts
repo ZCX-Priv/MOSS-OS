@@ -1,7 +1,7 @@
 // src/modules/file-history/ledger.ts
 // Read Ledger：会话级追踪已 read 的文件 + 内容 sha。
 // read-before-overwrite 强制约束的数据基础。
-// 持久化：~/.moss/ledger/<sessionId>.json（防抖落盘 + 懒加载），重启后 read 记录仍有效
+// 持久化：~/.moss/file-history/ledger/<sessionId>.json（防抖落盘 + 懒加载），重启后 read 记录仍有效
 // （修复旧版仅内存、重启即失效，与 transcript 持久化能力不对称的割裂）。
 
 import { existsSync, readFileSync } from 'node:fs';

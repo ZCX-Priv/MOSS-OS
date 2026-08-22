@@ -7,7 +7,7 @@ import { basename, dirname } from 'node:path';
 import * as tar from 'tar';
 
 export interface ArchiveResult {
-  /** 归档文件路径（~/.moss/backups/<entryId>.tar.gz） */
+  /** 归档文件路径（~/.moss/file-history/backups/<entryId>.tar.gz） */
   archivePath: string;
   /** 归档文件大小（字节） */
   bytes: number;

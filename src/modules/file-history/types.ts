@@ -51,7 +51,7 @@ export interface FileHistoryEntry {
 export interface TrackEditResult {
   /** 是否实际备份了（文件不存在或已在快照中则 false） */
   backedUp: boolean;
-  /** 备份路径（~/.moss/backups/<hash>.bak 文件 或 ~/.moss/backups/<entryId>.tar.gz 目录） */
+  /** 备份路径（~/.moss/file-history/backups/<hash>.bak 文件 或 ~/.moss/file-history/backups/<entryId>.tar.gz 目录） */
   backupPath: string | null;
   /** 原内容 sha256（新文件为空字符串；目录归档为空字符串） */
   hash: string;

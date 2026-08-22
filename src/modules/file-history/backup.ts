@@ -23,7 +23,7 @@ export interface BackupResult {
  * - 文件存在 → 计算 sha256，若 backups/<hash>.bak 已存在则跳过（去重），否则 copyFileSync
  *
  * @param absPath 要备份的文件绝对路径
- * @param backupDir 备份目录（~/.moss/backups/）
+ * @param backupDir 备份目录（~/.moss/file-history/backups/）
  */
 export function backupByHash(absPath: string, backupDir: string): BackupResult {
   // 1. 文件不存在：新文件，无需备份

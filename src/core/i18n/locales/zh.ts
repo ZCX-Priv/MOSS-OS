@@ -412,6 +412,8 @@ export const zh = {
     backupCreated: '已创建备份: {{path}}',
     restored: '已恢复文件: {{path}}',
     undoFailed: '撤销失败: {{error}}',
+    layoutMigrated: '文件历史目录布局已统一：迁入目录 {{dirs}}，transcript 文件 {{transcripts}} 个，重写备份路径 {{rewrites}} 条',
+    layoutMigrationFailed: '文件历史目录布局迁移失败：{{error}}',
   },
   agenteam: {
     saveFailed: '保存 agenteam.json 失败',

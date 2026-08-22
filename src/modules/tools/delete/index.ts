@@ -278,7 +278,7 @@ async function deleteSingle(
         path: absPath,
         error: errMsg,
       });
-      // 3. 回退应用内回收站（~/.moss/trash，保留 7 天）
+      // 3. 回退应用内回收站（~/.moss/file-history/trash，保留 7 天）
       if (!trashDir) {
         return { absPath, success: false, message: t('tools.deleteTrashDirUnavailable') };
       }

@@ -35,11 +35,13 @@ export class FileHistoryServiceImpl implements FileHistoryService {
     private readonly logger: Logger,
     private readonly config: FileHistoryConfig,
   ) {
-    this.backupDir = join(env.dataDir, 'backups');
-    this.transcriptDir = join(env.dataDir, 'file-history');
-    this.trashDir = join(env.dataDir, 'trash');
-    // ledger 持久化：~/.moss/ledger/<sessionId>.json（重启后 read-before-overwrite 仍有效）
-    this.ledger = new ReadLedger(join(env.dataDir, 'ledger'), logger);
+    // 统一布局根目录：~/.moss/file-history/（backups / transcripts / trash / ledger 四个子目录）
+    const rootDir = join(env.dataDir, 'file-history');
+    this.backupDir = join(rootDir, 'backups');
+    this.transcriptDir = join(rootDir, 'transcripts');
+    this.trashDir = join(rootDir, 'trash');
+    // ledger 持久化：~/.moss/file-history/ledger/<sessionId>.json（重启后 read-before-overwrite 仍有效）
+    this.ledger = new ReadLedger(join(rootDir, 'ledger'), logger);
   }
 
   /** 全局开关：config.fileHistory.enabled 为 false 时所有行为降级为 no-op */
