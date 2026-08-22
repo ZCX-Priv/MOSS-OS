@@ -104,7 +104,7 @@ function getGreetingKey(): string {
 }
 
 interface TaskPageProps {
-  onOpenOverlay: (overlay: OverlayType) => void;
+  onOpenOverlay?: (overlay: OverlayType) => void;
 }
 
 export function TaskPage({ onOpenOverlay }: TaskPageProps) {

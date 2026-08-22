@@ -322,7 +322,7 @@ export function TaskInput({
 
   return (
     <>
-    <Card className="relative w-full gap-0 rounded-2xl border border-border bg-transparent p-2 shadow-none ring-0">
+    <Card className="relative w-full gap-0 overflow-visible rounded-2xl border border-border bg-transparent p-2 shadow-none ring-0">
       {trigger && (
         <MentionMenu
           items={mentionItems}
