@@ -1,9 +1,9 @@
 // src/modules/file-history/service.ts
 // FileHistoryService 实现：组装 backup / ledger / transcript / atomic-write / diff。
 // 三层架构：
-//   Layer 1 (Track Edit)：trackEdit 改前备份，同步阻塞
+//   Layer 1 (Track)：track() 统一变更追踪入口（tracker 对象模式，改前备份）
 //   Layer 2 (Snapshot)：createSnapshot 每轮快照（当前 no-op，预留）
-//   Layer 3 (Transcript)：recordChange 写 JSONL，undo 读 JSONL 恢复
+//   Layer 3 (Transcript)：tracker.commit() 写 JSONL，undo 读 JSONL 恢复
 
 import { randomUUID } from 'node:crypto';
 import { join, dirname } from 'node:path';
@@ -12,17 +12,38 @@ import type { Logger, Environment } from '../../core/types';
 import type { FileHistoryService } from '../contracts';
 import type {
   FileHistoryEntry,
-  TrackEditResult,
+  TrackRequest,
+  TrackReceipt,
+  TrackCompletion,
+  ChangeTracker,
   UndoResult,
   FileHistoryConfig,
   FileOperation,
 } from './types';
 import { backupByHash, backupBufferByHash, readBackup } from './backup';
 import { ReadLedger } from './ledger';
-import { appendEntry, readEntries, removeLastNEntries, removeEntryById, removeEntriesByIds } from './transcript';
+import {
+  appendEntry,
+  readEntries,
+  removeEntryById,
+  removeEntriesByIds,
+  peekActiveEntries,
+  markEntriesRolledBack,
+  clearRolledBackMarks,
+  isActiveEntry,
+} from './transcript';
 import { atomicWriteFile } from '../../utils/fs-atomic';
 import { archiveDirectory, extractArchive } from './archive';
 import { cleanupExpiredTrash, TRASH_RETENTION_DAYS } from './trash';
+
+/** tracker 闭包携带的登记状态：收据 + move 目标路径 */
+interface TrackerState {
+  sessionId: string;
+  absPath: string;
+  receipt: TrackReceipt;
+  /** move 的目标路径（operation='move' 时 commit 登录用） */
+  destPath?: string;
+}
 
 export class FileHistoryServiceImpl implements FileHistoryService {
   private readonly ledger: ReadLedger;
@@ -56,50 +77,108 @@ export class FileHistoryServiceImpl implements FileHistoryService {
     return join(this.transcriptDir, `${safe}.jsonl`);
   }
 
-  async trackEdit(
-    sessionId: string,
-    absPath: string,
-    toolCallId: string,
-    toolName: 'write' | 'edit' | 'delete',
-  ): Promise<TrackEditResult> {
+  /**
+   * 统一变更追踪入口（tracker 对象模式）：按 toolName 分发。
+   * write/edit/delete → 改前备份；move/copy → 无备份收据；shell → 事后回填备份。
+   * enabled=false 时返回 no-op tracker（收据空值，commit 无操作）。
+   */
+  async track(req: TrackRequest): Promise<ChangeTracker> {
+    const callerInfo = {
+      ...(req.toolCallId ? { toolCallId: req.toolCallId } : {}),
+      toolName: req.toolName,
+    };
+
     if (!this.enabled) {
-      // 全局禁用：返回空结果，不备份不记录
-      return {
-        backedUp: false,
-        backupPath: null,
-        hash: '',
-        bytesBefore: 0,
-        entryId: '',
-        operation: 'create',
-      };
+      // 全局禁用：no-op tracker，不备份不记录
+      return this.makeTracker({
+        sessionId: req.sessionId,
+        absPath: req.absPath,
+        receipt: {
+          backedUp: false,
+          backupPath: null,
+          hash: '',
+          bytesBefore: 0,
+          entryId: '',
+          operation: 'create',
+          ...callerInfo,
+        },
+      });
     }
 
+    switch (req.toolName) {
+      case 'move':
+        // move：内容不变无需备份；commit 登记反向 rename 条目
+        return this.makeTracker({
+          sessionId: req.sessionId,
+          absPath: req.absPath,
+          receipt: {
+            backedUp: false,
+            backupPath: null,
+            hash: '',
+            bytesBefore: req.bytesBefore ?? 0,
+            entryId: randomUUID(),
+            operation: 'move',
+            ...(req.isDirectory ? { isDirectory: true } : {}),
+            ...callerInfo,
+          },
+          destPath: req.destPath,
+        });
+
+      case 'copy':
+        // copy：副本目标在复制前不存在 → create 收据（undo = 删除副本），无备份
+        return this.makeTracker({
+          sessionId: req.sessionId,
+          absPath: req.absPath,
+          receipt: {
+            backedUp: false,
+            backupPath: null,
+            hash: '',
+            bytesBefore: 0,
+            entryId: randomUUID(),
+            operation: 'create',
+            ...(req.isDirectory ? { isDirectory: true } : {}),
+            ...callerInfo,
+          },
+        });
+
+      case 'shell':
+        // shell：事后回填（执行前内容来自 filesys 读缓存）
+        return this.makeTracker(await this.prepareShellReceipt(req));
+
+      default:
+        // write / edit / delete：改前备份（同步阻塞，必须在变更前完成）
+        return this.makeTracker(await this.prepareEditReceipt(req));
+    }
+  }
+
+  /** write/edit/delete 的改前备份收据：不存在→create；目录→tar.gz 归档；文件→内容哈希备份 */
+  private async prepareEditReceipt(req: TrackRequest): Promise<TrackerState> {
+    const { sessionId, absPath } = req;
     const entryId = randomUUID();
-    // 记录调用方信息（recordChange 写入 transcript 用）
-    const callerInfo = { toolCallId, toolName };
+    const callerInfo = {
+      ...(req.toolCallId ? { toolCallId: req.toolCallId } : {}),
+      toolName: req.toolName,
+    };
+    const operation: FileOperation =
+      req.toolName === 'delete' ? 'delete' : req.toolName === 'edit' ? 'edit' : 'overwrite';
 
     // 文件/目录不存在 → create 操作，无需备份
     if (!existsSync(absPath)) {
       return {
-        backedUp: false,
-        backupPath: null,
-        hash: '',
-        bytesBefore: 0,
-        entryId,
-        operation: 'create',
-        ...callerInfo,
+        sessionId,
+        absPath,
+        receipt: { backedUp: false, backupPath: null, hash: '', bytesBefore: 0, entryId, operation: 'create', ...callerInfo },
       };
     }
 
     const stat = statSync(absPath);
-    const operation: FileOperation = toolName === 'delete' ? 'delete' : toolName === 'edit' ? 'edit' : 'overwrite';
 
     // 目录 → tar.gz 整体归档备份（支持 undo 解包恢复）
     if (stat.isDirectory()) {
       const archivePath = join(this.backupDir, `${entryId}.tar.gz`);
       try {
         const result = await archiveDirectory(absPath, archivePath);
-        this.logger.debug('file-history: trackEdit directory archived', {
+        this.logger.debug('file-history: track directory archived', {
           sessionId,
           absPath,
           operation,
@@ -107,14 +186,18 @@ export class FileHistoryServiceImpl implements FileHistoryService {
           bytes: result.bytes,
         });
         return {
-          backedUp: true,
-          backupPath: result.archivePath,
-          hash: '', // 目录归档无内容哈希
-          bytesBefore: result.bytes,
-          entryId,
-          operation,
-          isDirectory: true,
-          ...callerInfo,
+          sessionId,
+          absPath,
+          receipt: {
+            backedUp: true,
+            backupPath: result.archivePath,
+            hash: '', // 目录归档无内容哈希
+            bytesBefore: result.bytes,
+            entryId,
+            operation,
+            isDirectory: true,
+            ...callerInfo,
+          },
         };
       } catch (err) {
         this.logger.warn('file-history: directory archive failed', {
@@ -122,14 +205,9 @@ export class FileHistoryServiceImpl implements FileHistoryService {
           error: err instanceof Error ? err.message : String(err),
         });
         return {
-          backedUp: false,
-          backupPath: null,
-          hash: '',
-          bytesBefore: 0,
-          entryId,
-          operation,
-          isDirectory: true,
-          ...callerInfo,
+          sessionId,
+          absPath,
+          receipt: { backedUp: false, backupPath: null, hash: '', bytesBefore: 0, entryId, operation, isDirectory: true, ...callerInfo },
         };
       }
     }
@@ -145,17 +223,13 @@ export class FileHistoryServiceImpl implements FileHistoryService {
         error: err instanceof Error ? err.message : String(err),
       });
       return {
-        backedUp: false,
-        backupPath: null,
-        hash: '',
-        bytesBefore: stat.size,
-        entryId,
-        operation,
-        ...callerInfo,
+        sessionId,
+        absPath,
+        receipt: { backedUp: false, backupPath: null, hash: '', bytesBefore: stat.size, entryId, operation, ...callerInfo },
       };
     }
 
-    this.logger.debug('file-history: trackEdit', {
+    this.logger.debug('file-history: track', {
       sessionId,
       absPath,
       operation,
@@ -165,123 +239,41 @@ export class FileHistoryServiceImpl implements FileHistoryService {
     });
 
     return {
-      backedUp: backup.created,
-      backupPath: backup.backupPath,
-      hash: backup.hash,
-      bytesBefore: backup.bytes,
-      entryId,
-      operation,
-      ...callerInfo,
-    };
-  }
-
-  recordChange(
-    sessionId: string,
-    absPath: string,
-    trackResult: TrackEditResult,
-    hashAfter: string,
-    bytesAfter: number,
-    diff?: string,
-  ): void {
-    if (!this.enabled) return;
-    if (!trackResult.entryId) return; // trackEdit 被禁用或失败
-
-    if (!this.config.transcriptEnabled) return;
-
-    const entry: FileHistoryEntry = {
-      id: trackResult.entryId,
       sessionId,
       absPath,
-      toolCallId: trackResult.toolCallId ?? '',
-      toolName: trackResult.toolName
-        ?? (trackResult.operation === 'delete' ? 'delete' : trackResult.operation === 'edit' ? 'edit' : 'write'),
-      timestamp: new Date().toISOString(),
-      operation: trackResult.operation,
-      hashBefore: trackResult.hash || null,
-      hashAfter: hashAfter || null,
-      backupPath: trackResult.backupPath,
-      bytesBefore: trackResult.bytesBefore,
-      bytesAfter,
-      isDirectory: trackResult.isDirectory,
-      ...(diff ? { diff } : {}),
+      receipt: {
+        backedUp: backup.created,
+        backupPath: backup.backupPath,
+        hash: backup.hash,
+        bytesBefore: backup.bytes,
+        entryId,
+        operation,
+        ...callerInfo,
+      },
     };
-
-    try {
-      appendEntry(this.transcriptPath(sessionId), entry);
-    } catch (err) {
-      this.logger.warn('file-history: recordChange failed', {
-        sessionId,
-        absPath,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
   }
 
-  /**
-   * 记录 move（移动/重命名）条目：undo = destPath → absPath 反向 rename。
-   * move 不改变内容，无需内容备份；若 undo 时 source 位被占用则先移除占用者。
-   */
-  recordMoveEntry(
-    sessionId: string,
-    source: string,
-    dest: string,
-    toolCallId: string,
-    opts?: { bytesBefore?: number; isDirectory?: boolean },
-  ): void {
-    if (!this.enabled || !this.config.transcriptEnabled) return;
-    const entry: FileHistoryEntry = {
-      id: randomUUID(),
-      sessionId,
-      absPath: source,
-      toolCallId,
-      toolName: 'move',
-      timestamp: new Date().toISOString(),
-      operation: 'move',
-      hashBefore: null,
-      hashAfter: null,
-      backupPath: null,
-      bytesBefore: opts?.bytesBefore ?? 0,
-      bytesAfter: opts?.bytesBefore ?? 0,
-      destPath: dest,
-      ...(opts?.isDirectory ? { isDirectory: true } : {}),
-    };
-    try {
-      appendEntry(this.transcriptPath(sessionId), entry);
-    } catch (err) {
-      this.logger.warn('file-history: recordMoveEntry failed', {
-        sessionId,
-        source,
-        dest,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
-
-  /**
-   * shell 快照检测登记（filesys shell-watch 回填）：
-   * - created：记 operation='create'（undo = 删除该文件）
-   * - modified/deleted：beforeBuffer（filesys 读缓存的执行前内容）存在时按哈希备份 → 可完整 undo；
-   *   为 null 时记无备份条目（undo 时提示不可恢复）。
-   */
-  trackShellFile(
-    sessionId: string,
-    absPath: string,
-    kind: 'created' | 'modified' | 'deleted',
-    beforeBuffer: Buffer | null,
-    toolCallId?: string,
-  ): void {
-    if (!this.enabled || !this.config.transcriptEnabled) return;
+  /** shell 事后回填收据：kind 映射 operation；shellBefore 非空时按哈希备份（可完整 undo） */
+  private async prepareShellReceipt(req: TrackRequest): Promise<TrackerState> {
+    const { sessionId, absPath } = req;
+    const kind = req.shellKind ?? 'modified';
     const entryId = randomUUID();
+    const callerInfo = {
+      ...(req.toolCallId ? { toolCallId: req.toolCallId } : {}),
+      toolName: 'shell' as const,
+    };
+    const operation: FileOperation =
+      kind === 'created' ? 'create' : kind === 'deleted' ? 'delete' : 'edit';
 
     let backupPath: string | null = null;
-    let hashBefore: string | null = null;
+    let hash = '';
     let bytesBefore = 0;
 
-    if (kind !== 'created' && beforeBuffer) {
+    if (kind !== 'created' && req.shellBefore) {
       try {
-        const backup = backupBufferByHash(beforeBuffer, this.backupDir);
+        const backup = backupBufferByHash(req.shellBefore, this.backupDir);
         backupPath = backup.backupPath;
-        hashBefore = backup.hash;
+        hash = backup.hash;
         bytesBefore = backup.bytes;
       } catch (err) {
         this.logger.warn('file-history: shell backup failed', {
@@ -291,24 +283,75 @@ export class FileHistoryServiceImpl implements FileHistoryService {
       }
     }
 
-    const entry: FileHistoryEntry = {
-      id: entryId,
+    return {
       sessionId,
       absPath,
-      toolCallId: toolCallId ?? '',
-      toolName: 'shell',
-      timestamp: new Date().toISOString(),
-      operation: kind === 'created' ? 'create' : kind === 'deleted' ? 'delete' : 'edit',
-      hashBefore,
-      hashAfter: null,
-      backupPath,
-      bytesBefore,
-      bytesAfter: 0,
+      receipt: { backedUp: backupPath !== null, backupPath, hash, bytesBefore, entryId, operation, ...callerInfo },
     };
+  }
+
+  /** 组装 tracker：receipt 冻结为只读快照，commit 闭包携带登记状态 */
+  private makeTracker(state: TrackerState): ChangeTracker {
+    const frozenReceipt: TrackReceipt = Object.freeze({ ...state.receipt });
+    return {
+      receipt: frozenReceipt,
+      commit: (after?: TrackCompletion): void => this.commitEntry(state, after ?? {}),
+    };
+  }
+
+  /**
+   * commit 实现：按收据 operation 写 transcript。
+   * move 登记反向 rename 条目；其余登记通用条目（hashBefore 来自收据、hashAfter 来自 after）。
+   * transcriptEnabled=false 时 no-op；登记失败记 warn 不抛出。
+   */
+  private commitEntry(state: TrackerState, after: TrackCompletion): void {
+    if (!this.enabled) return;
+    const { sessionId, absPath, receipt } = state;
+    if (!receipt.entryId) return; // track 被禁用（no-op tracker）
+    if (!this.config.transcriptEnabled) return;
+
+    const timestamp = new Date().toISOString();
+    const entry: FileHistoryEntry =
+      receipt.operation === 'move'
+        ? {
+            // move 条目：absPath=源路径、destPath=目标路径；undo = destPath → absPath 反向 rename
+            id: receipt.entryId,
+            sessionId,
+            absPath,
+            toolCallId: receipt.toolCallId ?? '',
+            toolName: 'move',
+            timestamp,
+            operation: 'move',
+            hashBefore: null,
+            hashAfter: null,
+            backupPath: null,
+            bytesBefore: receipt.bytesBefore,
+            bytesAfter: receipt.bytesBefore,
+            ...(state.destPath ? { destPath: state.destPath } : {}),
+            ...(receipt.isDirectory ? { isDirectory: true } : {}),
+          }
+        : {
+            id: receipt.entryId,
+            sessionId,
+            absPath,
+            toolCallId: receipt.toolCallId ?? '',
+            toolName: receipt.toolName
+              ?? (receipt.operation === 'delete' ? 'delete' : receipt.operation === 'edit' ? 'edit' : 'write'),
+            timestamp,
+            operation: receipt.operation,
+            hashBefore: receipt.hash || null,
+            hashAfter: after.hashAfter || null,
+            backupPath: receipt.backupPath,
+            bytesBefore: receipt.bytesBefore,
+            bytesAfter: after.bytesAfter ?? 0,
+            ...(after.diff ? { diff: after.diff } : {}),
+            ...(receipt.isDirectory ? { isDirectory: true } : {}),
+          };
+
     try {
       appendEntry(this.transcriptPath(sessionId), entry);
     } catch (err) {
-      this.logger.warn('file-history: trackShellFile failed', {
+      this.logger.warn('file-history: commit failed', {
         sessionId,
         absPath,
         error: err instanceof Error ? err.message : String(err),
@@ -336,9 +379,10 @@ export class FileHistoryServiceImpl implements FileHistoryService {
     }
 
     const path = this.transcriptPath(sessionId);
-    let removed: FileHistoryEntry[];
+    // peek 活跃条目（跳过 R 条目与已回滚条目），不物理移除
+    let pending: FileHistoryEntry[];
     try {
-      removed = removeLastNEntries(path, steps);
+      pending = peekActiveEntries(path, steps);
     } catch (err) {
       this.logger.error('file-history: undo read transcript failed', {
         sessionId,
@@ -347,19 +391,19 @@ export class FileHistoryServiceImpl implements FileHistoryService {
       return { restored: [], remaining: 0, failed: [] };
     }
 
-    if (removed.length === 0) {
-      const remaining = readEntries(path).length;
-      return { restored: [], remaining, failed: [] };
+    if (pending.length === 0) {
+      return { restored: [], remaining: this.countActive(path), failed: [] };
     }
 
     const restored: string[] = [];
     const failed: Array<{ entryId: string; absPath: string; error: string }> = [];
 
-    // 逆序处理（removed 已是倒序：最近在前）
-    // 注意：removeLastNEntries 返回 reverse() 后的结果，索引 0 是最近一次
-    for (const entry of removed) {
+    // 逆序处理（pending 已是倒序：最近在前）。
+    // 先恢复成功再移除条目：恢复失败的条目保留在 transcript，可重试（历史永不丢失）。
+    for (const entry of pending) {
       try {
         await this.restoreEntry(entry);
+        removeEntryById(path, entry.id);
         restored.push(entry.absPath);
         this.logger.info('file-history: undo restored', {
           sessionId,
@@ -369,7 +413,7 @@ export class FileHistoryServiceImpl implements FileHistoryService {
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         failed.push({ entryId: entry.id, absPath: entry.absPath, error: errMsg });
-        this.logger.warn('file-history: undo failed for entry', {
+        this.logger.warn('file-history: undo failed for entry (entry kept for retry)', {
           sessionId,
           absPath: entry.absPath,
           error: errMsg,
@@ -377,8 +421,16 @@ export class FileHistoryServiceImpl implements FileHistoryService {
       }
     }
 
-    const remaining = readEntries(path).length;
-    return { restored, remaining, failed };
+    return { restored, remaining: this.countActive(path), failed };
+  }
+
+  /** 活跃条目计数（非 R 且未回滚；remaining 语义 = 仍可撤销的条目数） */
+  private countActive(path: string): number {
+    try {
+      return readEntries(path).filter(isActiveEntry).length;
+    } catch {
+      return 0;
+    }
   }
 
   listHistory(sessionId: string): FileHistoryEntry[] {
@@ -397,9 +449,10 @@ export class FileHistoryServiceImpl implements FileHistoryService {
     if (Number.isNaN(fromMs) || Number.isNaN(toMs)) {
       return { rollbackIds: [], failed: [] };
     }
-    // 区间内的原始变更 entries（排除 rollback 备份条目，避免二次回滚误伤 redo 备份）
+    // 区间内的活跃原始条目（排除 R 条目与已回滚条目——已回滚的不重复回滚，
+    // 嵌套撤回时内层窗口的条目天然跳过）
     const targets = readEntries(path).filter(e => {
-      if (e.toolName === 'rollback') return false;
+      if (!isActiveEntry(e)) return false;
       const ts = Date.parse(e.timestamp);
       return !Number.isNaN(ts) && ts >= fromMs && ts <= toMs;
     });
@@ -408,26 +461,34 @@ export class FileHistoryServiceImpl implements FileHistoryService {
     const failed: Array<{ absPath: string; error: string }> = [];
     if (targets.length === 0) return { rollbackIds, failed };
 
-    // 先为每个目标做 redo 备份（在动任何文件前完成全部备份，避免中途失败导致备份缺失）
+    // Phase 1：全量 redo 备份（不动文件、不动 transcript；备份文件落盘 + 内存收集）。
+    // 维持"动任何文件前完成全部备份"的既有设计，避免中途失败导致备份缺失。
+    const backups = new Map<string, FileHistoryEntry | null>();
     for (const entry of targets) {
       try {
-        const rbEntry = await this.createRollbackBackup(sessionId, entry);
-        if (rbEntry) {
-          appendEntry(path, rbEntry);
-          rollbackIds.push(rbEntry.id);
-        }
+        backups.set(entry.id, await this.createRollbackBackup(sessionId, entry));
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         failed.push({ absPath: entry.absPath, error: `redo backup failed: ${errMsg}` });
+        backups.set(entry.id, null); // 备份失败 → 该条目不进入 Phase 2
       }
     }
 
-    // 逆序恢复（最近的最先恢复），随后从 transcript 移除该 entry
+    // Phase 2：逆序恢复（最近的最先恢复）。
+    // 标记制：成功才登记 R 条目（含 rollbackOf 反向引用）+ 打 rolledBackAt 标记；
+    // 失败不打标记（条目保留可重试），原始条目永不物理删除。
+    const markedAt = new Date().toISOString();
+    const succeededIds = new Set<string>();
     for (let i = targets.length - 1; i >= 0; i--) {
       const entry = targets[i];
+      const rbEntry = backups.get(entry.id);
+      if (!rbEntry) continue; // Phase 1 备份失败（null）或缺失，跳过
       try {
         await this.restoreEntry(entry);
-        removeEntryById(path, entry.id);
+        const rEntry: FileHistoryEntry = { ...rbEntry, rollbackOf: entry.id };
+        appendEntry(path, rEntry);
+        rollbackIds.push(rEntry.id);
+        succeededIds.add(entry.id);
         this.logger.info('file-history: rollbackRange restored', {
           sessionId,
           absPath: entry.absPath,
@@ -436,12 +497,17 @@ export class FileHistoryServiceImpl implements FileHistoryService {
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         failed.push({ absPath: entry.absPath, error: errMsg });
-        this.logger.warn('file-history: rollbackRange failed for entry', {
+        this.logger.warn('file-history: rollbackRange failed for entry (kept for retry)', {
           sessionId,
           absPath: entry.absPath,
           error: errMsg,
         });
       }
+    }
+
+    // 批量打 rolledBackAt 标记（一次原子重写，避免 N 次全文件重写）
+    if (succeededIds.size > 0) {
+      markEntriesRolledBack(path, succeededIds, markedAt);
     }
 
     return { rollbackIds, failed };
@@ -458,11 +524,17 @@ export class FileHistoryServiceImpl implements FileHistoryService {
     const entries = readEntries(path).filter(e => idSet.has(e.id));
     const failed: Array<{ absPath: string; error: string }> = [];
 
-    // 逆序恢复（与回滚顺序相反的逆序 = 回到回滚前状态）
+    // 逆序恢复（与回滚顺序相反的逆序 = 回到回滚前状态）。
+    // 按 rollbackOf 精确配对：成功的 R 移除 + 对应原始条目清除标记（条目复活，支持再次撤回）；
+    // 失败的 R 保留在 transcript（可重试，数据不丢）。
+    const redoOkIds = new Set<string>();
+    const unmarkIds = new Set<string>();
     for (let i = entries.length - 1; i >= 0; i--) {
       const entry = entries[i];
       try {
         await this.restoreEntry(entry);
+        redoOkIds.add(entry.id);
+        if (entry.rollbackOf) unmarkIds.add(entry.rollbackOf);
         this.logger.info('file-history: redoRollback restored', {
           sessionId,
           absPath: entry.absPath,
@@ -472,13 +544,19 @@ export class FileHistoryServiceImpl implements FileHistoryService {
         failed.push({ absPath: entry.absPath, error: errMsg });
       }
     }
-    // 无论个别失败与否，这批 rollback entries 一次性移除（redo 窗口单次）
-    removeEntriesByIds(path, idSet);
+
+    if (redoOkIds.size > 0) {
+      removeEntriesByIds(path, redoOkIds);
+    }
+    if (unmarkIds.size > 0) {
+      clearRolledBackMarks(path, unmarkIds);
+    }
     return { failed };
   }
 
   /**
    * 为将被回滚的 entry 创建 redo 备份条目（记录回滚前该路径的当前状态）。
+   * rollbackOf 反向引用由调用方（rollbackRange Phase 2）在登记时附加。
    * redo = 对该备份条目执行 restoreEntry：
    * - 当前路径存在（文件/目录）→ operation='overwrite' + 当前内容/归档备份 → redo 写回当前状态
    * - 当前路径不存在 → operation='create' → redo 删除该路径
@@ -568,9 +646,9 @@ export class FileHistoryServiceImpl implements FileHistoryService {
     }
 
     const path = this.transcriptPath(sessionId);
-    let entry: FileHistoryEntry | null;
+    let entry: FileHistoryEntry | undefined;
     try {
-      entry = removeEntryById(path, entryId);
+      entry = readEntries(path).find(e => e.id === entryId);
     } catch (err) {
       this.logger.error('file-history: restore read transcript failed', {
         sessionId,
@@ -581,17 +659,43 @@ export class FileHistoryServiceImpl implements FileHistoryService {
     }
 
     if (!entry) {
-      return { restored: [], remaining: readEntries(path).length, failed: [] };
+      return { restored: [], remaining: this.countActive(path), failed: [] };
     }
 
+    // 已回滚条目与 R 条目不可单条恢复（防状态错乱：应走消息恢复 redoRollback）
+    if (entry.toolName === 'rollback') {
+      return {
+        restored: [],
+        remaining: this.countActive(path),
+        failed: [{
+          entryId,
+          absPath: entry.absPath,
+          error: 'rollback entry cannot be restored individually; use message redo instead',
+        }],
+      };
+    }
+    if (entry.rolledBackAt) {
+      return {
+        restored: [],
+        remaining: this.countActive(path),
+        failed: [{
+          entryId,
+          absPath: entry.absPath,
+          error: 'entry already rolled back by message truncate; restore the message first',
+        }],
+      };
+    }
+
+    // 先恢复成功再移除条目（失败时条目保留可重试）
     try {
       await this.restoreEntry(entry);
-      return { restored: [entry.absPath], remaining: readEntries(path).length, failed: [] };
+      removeEntryById(path, entryId);
+      return { restored: [entry.absPath], remaining: this.countActive(path), failed: [] };
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       return {
         restored: [],
-        remaining: readEntries(path).length,
+        remaining: this.countActive(path),
         failed: [{ entryId: entry.id, absPath: entry.absPath, error: errMsg }],
       };
     }

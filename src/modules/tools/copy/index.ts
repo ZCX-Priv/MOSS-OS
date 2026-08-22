@@ -24,6 +24,7 @@ import {
   containsVcsMarker,
 } from '../../../utils/fs';
 import type { FileHistoryService, FilesysService } from '../../contracts';
+import type { ChangeTracker } from '../../file-history/types';
 import type { ToolContext, ToolResult } from '../types';
 
 /** 目录复制大小上限 */
@@ -197,10 +198,16 @@ async function copySingle(
     return { source: sourceAbs, dest: finalDest, success: true, message: t('tools.copyDryRunWouldCopy') };
   }
 
-  // d. 覆盖前备份已存在目标（支持 undo 恢复被覆盖内容）
+  // d. 覆盖前统一追踪已存在目标（track 变更前备份；commit 变更后登记覆盖条目）
+  let destTracker: ChangeTracker | null = null;
   if (existsSync(finalDest) && overwrite === 'overwrite' && trackHistory && fileHistory) {
     try {
-      await fileHistory.trackEdit(ctx.sessionId, finalDest, ctx.toolCallId, 'edit');
+      destTracker = await fileHistory.track({
+        sessionId: ctx.sessionId,
+        absPath: finalDest,
+        toolCallId: ctx.toolCallId,
+        toolName: 'edit',
+      });
     } catch {
       /* 备份失败不阻断 */
     }
@@ -222,26 +229,24 @@ async function copySingle(
     return { source: sourceAbs, dest: finalDest, success: false, message: t('tools.copyFailed', { message: err instanceof Error ? err.message : String(err) }) };
   }
 
-  // f. file-history：副本登记 create 条目（undo = 删除副本；复制产物在复制前不存在）
+  // f. 登记：被覆盖目标条目（undo 恢复旧内容）+ 副本 create 条目（undo = 删除副本）
+  if (destTracker) {
+    try {
+      destTracker.commit();
+    } catch {
+      /* 登记失败不阻断 */
+    }
+  }
   if (trackHistory && fileHistory) {
     try {
-      fileHistory.recordChange(
-        ctx.sessionId,
-        finalDest,
-        {
-          backedUp: false,
-          backupPath: null,
-          hash: '',
-          bytesBefore: 0,
-          entryId: `${Date.now()}-copy-${Math.random().toString(36).slice(2, 8)}`,
-          operation: 'create',
-          toolCallId: ctx.toolCallId,
-          toolName: 'copy',
-          ...(isDir ? { isDirectory: true } : {}),
-        },
-        '',
-        bytes,
-      );
+      const copyTracker = await fileHistory.track({
+        sessionId: ctx.sessionId,
+        absPath: finalDest,
+        toolCallId: ctx.toolCallId,
+        toolName: 'copy',
+        isDirectory: isDir,
+      });
+      copyTracker.commit({ bytesAfter: bytes });
     } catch {
       /* 记录失败不阻断 */
     }

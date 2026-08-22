@@ -626,7 +626,7 @@ export class AgentEngineImpl implements AgentEngine {
   previewTruncate(sessionId: string, messageTimestamp: string, content: string): TruncatePreview | null {
     const session = this.sessions.get(sessionId);
     if (!session) return null;
-    this.sessions.purgeDeletedMessages(session);
+    // 预览只读：不做任何物理清除（旧版在此 purge 软删除会破坏既有恢复窗口）
     const idx = this.sessions.locateUserMessage(session, messageTimestamp, content);
     if (idx === -1) return null;
 
@@ -658,7 +658,8 @@ export class AgentEngineImpl implements AgentEngine {
         const fromMs = Date.parse(from);
         const toMs = Date.parse(to);
         for (const e of fh.listHistory(sessionId)) {
-          if (e.toolName === 'rollback') continue;
+          // 跳过 R 条目与已回滚条目（已回滚的不会再被本次撤回影响）
+          if (e.toolName === 'rollback' || e.rolledBackAt) continue;
           const ts = Date.parse(e.timestamp);
           if (Number.isNaN(ts) || ts < fromMs || ts > toMs) continue;
           fileChanges.push({ absPath: e.absPath, operation: e.operation, toolName: e.toolName, timestamp: e.timestamp });
@@ -675,8 +676,8 @@ export class AgentEngineImpl implements AgentEngine {
   async truncateFrom(sessionId: string, messageTimestamp: string, content: string): Promise<TruncateResult | null> {
     const session = this.sessions.get(sessionId);
     if (!session) return null;
-    // 新截断覆盖旧恢复窗口：物理清除旧软删除
-    this.sessions.purgeDeletedMessages(session);
+    // 栈式恢复窗口：不物理清除旧软删除（嵌套撤回语义——旧窗口保持可恢复），
+    // 内层窗口已回滚的文件条目由 rollbackRange 的 rolledBackAt 过滤天然跳过。
     const idx = this.sessions.locateUserMessage(session, messageTimestamp, content);
     if (idx === -1) return null;
     const targetMsg = session.messages[idx];
@@ -720,12 +721,12 @@ export class AgentEngineImpl implements AgentEngine {
     // 消息软删除
     const removedCount = this.sessions.truncateFrom(session, idx);
 
-    // 记录 lastTruncation（redo 用）
-    session.lastTruncation = {
+    // 记录撤回窗口（push 栈；redo 用）
+    if (!session.lastTruncations) session.lastTruncations = [];
+    session.lastTruncations.push({
       truncatedBeforeTimestamp,
-      deletedIndexes: [],
       rollbackEntryIds,
-    };
+    });
     // 直接落盘（saveSession 是私有方法，通过再次触发软删除持久化路径覆盖）
     this.sessions.persistSession(session);
 
@@ -760,7 +761,8 @@ export class AgentEngineImpl implements AgentEngine {
   async restoreTruncate(sessionId: string): Promise<TruncateRestoreResult | null> {
     const session = this.sessions.get(sessionId);
     if (!session) return null;
-    const info = session.lastTruncation;
+    // 栈顶窗口（最近一次撤回）；无窗口表示无可恢复
+    const info = session.lastTruncations?.[session.lastTruncations.length - 1];
     if (!info) return null;
 
     // 先恢复文件（redo rollback），再恢复消息
@@ -782,7 +784,9 @@ export class AgentEngineImpl implements AgentEngine {
       }
     }
 
-    const restoredCount = this.sessions.restoreTruncated(session);
+    // pop 窗口 + 仅恢复该窗口区间内的消息（更早窗口保持撤回状态）
+    session.lastTruncations!.pop();
+    const restoredCount = this.sessions.restoreTruncatedWindow(session, info.truncatedBeforeTimestamp);
 
     const server = this.services.tryResolve<{ sendToSession: (sid: string, msg: unknown) => void }>(ServiceNames.SERVER_INSTANCE);
     server?.sendToSession(sessionId, {

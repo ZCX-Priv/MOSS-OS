@@ -1,5 +1,5 @@
 // tools/write/index.ts
-// write 工具调度层：参数校验 → 路径安全 → read-before-overwrite → trackEdit → 分派到 handler → 组装结果。
+// write 工具调度层：参数校验 → 路径安全 → read-before-overwrite → 统一 track 备份 → 分派到 handler → 组装结果。
 // 元数据（name/description/icon/annotations/inputSchema/config）见同目录 tool.json。
 // handlers/ 子目录执行实际写入（流式原子写入 + diff + 哈希），shared/ 子目录提供流式写入/diff守卫等公共能力。
 //
@@ -16,6 +16,7 @@ import { t } from '../../../core/i18n';
 import { ServiceNames } from '../../../core/types';
 import { existsSync, statSync } from 'node:fs';
 import type { FileHistoryService, FilesysService } from '../../contracts';
+import type { ChangeTracker } from '../../file-history/types';
 import type { ToolContext, ToolResult } from '../types';
 import { writeText, type WriteTextResult } from './handlers/text';
 
@@ -94,14 +95,19 @@ export default {
       }
     }
 
-    // 6. Track Edit：改前备份（同步阻塞，必须在写入前完成）
+    // 6. 统一追踪：改前备份（同步阻塞，必须在写入前完成）
     const createDirs = p.createDirs ?? true;
-    let trackResult: Awaited<ReturnType<FileHistoryService['trackEdit']>> | null = null;
+    let tracker: ChangeTracker | null = null;
     if (trackHistory && fileHistory) {
       try {
-        trackResult = await fileHistory.trackEdit(ctx.sessionId, absPath, ctx.toolCallId, 'write');
+        tracker = await fileHistory.track({
+          sessionId: ctx.sessionId,
+          absPath,
+          toolCallId: ctx.toolCallId,
+          toolName: 'write',
+        });
       } catch (err) {
-        ctx.logger.warn('write: trackEdit failed, undo will be unavailable', {
+        ctx.logger.warn('write: track failed, undo will be unavailable', {
           path: absPath, error: err instanceof Error ? err.message : String(err),
         });
       }
@@ -124,15 +130,16 @@ export default {
       return errorResult(t('tools.writeError', { message: msg }));
     }
 
-    // 8. 记录历史条目（写入 transcript）
-    if (trackResult && fileHistory) {
+    // 8. 登记历史条目（写入 transcript）
+    if (tracker) {
       try {
-        fileHistory.recordChange(
-          ctx.sessionId, absPath, trackResult, writeResult.hash, writeResult.bytes,
-          writeResult.diff ?? undefined,
-        );
+        tracker.commit({
+          hashAfter: writeResult.hash,
+          bytesAfter: writeResult.bytes,
+          diff: writeResult.diff ?? undefined,
+        });
       } catch (err) {
-        ctx.logger.warn('write: recordChange failed', { path: absPath, error: err instanceof Error ? err.message : String(err) });
+        ctx.logger.warn('write: commit failed', { path: absPath, error: err instanceof Error ? err.message : String(err) });
       }
     }
 
@@ -143,7 +150,7 @@ export default {
       ? t('tools.writeCreated', { path: absPath, bytes: writeResult.bytes })
       : t('tools.writeOverwrote', { path: absPath, bytes: writeResult.bytes });
     const diffSection = writeResult.diff ? `\n\n--- unified diff ---\n${writeResult.diff}` : '';
-    const backupNote = trackResult?.backedUp ? t('tools.writeBackupNote', { path: trackResult.backupPath ?? '' }) : '';
+    const backupNote = tracker?.receipt.backedUp ? t('tools.writeBackupNote', { path: tracker.receipt.backupPath ?? '' }) : '';
 
     return {
       content: [{ type: 'text', text: summary + diffSection + backupNote }],
@@ -153,10 +160,10 @@ export default {
         operation: writeResult.operation,
         createdDirs: createDirs,
         diff: writeResult.diff || undefined,
-        hashBefore: trackResult?.hash || null,
+        hashBefore: tracker?.receipt.hash || null,
         hashAfter: writeResult.hash,
-        entryId: trackResult?.entryId || null,
-        backedUp: trackResult?.backedUp ?? false,
+        entryId: tracker?.receipt.entryId || null,
+        backedUp: tracker?.receipt.backedUp ?? false,
       },
     };
   },

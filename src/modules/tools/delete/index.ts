@@ -21,6 +21,7 @@ import {
 import sendToTrash from 'trash';
 import { moveToTrash } from '../../file-history/trash';
 import type { FileHistoryService, FilesysService } from '../../contracts';
+import type { ChangeTracker } from '../../file-history/types';
 import type { ToolContext, ToolResult } from '../types';
 
 /** 目录删除（trash/硬删除）最大字节数（超限拒绝，提示改用 shell 工具） */
@@ -254,12 +255,17 @@ async function deleteSingle(
   // i/j. trash 模式：备份 → 送系统回收站（失败回退应用内回收站）→ 记录历史
   if (trash) {
     // 1. 删除前备份（undo/消息撤回恢复原位的数据来源；失败不阻断——系统回收站本身是兜底）
-    let trackResult: Awaited<ReturnType<FileHistoryService['trackEdit']>> | null = null;
+    let tracker: ChangeTracker | null = null;
     if (trackHistory && fileHistory) {
       try {
-        trackResult = await fileHistory.trackEdit(ctx.sessionId, realPath, ctx.toolCallId, 'delete');
+        tracker = await fileHistory.track({
+          sessionId: ctx.sessionId,
+          absPath: realPath,
+          toolCallId: ctx.toolCallId,
+          toolName: 'delete',
+        });
       } catch (err) {
-        ctx.logger.warn('delete: trackEdit failed, undo will be unavailable', {
+        ctx.logger.warn('delete: track failed, undo will be unavailable', {
           path: absPath,
           error: err instanceof Error ? err.message : String(err),
         });
@@ -295,12 +301,12 @@ async function deleteSingle(
       }
     }
 
-    // 4. 写 transcript（消息撤回 rollbackRange / undo 从备份恢复原位的依据）
-    if (trackResult?.entryId && fileHistory) {
+    // 4. 登记历史（消息撤回 rollbackRange / undo 从备份恢复原位的依据）
+    if (tracker?.receipt.entryId) {
       try {
-        fileHistory.recordChange(ctx.sessionId, realPath, trackResult, '', 0, undefined);
+        tracker.commit();
       } catch (err) {
-        ctx.logger.warn('delete: recordChange failed', {
+        ctx.logger.warn('delete: commit failed', {
           path: absPath,
           error: err instanceof Error ? err.message : String(err),
         });
@@ -332,20 +338,25 @@ async function deleteSingle(
       trashed: true,
       systemTrash,
       fallbackTrash: !systemTrash,
-      backedUp: trackResult?.backedUp ?? false,
-      entryId: trackResult?.entryId || null,
+      backedUp: tracker?.receipt.backedUp ?? false,
+      entryId: tracker?.receipt.entryId || null,
       bytes,
       isDirectory: isDir,
     };
   }
 
-  // k. 硬删除：trackEdit 备份 + unlinkSync/rmSync + recordChange
-  let trackResult: Awaited<ReturnType<FileHistoryService['trackEdit']>> | null = null;
+  // k. 硬删除：统一追踪备份 + unlinkSync/rmSync + commit 登记
+  let tracker: ChangeTracker | null = null;
   if (trackHistory && fileHistory) {
     try {
-      trackResult = await fileHistory.trackEdit(ctx.sessionId, realPath, ctx.toolCallId, 'delete');
+      tracker = await fileHistory.track({
+        sessionId: ctx.sessionId,
+        absPath: realPath,
+        toolCallId: ctx.toolCallId,
+        toolName: 'delete',
+      });
     } catch (err) {
-      ctx.logger.warn('delete: trackEdit failed, undo will be unavailable', {
+      ctx.logger.warn('delete: track failed, undo will be unavailable', {
         path: absPath,
         error: err instanceof Error ? err.message : String(err),
       });
@@ -368,20 +379,20 @@ async function deleteSingle(
     return { absPath, success: false, message: t('tools.deleteFailed', { message: errMsg }) };
   }
 
-  // 记录历史（hashAfter='', bytesAfter=0）
-  if (trackResult && fileHistory) {
+  // 登记历史（hashAfter='', bytesAfter=0）
+  if (tracker) {
     try {
-      fileHistory.recordChange(ctx.sessionId, realPath, trackResult, '', 0, undefined);
+      tracker.commit();
     } catch (err) {
-      ctx.logger.warn('delete: recordChange failed', {
+      ctx.logger.warn('delete: commit failed', {
         path: absPath,
         error: err instanceof Error ? err.message : String(err),
       });
     }
   }
 
-  const backupNote = trackResult?.backedUp
-    ? t('tools.deleteBackupNote', { path: trackResult.backupPath ?? '' })
+  const backupNote = tracker?.receipt.backedUp
+    ? t('tools.deleteBackupNote', { path: tracker.receipt.backupPath ?? '' })
     : '';
 
   // 变更事件（同 trash 分支；delete 从原位置消失即视为 deleted）
@@ -400,8 +411,8 @@ async function deleteSingle(
     success: true,
     message: `${t('tools.deleteHardDeleted')}${backupNote}`,
     hardDeleted: true,
-    backedUp: trackResult?.backedUp ?? false,
-    entryId: trackResult?.entryId || null,
+    backedUp: tracker?.receipt.backedUp ?? false,
+    entryId: tracker?.receipt.entryId || null,
     bytes,
     isDirectory: isDir,
   };

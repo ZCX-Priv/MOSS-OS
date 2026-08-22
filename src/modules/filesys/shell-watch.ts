@@ -53,17 +53,20 @@ function* walkSnapshotFiles(root: string, _maxFiles: number, deadline: number): 
 }
 
 /**
- * file-history 侧的 shell 变更支持（最小结构类型，避免模块反向依赖 file-history 的类型）。
- * file-history 实现 trackShellFile 后自动生效；未实现（旧版本）时降级为仅检测+事件，不备份。
+ * file-history 侧的统一变更追踪支持（最小结构类型，避免模块反向依赖 file-history 的类型）。
+ * 与 FileHistoryService.track 同构：file-history 实现后自动生效；
+ * 未实现（旧版本）时降级为仅检测+事件，不备份。
  */
 export interface ShellHistorySupport {
-  trackShellFile(
-    sessionId: string,
-    absPath: string,
-    kind: 'created' | 'modified' | 'deleted',
-    beforeBuffer: Buffer | null,
-    toolCallId?: string,
-  ): void;
+  /** 统一追踪入口：shell 场景为事后回填（shellBefore 来自读缓存） */
+  track(req: {
+    sessionId: string;
+    absPath: string;
+    toolName: 'shell';
+    toolCallId?: string;
+    shellKind: 'created' | 'modified' | 'deleted';
+    shellBefore: Buffer | null;
+  }): Promise<{ commit(after?: { hashAfter?: string; bytesAfter?: number; diff?: string }): void }>;
 }
 
 export class ShellWatcher {
@@ -134,12 +137,21 @@ export class ShellWatcher {
       if (!after.has(path)) report.deleted.push(path);
     }
 
-    // 缓存回填备份（file-history 未实现 trackShellFile 时整体降级为仅报告）
+    // 缓存回填备份（统一 tracker：track 备份 + commit 登记，顺序 await 防 JSONL 交错；
+    // file-history 未实现 track 时整体降级为仅报告）
     const history = this.resolveHistory();
     if (history) {
       for (const path of report.created) {
         try {
-          history.trackShellFile(sessionId, path, 'created', null, toolCallId);
+          const tracker = await history.track({
+            sessionId,
+            absPath: path,
+            toolName: 'shell',
+            shellKind: 'created',
+            shellBefore: null,
+            toolCallId,
+          });
+          tracker.commit();
           report.undone++;
         } catch {
           /* 单文件失败不阻断 */
@@ -148,7 +160,15 @@ export class ShellWatcher {
       for (const path of report.modified) {
         const buf = this.deps.cache.peek(path)?.rawBuffer ?? null;
         try {
-          history.trackShellFile(sessionId, path, 'modified', buf, toolCallId);
+          const tracker = await history.track({
+            sessionId,
+            absPath: path,
+            toolName: 'shell',
+            shellKind: 'modified',
+            shellBefore: buf,
+            toolCallId,
+          });
+          tracker.commit();
           if (buf) report.undone++;
         } catch {
           /* 单文件失败不阻断 */
@@ -157,7 +177,15 @@ export class ShellWatcher {
       for (const path of report.deleted) {
         const buf = this.deps.cache.peek(path)?.rawBuffer ?? null;
         try {
-          history.trackShellFile(sessionId, path, 'deleted', buf, toolCallId);
+          const tracker = await history.track({
+            sessionId,
+            absPath: path,
+            toolName: 'shell',
+            shellKind: 'deleted',
+            shellBefore: buf,
+            toolCallId,
+          });
+          tracker.commit();
           if (buf) report.undone++;
         } catch {
           /* 单文件失败不阻断 */
@@ -205,7 +233,7 @@ export class ShellWatcher {
   private resolveHistory(): ShellHistorySupport | null {
     try {
       const svc = this.deps.services.tryResolve<Partial<ShellHistorySupport>>(ServiceNames.FILE_HISTORY);
-      if (svc && typeof svc.trackShellFile === 'function') {
+      if (svc && typeof svc.track === 'function') {
         return svc as ShellHistorySupport;
       }
     } catch {

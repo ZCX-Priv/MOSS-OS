@@ -1,6 +1,6 @@
 // write/handlers/text.ts
 // 文本写入 handler：filesys.writeFile（≤1MB 统一路径）或流式原子写入（>1MB 大文件）+ diff + 哈希。
-// 只关心「如何写文本」，不关心 read-before-overwrite / trackEdit / 权限确认（调度层负责）。
+// 只关心「如何写文本」，不关心 read-before-overwrite / 统一 track 备份 / 权限确认（调度层负责）。
 // 返回纯数据，由调度层组装 ToolResult 和调用 fileHistory 服务。
 // filesys 统一化：两路径写入均更新 filesys 缓存并发出变更事件（大文件经 recordExternalWrite 登记）。
 

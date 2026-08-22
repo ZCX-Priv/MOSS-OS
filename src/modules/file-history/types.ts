@@ -12,7 +12,7 @@ export type HistoryToolName = 'write' | 'edit' | 'delete' | 'rollback' | 'move' 
 
 /**
  * 文件历史条目（JSONL 中每行一个）。
- * 每次文件变更前由 trackEdit 写入一条。
+ * 每次文件变更经 track()/commit() 写入一条。
  */
 export interface FileHistoryEntry {
   /** 条目唯一 ID（UUID） */
@@ -45,11 +45,37 @@ export interface FileHistoryEntry {
   isDirectory?: boolean;
   /** move 操作的目标路径（operation='move' 时 undo = destPath → absPath 反向 rename） */
   destPath?: string;
+  /** 消息撤回回滚标记（标记制：不物理删除条目；redo 恢复后清除，可无限次撤回/恢复循环） */
+  rolledBackAt?: string;
+  /** 仅 R 条目（toolName='rollback'）：指向被回滚的原始条目 id，redoRollback 成功后据此精确清除标记 */
+  rollbackOf?: string;
 }
 
-/** trackEdit 返回结果 */
-export interface TrackEditResult {
-  /** 是否实际备份了（文件不存在或已在快照中则 false） */
+/** 统一追踪请求：所有变更类型（write/edit/delete/move/copy/shell）单一入口 */
+export interface TrackRequest {
+  /** 会话 ID */
+  sessionId: string;
+  /** 变更主路径（move = 源路径；copy = 副本目标路径；其余 = 变更文件路径） */
+  absPath: string;
+  /** 触发变更的工具名 */
+  toolName: HistoryToolName;
+  /** 触发变更的工具调用 ID */
+  toolCallId?: string;
+  /** move 的目标路径 */
+  destPath?: string;
+  /** 变更前字节数（move/copy 可选提供） */
+  bytesBefore?: number;
+  /** 是否目录操作（move/copy 可选提供） */
+  isDirectory?: boolean;
+  /** shell 快照检测分类（仅 toolName='shell' 事后回填场景） */
+  shellKind?: 'created' | 'modified' | 'deleted';
+  /** shell 执行前内容（读缓存命中时；null 表示不可得，undo 降级为提示不可恢复） */
+  shellBefore?: Buffer | null;
+}
+
+/** track() 返回的收据（原 TrackEditResult 泛化）：备份结果 + 条目登记要素 */
+export interface TrackReceipt {
+  /** 是否实际备份了（文件不存在、move/copy、禁用时为 false） */
   backedUp: boolean;
   /** 备份路径（~/.moss/file-history/backups/<hash>.bak 文件 或 ~/.moss/file-history/backups/<entryId>.tar.gz 目录） */
   backupPath: string | null;
@@ -61,12 +87,35 @@ export interface TrackEditResult {
   entryId: string;
   /** 变更操作类型 */
   operation: FileOperation;
-  /** 是否为目录操作（新增：true 时 backupPath 指向 .tar.gz，restoreEntry 走 extractArchive） */
+  /** 是否为目录操作（true 时 backupPath 指向 .tar.gz，restoreEntry 走 extractArchive） */
   isDirectory?: boolean;
-  /** 触发变更的工具调用 ID（recordChange 写入 transcript 用） */
+  /** 触发变更的工具调用 ID */
   toolCallId?: string;
-  /** 触发变更的工具名（recordChange 写入 transcript 用） */
+  /** 触发变更的工具名 */
   toolName?: HistoryToolName;
+}
+
+/** commit() 的变更后状态描述 */
+export interface TrackCompletion {
+  /** 变更后内容 sha256（删除为空/缺省） */
+  hashAfter?: string;
+  /** 变更后字节数 */
+  bytesAfter?: number;
+  /** unified diff 文本（仅 overwrite/edit） */
+  diff?: string;
+}
+
+/**
+ * 统一变更追踪器：一个变更一个 tracker。
+ * 协议：变更前 fh.track(req) → 执行变更 → tracker.commit(after)；
+ * 变更失败时不调 commit 即丢弃（孤儿备份由 retention 回收）。
+ * shell 场景为事后回填：track 携带 shellBefore，commit 空参数登记。
+ */
+export interface ChangeTracker {
+  /** 只读收据（工具返回 metadata 的 entryId/backedUp/backupPath 来源） */
+  readonly receipt: TrackReceipt;
+  /** 变更完成后登记历史条目（写 transcript）；transcriptEnabled=false 时 no-op */
+  commit(after?: TrackCompletion): void;
 }
 
 /** undo 返回结果 */

@@ -12,7 +12,8 @@ import type { Tool, ToolContext, ToolResult, AskPayload, AskOutcome } from './to
 import type { TodoItem } from './tools/todo/shared/store';
 import type {
   FileHistoryEntry,
-  TrackEditResult,
+  TrackRequest,
+  ChangeTracker,
   UndoResult,
 } from './file-history/types';
 export type { FilesysService, ShellChangeReport } from './filesys/types';
@@ -401,60 +402,19 @@ export interface ServerInstanceLike {
 
 // ============================================================================
 // File History Service（由 file-history 模块注册，ServiceNames.FILE_HISTORY）
-// 三层文件历史架构：Track Edit（改前备份）+ Snapshot（每轮快照）+ JSONL 持久化
+// 三层文件历史架构：Track（统一变更追踪）+ Snapshot（每轮快照）+ JSONL 持久化
 // ============================================================================
 
 export interface FileHistoryService {
   /**
-   * Layer 1：改前备份（同步阻塞，必须在文件修改前调用）。
-   * - 文件不存在 → operation='create'，不备份
-   * - 文件存在 → operation='overwrite'/'edit'，按内容哈希备份（同内容去重）
-   * @returns 备份结果（含 entryId 用于 restore）
+   * 统一变更追踪入口（tracker 对象模式）：变更前调用（shell 为事后回填调用）。
+   * 内部按 toolName 分发：write/edit/delete 做改前备份（文件不存在记 create 收据）；
+   * move/copy 构造无备份收据；shell 按 shellBefore 缓存内容回填备份。
+   * @returns ChangeTracker：变更后调 tracker.commit(after) 登记历史条目；
+   *          变更失败不调 commit 即丢弃（孤儿备份由 retention 回收）。
+   *          enabled=false 时返回 no-op tracker。
    */
-  trackEdit(
-    sessionId: string,
-    absPath: string,
-    toolCallId: string,
-    toolName: 'write' | 'edit' | 'delete',
-  ): Promise<TrackEditResult>;
-
-  /**
-   * 在文件变更后记录历史条目（写入 transcript）。
-   * 由 write/edit/delete 工具在变更完成后调用，传入变更后的内容 sha。
-   */
-  recordChange(
-    sessionId: string,
-    absPath: string,
-    trackResult: TrackEditResult,
-    hashAfter: string,
-    bytesAfter: number,
-    diff?: string,
-  ): void;
-
-  /**
-   * 记录 move（移动/重命名）条目（filesys move 工具调用）。
-   * undo = destPath → source 反向 rename；move 不改变内容，无需内容备份。
-   */
-  recordMoveEntry(
-    sessionId: string,
-    source: string,
-    dest: string,
-    toolCallId: string,
-    opts?: { bytesBefore?: number; isDirectory?: boolean },
-  ): void;
-
-  /**
-   * shell 快照检测登记（filesys shell-watch 回填调用）：
-   * created → operation='create'（undo=删除）；modified/deleted 且提供执行前 buffer →
-   * 按哈希备份可完整 undo；buffer 为 null 时记无备份条目（undo 时提示不可恢复）。
-   */
-  trackShellFile(
-    sessionId: string,
-    absPath: string,
-    kind: 'created' | 'modified' | 'deleted',
-    beforeBuffer: Buffer | null,
-    toolCallId?: string,
-  ): void;
+  track(req: TrackRequest): Promise<ChangeTracker>;
 
   /** 校验本会话是否 read 过该文件（read-before-mutate 约束） */
   isRead(sessionId: string, absPath: string): boolean;
@@ -465,16 +425,17 @@ export interface FileHistoryService {
   /** Layer 2：创建快照（每轮 LLM 响应后异步调用）。当前实现为 no-op，预留扩展点。 */
   createSnapshot(sessionId: string): Promise<void>;
 
-  /** 撤销最近 N 次文件变更（默认 1 次）。从备份恢复原内容。 */
+  /** 撤销最近 N 次文件变更（默认 1 次）。先恢复成功再移除条目，失败条目保留可重试。 */
   undo(sessionId: string, steps?: number): Promise<UndoResult>;
 
-  /** 列出某会话的文件历史（前端 UI 用） */
+  /** 列出某会话的文件历史（前端 UI 用；含已回滚标记条目） */
   listHistory(sessionId: string): FileHistoryEntry[];
 
   /**
-   * 回滚时间区间内的全部文件变更（消息撤回联动）。
-   * 逆序恢复每条 entry；恢复前对当前状态做 redo 备份并写入 toolName='rollback' 的新 entry，
-   * 随后从 transcript 移除被回滚的 entry。
+   * 回滚时间区间内的全部文件变更（消息撤回联动，标记制）。
+   * Phase 1 全量 redo 备份（不动文件）；Phase 2 逆序恢复，成功才追加
+   * toolName='rollback' 的 R 条目（含 rollbackOf 反向引用）并给原始条目打
+   * rolledBackAt 标记（不物理删除，redo 后清除标记，支持无限次撤回/恢复循环）。
    * @returns rollback entry id 列表（供 redoRollback）
    */
   rollbackRange(sessionId: string, fromTs: string, toTs: string): Promise<{
@@ -483,13 +444,14 @@ export interface FileHistoryService {
   }>;
 
   /**
-   * 恢复一次回滚（redo）：把文件恢复到回滚前状态，随后移除这些 rollback entries。
+   * 恢复一次回滚（redo）：按 rollbackOf 配对——单条 R 恢复成功则移除该 R
+   * 并清除对应原始条目的 rolledBackAt 标记；失败的 R 保留（可重试）。
    */
   redoRollback(sessionId: string, rollbackIds: string[]): Promise<{
     failed: Array<{ absPath: string; error: string }>;
   }>;
 
-  /** 恢复到指定历史条目（前端 UI 用，撤销该条目对应的变更） */
+  /** 恢复到指定历史条目（前端 UI 用，撤销该条目对应的变更；拒绝已回滚/R 条目） */
   restore(sessionId: string, entryId: string): Promise<UndoResult>;
 
   /** 清理会话资源（会话结束时调用，清空内存 ledger） */

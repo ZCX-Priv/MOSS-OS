@@ -37,6 +37,8 @@ export interface ActiveSkill {
 interface LegacySessionRecord {
   systemPrompt?: string;
   activeSkill?: { name?: string; mode?: 'system' | 'message'; content?: string };
+  /** 旧单槽撤回窗口（现用 lastTruncations 栈，加载时自动包装） */
+  lastTruncation?: TruncationInfo;
 }
 
 export interface Session {
@@ -65,15 +67,16 @@ export interface Session {
   contextTelemetry?: SessionContextTelemetry;
   /** 最近一次 run 的运行统计（run 级口径：每次发送消息重置；中控台指标栏刷新恢复用） */
   lastRunStats?: RunStats;
-  /** 最近一次消息撤回（截断）的恢复信息（redo 用；新撤回覆盖旧的） */
-  lastTruncation?: {
-    /** 截断起点时间戳（目标用户消息的 timestamp） */
-    truncatedBeforeTimestamp: string;
-    /** 被软删除的消息在 messages 中的索引列表 */
-    deletedIndexes: number[];
-    /** 文件回滚产生的 rollback entry id 列表（file-history redo 备份） */
-    rollbackEntryIds: string[];
-  };
+  /** 消息撤回（截断）恢复窗口栈（尾部为最近窗口；支持连续撤回后按栈序逐层恢复） */
+  lastTruncations?: TruncationInfo[];
+}
+
+/** 消息撤回（截断）恢复窗口：栈式存储，支持连续撤回多条消息后逐层恢复 */
+export interface TruncationInfo {
+  /** 截断起点时间戳（目标用户消息的 timestamp；恢复时仅清除该时刻之后的软删除） */
+  truncatedBeforeTimestamp: string;
+  /** 文件回滚产生的 rollback entry id 列表（file-history redo 备份） */
+  rollbackEntryIds: string[];
 }
 
 export class SessionStore {
@@ -309,7 +312,12 @@ export class SessionStore {
           ...(parsed.envContext ? { envContext: parsed.envContext } : {}),
           ...(Array.isArray(parsed.compactions) ? { compactions: parsed.compactions } : {}),
           ...(parsed.lastRunStats ? { lastRunStats: parsed.lastRunStats } : {}),
-          ...(parsed.lastTruncation ? { lastTruncation: parsed.lastTruncation } : {}),
+          ...(Array.isArray(parsed.lastTruncations)
+            ? { lastTruncations: parsed.lastTruncations }
+            : parsed.lastTruncation
+              // 旧单对象格式兼容：包装为单元素数组（栈）
+              ? { lastTruncations: [parsed.lastTruncation] }
+              : {}),
         };
         // 崩溃自愈：防抖落盘窗口内进程崩溃可能丢尾部 tool 结果——补错误结果
         // 恢复 tool_use/tool_result 配对（否则 session 复用时 provider 报 HTTP 400）
@@ -572,20 +580,8 @@ export class SessionStore {
   }
 
   /**
-   * 物理移除所有软删除消息（新截断覆盖旧截断时调用：旧恢复窗口已被覆盖，彻底清理）。
-   * 调用后 messages 中不再有 deletedAt 标记，方可进行 locate + truncate。
-   */
-  purgeDeletedMessages(session: Session): void {
-    const before = session.messages.length;
-    session.messages = session.messages.filter(m => !m.deletedAt);
-    if (session.messages.length !== before) {
-      session.lastTruncation = undefined;
-      this.saveSessionNow(session);
-    }
-  }
-
-  /**
    * 从目标用户消息起（含其后全部）标记软删除（索引基于 session.messages 全数组）。
+   * 嵌套撤回：已在更早窗口中软删除的消息保持标记（deletedAt 不覆盖）。
    * @returns 被标记的消息数量（0 表示目标索引无效或无可删）
    */
   truncateFrom(session: Session, targetIndex: number): number {
@@ -605,16 +601,23 @@ export class SessionStore {
     return count;
   }
 
-  /** 恢复最近一次截断：清除全部软删除标记（恢复窗口仅保留最近一步）并返回恢复数量 */
-  restoreTruncated(session: Session): number {
+  /**
+   * 恢复单个截断窗口：仅清除该窗口起点时间戳之后的软删除标记（嵌套窗口内层保持撤回状态）。
+   * 调用方（engine）负责先 pop lastTruncations 栈顶。
+   * @returns 恢复的消息数量
+   */
+  restoreTruncatedWindow(session: Session, beforeTimestamp: string): number {
+    const fromMs = Date.parse(beforeTimestamp);
     let restored = 0;
     for (const m of session.messages) {
-      if (m.deletedAt) {
-        m.deletedAt = undefined;
-        restored++;
-      }
+      if (!m.deletedAt) continue;
+      const ts = m.timestamp ? Date.parse(m.timestamp) : Number.NaN;
+      // 窗口起点之前的消息属于更早的撤回窗口，保持软删除（时间不可解析时保守恢复：
+      // 撤回场景目标消息必有 timestamp，此处仅防御脏数据）
+      if (!Number.isNaN(fromMs) && !Number.isNaN(ts) && ts < fromMs) continue;
+      m.deletedAt = undefined;
+      restored++;
     }
-    session.lastTruncation = undefined;
     if (restored > 0) {
       session.updatedAt = new Date().toISOString();
       this.saveSessionNow(session);

@@ -27,6 +27,7 @@ import {
   containsVcsMarker,
 } from '../../../utils/fs';
 import type { FileHistoryService, FilesysService } from '../../contracts';
+import type { ChangeTracker } from '../../file-history/types';
 import type { ToolContext, ToolResult } from '../types';
 
 /** 目录移动大小上限（跨盘 fallback 时递归复制的保护） */
@@ -213,10 +214,16 @@ async function moveSingle(
     return { source: sourceAbs, dest: finalDest, success: true, message: t('tools.moveDryRunWouldMove') };
   }
 
-  // g. overwrite 策略：覆盖前对已存在目标备份（支持 undo 恢复被覆盖内容）
+  // g. overwrite 策略：覆盖前统一追踪已存在目标（track 变更前备份；commit 变更后登记覆盖条目）
+  let destTracker: ChangeTracker | null = null;
   if (existsSync(finalDest) && overwrite === 'overwrite' && trackHistory && fileHistory) {
     try {
-      await fileHistory.trackEdit(ctx.sessionId, finalDest, ctx.toolCallId, 'edit');
+      destTracker = await fileHistory.track({
+        sessionId: ctx.sessionId,
+        absPath: finalDest,
+        toolCallId: ctx.toolCallId,
+        toolName: 'edit',
+      });
     } catch {
       /* 备份失败不阻断（undo 不可用） */
     }
@@ -244,13 +251,26 @@ async function moveSingle(
     return { source: sourceAbs, dest: finalDest, success: false, message: t('tools.moveFailed', { message: err instanceof Error ? err.message : String(err) }) };
   }
 
-  // i. file-history move 条目（undo = 反向 rename）
+  // i. 登记：被覆盖目标条目（undo 恢复旧内容）+ move 条目（undo = 反向 rename）
+  if (destTracker) {
+    try {
+      destTracker.commit();
+    } catch {
+      /* 登记失败不阻断 */
+    }
+  }
   if (trackHistory && fileHistory) {
     try {
-      fileHistory.recordMoveEntry(ctx.sessionId, sourceAbs, finalDest, ctx.toolCallId, {
+      const moveTracker = await fileHistory.track({
+        sessionId: ctx.sessionId,
+        absPath: sourceAbs,
+        toolCallId: ctx.toolCallId,
+        toolName: 'move',
+        destPath: finalDest,
         bytesBefore: bytes,
         isDirectory: isDir,
       });
+      moveTracker.commit();
     } catch {
       /* 记录失败不阻断 */
     }

@@ -34,10 +34,6 @@ import {
   AnimSettingsSection,
 } from './components/pages/SettingsPage';
 import { SearchModal } from './components/overlays/SearchModal';
-import { AgentSwitchMenu } from './components/overlays/AgentSwitchMenu';
-import { FileReferenceMenu } from './components/overlays/FileReferenceMenu';
-import { SlashCommandMenu } from './components/dialogs/SlashCommandMenu';
-import { PlanModeInput } from './components/dialogs/PlanModeInput';
 import { SidebarProvider, SidebarInset, SidebarTrigger } from '@/components/ui/sidebar';
 import { Button } from '@/components/ui/button';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -115,8 +111,8 @@ export default function App() {
             className="anim-route animate-in fade-in slide-in-from-bottom-1 duration-200 flex min-h-0 flex-1 flex-col"
           >
             <Routes>
-            <Route path="/" element={<TaskPage onOpenOverlay={openOverlay} />} />
-            <Route path="/task/:taskId" element={<TaskPage onOpenOverlay={openOverlay} />} />
+            <Route path="/" element={<TaskPage />} />
+            <Route path="/task/:taskId" element={<TaskPage />} />
             <Route path="/plugins" element={<PluginMarketPage />}>
               <Route index element={<Navigate to="skills" replace />} />
               <Route path="skills" element={<SkillsTab />} />
@@ -171,10 +167,6 @@ export default function App() {
 
         {/* 受控 overlay：各组件自带 Dialog/Sheet，由 overlay state 驱动开关 */}
         <SearchModal open={overlay === 'search'} onClose={closeOverlay} />
-        <AgentSwitchMenu open={overlay === 'agent-switch'} onClose={closeOverlay} />
-        <FileReferenceMenu open={overlay === 'file-reference'} onClose={closeOverlay} />
-        <SlashCommandMenu open={overlay === 'slash-command'} onClose={closeOverlay} />
-        <PlanModeInput open={overlay === 'plan-mode'} onClose={closeOverlay} />
       </SidebarProvider>
       <Toaster position="top-center" />
     </TooltipProvider>

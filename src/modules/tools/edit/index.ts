@@ -7,7 +7,7 @@
 //   1. 多级模糊容错（exact → eol → indent → trailing-ws），命中即应用并标注级别
 //   2. sha256 乐观锁（expectHash 防并发覆盖）
 //   3. dryRun 预览
-//   4. read-before-overwrite + trackEdit 哈希备份 + 原子写入 + diff 返回
+//   4. read-before-overwrite + 统一 track 哈希备份 + 原子写入 + diff 返回
 // filesys 统一化：读取/哈希走 filesys.readFile（sha256 对磁盘原始字节，修复 BOM 乐观锁断裂）；
 // 写入走 filesys.writeFile（BOM 单次保留，替代旧双写；缓存更新 + 变更事件）。
 
@@ -18,7 +18,7 @@ import { stripBom } from '../../../utils/encoding';
 import { computeLineDiff } from '../../file-history/diff';
 import { hashText } from '../../filesys/hash';
 import type { FileHistoryService, FilesysService } from '../../contracts';
-import type { TrackEditResult } from '../../file-history/types';
+import type { ChangeTracker } from '../../file-history/types';
 import type { ToolContext, ToolResult } from '../types';
 
 // ============================================================================
@@ -371,13 +371,18 @@ async function editOneFile(
     return result;
   }
 
-  // 9. trackEdit 备份（改前哈希）
-  let trackResult: TrackEditResult | null = null;
+  // 9. 统一追踪：改前备份（改前哈希）
+  let tracker: ChangeTracker | null = null;
   if (toolConfig.trackHistory && fileHistory) {
     try {
-      trackResult = await fileHistory.trackEdit(ctx.sessionId, absPath, ctx.toolCallId, 'edit');
+      tracker = await fileHistory.track({
+        sessionId: ctx.sessionId,
+        absPath,
+        toolCallId: ctx.toolCallId,
+        toolName: 'edit',
+      });
     } catch (err) {
-      ctx.logger.warn('edit: trackEdit failed, undo will be unavailable', {
+      ctx.logger.warn('edit: track failed, undo will be unavailable', {
         path: absPath,
         error: err instanceof Error ? err.message : String(err),
       });
@@ -409,23 +414,20 @@ async function editOneFile(
   const diff = computeLineDiff(content, newContent);
   result.diff = diff || undefined;
   result.hashAfter = writeResult.sha256;
-  result.entryId = trackResult?.entryId ?? null;
-  result.backedUp = trackResult?.backedUp ?? false;
+  result.entryId = tracker?.receipt.entryId ?? null;
+  result.backedUp = tracker?.receipt.backedUp ?? false;
   result.ok = true;
 
-  // 12. recordChange（写入 transcript）
-  if (trackResult && fileHistory) {
+  // 12. 登记（写入 transcript）
+  if (tracker) {
     try {
-      fileHistory.recordChange(
-        ctx.sessionId,
-        absPath,
-        trackResult,
-        result.hashAfter,
-        writeResult.bytes,
-        diff || undefined,
-      );
+      tracker.commit({
+        hashAfter: result.hashAfter,
+        bytesAfter: writeResult.bytes,
+        diff: diff || undefined,
+      });
     } catch (err) {
-      ctx.logger.warn('edit: recordChange failed', {
+      ctx.logger.warn('edit: commit failed', {
         path: absPath,
         error: err instanceof Error ? err.message : String(err),
       });
