@@ -31,6 +31,7 @@ import {
   useDroppable,
   defaultDropAnimationSideEffects,
   pointerWithin,
+  closestCenter,
   type CollisionDetection,
   type DragEndEvent,
   type DragOverEvent,
@@ -41,6 +42,7 @@ import {
   SortableContext,
   verticalListSortingStrategy,
   useSortable,
+  arrayMove,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { cn } from '@/lib/utils';
@@ -231,32 +233,39 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
     await reload();
   };
 
-  // 碰撞检测：指针下有任务（sortable item）时优先任务（保证组内/跨组精确落点），
-  // 否则命中组容器/组标题 droppable（含空组与折叠组），使任务可拖入任意分组区域
+  // 碰撞检测：指针下有任务（sortable item）时优先任务（保证组内/跨组精确落点）；
+  // 若指针落在让位缝隙（任务已 transform 平移，rect 不再包含指针）而命中组容器，
+  // 则在该组内按中心距离吸附最近任务，避免误判整组导致落点错置组首/组尾；
+  // 组标题 droppable 保留（折叠组悬停展开 / 落组首）
   const collisionDetection: CollisionDetection = useCallback((args) => {
+    const isTaskId = (id: unknown) => {
+      const s = String(id);
+      return !s.startsWith('group:') && !s.startsWith('group-header:');
+    };
     const pointerCollisions = pointerWithin(args);
-    const taskCollision = pointerCollisions.find(
-      (c) => !String(c.id).startsWith('group:') && !String(c.id).startsWith('group-header:'),
-    );
+    const taskCollision = pointerCollisions.find((c) => isTaskId(c.id) && c.id !== args.active.id);
     if (taskCollision) return [taskCollision];
+    const groupCollision = pointerCollisions.find((c) => String(c.id).startsWith('group:'));
+    if (groupCollision) {
+      const groupId = String(groupCollision.id).slice('group:'.length);
+      const groupTaskContainers = args.droppableContainers.filter(
+        (c) =>
+          isTaskId(c.id) &&
+          c.id !== args.active.id &&
+          (c.data.current as { groupId?: string } | undefined)?.groupId === groupId,
+      );
+      if (groupTaskContainers.length > 0) {
+        return closestCenter({ ...args, droppableContainers: groupTaskContainers });
+      }
+      return [groupCollision]; // 空组：保持组容器落点
+    }
     return pointerCollisions;
   }, []);
 
-  // 指针中线判定：拖动中的 active 矩形越过 over 项中线则插到其后
-  const isAfterOver = (
-    activeRect: { top: number; height: number } | null,
-    overRect: { top: number; height: number },
-  ) => activeRect != null && activeRect.top + activeRect.height / 2 > overRect.top + overRect.height / 2;
-
-  // 拖拽全程共享的落点解析：over 为任务 → 插入其前/后（依指针越过中线）；
-  // over 为组容器 → 组末尾；over 为组标题 → 组首
+  // 拖拽全程共享的落点解析（与 sortable 让位预览同一套 arrayMove 语义：落点 = over 所在位置）：
+  // over 为任务 → 占据其位置；over 为组容器 → 组末尾；over 为组标题 → 组首
   const resolveInsertion = useCallback(
-    (
-      source: TaskItem[],
-      activeId: string,
-      overId: string,
-      afterOver: boolean,
-    ): { groupId: string; index: number } | null => {
+    (source: TaskItem[], activeId: string, overId: string): { groupId: string; index: number } | null => {
       if (overId.startsWith('group:')) {
         const groupId = overId.slice('group:'.length);
         return { groupId, index: source.filter((t) => t.groupId === groupId && t.id !== activeId).length };
@@ -267,17 +276,16 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
       const overTask = source.find((t) => t.id === overId);
       if (!overTask || overTask.id === activeId) return null;
       const members = source.filter((t) => t.groupId === overTask.groupId && t.id !== activeId);
-      const overIndex = members.findIndex((t) => t.id === overId);
-      return { groupId: overTask.groupId, index: afterOver ? overIndex + 1 : overIndex };
+      return { groupId: overTask.groupId, index: members.findIndex((t) => t.id === overId) };
     },
     [],
   );
 
   // 把 active 任务按落点插入扁平列表（其余任务相对顺序不变；渲染按 groupId 过滤，仅需保证组内顺序）
   const placeTask = useCallback(
-    (source: TaskItem[], activeId: string, overId: string, afterOver: boolean): TaskItem[] | null => {
+    (source: TaskItem[], activeId: string, overId: string): TaskItem[] | null => {
       const activeTask = source.find((t) => t.id === activeId);
-      const target = resolveInsertion(source, activeId, overId, afterOver);
+      const target = resolveInsertion(source, activeId, overId);
       if (!activeTask || !target) return null;
       const rest = source.filter((t) => t.id !== activeId);
       const members = rest.filter((t) => t.groupId === target.groupId);
@@ -318,17 +326,20 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
     } else {
       clearExpandTimer();
     }
-    // 跨组：把 active 乐观移入目标组的悬停索引，触发目标组实时让位预览；
-    // 同组交由 sortable 自身 transform 预览，dragEnd 统一落序
+    // 跨组：把 active 乐观移入目标组的 over 位置（arrayMove 语义），触发目标组实时让位预览；
+    // 同组交由 sortable 自身 transform 预览，dragEnd 以同一语义落序
     const activeId = String(active.id);
-    const afterOver = isAfterOver(active.rect.current.translated, over.rect);
     setDraftTasks((prev) => {
       if (!prev) return prev;
       const current = prev.find((t) => t.id === activeId);
       if (!current) return prev;
-      const target = resolveInsertion(prev, activeId, overId, afterOver);
+      const target = resolveInsertion(prev, activeId, overId);
       if (!target || target.groupId === current.groupId) return prev;
-      return placeTask(prev, activeId, overId, afterOver) ?? prev;
+      const next = placeTask(prev, activeId, overId);
+      if (!next) return prev;
+      // 顺序未变则不触发重渲染
+      const unchanged = next.length === prev.length && next.every((t, i) => t.id === prev[i].id);
+      return unchanged ? prev : next;
     });
   };
 
@@ -350,9 +361,33 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
       setDraftTasks(null);
       return;
     }
-    // 在草稿上落定最终位置（同组排序 + 跨组后指针前/后微调，一次算清）
-    const final =
-      placeTask(draft, activeId, String(over.id), isAfterOver(active.rect.current.translated, over.rect)) ?? draft;
+    // 在草稿上落定最终位置（arrayMove 语义，与拖动中的让位预览严格一致，保证落点=预览点）
+    const overId = String(over.id);
+    let final = draft;
+    if (overId.startsWith('group:') || overId.startsWith('group-header:')) {
+      // 组容器 → 组末尾；组标题 → 组首
+      final = placeTask(draft, activeId, overId) ?? draft;
+    } else if (overId !== activeId) {
+      const overTask = draft.find((t) => t.id === overId);
+      if (overTask) {
+        // 极少数情况（最后一次 onDragOver 未触发）先保证 active 已在目标组
+        const staged =
+          draft.find((t) => t.id === activeId)?.groupId === overTask.groupId
+            ? draft
+            : (placeTask(draft, activeId, overId) ?? draft);
+        // 落点 = over 在组内的索引（含 active 的序列上做 arrayMove，同 sortable 预览）
+        const members = staged.filter((t) => t.groupId === overTask.groupId);
+        const from = members.findIndex((t) => t.id === activeId);
+        const to = members.findIndex((t) => t.id === overId);
+        if (from !== -1 && to !== -1 && from !== to) {
+          const reordered = arrayMove(members, from, to);
+          const queue = [...reordered];
+          final = staged.map((t) => (t.groupId === overTask.groupId ? queue.shift()! : t));
+        } else {
+          final = staged;
+        }
+      }
+    }
     setDraftTasks(null);
 
     const movedTask = final.find((t) => t.id === activeId)!;
@@ -897,10 +932,12 @@ function TaskRow({
 }: TaskRowProps) {
   const { t } = useTranslation();
   const { pathname } = useLocation();
-  // 仅管理模式可拖拽（disabled 时 listeners 不激活，普通模式彻底不可拖）
+  // 仅管理模式可拖拽（disabled 时 listeners 不激活，普通模式彻底不可拖）；
+  // data.groupId 供碰撞检测在让位缝隙中按组吸附最近任务
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: task.id,
     disabled: !manageMode,
+    data: { groupId: task.groupId },
   });
   // 状态指示器：运行中（转圈）/ 出错（红警示），空闲不显示；WS 事件流驱动
   const sid = task.sessionId ?? task.id;
