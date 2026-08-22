@@ -280,6 +280,8 @@ export interface TruncatePreview {
   messagesToRemove: Array<{ index: number; role: string; content: string; timestamp?: string }>;
   /** 将被回滚的文件变更（来自 file-history transcript 时间区间） */
   fileChanges: Array<{ absPath: string; operation: string; toolName: string; timestamp: string }>;
+  /** 文件回滚被跳过的原因（诚实降级：不再静默跳过，前端如实提示） */
+  rollbackSkippedReason?: 'no-file-history' | 'no-timestamp';
 }
 
 /** 消息撤回（截断）执行结果 */
@@ -294,6 +296,8 @@ export interface TruncateResult {
   truncatedBeforeTimestamp: string;
   /** 是否回滚了文件变更 */
   fileRollbackPerformed: boolean;
+  /** 文件回滚被跳过的原因（诚实降级：不再静默跳过，前端如实提示） */
+  rollbackSkippedReason?: 'no-file-history' | 'no-timestamp';
 }
 
 /** 消息撤回恢复（redo）结果 */

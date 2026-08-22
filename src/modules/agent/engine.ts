@@ -649,6 +649,9 @@ export class AgentEngineImpl implements AgentEngine {
       }
     }
     const fileChanges: TruncatePreview['fileChanges'] = [];
+    // 跳过原因显式化（诚实降级）：file-history 不可用 / 旧消息无 timestamp 时
+    // 不再静默跳过文件回滚，原因随结果返回供前端如实提示
+    let rollbackSkippedReason: TruncatePreview['rollbackSkippedReason'];
     if (from && to) {
       const fh = this.resolveFileHistory();
       if (fh) {
@@ -660,9 +663,13 @@ export class AgentEngineImpl implements AgentEngine {
           if (Number.isNaN(ts) || ts < fromMs || ts > toMs) continue;
           fileChanges.push({ absPath: e.absPath, operation: e.operation, toolName: e.toolName, timestamp: e.timestamp });
         }
+      } else {
+        rollbackSkippedReason = 'no-file-history';
       }
+    } else {
+      rollbackSkippedReason = 'no-timestamp';
     }
-    return { messagesToRemove, fileChanges };
+    return { messagesToRemove, fileChanges, ...(rollbackSkippedReason ? { rollbackSkippedReason } : {}) };
   }
 
   async truncateFrom(sessionId: string, messageTimestamp: string, content: string): Promise<TruncateResult | null> {
@@ -687,6 +694,8 @@ export class AgentEngineImpl implements AgentEngine {
         break;
       }
     }
+    // 跳过原因显式化（诚实降级）：不再静默跳过文件回滚
+    let rollbackSkippedReason: TruncateResult['rollbackSkippedReason'];
     if (from && to) {
       const fh = this.resolveFileHistory();
       if (fh) {
@@ -701,7 +710,11 @@ export class AgentEngineImpl implements AgentEngine {
             error: `rollbackRange threw: ${err instanceof Error ? err.message : String(err)}`,
           });
         }
+      } else {
+        rollbackSkippedReason = 'no-file-history';
       }
+    } else {
+      rollbackSkippedReason = 'no-timestamp';
     }
 
     // 消息软删除
@@ -740,6 +753,7 @@ export class AgentEngineImpl implements AgentEngine {
       rollbackFailed,
       truncatedBeforeTimestamp,
       fileRollbackPerformed,
+      ...(rollbackSkippedReason ? { rollbackSkippedReason } : {}),
     };
   }
 

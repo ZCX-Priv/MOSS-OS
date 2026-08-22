@@ -435,6 +435,8 @@ export const zh = {
     truncateNoPreview: '（无法获取预览，确认后将只删除消息）',
     truncateFiles: '将回滚 {{count}} 个文件变更',
     truncateNoFiles: '无文件变更需要回滚',
+    truncateSkipNoHistory: '文件变更无法回滚：文件历史服务不可用',
+    truncateSkipNoTimestamp: '文件变更无法回滚：目标消息缺少时间戳（旧数据）',
     truncateCancel: '取消',
     truncateConfirm: '确认撤回',
     truncateDone: '已撤回 {{count}} 条消息',

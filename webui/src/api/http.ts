@@ -200,6 +200,7 @@ export const api = {
       sessionId: string;
       messagesToRemove: Array<{ index: number; role: string; content: string; timestamp?: string }>;
       fileChanges: Array<{ absPath: string; operation: string; toolName: string; timestamp: string }>;
+      rollbackSkippedReason?: 'no-file-history' | 'no-timestamp';
     }>(
       'GET',
       `/api/sessions/${encodeURIComponent(id)}/truncate-preview?messageTimestamp=${encodeURIComponent(messageTimestamp)}&content=${encodeURIComponent(content)}`,
@@ -213,6 +214,7 @@ export const api = {
       rollbackFailed: Array<{ absPath: string; error: string }>;
       truncatedBeforeTimestamp: string;
       fileRollbackPerformed: boolean;
+      rollbackSkippedReason?: 'no-file-history' | 'no-timestamp';
     }>(
       'POST',
       `/api/sessions/${encodeURIComponent(id)}/truncate`,

@@ -199,6 +199,8 @@ export interface CompactionRecord {
   beforeTokens: number;
   afterTokens: number;
   compactedCount: number;
+  /** 物理折叠的消息条数（新实现 = compactedCount；旧记录仅标记未折叠时缺省） */
+  foldedMessageCount?: number;
   summary: string;
   boundaryTimestamp?: string;
   summaryModel: string;

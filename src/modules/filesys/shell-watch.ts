@@ -108,7 +108,18 @@ export class ShellWatcher {
 
     const after = new Map<string, { mtimeMs: number; size: number }>();
     const ok = this.collectInto(snap.roots, cfg.maxFiles, deadline, after);
-    if (!ok) report.truncated = true;
+    if (!ok) {
+      // 截断保护（超时/超限）：放弃本次 diff。半截 after 与完整 before diff 会把
+      // 大量未扫描文件误判为 deleted（多轮 shell 执行时被放大为成片误报），
+      // 对齐 begin 的"不产生半截快照"哲学——宁可不跟踪，不可错跟踪。
+      report.truncated = true;
+      this.deps.logger.warn('filesys: shell snapshot truncated on end, diff skipped', {
+        timeoutMs: cfg.timeoutMs,
+        maxFiles: cfg.maxFiles,
+        sessionId,
+      });
+      return report;
+    }
 
     // diff 三分类
     for (const [path, meta] of after) {
@@ -159,7 +170,9 @@ export class ShellWatcher {
 
   /**
    * walk + stat 收集清单。
-   * @returns false = 超时/超限被截断（begin 视为放弃，end 按 truncated 处理）
+   * @returns false = 超时/超限被截断（begin 视为放弃，end 按 truncated 处理）。
+   * 超时判定必须在调用方循环内做：walkSnapshotFiles 超时直接 return（generator 正常
+   * 结束），否则半截清单被当作完整结果返回（历史缺陷：截断被静默吞掉）。
    */
   private collectInto(
     roots: readonly string[],
@@ -171,6 +184,7 @@ export class ShellWatcher {
       try {
         for (const abs of walkSnapshotFiles(root, maxFiles, deadline)) {
           if (into.size > maxFiles) return false;
+          if (Date.now() > deadline) return false;
           try {
             const s = statSync(abs);
             into.set(abs, { mtimeMs: s.mtimeMs, size: s.size });

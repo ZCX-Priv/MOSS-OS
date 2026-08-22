@@ -299,6 +299,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
   const [truncatePreview, setTruncatePreview] = useState<{
     messagesToRemove: Array<{ index: number; role: string; content: string }>;
     fileChanges: Array<{ absPath: string; operation: string; toolName: string; timestamp: string }>;
+    rollbackSkippedReason?: 'no-file-history' | 'no-timestamp';
   } | null>(null);
   /** 执行中 */
   const [truncating, setTruncating] = useState(false);
@@ -501,7 +502,11 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
       setTruncateLoading(true);
       try {
         const resp = await api.previewTruncate(taskId, message.timestamp, message.content);
-        setTruncatePreview({ messagesToRemove: resp.messagesToRemove, fileChanges: resp.fileChanges });
+        setTruncatePreview({
+          messagesToRemove: resp.messagesToRemove,
+          fileChanges: resp.fileChanges,
+          ...(resp.rollbackSkippedReason ? { rollbackSkippedReason: resp.rollbackSkippedReason } : {}),
+        });
       } catch {
         // 预览失败（后端未就绪/旧消息无时间戳）：仍允许执行（只删消息）
         setTruncatePreview({ messagesToRemove: [], fileChanges: [] });
@@ -962,6 +967,14 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
                       <FileWarning className="size-3.5 text-amber-500" />
                       {t('task.truncateFiles', { count: truncatePreview?.fileChanges.length ?? 0 })}
                     </div>
+                    {/* 回滚被跳过的原因（诚实降级：不再静默，用户明确知道文件不会回滚） */}
+                    {truncatePreview?.rollbackSkippedReason && (
+                      <div className="mb-1 rounded-md border border-amber-300/60 bg-amber-50/60 px-2 py-1.5 text-xs text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-400">
+                        {truncatePreview.rollbackSkippedReason === 'no-file-history'
+                          ? t('task.truncateSkipNoHistory')
+                          : t('task.truncateSkipNoTimestamp')}
+                      </div>
+                    )}
                     <div className="max-h-32 overflow-y-auto rounded-md border border-border p-2">
                       {truncatePreview && truncatePreview.fileChanges.length > 0 ? (
                         truncatePreview.fileChanges.map((f) => (

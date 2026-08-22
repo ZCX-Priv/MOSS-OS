@@ -435,6 +435,8 @@ export const en = {
     truncateNoPreview: '(Preview unavailable; only messages will be removed)',
     truncateFiles: '{{count}} file changes will be rolled back',
     truncateNoFiles: 'No file changes to roll back',
+    truncateSkipNoHistory: 'File changes cannot be rolled back: file-history service unavailable',
+    truncateSkipNoTimestamp: 'File changes cannot be rolled back: target message has no timestamp (legacy data)',
     truncateCancel: 'Cancel',
     truncateConfirm: 'Undo',
     truncateDone: '{{count}} messages withdrawn',
