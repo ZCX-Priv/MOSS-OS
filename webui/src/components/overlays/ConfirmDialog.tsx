@@ -79,7 +79,7 @@ export function ConfirmDialog({
 
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
-      <AlertDialogContent>
+      <AlertDialogContent size="md">
         <AlertDialogHeader>
           <div className="flex items-start gap-3">
             <Icon className={cn('size-5 shrink-0 translate-y-0.5', cfg.iconClass)} />

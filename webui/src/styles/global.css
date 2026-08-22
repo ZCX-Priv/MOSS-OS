@@ -306,3 +306,35 @@ html.anim-panel-off .anim-panel {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ============================================================
+   Toast 关闭按钮（sonner closeButton 全局启用后的定制）
+   方案：放弃 sonner 默认的左上角 absolute 圆形按钮（带背景+
+   边框+border-radius:50%），改为纳入 toast 的 flex 文档流——
+   容器 align-items:center 天然垂直居中；order:99 排到 action
+   按钮之后，margin-left:auto 贴右，与"恢复"等 action 按钮经
+   gap 自动错开零重叠；无 action 时同样贴右，视觉统一。
+   注意：sonner 样式经 __insertCSS() 运行时注入 <head> 末尾，
+   晚于本文件，故覆盖必须靠特异性（(0,4,1)/(0,5,1)）而非加载
+   顺序；颜色接入主题变量，亮暗模式自动适配。
+   ============================================================ */
+ol.toaster[data-sonner-toaster] [data-sonner-toast] [data-close-button] {
+  position: static;
+  order: 99;
+  margin-left: auto;
+  flex-shrink: 0;
+  height: 20px;
+  width: 20px;
+  /* 重置 sonner 默认左上角外挂偏移：transform 不依赖 position，
+     static 后仍生效，不重置会把按钮从 flex 居中位上移 7px */
+  transform: none;
+  color: var(--muted-foreground);
+  background: transparent;
+  border: none;
+  border-radius: 0;
+}
+ol.toaster[data-sonner-toaster] [data-sonner-toast] [data-close-button]:hover {
+  background: transparent;
+  border: none;
+  color: var(--foreground);
+}

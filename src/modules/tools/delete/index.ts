@@ -1,8 +1,8 @@
 // tools/delete/index.ts
 // delete 工具 execute 逻辑：删除文件或目录。
 // 强化点：
-//   1. trash 优先（默认送回收站，可恢复7天）；trash=false 时硬删除（带备份）
-//   2. 目录删除前 tar.gz 整体归档备份，支持 undo 解包恢复
+//   1. trash 优先（默认送系统回收站，撤回可恢复原位；系统回收站不可用时回退应用内回收站）
+//   2. 删除前统一备份（文件哈希备份 / 目录 tar.gz 归档），trash 与硬删除均支持 undo 恢复原位
 //   3. 批量删除（paths 数组）+ 预演模式（dryRun）
 //   4. 四重安全校验：路径越权、symlink 遍历、Windows 路径折叠、dev vault（.git）防护
 //   5. read-before-delete（文件需本会话先 read 过，force=true 可跳过）
@@ -18,11 +18,12 @@ import {
   isRootPath,
   containsVcsMarker,
 } from '../../../utils/fs';
+import sendToTrash from 'trash';
 import { moveToTrash } from '../../file-history/trash';
 import type { FileHistoryService, FilesysService } from '../../contracts';
 import type { ToolContext, ToolResult } from '../types';
 
-/** 目录硬删除最大字节数（超限拒绝，提示改用 shell 工具） */
+/** 目录删除（trash/硬删除）最大字节数（超限拒绝，提示改用 shell 工具） */
 const MAX_DIR_BYTES = 100 * 1024 * 1024; // 100MB
 
 interface DeleteParams {
@@ -43,6 +44,8 @@ interface PathResult {
   success: boolean;
   message: string;
   trashed?: boolean;
+  systemTrash?: boolean;
+  fallbackTrash?: boolean;
   hardDeleted?: boolean;
   backedUp?: boolean;
   entryId?: string | null;
@@ -214,16 +217,14 @@ async function deleteSingle(
         message: t('tools.deleteIsDirectory'),
       };
     }
-    // 计算目录大小（硬删除时校验，trash 时 rename 快不校验）
-    if (!trash) {
-      const dirBytes = calcDirBytes(realPath);
-      if (dirBytes > MAX_DIR_BYTES) {
-        return {
-          absPath,
-          success: false,
-          message: t('tools.deleteDirTooLarge', { bytes: dirBytes, limit: MAX_DIR_BYTES }),
-        };
-      }
+    // 计算目录大小（硬删除与 trash 均校验：trash 送系统回收站涉及跨盘复制 + 归档备份，同样耗时）
+    const dirBytes = calcDirBytes(realPath);
+    if (dirBytes > MAX_DIR_BYTES) {
+      return {
+        absPath,
+        success: false,
+        message: t('tools.deleteDirTooLarge', { bytes: dirBytes, limit: MAX_DIR_BYTES }),
+      };
     }
   } else {
     // g. 文件 read-before-delete 校验（仅硬删除时强制，trash 模式可恢复故不强制；force=true 可跳过）
@@ -250,38 +251,92 @@ async function deleteSingle(
     };
   }
 
-  // i/j. trash 模式：移到回收站
+  // i/j. trash 模式：备份 → 送系统回收站（失败回退应用内回收站）→ 记录历史
   if (trash) {
-    if (!trashDir) {
-      return { absPath, success: false, message: t('tools.deleteTrashDirUnavailable') };
+    // 1. 删除前备份（undo/消息撤回恢复原位的数据来源；失败不阻断——系统回收站本身是兜底）
+    let trackResult: Awaited<ReturnType<FileHistoryService['trackEdit']>> | null = null;
+    if (trackHistory && fileHistory) {
+      try {
+        trackResult = await fileHistory.trackEdit(ctx.sessionId, realPath, ctx.toolCallId, 'delete');
+      } catch (err) {
+        ctx.logger.warn('delete: trackEdit failed, undo will be unavailable', {
+          path: absPath,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
+
+    // 2. 送系统回收站（Windows 回收站 / macOS 废纸篓 / Linux gio trash）
+    let systemTrash = true;
+    let fallbackTrashPath: string | null = null;
     try {
-      const entry = moveToTrash(realPath, trashDir);
-      ctx.logger.info('delete: moved to trash', {
-        path: absPath,
-        trashPath: entry.trashPath,
-        isDirectory: isDir,
-      });
-      // 变更事件（前端 contextFiles/WS file-deleted 通知；修复旧版 delete 无任何通知的割裂）
-      filesys?.emitChange({
-        kind: 'deleted',
-        absPath,
-        source: 'delete',
-        sessionId: ctx.sessionId,
-        toolCallId: ctx.toolCallId,
-      });
-      return {
-        absPath,
-        success: true,
-        message: t('tools.deleteTrashed', { path: entry.trashPath }),
-        trashed: true,
-        bytes,
-        isDirectory: isDir,
-      };
+      await sendToTrash([realPath]);
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
-      return { absPath, success: false, message: t('tools.deleteTrashFailed', { message: errMsg }) };
+      systemTrash = false;
+      ctx.logger.warn('delete: system trash failed, falling back to internal trash', {
+        path: absPath,
+        error: errMsg,
+      });
+      // 3. 回退应用内回收站（~/.moss/trash，保留 7 天）
+      if (!trashDir) {
+        return { absPath, success: false, message: t('tools.deleteTrashDirUnavailable') };
+      }
+      try {
+        const entry = moveToTrash(realPath, trashDir);
+        fallbackTrashPath = entry.trashPath;
+      } catch (fallbackErr) {
+        const fbMsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
+        return {
+          absPath,
+          success: false,
+          message: t('tools.deleteTrashFailed', { message: `${errMsg}; fallback: ${fbMsg}` }),
+        };
+      }
     }
+
+    // 4. 写 transcript（消息撤回 rollbackRange / undo 从备份恢复原位的依据）
+    if (trackResult?.entryId && fileHistory) {
+      try {
+        fileHistory.recordChange(ctx.sessionId, realPath, trackResult, '', 0, undefined);
+      } catch (err) {
+        ctx.logger.warn('delete: recordChange failed', {
+          path: absPath,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    // 5. 变更事件（前端 contextFiles/WS file-deleted 通知；修复旧版 delete 无任何通知的割裂）
+    filesys?.emitChange({
+      kind: 'deleted',
+      absPath,
+      source: 'delete',
+      sessionId: ctx.sessionId,
+      toolCallId: ctx.toolCallId,
+    });
+
+    ctx.logger.info('delete: moved to trash', {
+      path: absPath,
+      isDirectory: isDir,
+      systemTrash,
+      fallbackTrashPath,
+    });
+
+    return {
+      absPath,
+      success: true,
+      message: systemTrash
+        ? t('tools.deleteTrashed')
+        : t('tools.deleteTrashedFallback', { path: fallbackTrashPath ?? '' }),
+      trashed: true,
+      systemTrash,
+      fallbackTrash: !systemTrash,
+      backedUp: trackResult?.backedUp ?? false,
+      entryId: trackResult?.entryId || null,
+      bytes,
+      isDirectory: isDir,
+    };
   }
 
   // k. 硬删除：trackEdit 备份 + unlinkSync/rmSync + recordChange

@@ -21,7 +21,7 @@ function resolveEngine(services: ServiceRegistry): AgentEngineWithTruncate | nul
 
 /** GET /api/sessions/:id/truncate-preview?messageTimestamp=xxx&content=yyy */
 export function createTruncatePreviewHandler(services: ServiceRegistry): RouteHandler {
-  return async (_req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
+  return async (req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
     const sessionId = params?.id;
     if (!sessionId) {
       return { status: 400, body: { error: ErrorCode.SESSION_ID_REQUIRED } };
@@ -30,10 +30,10 @@ export function createTruncatePreviewHandler(services: ServiceRegistry): RouteHa
     if (!engine?.previewTruncate) {
       return { status: 503, body: { error: ErrorCode.AGENT_ENGINE_UNAVAILABLE } };
     }
-    const url = _req.url ?? '';
-    const query = new URL(url, 'http://localhost').searchParams;
-    const messageTimestamp = query.get('messageTimestamp') ?? '';
-    const content = query.get('content') ?? '';
+    // 注意：HttpRequest.url 仅含 pathname（router 构造时 query string 已剥离），
+    // 查询参数必须从框架解析好的 req.query 读取（同 filesystem.ts createReadFileHandler 模式）
+    const messageTimestamp = (req.query.messageTimestamp ?? '').trim();
+    const content = (req.query.content ?? '').trim();
     if (!messageTimestamp && !content) {
       return { status: 400, body: { error: 'messageTimestamp or content is required' } };
     }

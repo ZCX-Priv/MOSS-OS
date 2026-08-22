@@ -1,6 +1,7 @@
 // src/modules/file-history/trash.ts
-// 回收站管理：移动文件/目录到回收站、从回收站恢复、清理过期 trash 项。
-// trash 优先策略：默认送回收站可恢复7天，超期自动清理。
+// 应用内回收站（~/.moss/trash）：delete 工具在系统回收站不可用时的回退目标。
+// 移动文件/目录到应用内回收站、清理过期 trash 项（超期自动清理，默认 7 天）。
+// 撤回/undo 恢复不走本模块（从 file-history 备份恢复到原路径），此处仅负责"删得进、存得住、到期清"。
 
 import {
   existsSync,
@@ -14,7 +15,7 @@ import {
   statSync,
   rmSync,
 } from 'node:fs';
-import { basename, extname, dirname, join } from 'node:path';
+import { basename, extname, join } from 'node:path';
 
 /** trash 项保留天数（超期自动清理） */
 export const TRASH_RETENTION_DAYS = 7;
@@ -125,35 +126,6 @@ export function moveToTrash(absPath: string, trashDir: string): TrashEntry {
   writeMeta(trashPath, absPath, trashedAt);
 
   return { trashPath, originalPath: absPath, trashedAt };
-}
-
-/**
- * 从回收站恢复到原路径（覆盖已存在的同名文件/目录）。
- *
- * @param trashPath 回收站内路径
- * @param originalPath 原始绝对路径
- */
-export function restoreFromTrash(trashPath: string, originalPath: string): void {
-  if (!existsSync(trashPath)) {
-    throw new Error(`trash entry not found: ${trashPath}`);
-  }
-  // 确保原路径父目录存在
-  mkdirSync(dirname(originalPath), { recursive: true });
-  // 若原路径已被占用，先移除（覆盖语义）
-  if (existsSync(originalPath)) {
-    const stat = statSync(originalPath);
-    if (stat.isDirectory()) {
-      rmSync(originalPath, { recursive: true, force: true });
-    } else {
-      unlinkSync(originalPath);
-    }
-  }
-  moveEntry(trashPath, originalPath);
-  // 清理 sidecar 元数据
-  const metaPath = metaPathFor(trashPath);
-  if (existsSync(metaPath)) {
-    unlinkSync(metaPath);
-  }
 }
 
 /**

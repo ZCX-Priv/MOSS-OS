@@ -8,6 +8,17 @@ import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { XIcon } from "lucide-react"
 
+/** 模态窗统一尺寸档位：桌面端（sm: 断点起）固定档位宽度，小屏回退接近全宽 calc(100%-2rem) */
+export type DialogSize = "sm" | "md" | "lg" | "xl"
+
+/** 档位 → 桌面端固定宽度映射（sm=400px / md=520px / lg=680px / xl=1024px(max-w-5xl)），供 AlertDialogContent 复用 */
+export const dialogSizeClasses: Record<DialogSize, string> = {
+  sm: "sm:max-w-[400px]",
+  md: "sm:max-w-[520px]",
+  lg: "sm:max-w-[680px]",
+  xl: "sm:max-w-5xl",
+}
+
 function Dialog({
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Root>) {
@@ -52,9 +63,11 @@ function DialogContent({
   className,
   children,
   showCloseButton = true,
+  size = "md",
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean
+  size?: DialogSize
 }) {
   const { t } = useTranslation()
   return (
@@ -63,7 +76,8 @@ function DialogContent({
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(
-          "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          "fixed top-1/2 left-1/2 z-50 grid max-h-[80dvh] w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          dialogSizeClasses[size],
           className
         )}
         {...props}

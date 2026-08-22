@@ -416,7 +416,8 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
     useStore.getState().setActiveSession(taskId);
     useStore.getState().setActiveTaskId(taskId);
     // 同步后端 ConnectionState，确保异步事件推送到正确连接
-    wsClient.send({ type: 'session.subscribe', sessionId: taskId });
+    // （subscribeSession 会记住订阅关系：WS 断线重连后自动重订阅，防止事件丢失）
+    wsClient.subscribeSession(taskId);
 
     return () => {
       // 卸载时若 activeSessionId 仍指向自己，清除之，防止 useWebSocket 误用旧 session。
@@ -530,7 +531,16 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
           label: t('task.truncateRestore'),
           onClick: async () => {
             try {
-              await api.restoreTruncate(taskId);
+              const restoreResp = await api.restoreTruncate(taskId);
+              // 防御性刷新：WS 断线重连期间 session-restored 事件可能丢失，
+              // 恢复成功后直接拉取历史刷新 UI（WS 正常时两者幂等一致）
+              if (restoreResp.restoredCount > 0) {
+                useStore.getState().setTruncateBackup(taskId, undefined);
+                const hist = await api.getSessionHistory(taskId);
+                if (hist.messages && hist.messages.length > 0 && !useStore.getState().generatingBySession[taskId]) {
+                  useStore.getState().setMessages(taskId, hist.messages);
+                }
+              }
             } catch {
               toast.error(t('task.truncateRestoreFailed'));
             }
@@ -928,14 +938,15 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
             }
           }}
         >
-          <DialogContent className="max-w-md">
+          <DialogContent size="md">
             <DialogHeader>
               <DialogTitle>{t('task.truncateTitle')}</DialogTitle>
               <DialogDescription>
                 {t('task.truncateDescription')}
               </DialogDescription>
             </DialogHeader>
-            <div className="flex flex-col gap-3 text-sm">
+            {/* min-w-0：DialogContent 是 grid 布局，grid item 需显式 min-width:0，否则长文本 nowrap min-content 会撑破弹窗 */}
+            <div className="flex min-w-0 flex-col gap-3 text-sm">
               {truncateLoading ? (
                 <div className="flex items-center justify-center gap-2 py-4 text-muted-foreground">
                   <Loader2 className="size-4 animate-spin" />
@@ -948,10 +959,10 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
                     <div className="mb-1 text-xs font-medium text-foreground">
                       {t('task.truncateMessages', { count: truncatePreview?.messagesToRemove.length ?? 0 })}
                     </div>
-                    <div className="max-h-32 overflow-y-auto rounded-md border border-border p-2">
+                    <div className="no-scrollbar max-h-32 overflow-auto rounded-md border border-border p-2">
                       {truncatePreview && truncatePreview.messagesToRemove.length > 0 ? (
                         truncatePreview.messagesToRemove.map((m) => (
-                          <div key={m.index} className="truncate py-0.5 text-xs text-muted-foreground">
+                          <div key={m.index} className="whitespace-nowrap py-0.5 text-xs text-muted-foreground">
                             <span className="mr-1 opacity-60">[{m.role}]</span>
                             {m.content}
                           </div>
@@ -975,10 +986,10 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
                           : t('task.truncateSkipNoTimestamp')}
                       </div>
                     )}
-                    <div className="max-h-32 overflow-y-auto rounded-md border border-border p-2">
+                    <div className="no-scrollbar max-h-32 overflow-auto rounded-md border border-border p-2">
                       {truncatePreview && truncatePreview.fileChanges.length > 0 ? (
                         truncatePreview.fileChanges.map((f) => (
-                          <div key={`${f.absPath}-${f.timestamp}`} className="truncate py-0.5 text-xs text-muted-foreground">
+                          <div key={`${f.absPath}-${f.timestamp}`} className="whitespace-nowrap py-0.5 text-xs text-muted-foreground">
                             <span className="mr-1 rounded bg-muted px-1 py-px text-[10px]">{f.operation}</span>
                             {f.absPath}
                           </div>
@@ -1018,7 +1029,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
 
         {/* 手动压缩确认框：预估压缩范围/收益/保留尾部 */}
         <Dialog open={compactDialogOpen} onOpenChange={(open) => !compacting && setCompactDialogOpen(open)}>
-          <DialogContent className="max-w-md">
+          <DialogContent size="md">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-1.5">
                 <Package className="size-4 text-primary" />

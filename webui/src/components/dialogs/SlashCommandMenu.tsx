@@ -115,7 +115,7 @@ export function SlashCommandMenu({ open, onClose, onSelect }: SlashCommandMenuPr
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-md">
+      <DialogContent size="md" className="gap-0 overflow-hidden p-0">
         <DialogHeader className="sr-only">
           <DialogTitle>{t('slashCommand.commands')}</DialogTitle>
         </DialogHeader>

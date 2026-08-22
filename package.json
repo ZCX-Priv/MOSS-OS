@@ -42,6 +42,7 @@
     "officeparser": "^7.6.1",
     "pdf-parse": "^2.4.5",
     "tar": "^7.5.22",
+    "trash": "^10.1.1",
     "word-extractor": "^1.0.4",
     "xlsx": "^0.18.5",
     "zod": "^3.23.8"

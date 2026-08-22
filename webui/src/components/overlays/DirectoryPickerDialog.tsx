@@ -31,11 +31,11 @@ export function DirectoryPickerDialog({
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-md">
+      <DialogContent size="md">
         <DialogHeader>
           <DialogTitle>{t('directoryPicker.selectTitle')}</DialogTitle>
         </DialogHeader>
-        <ScrollArea className="max-h-[60vh]">
+        <ScrollArea className="max-h-[50dvh]">
           <div className="flex flex-col gap-1 pr-2">
             {candidates.map((c) => (
               <button

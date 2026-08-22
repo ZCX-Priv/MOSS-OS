@@ -12,7 +12,7 @@ import { FileHistoryServiceImpl } from './service';
 import { DEFAULT_FILE_HISTORY_CONFIG, type FileHistoryConfig } from './types';
 
 // 导出 trash 与 archive 模块，供 delete 工具直接调用
-export { moveToTrash, restoreFromTrash, cleanupExpiredTrash, TRASH_RETENTION_DAYS } from './trash';
+export { moveToTrash, cleanupExpiredTrash, TRASH_RETENTION_DAYS } from './trash';
 export type { TrashEntry } from './trash';
 export { archiveDirectory, extractArchive } from './archive';
 export type { ArchiveResult } from './archive';

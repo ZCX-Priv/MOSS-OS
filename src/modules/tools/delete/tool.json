@@ -1,7 +1,7 @@
 {
   "name": "delete",
-  "description": "删除文件或目录。默认送回收站（trash=true，可恢复7天），force=true 且 trash=false 时永久硬删除（删除前自动备份：文件用哈希内容寻址备份，目录用 tar.gz 整体归档，均支持 undo 恢复）。支持批量（paths 数组）与预演模式（dryRun）。安全校验：路径越权、symlink 遍历、Windows 路径折叠、dev vault（.git）防护、read-before-delete。此操作具有破坏性。",
-  "description_en": "Delete files or directories. Defaults to moving to the recycle bin (trash=true, recoverable for 7 days); with force=true and trash=false performs a permanent hard delete (automatic backup before deletion: hash content-addressed backup for files, tar.gz archive for directories, both undo-recoverable). Supports batching (paths array) and dry-run. Safety checks: path escapes, symlink traversal, Windows path folding, dev vault (.git) protection, read-before-delete. This operation is destructive.",
+  "description": "删除文件或目录。默认送系统回收站（trash=true，可在系统回收站手动还原；撤回消息可从删除前备份恢复原位；系统回收站不可用时自动回退应用内回收站，保留 7 天），force=true 且 trash=false 时永久硬删除（删除前自动备份：文件用哈希内容寻址备份，目录用 tar.gz 整体归档，均支持 undo 恢复）。目录大小上限 100MB。支持批量（paths 数组）与预演模式（dryRun）。安全校验：路径越权、symlink 遍历、Windows 路径折叠、dev vault（.git）防护、read-before-delete。此操作具有破坏性。",
+  "description_en": "Delete files or directories. Defaults to moving to the system trash (trash=true; restore manually from the system trash, or undo a message to restore to the original location from the pre-delete backup; automatically falls back to the internal trash, 7-day retention, when the system trash is unavailable); with force=true and trash=false performs a permanent hard delete (automatic backup before deletion: hash content-addressed backup for files, tar.gz archive for directories, both undo-recoverable). Directory size limit 100MB. Supports batching (paths array) and dry-run. Safety checks: path escapes, symlink traversal, Windows path folding, dev vault (.git) protection, read-before-delete. This operation is destructive.",
   "icon": "trash-2",
   "annotations": {
     "destructiveHint": true,
@@ -31,8 +31,8 @@
       "trash": {
         "type": "boolean",
         "default": true,
-        "description": "默认 true 送回收站（可恢复7天）。设为 false 且 force=true 时永久硬删除",
-        "description_en": "Defaults to true: move to recycle bin (recoverable for 7 days). Set to false with force=true for permanent hard delete"
+        "description": "默认 true 送系统回收站（可手动还原/撤回恢复原位；不可用时自动回退应用内回收站，保留 7 天）。设为 false 且 force=true 时永久硬删除",
+        "description_en": "Defaults to true: move to the system trash (restore manually or via undo; automatically falls back to the internal trash with 7-day retention when unavailable). Set to false with force=true for permanent hard delete"
       },
       "force": {
         "type": "boolean",

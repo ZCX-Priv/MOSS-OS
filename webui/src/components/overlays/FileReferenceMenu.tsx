@@ -118,7 +118,7 @@ export function FileReferenceMenu({ open, onClose }: FileReferenceMenuProps) {
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-2xl">
+      <DialogContent size="lg" className="gap-0 overflow-hidden p-0">
         <DialogHeader className="sr-only">
           <DialogTitle>{t('fileRef.file')}</DialogTitle>
         </DialogHeader>

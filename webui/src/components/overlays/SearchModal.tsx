@@ -88,7 +88,7 @@ export function SearchModal({ open, onClose }: SearchModalProps) {
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-md h-[80svh] max-h-[600px] sm:h-[600px]">
+      <DialogContent size="md" className="gap-0 overflow-hidden p-0 h-[80svh] max-h-[600px] sm:h-[600px]">
         <DialogHeader className="sr-only">
           <DialogTitle>{t('search.placeholder')}</DialogTitle>
         </DialogHeader>

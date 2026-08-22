@@ -45,7 +45,7 @@ export function AgentSwitchMenu({ open, onClose }: AgentSwitchMenuProps) {
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-sm">
+      <DialogContent size="sm" className="gap-0 overflow-hidden p-0">
         <DialogHeader className="sr-only">
           <DialogTitle>{t('agentSwitch.builtIn')}</DialogTitle>
         </DialogHeader>

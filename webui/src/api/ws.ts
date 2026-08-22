@@ -15,6 +15,8 @@ export class WSClient {
   private messageHandlers = new Set<MessageHandler>();
   private statusHandlers = new Set<StatusHandler>();
   private pendingMessages: WSMessage[] = [];
+  /** 当前订阅的 session（重连后自动重订阅，防止 sendToSession 事件丢失） */
+  private subscribedSessionId: string | null = null;
   /** 心跳定时器 */
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private lastPong = 0;
@@ -50,6 +52,11 @@ export class WSClient {
       this.reconnectAttempts = 0;
       this.notifyStatus('open');
       this.startHeartbeat();
+      // 重连后自动恢复 session 订阅（后端 sendToSession 按连接订阅的 sessionId 投递事件，
+      // 新连接不重新订阅会导致 session-truncated/session-restored 等事件静默丢失）
+      if (this.subscribedSessionId) {
+        this.ws?.send(JSON.stringify({ type: 'session.subscribe', sessionId: this.subscribedSessionId }));
+      }
       // 发送积压消息
       while (this.pendingMessages.length > 0) {
         const msg = this.pendingMessages.shift()!;
@@ -105,6 +112,15 @@ export class WSClient {
       this.pendingMessages.push(msg);
       this.connect();
     }
+  }
+
+  /**
+   * 订阅 session 并记住订阅关系：断线自动重连后由 onopen 自动重发 session.subscribe，
+   * 保证后端 sendToSession 投递的 session 级事件（撤回/恢复/流式输出等）不因重连丢失。
+   */
+  subscribeSession(sessionId: string): void {
+    this.subscribedSessionId = sessionId;
+    this.send({ type: 'session.subscribe', sessionId });
   }
 
   onMessage(handler: MessageHandler): () => void {

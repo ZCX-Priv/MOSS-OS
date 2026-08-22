@@ -80,10 +80,10 @@ export function PdfPreview({ buffer }: PdfPreviewProps) {
   }, [doc, page, zoom]);
 
   if (error !== null) {
-    return <div className="flex h-[60vh] items-center justify-center text-sm text-destructive">{error}</div>;
+    return <div className="flex h-[calc(80dvh-9rem)] items-center justify-center text-sm text-destructive">{error}</div>;
   }
   if (doc === null) {
-    return <div className="flex h-[60vh] items-center justify-center text-sm text-muted-foreground">Loading PDF…</div>;
+    return <div className="flex h-[calc(80dvh-9rem)] items-center justify-center text-sm text-muted-foreground">Loading PDF…</div>;
   }
 
   return (
@@ -130,7 +130,7 @@ export function PdfPreview({ buffer }: PdfPreviewProps) {
           </SelectContent>
         </Select>
       </div>
-      <div className="max-h-[68vh] overflow-auto rounded border border-border bg-muted/30 p-3">
+      <div className="max-h-[calc(80dvh-9rem)] overflow-auto rounded border border-border bg-muted/30 p-3">
         <canvas ref={canvasRef} className="mx-auto block max-w-full rounded shadow-sm" />
       </div>
     </div>

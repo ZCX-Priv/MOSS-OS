@@ -24,7 +24,7 @@ export interface FilePreviewDialogProps {
 
 function Loading() {
   return (
-    <div className="flex h-[60vh] items-center justify-center text-muted-foreground">
+    <div className="flex h-[calc(80dvh-9rem)] items-center justify-center text-muted-foreground">
       <Loader2 className="mr-2 size-5 animate-spin" />
       <span className="text-sm">Loading…</span>
     </div>
@@ -33,7 +33,7 @@ function Loading() {
 
 function ErrorBox({ message }: { message: string }) {
   return (
-    <div className="flex h-[60vh] flex-col items-center justify-center gap-2 text-destructive">
+    <div className="flex h-[calc(80dvh-9rem)] flex-col items-center justify-center gap-2 text-destructive">
       <TriangleAlert className="size-6" />
       <span className="text-sm">{message}</span>
     </div>
@@ -101,8 +101,8 @@ export function FilePreviewDialog({ path, open, onOpenChange }: FilePreviewDialo
         return objectUrl ? <Model3DViewer url={objectUrl} ext={fileExtension(path)} /> : <Loading />;
       case 'image':
         return objectUrl ? (
-          <div className="flex max-h-[75vh] items-center justify-center">
-            <img src={objectUrl} alt={fileNameOf(path)} className="max-h-[75vh] max-w-full rounded object-contain" />
+          <div className="flex max-h-[calc(80dvh-9rem)] items-center justify-center">
+            <img src={objectUrl} alt={fileNameOf(path)} className="max-h-[calc(80dvh-9rem)] max-w-full rounded object-contain" />
           </div>
         ) : (
           <Loading />
@@ -110,11 +110,11 @@ export function FilePreviewDialog({ path, open, onOpenChange }: FilePreviewDialo
       case 'text':
         return text !== null ? (
           fileExtension(path) === 'md' ? (
-            <div className="max-h-[75vh] overflow-y-auto p-2">
+            <div className="max-h-[calc(80dvh-9rem)] overflow-y-auto p-2">
               <MarkdownRenderer text={text} streaming={false} />
             </div>
           ) : (
-            <pre className="max-h-[75vh] overflow-auto whitespace-pre-wrap break-words p-2 font-mono text-xs text-foreground">
+            <pre className="max-h-[calc(80dvh-9rem)] overflow-auto whitespace-pre-wrap break-words p-2 font-mono text-xs text-foreground">
               {text}
             </pre>
           )
@@ -128,7 +128,7 @@ export function FilePreviewDialog({ path, open, onOpenChange }: FilePreviewDialo
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] max-w-5xl overflow-hidden sm:max-w-5xl">
+      <DialogContent size="xl" className="overflow-hidden">
         <DialogHeader>
           <DialogTitle className="truncate pr-6 font-mono text-sm" title={path}>
             {fileNameOf(path)}

@@ -38,7 +38,7 @@ export function PlanModeInput({ open, onClose }: PlanModeInputProps) {
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="gap-4 sm:max-w-2xl">
+      <DialogContent size="lg">
         <DialogHeader className="sr-only">
           <DialogTitle>{t('planMode.placeholder')}</DialogTitle>
         </DialogHeader>

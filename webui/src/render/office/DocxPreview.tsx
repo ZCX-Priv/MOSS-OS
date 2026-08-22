@@ -34,7 +34,7 @@ export function DocxPreview({ buffer }: DocxPreviewProps) {
   }, [buffer]);
 
   return (
-    <div className="max-h-[75vh] overflow-auto rounded border border-border bg-background p-2">
+    <div className="max-h-[calc(80dvh-9rem)] overflow-auto rounded border border-border bg-background p-2">
       <div ref={containerRef} className="docx-container" />
     </div>
   );

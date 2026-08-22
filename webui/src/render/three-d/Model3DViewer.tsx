@@ -71,7 +71,7 @@ export function Model3DViewer({ url, ext }: Model3DViewerProps) {
   );
 
   return (
-    <div className="h-[70vh] overflow-hidden rounded border border-border bg-muted/30">
+    <div className="h-[calc(80dvh-9rem)] overflow-hidden rounded border border-border bg-muted/30">
       <Canvas camera={{ position: [3, 2, 5], fov: 50 }} shadows>
         <ambientLight intensity={0.6} />
         <directionalLight position={[5, 8, 5]} intensity={1.2} castShadow />

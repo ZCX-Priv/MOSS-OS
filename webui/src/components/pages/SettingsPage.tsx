@@ -1901,7 +1901,7 @@ function AddModelDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent size="md">
         <DialogHeader>
           <DialogTitle>
             {isEdit ? t('settings.model.editModelTitle') : t('settings.model.addModelTitle')}
@@ -2390,7 +2390,7 @@ export function SpecsSettings() {
 
       {/* 查看/编辑弹窗 */}
       <Dialog open={detail !== null || loading} onOpenChange={(o) => !o && !saving && setDetail(null)}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent size="lg">
           <DialogHeader>
             <DialogTitle>{detail ? detail.id : t('common.loading')}</DialogTitle>
             <DialogDescription>{detail?.description}</DialogDescription>

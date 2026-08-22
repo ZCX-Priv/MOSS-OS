@@ -580,7 +580,7 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
 
     {/* 新建分组弹窗 */}
     <Dialog open={newGroupOpen} onOpenChange={setNewGroupOpen}>
-      <DialogContent>
+      <DialogContent size="sm">
         <DialogHeader>
           <DialogTitle>{t('sidebar.newGroup')}</DialogTitle>
           <DialogDescription>{t('sidebar.newGroupDesc')}</DialogDescription>
@@ -606,7 +606,7 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
 
     {/* 重命名分组弹窗 */}
     <Dialog open={!!renameGroup} onOpenChange={(o) => !o && setRenameGroup(null)}>
-      <DialogContent>
+      <DialogContent size="sm">
         <DialogHeader>
           <DialogTitle>{t('sidebar.renameGroup')}</DialogTitle>
           <DialogDescription>{t('sidebar.renameGroupDesc')}</DialogDescription>
@@ -637,7 +637,7 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
         if (!o) setDeleteGroupId(null);
       }}
     >
-      <AlertDialogContent>
+      <AlertDialogContent size="md">
         <AlertDialogHeader>
           <div className="flex items-start gap-3">
             <CircleAlert className="size-5 shrink-0 translate-y-0.5 text-destructive" />
@@ -674,7 +674,7 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
 
     {/* 重命名弹窗 */}
     <Dialog open={!!renameTask} onOpenChange={(o) => !o && setRenameTask(null)}>
-      <DialogContent>
+      <DialogContent size="sm">
         <DialogHeader>
           <DialogTitle>{t('sidebar.renameTask')}</DialogTitle>
           <DialogDescription>{t('sidebar.renameTaskDesc')}</DialogDescription>

@@ -370,7 +370,7 @@ export function McpTab() {
 
       {/* 添加服务器弹窗 */}
       <Dialog open={addOpen} onOpenChange={(o) => !saving && setAddOpen(o)}>
-        <DialogContent className="max-w-md">
+        <DialogContent size="md">
           <DialogHeader>
             <DialogTitle>{t('plugins.mcpAdd')}</DialogTitle>
             <DialogDescription>{t('plugins.mcpAddDesc')}</DialogDescription>

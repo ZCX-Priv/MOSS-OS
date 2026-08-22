@@ -62,7 +62,7 @@ export function PptxOutline({ buffer }: PptxOutlineProps) {
   }, [buffer]);
 
   if (error !== null) {
-    return <div className="flex h-[60vh] items-center justify-center text-sm text-destructive">{error}</div>;
+    return <div className="flex h-[calc(80dvh-9rem)] items-center justify-center text-sm text-destructive">{error}</div>;
   }
 
   return (
@@ -71,7 +71,7 @@ export function PptxOutline({ buffer }: PptxOutlineProps) {
         <Info className="size-3.5 shrink-0" />
         <span>{t('settings.render.pptxLimited')}</span>
       </div>
-      <div className="max-h-[65vh] space-y-3 overflow-y-auto pr-1">
+      <div className="max-h-[calc(80dvh-9rem)] space-y-3 overflow-y-auto pr-1">
         {(slides ?? []).map((slide) => (
           <div key={slide.index} className="rounded-md border border-border p-3">
             <div className="mb-1.5 font-mono text-[11px] text-muted-foreground">Slide {slide.index}</div>
