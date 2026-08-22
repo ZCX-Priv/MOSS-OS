@@ -34,10 +34,10 @@ export function createUpdateAppConfigHandler(config: ConfigService): RouteHandle
 export function createGetApiConfigHandler(config: ConfigService): RouteHandler {
   return async (): Promise<HttpResponse> => {
     const cfg = config.getApiConfig();
-    // 脱敏：不回传每个模型的 apiKey（避免经 HTTP 泄露；前端编辑时留空表示不修改）
+    // 脱敏：不回传服务商的 apiKey（避免经 HTTP 泄露；前端编辑时留空表示不修改）
     const sanitized = {
       ...cfg,
-      models: cfg.models.map((m) => ({ ...m, apiKey: '' })),
+      providers: cfg.providers.map((p) => ({ ...p, apiKey: '' })),
     };
     return { status: 200, body: sanitized };
   };

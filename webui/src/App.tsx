@@ -12,7 +12,6 @@ import {
 } from './components/pages/PluginMarketPage';
 import {
   AutomationPage,
-  TemplatesTab,
   ConfiguredTab,
   HistoryTab,
 } from './components/pages/AutomationPage';
@@ -20,7 +19,7 @@ import {
   SettingsPage,
   GeneralSettings,
   AgentSettings,
-  ModelSettings,
+  ProviderSettings,
   ContextSettings,
   ContextEngineSettings,
   AppearanceSettings,
@@ -42,6 +41,7 @@ import { useWebSocket } from './hooks/useWebSocket';
 import { useConfig } from './hooks/useConfig';
 import { useTools } from './hooks/useTools';
 import { useAnimationClass } from './hooks/useAnimationClass';
+import { useStore } from './store';
 
 export default function App() {
   // 阶段1.6：WS 连接初始化 + 事件分发（单例，全应用只调用一次）
@@ -56,6 +56,7 @@ export default function App() {
   const [overlay, setOverlay] = useState<OverlayType>(null);
   const { pathname } = useLocation();
   const { t } = useTranslation();
+  const openAutomationForm = useStore((s) => s.openAutomationForm);
   // TaskPage 自带含左 trigger 的合并 header，全局移动端 header 仅在其他路由显示
   const isTaskRoute = pathname === '/' || pathname.startsWith('/task');
   // 移动端 header 标题与右侧 button（仅非 TaskPage 路由）
@@ -97,7 +98,12 @@ export default function App() {
               </h1>
               <div className="flex justify-end">
                 {isAutomationRoute && (
-                  <Button variant="ghost" size="icon-sm" title={t('automation.manualCreate')}>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    title={t('automation.manualCreate')}
+                    onClick={() => openAutomationForm()}
+                  >
                     <Plus />
                   </Button>
                 )}
@@ -120,11 +126,10 @@ export default function App() {
               <Route path="*" element={<Navigate to="skills" replace />} />
             </Route>
             <Route path="/automation" element={<AutomationPage />}>
-              <Route index element={<Navigate to="templates" replace />} />
-              <Route path="templates" element={<TemplatesTab />} />
+              <Route index element={<Navigate to="configured" replace />} />
               <Route path="configured" element={<ConfiguredTab />} />
               <Route path="history" element={<HistoryTab />} />
-              <Route path="*" element={<Navigate to="templates" replace />} />
+              <Route path="*" element={<Navigate to="configured" replace />} />
             </Route>
             <Route path="/settings" element={<SettingsPage />}>
               <Route index element={<Navigate to="general" replace />} />
@@ -136,7 +141,9 @@ export default function App() {
                 <Route path="anim" element={<AnimSettingsSection />} />
               </Route>
               <Route path="agent" element={<AgentSettings />} />
-              <Route path="model" element={<ModelSettings />} />
+              <Route path="provider" element={<ProviderSettings />} />
+              {/* 旧路径兼容：模型设置并入服务商 */}
+              <Route path="model" element={<Navigate to="/settings/provider" replace />} />
               {/* 上下文：Tab 容器（引擎 / 规范 / 索引 / 规则 / 记忆） */}
               <Route path="context" element={<ContextSettings />}>
                 <Route index element={<ContextEngineSettings />} />

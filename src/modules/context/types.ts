@@ -20,7 +20,7 @@ export interface CompactionConfig {
   summaryMaxTokens: number;
   /** 可压缩区最小 token（低于此值不值得一次摘要调用） */
   minFoldTokens: number;
-  /** 摘要模型：'inherit' = 主模型；否则为 apiConfig.models 中的模型 id */
+  /** 摘要模型：'inherit' = 主模型；否则为 providers 旗下模型 id */
   summaryModel: string;
 }
 

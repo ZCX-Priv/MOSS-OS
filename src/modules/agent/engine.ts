@@ -2,6 +2,7 @@
 // Agent ReAct 循环引擎。
 
 import { t } from '../../core/i18n';
+import { flattenModels } from '../../core/provider-utils';
 import { statSync } from 'node:fs';
 import { isAbsolute, resolve as resolvePath } from 'node:path';
 import { buildTools } from './context';
@@ -1766,13 +1767,14 @@ export class AgentEngineImpl implements AgentEngine {
 }
 
 /**
- * 从 apiConfig.models 反查 model 的显示名（cfg.name）。
+ * 从 providers 扁平视图反查 model 的显示名（cfg.name）。
  * 先按 id 精确匹配，再按 model 字段（API 模型名）兜底；找不到返回 model 本身。
  */
 function resolveModelDisplayName(apiConfig: ApiConfig, model: string): string {
-  const byId = apiConfig.models.find(m => m.id === model);
+  const models = flattenModels(apiConfig);
+  const byId = models.find(m => m.id === model);
   if (byId) return byId.name;
-  const byModel = apiConfig.models.find(m => m.model === model);
+  const byModel = models.find(m => m.model === model);
   if (byModel) return byModel.name;
   return model;
 }

@@ -60,7 +60,8 @@
     "glob":      { "enabled": true },
     "grep":      { "enabled": true },
     "todo":      { "enabled": true },
-    "ask":       { "enabled": true }
+    "ask":       { "enabled": true },
+    "automation": { "enabled": true }
   },
   "mcpServers": {},
   "mcp": {

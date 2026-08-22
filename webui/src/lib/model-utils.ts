@@ -1,6 +1,6 @@
 // 模型配置共享工具：弹窗（SettingsPage）与模型选择器（ModelSelector）共用
 
-import type { ModelItem } from '../types/api';
+import type { ProviderModelItem } from '../types/api';
 
 /** 思考强度档位（弹窗与选择器共用） */
 export type EffortLevel = 'off' | 'low' | 'medium' | 'high' | 'custom';
@@ -23,7 +23,7 @@ export function parseLegacyWindow(cw?: string): number | undefined {
 }
 
 /** 模型 thinking 配置 → 思考强度档位（预设档 off/low/medium/high，其余归 custom） */
-export function toEffortLevel(thinking?: ModelItem['thinking']): EffortLevel {
+export function toEffortLevel(thinking?: ProviderModelItem['thinking']): EffortLevel {
   if (!thinking?.enabled) return 'off';
   const e = thinking.effort;
   if (e === 'low' || e === 'medium' || e === 'high') return e;

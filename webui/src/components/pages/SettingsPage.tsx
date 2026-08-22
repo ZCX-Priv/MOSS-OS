@@ -4,7 +4,7 @@ import type { LucideIcon } from 'lucide-react';
 import {
   Settings,
   Bot,
-  Brain,
+  Server,
   Activity,
   Globe,
   Notebook,
@@ -21,11 +21,9 @@ import {
   Plus,
   Book,
   ExternalLink,
-  Database,
   Terminal,
   Layers,
   Trash2,
-  GripVertical,
   Loader2,
   Search,
   Wrench,
@@ -40,23 +38,6 @@ import {
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
-import {
-  DndContext,
-  closestCenter,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-} from '@dnd-kit/core';
-import {
-  SortableContext,
-  sortableKeyboardCoordinates,
-  useSortable,
-  arrayMove,
-  verticalListSortingStrategy,
-} from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
 import type { SettingsSection } from '../../types';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useLocale } from '../../hooks/useLocale';
@@ -71,7 +52,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible';
-import { Slider } from '@/components/ui/slider';
 import {
   Dialog,
   DialogContent,
@@ -80,7 +60,6 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog';
-import { useModels } from '../../hooks/useModels';
 import { useAgents } from '../../hooks/useAgents';
 import { useTools } from '../../hooks/useTools';
 import { useSpecs } from '../../hooks/useSpecs';
@@ -89,8 +68,10 @@ import { useReducedMotion } from '../../hooks/useAnimationClass';
 import { useStore } from '../../store';
 import { api } from '../../api/http';
 import { TOOL_ICON_MAP } from '../../lib/tool-icons';
-import { parseLegacyWindow, toEffortLevel } from '../../lib/model-utils';
-import type { ModelItem, SpecDetail, SafetyConfig, LogLevel, LogsConfig, LogFileInfo, ContextEngineConfig } from '../../types/api';
+import type { SpecDetail, SafetyConfig, LogLevel, LogsConfig, LogFileInfo, ContextEngineConfig } from '../../types/api';
+
+// 服务商设置页（App.tsx 从本模块导入）
+export { ProviderSettings } from './ProviderSettings';
 
 export interface NavItem {
   id: SettingsSection;
@@ -102,8 +83,8 @@ export const settingsNavItems: NavItem[] = [
   { id: 'general', labelKey: 'settings.nav.general', Icon: Settings },
   { id: 'appearance', labelKey: 'settings.nav.appearance', Icon: Palette },
   { id: 'agent', labelKey: 'settings.nav.agent', Icon: Bot },
-  { id: 'model', labelKey: 'settings.nav.model', Icon: Brain },
-  { id: 'context', labelKey: 'settings.nav.context', Icon: Database },
+  { id: 'provider', labelKey: 'settings.nav.provider', Icon: Server },
+  { id: 'context', labelKey: 'settings.nav.context', Icon: Layers },
   { id: 'tools', labelKey: 'settings.nav.tools', Icon: Wrench },
   { id: 'safety', labelKey: 'settings.nav.safety', Icon: ShieldCheck },
   { id: 'logs', labelKey: 'settings.nav.logs', Icon: ScrollText },
@@ -138,7 +119,7 @@ export const settingsSearchIndex: SearchableSetting[] = [
   { labelKey: 'settings.anim.hub', descriptionKey: 'settings.anim.hubDesc', section: 'anim' },
   { labelKey: 'settings.anim.panel', descriptionKey: 'settings.anim.panelDesc', section: 'anim' },
   { labelKey: 'settings.nav.agent', section: 'agent' },
-  { labelKey: 'settings.nav.model', section: 'model' },
+  { labelKey: 'settings.nav.provider', section: 'provider' },
   { labelKey: 'settings.nav.context', section: 'context' },
   { labelKey: 'settings.context.compactionTitle', descriptionKey: 'settings.context.compactionDesc', section: 'context' },
   { labelKey: 'settings.context.summaryModel', descriptionKey: 'settings.context.summaryModelDesc', section: 'context' },
@@ -174,16 +155,16 @@ export const settingsSearchIndex: SearchableSetting[] = [
   { labelKey: 'settings.agent.custom', section: 'agent' },
   { labelKey: 'settings.agent.createAgent', section: 'agent' },
 
-  // 模型设置详细项
-  { labelKey: 'settings.model.addModel', section: 'model' },
-  { labelKey: 'settings.model.contextWindow', section: 'model' },
-  { labelKey: 'settings.model.thinkingMode', descriptionKey: 'settings.model.thinkingModeDesc', section: 'model' },
-  { labelKey: 'settings.model.displayName', section: 'model' },
-  { labelKey: 'settings.model.modelName', section: 'model' },
-  { labelKey: 'settings.model.apiFormat', section: 'model' },
-  { labelKey: 'settings.model.endpoint', section: 'model' },
-  { labelKey: 'settings.model.apiKey', section: 'model' },
-  { labelKey: 'settings.model.thinkingLevel', descriptionKey: 'settings.model.thinkingModeDesc', section: 'model' },
+  // 服务商设置详细项
+  { labelKey: 'settings.provider.addProvider', section: 'provider' },
+  { labelKey: 'settings.provider.providerName', section: 'provider' },
+  { labelKey: 'settings.provider.modelName', section: 'provider' },
+  { labelKey: 'settings.provider.apiFormat', section: 'provider' },
+  { labelKey: 'settings.provider.endpoint', section: 'provider' },
+  { labelKey: 'settings.provider.apiKey', section: 'provider' },
+  { labelKey: 'settings.provider.balanceUrl', section: 'provider' },
+  { labelKey: 'settings.provider.modelsUrl', section: 'provider' },
+  { labelKey: 'settings.provider.thinkingLevel', descriptionKey: 'settings.provider.thinkingModeDesc', section: 'provider' },
 
   // 关于设置详细项
   { labelKey: 'settings.about.relatedLinks', section: 'about' },
@@ -793,7 +774,7 @@ export function ContextSettings() {
               {t('settings.nav.specs')}
             </TabsTrigger>
             <TabsTrigger value="index" className="gap-1.5">
-              <Layers className="size-3.5" />
+              <Globe className="size-3.5" />
               {t('settings.nav.index')}
             </TabsTrigger>
             <TabsTrigger value="rules" className="gap-1.5">
@@ -823,7 +804,7 @@ export function ContextEngineSettings() {
   const { t } = useTranslation();
   const { appConfig, apiConfig, updateAppConfig } = useConfig();
   const context = appConfig?.context ?? CONTEXT_FALLBACK;
-  const models = apiConfig?.models ?? [];
+  const models = apiConfig?.providers.flatMap((p) => p.models) ?? [];
 
   const patchContext = (patch: Partial<ContextEngineConfig>) => {
     void updateAppConfig({ context: { ...context, ...patch } }).catch(() => {
@@ -1488,619 +1469,6 @@ export function AgentSettings() {
         <span>{t('settings.agent.createAgent')}</span>
       </Button>
     </div>
-  );
-}
-
-/* ===== 模型设置 ===== */
-export function ModelSettings() {
-  const { t } = useTranslation();
-  const { models, currentModel, setCurrent, createModel, updateModel, deleteModel, testModel, reorderModels } = useModels();
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [editingModel, setEditingModel] = useState<ModelItem | null>(null);
-  const [testingId, setTestingId] = useState<string | null>(null);
-  const [query, setQuery] = useState('');
-  const [formatFilter, setFormatFilter] = useState<'all' | ModelItem['format']>('all');
-  const modelDialogRequest = useStore((s) => s.modelDialogRequest);
-  const clearModelDialogRequest = useStore((s) => s.clearModelDialogRequest);
-
-  // 从模型菜单"添加自定义模型"跳转过来时自动打开添加弹窗
-  useEffect(() => {
-    if (modelDialogRequest) {
-      clearModelDialogRequest();
-      setEditingModel(null);
-      setDialogOpen(true);
-    }
-  }, [modelDialogRequest, clearModelDialogRequest]);
-
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-  );
-
-  const openAdd = () => {
-    setEditingModel(null);
-    setDialogOpen(true);
-  };
-
-  const openEdit = (model: ModelItem) => {
-    setEditingModel(model);
-    setDialogOpen(true);
-  };
-
-  const handleDelete = async (model: ModelItem) => {
-    if (!window.confirm(t('settings.model.deleteConfirm'))) return;
-    try {
-      await deleteModel(model.id);
-      toast.success(t('settings.model.deleteSuccess'));
-    } catch {
-      // 错误已由 hook toast
-    }
-  };
-
-  const handleTest = async (model: ModelItem) => {
-    setTestingId(model.id);
-    try {
-      const result = await testModel(model.id);
-      if (result.success) {
-        toast.success(t('settings.model.testSuccess', { latencyMs: result.latencyMs }));
-      } else {
-        toast.error(t('settings.model.testFail', { error: result.error }));
-      }
-    } finally {
-      setTestingId(null);
-    }
-  };
-
-  const handleDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-    const oldIndex = models.findIndex((m) => m.id === active.id);
-    const newIndex = models.findIndex((m) => m.id === over.id);
-    if (oldIndex < 0 || newIndex < 0) return;
-    const newOrder = arrayMove(models, oldIndex, newIndex).map((m) => m.id);
-    void reorderModels(newOrder);
-  };
-
-  // 搜索 + API 格式筛选（实时本地过滤）
-  const q = query.trim().toLowerCase();
-  const visibleModels = models.filter((m) => {
-    const matchQ = !q || m.name.toLowerCase().includes(q) || m.model.toLowerCase().includes(q);
-    const matchF = formatFilter === 'all' || m.format === formatFilter;
-    return matchQ && matchF;
-  });
-
-  return (
-    <div className="flex flex-col gap-6 p-6">
-      {/* 页头 */}
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-2xl font-semibold text-foreground">{t('settings.model.title')}</h1>
-          <p className="text-sm text-muted-foreground">{t('settings.model.subtitle')}</p>
-        </div>
-        <Button className="gap-1.5" onClick={openAdd}>
-          <Plus className="size-3.5" />
-          {t('settings.model.addModel')}
-        </Button>
-      </div>
-
-      {/* 搜索与筛选：桌面端筛选在左、搜索在右、整体靠右；移动端搜索在上、筛选在下 */}
-      <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end">
-        <Select
-          value={formatFilter}
-          onValueChange={(v) => setFormatFilter(v as 'all' | ModelItem['format'])}
-        >
-          <SelectTrigger className="w-full sm:w-40">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">{t('settings.model.allFormats')}</SelectItem>
-            <SelectItem value="openai-chat">OpenAI Chat</SelectItem>
-            <SelectItem value="openai-responses">OpenAI Responses</SelectItem>
-            <SelectItem value="anthropic">Anthropic</SelectItem>
-            <SelectItem value="gemini">Gemini</SelectItem>
-          </SelectContent>
-        </Select>
-        <div className="relative w-full sm:max-w-64">
-          <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            type="text"
-            placeholder={t('settings.model.searchPlaceholder')}
-            className="pl-8"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-        </div>
-      </div>
-
-      {/* 卡片列表 */}
-      {models.length === 0 ? (
-        <div className="flex items-center justify-center rounded-xl border border-dashed border-border p-8 text-sm text-muted-foreground">
-          {t('settings.model.empty')}
-        </div>
-      ) : visibleModels.length === 0 ? (
-        <div className="flex items-center justify-center rounded-xl border border-dashed border-border p-8 text-sm text-muted-foreground">
-          {t('settings.model.noMatch')}
-        </div>
-      ) : (
-        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-          <SortableContext items={visibleModels.map((m) => m.id)} strategy={verticalListSortingStrategy}>
-            <div className="flex flex-col gap-2">
-              {visibleModels.map((model) => (
-                <SortableModelCard
-                  key={model.id}
-                  model={model}
-                  isSelected={currentModel === model.id}
-                  isTesting={testingId === model.id}
-                  onSelect={() => void setCurrent(model.id)}
-                  onTest={() => void handleTest(model)}
-                  onEdit={() => openEdit(model)}
-                  onDelete={() => void handleDelete(model)}
-                />
-              ))}
-            </div>
-          </SortableContext>
-        </DndContext>
-      )}
-
-      <AddModelDialog
-        open={dialogOpen}
-        onOpenChange={setDialogOpen}
-        editingModel={editingModel}
-        createModel={createModel}
-        updateModel={updateModel}
-      />
-    </div>
-  );
-}
-
-/* ===== 可拖拽模型卡片 ===== */
-interface SortableModelCardProps {
-  model: ModelItem;
-  isSelected: boolean;
-  isTesting: boolean;
-  onSelect: () => void;
-  onTest: () => void;
-  onEdit: () => void;
-  onDelete: () => void;
-}
-
-function SortableModelCard({
-  model,
-  isSelected,
-  isTesting,
-  onSelect,
-  onTest,
-  onEdit,
-  onDelete,
-}: SortableModelCardProps) {
-  const { t } = useTranslation();
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: model.id,
-  });
-
-  return (
-    <div
-      ref={setNodeRef}
-      style={{
-        transform: CSS.Transform.toString(transform),
-        transition,
-      }}
-      className={cn(
-        'flex items-center gap-3 rounded-xl border p-4 transition-colors',
-        isSelected ? 'border-primary/40 bg-primary/5' : 'border-border hover:bg-muted/50',
-        isDragging && 'opacity-50 shadow-lg',
-      )}
-    >
-      {/* 拖拽手柄 */}
-      <button
-        type="button"
-        className="cursor-grab shrink-0 text-muted-foreground/50 hover:text-muted-foreground active:cursor-grabbing"
-        {...attributes}
-        {...listeners}
-      >
-        <GripVertical className="size-4" />
-      </button>
-      {/* 主体可点击区域 */}
-      <div className="flex flex-1 items-center gap-3 min-w-0 cursor-pointer" onClick={onSelect}>
-        {/* 状态点 */}
-        <span
-          className={cn(
-            'size-2.5 shrink-0 rounded-full',
-            isSelected ? 'bg-emerald-500' : 'bg-muted-foreground/30',
-          )}
-        />
-        {/* 名称 + 徽章 */}
-        <div className="flex flex-1 flex-col gap-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-semibold text-foreground">{model.name}</span>
-            <span className="text-xs text-muted-foreground truncate">{model.model}</span>
-            {isSelected && (
-              <Badge variant="secondary" className="font-normal">
-                {t('common.default')}
-              </Badge>
-            )}
-          </div>
-          {/* 详情行 */}
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            {model.contextWindow && (
-              <>
-                <span>{model.contextWindow}</span>
-                <span className="text-border">·</span>
-              </>
-            )}
-            <span>{model.format}</span>
-            {model.thinking?.enabled && (
-              <>
-                <span className="text-border">·</span>
-                <span>{t('settings.model.thinkingMode')}</span>
-              </>
-            )}
-          </div>
-        </div>
-      </div>
-      {/* 操作链接 */}
-      <div className="flex items-center gap-4 shrink-0">
-        <button
-          type="button"
-          className="flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
-          onClick={(e) => {
-            e.stopPropagation();
-            onTest();
-          }}
-          disabled={isTesting}
-        >
-          {isTesting && <Loader2 className="size-3 animate-spin" />}
-          {isTesting ? t('settings.model.testing') : t('settings.model.test')}
-        </button>
-        <button
-          type="button"
-          className="text-xs text-muted-foreground transition-colors hover:text-foreground"
-          onClick={(e) => {
-            e.stopPropagation();
-            onEdit();
-          }}
-        >
-          {t('settings.model.edit')}
-        </button>
-        <button
-          type="button"
-          className="text-muted-foreground transition-colors hover:text-destructive"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete();
-          }}
-          aria-label={t('settings.model.delete')}
-        >
-          <Trash2 className="size-3.5" />
-        </button>
-      </div>
-    </div>
-  );
-}
-
-/* ===== 模型弹窗（新建/编辑共用） ===== */
-interface AddModelDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  editingModel: ModelItem | null;
-  createModel: ReturnType<typeof useModels>['createModel'];
-  updateModel: ReturnType<typeof useModels>['updateModel'];
-}
-
-function AddModelDialog({
-  open,
-  onOpenChange,
-  editingModel,
-  createModel,
-  updateModel,
-}: AddModelDialogProps) {
-  const { t } = useTranslation();
-  const isEdit = !!editingModel;
-
-  const [name, setName] = useState('');
-  const [model, setModel] = useState('');
-  const [format, setFormat] = useState<ModelItem['format']>('openai-chat');
-  const [endpoint, setEndpoint] = useState('');
-  const [apiKey, setApiKey] = useState('');
-  const [inputTokens, setInputTokens] = useState('');
-  const [outputTokens, setOutputTokens] = useState('');
-  const [temperature, setTemperature] = useState(1.0);
-  const [topP, setTopP] = useState(1.0);
-  const [topK, setTopK] = useState(0);
-  const [effortLevel, setEffortLevel] = useState<'off' | 'low' | 'medium' | 'high' | 'custom'>('off');
-  const [customLabel, setCustomLabel] = useState('');
-  const [customEffort, setCustomEffort] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-
-  // 弹窗打开时同步表单数据
-  useEffect(() => {
-    if (!open) return;
-    if (editingModel) {
-      setName(editingModel.name);
-      setModel(editingModel.model);
-      setFormat(editingModel.format);
-      setEndpoint(editingModel.endpoint);
-      setApiKey(editingModel.apiKey);
-      setInputTokens(
-        String(editingModel.inputTokens ?? parseLegacyWindow(editingModel.contextWindow) ?? ''),
-      );
-      setOutputTokens(String(editingModel.outputTokens ?? ''));
-      setTemperature(editingModel.temperature ?? 1.0);
-      setTopP(editingModel.topP ?? 1.0);
-      setTopK(editingModel.topK ?? 0);
-      const lv = toEffortLevel(editingModel.thinking);
-      setEffortLevel(lv);
-      setCustomLabel(lv === 'custom' ? (editingModel.thinking?.label ?? '') : '');
-      setCustomEffort(lv === 'custom' ? (editingModel.thinking?.effort ?? '') : '');
-    } else {
-      setName('');
-      setModel('');
-      setFormat('openai-chat');
-      setEndpoint('');
-      setApiKey('');
-      setInputTokens('');
-      setOutputTokens('');
-      setTemperature(1.0);
-      setTopP(1.0);
-      setTopK(0);
-      setEffortLevel('off');
-      setCustomLabel('');
-      setCustomEffort('');
-    }
-  }, [open, editingModel]);
-
-  const handleSubmit = async () => {
-    if (!name.trim() || !model.trim() || !endpoint.trim()) {
-      toast.error(t('settings.model.empty'));
-      return;
-    }
-    if (effortLevel === 'custom' && !customEffort.trim()) {
-      toast.error(t('settings.model.customEffortRequired'));
-      return;
-    }
-    setSubmitting(true);
-    try {
-      const payload = {
-        name: name.trim(),
-        model: model.trim(),
-        format,
-        endpoint: endpoint.trim(),
-        apiKey: apiKey.trim(),
-        inputTokens: inputTokens.trim() ? Math.max(1, Math.floor(Number(inputTokens))) : undefined,
-        outputTokens: outputTokens.trim()
-          ? Math.max(1, Math.floor(Number(outputTokens)))
-          : undefined,
-        temperature,
-        topP,
-        topK,
-        thinking:
-          effortLevel === 'off'
-            ? { enabled: false }
-            : effortLevel === 'custom'
-              ? {
-                  enabled: true,
-                  effort: customEffort.trim(),
-                  ...(customLabel.trim() ? { label: customLabel.trim() } : {}),
-                }
-              : { enabled: true, effort: effortLevel },
-      };
-      if (isEdit && editingModel) {
-        await updateModel(editingModel.id, payload);
-        toast.success(t('settings.model.updateSuccess'));
-      } else {
-        await createModel(payload);
-        toast.success(t('settings.model.createSuccess'));
-      }
-      onOpenChange(false);
-    } catch {
-      // 错误已由 hook toast
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent size="md">
-        <DialogHeader>
-          <DialogTitle>
-            {isEdit ? t('settings.model.editModelTitle') : t('settings.model.addModelTitle')}
-          </DialogTitle>
-        </DialogHeader>
-
-        <div className="flex flex-col gap-3">
-          {/* 显示名 */}
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="model-name">{t('settings.model.displayName')}</Label>
-            <Input
-              id="model-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder={t('settings.model.displayNamePlaceholder')}
-            />
-          </div>
-          {/* 模型id */}
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="model-model">{t('settings.model.modelName')}</Label>
-            <Input
-              id="model-model"
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              placeholder={t('settings.model.modelNamePlaceholder')}
-            />
-          </div>
-          {/* API 格式 */}
-          <div className="flex flex-col gap-1.5">
-            <Label>{t('settings.model.apiFormat')}</Label>
-            <Select value={format} onValueChange={(v) => setFormat(v as ModelItem['format'])}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="openai-chat">OpenAI Chat</SelectItem>
-                <SelectItem value="openai-responses">OpenAI Responses</SelectItem>
-                <SelectItem value="anthropic">Anthropic</SelectItem>
-                <SelectItem value="gemini">Gemini</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          {/* Endpoint */}
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="model-endpoint">{t('settings.model.endpoint')}</Label>
-            <Input
-              id="model-endpoint"
-              value={endpoint}
-              onChange={(e) => setEndpoint(e.target.value)}
-              placeholder={t('settings.model.endpointPlaceholder')}
-            />
-          </div>
-          {/* API Key */}
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="model-apikey">{t('settings.model.apiKey')}</Label>
-            <Input
-              id="model-apikey"
-              type="password"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder={t('settings.model.apiKeyPlaceholder')}
-            />
-          </div>
-          {/* 高级配置（默认折叠） */}
-          <Collapsible defaultOpen={false}>
-            <CollapsibleTrigger className="group flex w-full items-center gap-1 rounded-md py-1 text-sm text-muted-foreground transition-colors hover:text-foreground data-[state=open]:text-foreground">
-              <ChevronRight className="size-3.5 transition-transform group-data-[state=open]:rotate-90" />
-              <span>{t('settings.model.advancedConfig')}</span>
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <div className="flex flex-col gap-3 pt-1">
-                {/* 上下文窗口：输入 / 输出 */}
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="flex flex-col gap-1.5">
-                    <Label htmlFor="model-input-tokens">{t('settings.model.inputWindow')}</Label>
-                    <Input
-                      id="model-input-tokens"
-                      type="number"
-                      min={1}
-                      value={inputTokens}
-                      onChange={(e) => setInputTokens(e.target.value)}
-                      placeholder="200000"
-                    />
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <Label htmlFor="model-output-tokens">{t('settings.model.outputWindow')}</Label>
-                    <Input
-                      id="model-output-tokens"
-                      type="number"
-                      min={1}
-                      value={outputTokens}
-                      onChange={(e) => setOutputTokens(e.target.value)}
-                      placeholder="8192"
-                    />
-                  </div>
-                </div>
-                {/* 模型温度 */}
-                <div className="flex flex-col gap-2">
-                  <div className="flex items-center justify-between">
-                    <Label>{t('settings.model.temperature')}</Label>
-                    <span className="text-sm tabular-nums text-muted-foreground">
-                      {temperature.toFixed(1)}
-                    </span>
-                  </div>
-                  <Slider
-                    value={[temperature]}
-                    min={0}
-                    max={2}
-                    step={0.1}
-                    onValueChange={(v) => setTemperature(v[0] ?? 1)}
-                  />
-                </div>
-                {/* Top P */}
-                <div className="flex flex-col gap-2">
-                  <div className="flex items-center justify-between">
-                    <Label>{t('settings.model.topP')}</Label>
-                    <span className="text-sm tabular-nums text-muted-foreground">
-                      {topP.toFixed(2)}
-                    </span>
-                  </div>
-                  <Slider
-                    value={[topP]}
-                    min={0}
-                    max={1}
-                    step={0.05}
-                    onValueChange={(v) => setTopP(v[0] ?? 1)}
-                  />
-                </div>
-                {/* Top K */}
-                <div className="flex flex-col gap-2">
-                  <div className="flex items-center justify-between">
-                    <Label>{t('settings.model.topK')}</Label>
-                    <span className="text-sm tabular-nums text-muted-foreground">{topK}</span>
-                  </div>
-                  <Slider
-                    value={[topK]}
-                    min={0}
-                    max={100}
-                    step={1}
-                    onValueChange={(v) => setTopK(Math.round(v[0] ?? 0))}
-                  />
-                </div>
-                {/* 思考强度 */}
-                <div className="flex flex-col gap-1.5">
-                  <Label>{t('settings.model.thinkingLevel')}</Label>
-                  <Select
-                    value={effortLevel}
-                    onValueChange={(v) => setEffortLevel(v as typeof effortLevel)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="off">{t('settings.model.thinkingOff')}</SelectItem>
-                      <SelectItem value="low">{t('settings.model.thinkingLow')}</SelectItem>
-                      <SelectItem value="medium">{t('settings.model.thinkingMedium')}</SelectItem>
-                      <SelectItem value="high">{t('settings.model.thinkingHigh')}</SelectItem>
-                      <SelectItem value="custom">{t('settings.model.thinkingCustom')}</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                {/* 自定义等级：名称 + 参数 */}
-                {effortLevel === 'custom' && (
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="flex flex-col gap-1.5">
-                      <Label htmlFor="model-custom-label">{t('settings.model.customName')}</Label>
-                      <Input
-                        id="model-custom-label"
-                        value={customLabel}
-                        onChange={(e) => setCustomLabel(e.target.value)}
-                        placeholder="Deep"
-                      />
-                    </div>
-                    <div className="flex flex-col gap-1.5">
-                      <Label htmlFor="model-custom-effort">{t('settings.model.customEffort')}</Label>
-                      <Input
-                        id="model-custom-effort"
-                        value={customEffort}
-                        onChange={(e) => setCustomEffort(e.target.value)}
-                        placeholder="xhigh"
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-            </CollapsibleContent>
-          </Collapsible>
-        </div>
-
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
-            {t('settings.model.cancel')}
-          </Button>
-          <Button onClick={handleSubmit} disabled={submitting}>
-            {t('settings.model.save')}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   );
 }
 

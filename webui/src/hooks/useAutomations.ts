@@ -1,12 +1,12 @@
 // UI/src/hooks/useAutomations.ts
-// 自动化任务 hook：CRUD + trigger/pause/resume + history + templates。
+// 自动化任务 hook：CRUD + trigger/pause/resume + history。
 // 订阅 WS automation.started/finished 自动更新 history。
 
-import { useEffect, useCallback, useState } from 'react';
+import { useEffect, useCallback } from 'react';
 import { useStore } from '../store';
 import { api } from '../api/http';
 import { wsClient } from '../api/ws';
-import type { AutomationDetail, AutomationRun, AutomationTemplate } from '../types/api';
+import type { AutomationDetail, AutomationRun } from '../types/api';
 import { toast } from 'sonner';
 
 export function useAutomations() {
@@ -80,7 +80,16 @@ export function useAutomations() {
   }, [load, addAutomationRun, updateAutomationRun, updateAutomation]);
 
   const createAutomation = useCallback(
-    async (data: { title: string; cron: string; prompt: string; agentId?: string }) => {
+    async (data: {
+      title: string;
+      prompt: string;
+      description?: string;
+      icon?: string;
+      agentId?: string;
+      scheduleType?: 'cron' | 'once';
+      cron?: string;
+      runAt?: string;
+    }) => {
       try {
         const item = await api.createAutomation(data);
         await load();
@@ -160,26 +169,4 @@ export function useAutomations() {
     pauseAutomation,
     resumeAutomation,
   };
-}
-
-/** 模板 hook：单独使用，避免与 automations 列表耦合 */
-export function useAutomationTemplates() {
-  const [templates, setTemplates] = useState<AutomationTemplate[]>([]);
-
-  useEffect(() => {
-    let cancelled = false;
-    api
-      .listAutomationTemplates()
-      .then(({ templates }) => {
-        if (!cancelled) setTemplates(templates);
-      })
-      .catch((err) => {
-        console.warn('useAutomationTemplates load failed:', err);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  return templates;
 }

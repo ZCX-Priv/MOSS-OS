@@ -285,34 +285,9 @@ export interface ModelThinking {
   budgetTokens?: number;
 }
 
-export interface ModelConfig {
-  /** 内部唯一 id（如 "model_1734..."） */
-  id: string;
-  /** 显示名，如 "GPT-4o" */
-  name: string;
-  /** 发送给 API 的模型名，如 "gpt-4o" */
-  model: string;
-  format: 'openai-chat' | 'openai-responses' | 'anthropic' | 'gemini';
-  endpoint: string;
-  apiKey: string;
-  thinking: ModelThinking;
-  /** 上下文窗口档位（旧格式，如 '200k'）；读取时 inputTokens 优先 */
-  contextWindow?: string;
-  /** 输入窗口 token 数（context 引擎压缩预算） */
-  inputTokens?: number;
-  /** 输出窗口 token 数（请求 max_tokens 默认值） */
-  outputTokens?: number;
-  /** 模型温度 0-2 */
-  temperature?: number;
-  /** Top P 0-1 */
-  topP?: number;
-  /** Top K 0-100；0 表示不发送 */
-  topK?: number;
-}
-
 export interface ApiConfig {
   version: number;
-  models: ModelConfig[];
+  providers: ProviderItem[];
 }
 
 // ============================================================================
@@ -397,16 +372,30 @@ export interface ContextFile {
 // 模型管理（见文档 3.2.2）
 // ============================================================================
 
-export interface ModelItem {
+/** 服务商配置（与后端 ProviderConfig 对齐）：持有 API 格式/地址/Key 及自定义查询地址 */
+export interface ProviderItem {
+  /** 内部唯一 id（如 "provider_1734..."） */
+  id: string;
+  /** 显示名，如 "OpenAI" */
+  name: string;
+  format: 'openai-chat' | 'openai-responses' | 'anthropic' | 'gemini';
+  endpoint: string;
+  apiKey: string;
+  /** 自定义余额查询地址（OpenAI 兼容 subscription 接口完整 URL；空 = 不提供余额查询） */
+  balanceUrl?: string;
+  /** 自定义模型列表获取地址（空 = 按 API 格式自动推断） */
+  modelsUrl?: string;
+  models: ProviderModelItem[];
+}
+
+/** 服务商下的模型：名称 + 模型 id + 模型级高级配置 */
+export interface ProviderModelItem {
   /** 内部唯一 id（如 "model_1734..."） */
   id: string;
   /** 显示名，如 "GPT-4o" */
   name: string;
   /** 发送给 API 的模型名，如 "gpt-4o" */
   model: string;
-  format: 'openai-chat' | 'openai-responses' | 'anthropic' | 'gemini';
-  endpoint: string;
-  apiKey: string;
   /** 上下文窗口档位（旧格式，如 '200k'）；读取时 inputTokens 优先 */
   contextWindow?: string;
   /** 输入窗口 token 数（context 引擎压缩预算） */
@@ -420,6 +409,21 @@ export interface ModelItem {
   /** Top K 0-100；0 表示不发送 */
   topK?: number;
   thinking: ModelThinking;
+}
+
+/** 远程模型列表项（POST /api/providers/:id/models/fetch 归一化结果） */
+export interface RemoteModelItem {
+  id: string;
+  name?: string;
+}
+
+/** 余额查询结果（POST /api/providers/:id/balance） */
+export interface ProviderBalanceResult {
+  success: boolean;
+  totalUsd?: number;
+  usedUsd?: number;
+  balanceUsd?: number;
+  error?: string;
 }
 
 // ============================================================================
@@ -516,8 +520,16 @@ export interface AutomationItem {
   id: string;
   title: string;
   description?: string;
-  /** 5 字段 cron 表达式 */
-  cron: string;
+  /** lucide 图标名（kebab-case，如 'calendar-clock'；缺省回退首字母） */
+  icon?: string;
+  /** 调度类型：cron=周期循环；once=指定时间执行一次 */
+  scheduleType: 'cron' | 'once';
+  /** scheduleType='cron' 时的 5 字段 cron 表达式 */
+  cron?: string;
+  /** scheduleType='once' 时的执行时间（ISO 字符串） */
+  runAt?: string;
+  /** once 任务被调度器执行后标记 true（保留在列表，改 runAt 后重新启用） */
+  completed?: boolean;
   /** 触发时发送给 agent 的消息 */
   prompt: string;
   agentId?: string;
@@ -541,17 +553,6 @@ export interface AutomationRun {
   finishReason?: string;
   finalText?: string;
   error?: string;
-}
-
-export interface AutomationTemplate {
-  id: string;
-  title: string;
-  description: string;
-  iconGradient?: string;
-  /** 建议的 cron */
-  cron?: string;
-  /** 含 {{占位符}} 的 prompt 模板 */
-  promptTemplate?: string;
 }
 
 // ============================================================================

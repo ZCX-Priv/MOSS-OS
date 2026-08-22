@@ -2,6 +2,7 @@
 // LLM 路由器：按 modelId 查找 ModelConfig + 流式/非流式分发。
 
 import { t } from '../../core/i18n';
+import { flattenModels } from '../../core/provider-utils';
 import { getProvider } from './providers';
 import { httpRequest } from './client';
 import { parseSSEStream } from './stream';
@@ -154,28 +155,29 @@ export class LLMRouterImpl implements LLMRouter {
   // ========================================================================
 
   /**
-   * 按 modelId 查找 ModelConfig：先按 id 精确匹配，找不到则按 model 字段（API 模型名）兜底。
+   * 按 modelId 查找模型：先按 id 精确匹配，找不到则按 model 字段（API 模型名）兜底。
+   * 数据源为 providers 扁平视图（flattenModels 合并 provider 连接信息）。
    * 找不到则抛 LLMError；apiKey 为空也抛 LLMError。
    */
   private resolveModel(modelId: string): ModelConfig {
-    const apiCfg = this.config.getApiConfig();
+    const models = flattenModels(this.config.getApiConfig());
 
     // 先按 id 精确匹配
-    const byId = apiCfg.models.find(m => m.id === modelId);
+    const byId = models.find(m => m.id === modelId);
     if (byId) {
       this.ensureApiKey(byId);
       return byId;
     }
 
     // 兜底：按 model 字段（API 模型名）匹配
-    const byModel = apiCfg.models.find(m => m.model === modelId);
+    const byModel = models.find(m => m.model === modelId);
     if (byModel) {
       this.ensureApiKey(byModel);
       return byModel;
     }
 
     throw new LLMError(
-      `Model "${modelId}" not found in api.json. Available: ${apiCfg.models.map(m => m.id).join(', ') || '(none)'}`,
+      `Model "${modelId}" not found in api.json. Available: ${models.map(m => m.id).join(', ') || '(none)'}`,
       undefined,
       false,
     );

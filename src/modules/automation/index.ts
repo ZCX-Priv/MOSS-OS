@@ -1,7 +1,8 @@
 // src/modules/automation/index.ts
 // Automation 模块入口：实现 AutomationService，注册 automation.service 服务。
 // 持久化：~/.moss/automations.json + ~/.moss/automations-history.json
-// 调度：cron-parser 解析 + setTimeout 调度循环
+// 调度：scheduleType='cron' 周期任务（cron-parser 解析 + setTimeout 调度循环）；
+//       scheduleType='once' 一次性定时任务（runAt 到点执行一次，之后标记 completed 保留）。
 // 触发：调用 agent.engine.run({临时 sessionId, userMessage: prompt})，通过 server.instance.broadcastWS 推送事件
 
 import { t } from '../../core/i18n';
@@ -21,7 +22,16 @@ export interface AutomationItem {
   id: string;
   title: string;
   description?: string;
-  cron: string;
+  /** lucide 图标名（kebab-case，如 'calendar-clock'；缺省前端回退首字母） */
+  icon?: string;
+  /** 调度类型：cron=周期循环；once=指定时间执行一次（旧数据 load 迁移时补 'cron'） */
+  scheduleType: 'cron' | 'once';
+  /** scheduleType='cron' 时的 5 字段 cron 表达式 */
+  cron?: string;
+  /** scheduleType='once' 时的执行时间（ISO 字符串，须未来） */
+  runAt?: string;
+  /** once 任务被调度器执行后标记 true；调度器不再调度；编辑改 runAt 时重置 */
+  completed?: boolean;
   prompt: string;
   agentId?: string;
   enabled: boolean;
@@ -53,86 +63,6 @@ interface HistoryStoreData {
   history: Record<string, AutomationRun[]>;
 }
 
-export interface AutomationTemplate {
-  id: string;
-  title: string;
-  description: string;
-  iconGradient?: string;
-  cron?: string;
-  promptTemplate?: string;
-}
-
-// ============================================================================
-// 内置模板（与 UI AutomationPage 现有 templates 对齐）
-// ============================================================================
-
-const BUILTIN_TEMPLATES: AutomationTemplate[] = [
-  {
-    id: 'news-daily',
-    title: '每日 AI 新闻简报',
-    description: '每天早上推送 AI 行业热点新闻摘要与趋势分析',
-    iconGradient: 'linear-gradient(135deg, #6B4BCC, #8b5cf6)',
-    cron: '0 9 * * *',
-    promptTemplate: '请搜索并汇总今天的 AI 行业热点新闻，生成一份简报',
-  },
-  {
-    id: 'brand-weekly',
-    title: '品牌舆情监控周报',
-    description: '每周自动抓取品牌在社交媒体和社区中的提及与评价，生成舆情摘要',
-    iconGradient: 'linear-gradient(135deg, #4B8BFF, #2563eb)',
-    cron: '0 10 * * 1',
-    promptTemplate: '请汇总本周品牌舆情，生成周报',
-  },
-  {
-    id: 'competitor-weekly',
-    title: '每周竞品动态追踪',
-    description: '定期追踪竞品的产品更新、社区反馈和重要新闻',
-    iconGradient: 'linear-gradient(135deg, #10b981, #059669)',
-    cron: '0 10 * * 1',
-    promptTemplate: '请追踪并汇总本周竞品动态',
-  },
-  {
-    id: 'stock-monitor',
-    title: '股价监控与预警',
-    description: '每天追踪关注的股票价格变动，异常波动时自动预警',
-    iconGradient: 'linear-gradient(135deg, #f59e0b, #d97706)',
-    cron: '0 16 * * 1-5',
-    promptTemplate: '请查询关注股票今日价格变动，如有异常波动请预警',
-  },
-  {
-    id: 'security-scan',
-    title: '安全漏洞扫描',
-    description: '定期扫描代码仓库，发现经过验证的中高危安全漏洞',
-    iconGradient: 'linear-gradient(135deg, #ef4444, #dc2626)',
-    cron: '0 2 * * 0',
-    promptTemplate: '请扫描代码仓库，报告中高危安全漏洞',
-  },
-  {
-    id: 'bug-scan',
-    title: '扫描提交发现 Bug',
-    description: '分析最近的代码提交，发现可能导致严重后果的高危 Bug',
-    iconGradient: 'linear-gradient(135deg, #ec4899, #be185d)',
-    cron: '0 2 * * *',
-    promptTemplate: '请分析最近的代码提交，发现高危 Bug',
-  },
-  {
-    id: 'test-coverage',
-    title: '补充测试覆盖',
-    description: '识别最近变更中缺少测试的高风险代码，自动补充测试',
-    iconGradient: 'linear-gradient(135deg, #06b6d4, #0891b2)',
-    cron: '0 3 * * 0',
-    promptTemplate: '请识别最近变更中缺少测试的高风险代码，补充测试',
-  },
-  {
-    id: 'daily-summary',
-    title: '每日变更摘要',
-    description: '每天汇总代码仓库的变更情况，生成团队可读的工程日报',
-    iconGradient: 'linear-gradient(135deg, #6366f1, #4f46d5)',
-    cron: '0 18 * * 1-5',
-    promptTemplate: '请汇总今天的代码变更，生成工程日报',
-  },
-];
-
 // ============================================================================
 // AutomationService 实现
 // ============================================================================
@@ -142,10 +72,13 @@ export interface AutomationService {
   get(id: string): AutomationItem | null;
   create(data: {
     title: string;
-    cron: string;
     prompt: string;
     description?: string;
+    icon?: string;
     agentId?: string;
+    scheduleType?: 'cron' | 'once';
+    cron?: string;
+    runAt?: string;
   }): AutomationItem;
   update(id: string, patch: Partial<AutomationItem>): AutomationItem | null;
   remove(id: string): boolean;
@@ -153,7 +86,6 @@ export interface AutomationService {
   pause(id: string): boolean;
   resume(id: string): boolean;
   getHistory(id: string): AutomationRun[];
-  listTemplates(): AutomationTemplate[];
 }
 
 class AutomationServiceImpl implements AutomationService {
@@ -190,14 +122,43 @@ class AutomationServiceImpl implements AutomationService {
     this.history = this.loadHistory();
   }
 
-  /** 启动调度器（在模块 initialize 后调用） */
+  /** 启动调度器（在模块 initialize 后调用）：先迁移旧数据，再为每个任务安排调度 */
   startScheduler(): void {
+    this.migrate();
     for (const a of this.data.automations) {
       this.scheduleNext(a);
     }
     this.logger.info(t('automation.schedulerStarted'), {
-      scheduled: this.data.automations.filter(a => a.enabled && !a.paused).length,
+      scheduled: this.data.automations.filter(a => a.enabled && !a.paused && !a.completed).length,
     });
+  }
+
+  /**
+   * 旧数据迁移：无 scheduleType 的条目补 'cron'；
+   * once 任务 runAt 已过期且未执行 → 标记 completed（跳过不补跑）。
+   */
+  private migrate(): void {
+    let dirty = false;
+    const now = Date.now();
+    for (const a of this.data.automations) {
+      if (a.scheduleType !== 'cron' && a.scheduleType !== 'once') {
+        a.scheduleType = 'cron';
+        dirty = true;
+      }
+      if (
+        a.scheduleType === 'once' &&
+        !a.completed &&
+        a.runAt &&
+        !Number.isNaN(Date.parse(a.runAt)) &&
+        Date.parse(a.runAt) <= now
+      ) {
+        a.completed = true;
+        a.nextRunAt = undefined;
+        dirty = true;
+        this.logger.info(t('automation.onceSkippedExpired', { id: a.id }), { runAt: a.runAt });
+      }
+    }
+    if (dirty) this.save();
   }
 
   /** 停止所有调度 */
@@ -280,20 +241,47 @@ class AutomationServiceImpl implements AutomationService {
 
   create(data: {
     title: string;
-    cron: string;
     prompt: string;
     description?: string;
+    icon?: string;
     agentId?: string;
+    scheduleType?: 'cron' | 'once';
+    cron?: string;
+    runAt?: string;
   }): AutomationItem {
-    // 校验 cron
-    this.validateCron(data.cron);
+    const scheduleType = data.scheduleType ?? 'cron';
+    let cron: string | undefined;
+    let runAt: string | undefined;
+
+    if (scheduleType === 'cron') {
+      if (!data.cron) {
+        throw new Error(t('automation.cronRequiredThrow'));
+      }
+      this.validateCron(data.cron);
+      cron = data.cron;
+    } else {
+      if (!data.runAt) {
+        throw new Error(t('automation.onceRunAtRequiredThrow'));
+      }
+      const ts = Date.parse(data.runAt);
+      if (Number.isNaN(ts)) {
+        throw new Error(t('automation.onceRunAtInvalidThrow', { runAt: data.runAt }));
+      }
+      if (ts <= Date.now()) {
+        throw new Error(t('automation.onceRunAtPastThrow', { runAt: data.runAt }));
+      }
+      runAt = new Date(ts).toISOString();
+    }
 
     const now = new Date().toISOString();
     const item: AutomationItem = {
       id: `auto_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
       title: data.title,
       description: data.description,
-      cron: data.cron,
+      icon: data.icon,
+      scheduleType,
+      cron,
+      runAt,
       prompt: data.prompt,
       agentId: data.agentId,
       enabled: true,
@@ -310,18 +298,54 @@ class AutomationServiceImpl implements AutomationService {
   update(id: string, patch: Partial<AutomationItem>): AutomationItem | null {
     const idx = this.data.automations.findIndex(a => a.id === id);
     if (idx < 0) return null;
-    // 校验 cron（如提供）
-    if (patch.cron !== undefined) {
-      this.validateCron(patch.cron);
-    }
+    const current = this.data.automations[idx];
+
     // 不允许通过 patch 修改 id / createdAt
     const { id: _omitId, createdAt: _omitCreatedAt, ...allowedPatch } = patch;
-    const updated = { ...this.data.automations[idx], ...allowedPatch };
+
+    // 仅当调度相关字段发生变化时才校验（纯改标题等不应被旧 runAt 阻塞）
+    const scheduleTouched =
+      allowedPatch.scheduleType !== undefined ||
+      allowedPatch.cron !== undefined ||
+      allowedPatch.runAt !== undefined ||
+      allowedPatch.completed !== undefined;
+    if (scheduleTouched) {
+      const nextType = allowedPatch.scheduleType ?? current.scheduleType;
+      if (nextType === 'cron') {
+        const nextCron = allowedPatch.cron !== undefined ? allowedPatch.cron : current.cron;
+        if (!nextCron) {
+          throw new Error(t('automation.cronRequiredThrow'));
+        }
+        this.validateCron(nextCron);
+      } else {
+        const nextRunAt = allowedPatch.runAt !== undefined ? allowedPatch.runAt : current.runAt;
+        if (!nextRunAt) {
+          throw new Error(t('automation.onceRunAtRequiredThrow'));
+        }
+        const ts = Date.parse(nextRunAt);
+        if (Number.isNaN(ts)) {
+          throw new Error(t('automation.onceRunAtInvalidThrow', { runAt: nextRunAt }));
+        }
+        if (ts <= Date.now()) {
+          throw new Error(t('automation.onceRunAtPastThrow', { runAt: nextRunAt }));
+        }
+      }
+    }
+
+    const updated = { ...current, ...allowedPatch };
+    // once 任务 runAt 变化 → 重置完成状态（重新启用语义）
+    if (
+      updated.scheduleType === 'once' &&
+      allowedPatch.runAt !== undefined &&
+      allowedPatch.runAt !== current.runAt
+    ) {
+      updated.completed = false;
+    }
     this.data.automations[idx] = updated;
     this.save();
-    // 重新调度
+    // 重新调度（completed 任务由 scheduleNext 内部跳过）
     this.cancelSchedule(id);
-    if (updated.enabled && !updated.paused) {
+    if (updated.enabled && !updated.paused && !updated.completed) {
       this.scheduleNext(updated);
     }
     this.logger.info(t('automation.updated', { id }));
@@ -382,10 +406,6 @@ class AutomationServiceImpl implements AutomationService {
     return (this.history.history[id] ?? []).map(r => ({ ...r }));
   }
 
-  listTemplates(): AutomationTemplate[] {
-    return BUILTIN_TEMPLATES.map(t => ({ ...t }));
-  }
-
   // ========================================================================
   // 调度
   // ========================================================================
@@ -407,19 +427,34 @@ class AutomationServiceImpl implements AutomationService {
   }
 
   private scheduleNext(item: AutomationItem): void {
-    if (!item.enabled || item.paused) return;
+    if (!item.enabled || item.paused || item.completed) return;
     this.cancelSchedule(item.id);
 
     let next: Date;
-    try {
-      const interval = cronParser.parse(item.cron);
-      next = interval.next().toDate();
-    } catch (err) {
-      this.logger.warn(t('automation.cronParseFailed', { id: item.id }), {
-        cron: item.cron,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      return;
+    if (item.scheduleType === 'once') {
+      const ts = item.runAt ? Date.parse(item.runAt) : NaN;
+      if (Number.isNaN(ts)) {
+        this.logger.warn(t('automation.onceRunAtInvalid', { id: item.id }), { runAt: item.runAt });
+        return;
+      }
+      if (ts <= Date.now()) {
+        // 防御：过期 once 任务标记完成，不补跑
+        this.markCompleted(item.id);
+        return;
+      }
+      next = new Date(ts);
+    } else {
+      if (!item.cron) return;
+      try {
+        const interval = cronParser.parse(item.cron);
+        next = interval.next().toDate();
+      } catch (err) {
+        this.logger.warn(t('automation.cronParseFailed', { id: item.id }), {
+          cron: item.cron,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return;
+      }
     }
 
     const delay = next.getTime() - Date.now();
@@ -435,14 +470,16 @@ class AutomationServiceImpl implements AutomationService {
     const scheduleFn = () => {
       const timer = setTimeout(() => {
         this.timers.delete(item.id);
-        void this.executeRun(item, `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`)
+        // once 任务由调度器触发，执行后标记完成（手动 trigger 不标记）
+        const markCompleted = item.scheduleType === 'once';
+        void this.executeRun(item, `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, { markCompleted })
           .catch(err => {
             this.logger.error(t('automation.runFailed', { id: item.id }), {
               error: err instanceof Error ? err.message : String(err),
             });
           })
           .finally(() => {
-            // 调度下一次
+            // 调度下一次（once 任务已标记 completed，scheduleNext 内部跳过）
             const current = this.data.automations.find(a => a.id === item.id);
             if (current && current.enabled && !current.paused) {
               this.scheduleNext(current);
@@ -467,11 +504,26 @@ class AutomationServiceImpl implements AutomationService {
     }
   }
 
+  /** once 任务标记完成：completed=true、清除 nextRunAt 并落盘 */
+  private markCompleted(id: string): void {
+    const idx = this.data.automations.findIndex(a => a.id === id);
+    if (idx < 0) return;
+    if (this.data.automations[idx].completed) return;
+    this.data.automations[idx].completed = true;
+    this.data.automations[idx].nextRunAt = undefined;
+    this.save();
+    this.logger.info(t('automation.onceCompleted', { id }));
+  }
+
   // ========================================================================
   // 执行
   // ========================================================================
 
-  private async executeRun(item: AutomationItem, runId: string): Promise<void> {
+  private async executeRun(
+    item: AutomationItem,
+    runId: string,
+    opts?: { markCompleted?: boolean },
+  ): Promise<void> {
     const agent = this.services.tryResolve<AgentEngine>(ServiceNames.AGENT_ENGINE);
     const server = this.services.tryResolve<ServerInstanceLike>(ServiceNames.SERVER_INSTANCE);
 
@@ -588,6 +640,10 @@ class AutomationServiceImpl implements AutomationService {
       this.logger.error(t('automation.runFailedWithRun', { id: item.id, runId }), { error: errorMsg });
     } finally {
       this.running.delete(runId);
+      // once 任务由调度器触发（markCompleted）：无论成败都标记完成并保留
+      if (opts?.markCompleted && item.scheduleType === 'once') {
+        this.markCompleted(item.id);
+      }
     }
   }
 
@@ -633,7 +689,6 @@ class AutomationModule implements Module {
     this.service.startScheduler();
     ctx.logger.info(t('automation.moduleInitialized'), {
       automationCount: this.service.list().length,
-      templateCount: this.service.listTemplates().length,
     });
   }
 

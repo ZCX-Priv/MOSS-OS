@@ -1,47 +1,32 @@
 // UI/src/components/pages/AutomationPage.tsx
-// 自动化任务：阶段4.3 对接 useAutomations + useAutomationTemplates，移除硬编码。
-// 三 tab 路由化：/automation/templates | /automation/configured | /automation/history
+// 自动化任务页面：两 tab 路由化（/automation/configured | /automation/history）。
+// 新建/编辑走 AutomationFormDialog（store 状态驱动），任务卡片渲染 lucide 图标。
+// 支持 周期（cron）与 定时（once，完成后标记 completed 保留）两种调度。
 
 import {
-  Newspaper,
-  Eye,
-  Crosshair,
-  TrendingUp,
-  ShieldCheck,
-  Bug,
-  FlaskConical,
-  GitCommit,
   Plus,
   Play,
   Pause,
+  Pencil,
   Trash2,
   Clock,
+  CalendarClock,
   CheckCircle2,
   XCircle,
   Loader2,
 } from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { Card, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useAutomations } from '../../hooks/useAutomations';
-import { useAutomationTemplates } from '../../hooks/useAutomations';
+import { useStore } from '../../store';
+import { getLucideIcon } from '../../lib/icons';
+import { AutomationFormDialog } from './automation/AutomationFormDialog';
 import { toast } from 'sonner';
-
-// 已知模板 id → 图标的映射（与后端模板 id 对齐，未知模板回退首字母方块）
-const TEMPLATE_ICONS: Record<string, LucideIcon> = {
-  'news-daily': Newspaper,
-  'brand-weekly': Eye,
-  'competitor-weekly': Crosshair,
-  'stock-monitor': TrendingUp,
-  'security-scan': ShieldCheck,
-  'bug-scan': Bug,
-  'test-coverage': FlaskConical,
-  'daily-summary': GitCommit,
-};
+import type { AutomationItem } from '../../types/api';
 
 function formatTime(iso?: string): string {
   if (!iso) return '—';
@@ -59,20 +44,42 @@ function RunStatusIcon({ status }: { status: string }) {
   return <Clock className="size-3.5 text-muted-foreground" />;
 }
 
-// 从 pathname 派生当前 tab（templates/configured/history）
+/** 任务卡片图标：选中 lucide 图标，缺省回退首字母 */
+function AutomationIcon({ item, active }: { item: AutomationItem; active: boolean }) {
+  const Icon = item.icon ? getLucideIcon(item.icon) : undefined;
+  return (
+    <div
+      className="flex size-10 shrink-0 items-center justify-center rounded-lg text-xs font-bold text-white"
+      style={{
+        backgroundImage: active
+          ? 'linear-gradient(135deg, #6B4BCC, #8b5cf6)'
+          : 'linear-gradient(135deg, #64748b, #475569)',
+      }}
+    >
+      {Icon ? (
+        <Icon className="size-5" />
+      ) : (
+        <span className="text-xs font-bold">{item.title.slice(0, 1)}</span>
+      )}
+    </div>
+  );
+}
+
+// 从 pathname 派生当前 tab（configured/history）
 function useCurrentAutomationTab(): string {
   const { pathname } = useLocation();
   const seg = pathname.split('/').pop() ?? '';
-  return ['templates', 'configured', 'history'].includes(seg) ? seg : 'templates';
+  return ['configured', 'history'].includes(seg) ? seg : 'configured';
 }
 
 export function AutomationPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const tab = useCurrentAutomationTab();
-  // Badge 计数需要三个 tab 的数据，在布局层拉取
+  const openAutomationForm = useStore((s) => s.openAutomationForm);
+  const editingId = useStore((s) => s.automationFormEditingId);
+  // Badge 计数需要两个 tab 的数据，在布局层拉取
   const { automations, automationHistory } = useAutomations();
-  const templates = useAutomationTemplates();
   const allHistoryCount = Object.values(automationHistory).flat().length;
 
   return (
@@ -84,7 +91,7 @@ export function AutomationPage() {
           <p className="text-sm text-muted-foreground">{t('automation.subtitle')}</p>
         </div>
         <div className="flex items-center gap-2">
-          <Button className="gap-1.5">
+          <Button className="gap-1.5" onClick={() => openAutomationForm()}>
             <Plus />
             <span>{t('automation.manualCreate')}</span>
           </Button>
@@ -106,10 +113,6 @@ export function AutomationPage() {
               {t('automation.history')}
               <Badge variant="secondary">{allHistoryCount}</Badge>
             </TabsTrigger>
-            <TabsTrigger value="templates" className="gap-1.5">
-              {t('automation.templates')}
-              <Badge variant="secondary">{templates.length}</Badge>
-            </TabsTrigger>
           </TabsList>
         </div>
       </Tabs>
@@ -118,53 +121,9 @@ export function AutomationPage() {
       <div className="flex-1 overflow-auto">
         <Outlet />
       </div>
-    </div>
-  );
-}
 
-/* ===== 模板 tab ===== */
-export function TemplatesTab() {
-  const { t } = useTranslation();
-  const templates = useAutomationTemplates();
-
-  return (
-    <div className="p-6">
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {templates.length === 0 && (
-          <div className="col-span-full py-12 text-center text-sm text-muted-foreground">
-            {t('automation.noTemplates')}
-          </div>
-        )}
-        {templates.map((template) => {
-          const Icon = TEMPLATE_ICONS[template.id];
-          const gradient =
-            template.iconGradient ?? 'linear-gradient(135deg, #6366f1, #4f46d5)';
-          return (
-            <Card key={template.id} className="gap-2 p-4">
-              <div
-                className="flex size-10 items-center justify-center rounded-lg"
-                style={{ backgroundImage: gradient }}
-              >
-                {Icon ? (
-                  <Icon className="size-5 text-white" />
-                ) : (
-                  <span className="text-xs font-bold text-white">
-                    {template.title.slice(0, 1)}
-                  </span>
-                )}
-              </div>
-              <CardTitle className="text-sm">{template.title}</CardTitle>
-              <CardDescription className="text-xs">{template.description}</CardDescription>
-              {template.cron && (
-                <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
-                  <Clock className="size-3" />
-                  <code className="rounded bg-muted px-1 py-0.5">{template.cron}</code>
-                </div>
-              )}
-            </Card>
-          );
-        })}
-      </div>
+      {/* 新建/编辑表单（key 变化时重挂载重置表单） */}
+      <AutomationFormDialog key={editingId ?? 'new'} />
     </div>
   );
 }
@@ -172,6 +131,7 @@ export function TemplatesTab() {
 /* ===== 已配置 tab ===== */
 export function ConfiguredTab() {
   const { t } = useTranslation();
+  const openAutomationForm = useStore((s) => s.openAutomationForm);
   const {
     automations,
     triggerAutomation,
@@ -219,23 +179,21 @@ export function ConfiguredTab() {
           </div>
         )}
         {automations.map((a) => {
-          const enabled = a.enabled && !a.paused;
+          const completed = a.scheduleType === 'once' && a.completed;
+          const enabled = a.enabled && !a.paused && !completed;
           return (
             <Card key={a.id} className="flex flex-row items-center gap-3 p-3">
-              <div
-                className="flex size-10 shrink-0 items-center justify-center rounded-lg text-xs font-bold text-white"
-                style={{
-                  backgroundImage: enabled
-                    ? 'linear-gradient(135deg, #6B4BCC, #8b5cf6)'
-                    : 'linear-gradient(135deg, #64748b, #475569)',
-                }}
-              >
-                {a.title.slice(0, 1)}
-              </div>
+              <AutomationIcon item={a} active={enabled} />
               <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <div className="flex items-center gap-2">
                   <h3 className="text-sm font-medium text-foreground">{a.title}</h3>
-                  {a.paused && (
+                  {completed && (
+                    <Badge variant="outline" className="font-normal text-muted-foreground">
+                      <CheckCircle2 className="size-3" />
+                      {t('automation.completedBadge')}
+                    </Badge>
+                  )}
+                  {!completed && a.paused && (
                     <Badge variant="outline" className="font-normal">
                       {t('automation.pausedBadge')}
                     </Badge>
@@ -247,19 +205,37 @@ export function ConfiguredTab() {
                   )}
                 </div>
                 <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                  <span className="flex items-center gap-1">
-                    <Clock className="size-3" />
-                    <code className="rounded bg-muted px-1 py-0.5">{a.cron}</code>
-                  </span>
+                  {a.scheduleType === 'once' ? (
+                    <span className="flex items-center gap-1">
+                      <CalendarClock className="size-3" />
+                      {t('automation.onceLabel')}: {formatTime(a.runAt)}
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1">
+                      <Clock className="size-3" />
+                      <code className="rounded bg-muted px-1 py-0.5">{a.cron}</code>
+                    </span>
+                  )}
                   <span>
                     {t('automation.lastRunAt')}: {formatTime(a.lastRunAt)}
                   </span>
-                  <span>
-                    {t('automation.nextRunAt')}: {formatTime(a.nextRunAt)}
-                  </span>
+                  {!completed && (
+                    <span>
+                      {t('automation.nextRunAt')}: {formatTime(a.nextRunAt)}
+                    </span>
+                  )}
                 </div>
               </div>
               <div className="flex items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-7"
+                  onClick={() => openAutomationForm(a.id)}
+                  title={t('automation.editBtn')}
+                >
+                  <Pencil className="size-3.5" />
+                </Button>
                 <Button
                   variant="ghost"
                   size="icon"
@@ -269,15 +245,17 @@ export function ConfiguredTab() {
                 >
                   <Play className="size-3.5" />
                 </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-7"
-                  onClick={() => void handleTogglePause(a.id, a.paused)}
-                  title={a.paused ? t('automation.resumeBtn') : t('automation.pauseBtn')}
-                >
-                  {a.paused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
-                </Button>
+                {!completed && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-7"
+                    onClick={() => void handleTogglePause(a.id, a.paused)}
+                    title={a.paused ? t('automation.resumeBtn') : t('automation.pauseBtn')}
+                  >
+                    {a.paused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
+                  </Button>
+                )}
                 <Button
                   variant="ghost"
                   size="icon"

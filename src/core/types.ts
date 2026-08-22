@@ -249,10 +249,61 @@ export interface AppConfig {
 }
 
 export type ApiConfig = {
+  /** 配置结构版本：2 = providers 结构（1 = 旧扁平 models，加载时自动迁移） */
   version: number;
-  models: ModelConfig[];
+  providers: ProviderConfig[];
 };
 
+/** 服务商配置：持有 API 格式/地址/Key 及自定义查询地址，模型挂其下 */
+export interface ProviderConfig {
+  /** 内部唯一 id（如 "provider_1734..."） */
+  id: string;
+  /** 显示名，如 "OpenAI" */
+  name: string;
+  format: 'openai-chat' | 'openai-responses' | 'anthropic' | 'gemini';
+  endpoint: string;
+  apiKey: string;
+  /** 自定义余额查询地址（OpenAI 兼容 subscription 接口完整 URL；空 = 不提供余额查询） */
+  balanceUrl?: string;
+  /** 自定义模型列表获取地址（空 = 按 format 推断默认值） */
+  modelsUrl?: string;
+  models: ProviderModelConfig[];
+}
+
+/** 服务商下的模型：名称 + 模型 id + 模型级高级配置 */
+export interface ProviderModelConfig {
+  /** 内部唯一 id（如 "model_1734..."）；从旧版迁移时保留原 id */
+  id: string;
+  /** 显示名，如 "GPT-4o" */
+  name: string;
+  /** 发送给 API 的模型名，如 "gpt-4o" */
+  model: string;
+  thinking: {
+    enabled: boolean;
+    /** 思考强度：预设档（low/medium/high 等）或自定义字符串 */
+    effort?: string;
+    /** 自定义等级显示名（预设档无此字段） */
+    label?: string;
+    budgetTokens?: number;
+  };
+  /** 上下文窗口档位（旧格式，如 '200k'）；读取时 inputTokens 优先 */
+  contextWindow?: string;
+  /** 输入窗口 token 数（context 引擎压缩预算） */
+  inputTokens?: number;
+  /** 输出窗口 token 数（请求 max_tokens 默认值） */
+  outputTokens?: number;
+  /** 模型温度 0-2 */
+  temperature?: number;
+  /** Top P 0-1 */
+  topP?: number;
+  /** Top K 0-100；0 表示不发送 */
+  topK?: number;
+}
+
+/**
+ * 运行时"扁平视图"：provider 连接信息（format/endpoint/apiKey）与模型配置的合并结果，
+ * 由 core/provider-utils 的 flattenModels() 生成，供 LLMRouter/context/agent 等运行时消费。
+ */
 export interface ModelConfig {
   /** 内部唯一 id（如 "model_1734..."） */
   id: string;

@@ -18,7 +18,7 @@ import type {
   TaskGroup,
   TodoItem,
   ContextFile,
-  ModelItem,
+  ProviderItem,
   AgentItem,
   AutomationItem,
   AutomationRun,
@@ -68,8 +68,8 @@ interface UIState {
   /** 最近成功使用的目录（绝对路径），最多 5 条，新条目置顶 */
   recentDirectories: string[];
 
-  // --- 模型 ---
-  models: ModelItem[];
+  // --- 服务商（模型挂在服务商下；currentModel 为模型 id） ---
+  providers: ProviderItem[];
   currentModel: string;
 
   // --- Agent ---
@@ -95,6 +95,10 @@ interface UIState {
   // --- 自动化 ---
   automations: AutomationItem[];
   automationHistory: Record<string, AutomationRun[]>;
+  /** 新建/编辑自动化任务表单：是否打开 */
+  automationFormOpen: boolean;
+  /** 编辑模式的任务 id（null = 新建） */
+  automationFormEditingId: string | null;
 
   // --- Skills / Specs ---
   skills: SkillItem[];
@@ -205,8 +209,8 @@ interface UIActions {
   setWorkingDirectory: (cwd: string) => void;
   addRecentDirectory: (dir: string) => void;
 
-  // 模型
-  setModels: (models: ModelItem[]) => void;
+  // 服务商
+  setProviders: (providers: ProviderItem[]) => void;
   setCurrentModel: (m: string) => void;
 
   // Agent
@@ -244,6 +248,8 @@ interface UIActions {
   setAutomationHistory: (id: string, history: AutomationRun[]) => void;
   addAutomationRun: (id: string, run: AutomationRun) => void;
   updateAutomationRun: (id: string, runId: string, patch: Partial<AutomationRun>) => void;
+  openAutomationForm: (editingId?: string) => void;
+  closeAutomationForm: () => void;
 
   // Skills / Specs
   setSkills: (s: SkillItem[]) => void;
@@ -304,10 +310,10 @@ interface UIActions {
   setAnimationSetting: <K extends keyof AnimationSettings>(key: K, value: AnimationSettings[K]) => void;
   setPrefersReducedMotion: (v: boolean) => void;
 
-  // 模型菜单"添加自定义模型"跳转设置页并打开弹窗的信号
-  modelDialogRequest: boolean;
-  requestModelDialog: () => void;
-  clearModelDialogRequest: () => void;
+  // 模型菜单"添加服务商"跳转设置页并打开弹窗的信号
+  providerDialogRequest: boolean;
+  requestProviderDialog: () => void;
+  clearProviderDialogRequest: () => void;
 
   // 右侧边栏标签页
   /** 新建标签页，返回新标签 id；自动设为活跃 */
@@ -376,8 +382,8 @@ export const useStore = create<Store>((set) => ({
   workingDirectory: DEFAULT_WORKING_DIRECTORY,
   recentDirectories: [],
 
-  // --- 模型 ---
-  models: [],
+  // --- 服务商 ---
+  providers: [],
   currentModel: '',
 
   // --- Agent ---
@@ -398,6 +404,8 @@ export const useStore = create<Store>((set) => ({
   // --- 自动化 ---
   automations: [],
   automationHistory: {},
+  automationFormOpen: false,
+  automationFormEditingId: null,
 
   // --- Skills / Specs ---
   skills: [],
@@ -435,8 +443,8 @@ export const useStore = create<Store>((set) => ({
   animationSettings: DEFAULT_ANIMATION_SETTINGS,
   prefersReducedMotion: false,
 
-  // 模型菜单"添加自定义模型"跳转设置页并打开弹窗的信号
-  modelDialogRequest: false,
+  // 模型菜单"添加服务商"跳转设置页并打开弹窗的信号
+  providerDialogRequest: false,
 
   // --- 右侧边栏标签页（IndexedDB 持久化） ---
   sidebarTabs: [defaultSidebarTab()],
@@ -568,8 +576,8 @@ export const useStore = create<Store>((set) => ({
       return { recentDirectories: next };
     }),
 
-  // --- Actions: 模型 ---
-  setModels: (models) => set({ models }),
+  // --- Actions: 服务商 ---
+  setProviders: (providers) => set({ providers }),
   setCurrentModel: (currentModel) => set({ currentModel }),
 
   // --- Actions: Agent ---
@@ -676,6 +684,9 @@ export const useStore = create<Store>((set) => ({
         ),
       },
     })),
+  openAutomationForm: (editingId) =>
+    set({ automationFormOpen: true, automationFormEditingId: editingId ?? null }),
+  closeAutomationForm: () => set({ automationFormOpen: false, automationFormEditingId: null }),
 
   // --- Actions: Skills / Specs ---
   setSkills: (skills) => set({ skills }),
@@ -798,9 +809,9 @@ export const useStore = create<Store>((set) => ({
 
   setPrefersReducedMotion: (v) => set({ prefersReducedMotion: v }),
 
-  // --- Actions: 模型添加弹窗信号 ---
-  requestModelDialog: () => set({ modelDialogRequest: true }),
-  clearModelDialogRequest: () => set({ modelDialogRequest: false }),
+  // --- Actions: 服务商添加弹窗信号 ---
+  requestProviderDialog: () => set({ providerDialogRequest: true }),
+  clearProviderDialogRequest: () => set({ providerDialogRequest: false }),
 
   // --- Actions: 右侧边栏标签页 ---
   addSidebarTab: (type, title, toolCallId) => {

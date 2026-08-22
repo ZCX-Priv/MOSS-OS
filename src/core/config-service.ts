@@ -2,6 +2,7 @@
 // 配置服务：加载 config.json + api.json，Zod 校验，热重载，分发。
 
 import { setBackendLocale, t } from './i18n';
+import { migrateLegacyApiConfig } from './provider-utils';
 import { z } from 'zod';
 import { join } from 'node:path';
 import { atomicWriteFile } from '../utils/fs-atomic';
@@ -14,7 +15,6 @@ import type {
   EventBusSubscription,
   Logger,
   LogLevel,
-  ModelConfig,
 } from './types';
 import { buildToolsSchema, buildToolsDefaults } from '../modules/tools/manifest';
 import { DEFAULT_FILE_HISTORY_CONFIG } from '../modules/file-history/types';
@@ -34,13 +34,10 @@ const providerThinkingSchema = z.object({
   budgetTokens: z.number().int().positive().optional(),
 });
 
-const modelConfigSchema: z.ZodType<ModelConfig> = z.object({
+const providerModelConfigSchema = z.object({
   id: z.string().min(1),
   name: z.string(),
   model: z.string(),
-  format: z.enum(['openai-chat', 'openai-responses', 'anthropic', 'gemini']),
-  endpoint: z.string(),
-  apiKey: z.string(),
   thinking: providerThinkingSchema,
   contextWindow: z.string().optional(),
   inputTokens: z.number().int().positive().optional(),
@@ -48,6 +45,17 @@ const modelConfigSchema: z.ZodType<ModelConfig> = z.object({
   temperature: z.number().min(0).max(2).optional(),
   topP: z.number().min(0).max(1).optional(),
   topK: z.number().int().min(0).max(100).optional(),
+});
+
+const providerConfigSchema = z.object({
+  id: z.string().min(1),
+  name: z.string(),
+  format: z.enum(['openai-chat', 'openai-responses', 'anthropic', 'gemini']),
+  endpoint: z.string(),
+  apiKey: z.string(),
+  balanceUrl: z.string().optional(),
+  modelsUrl: z.string().optional(),
+  models: z.array(providerModelConfigSchema).default([]),
 });
 
 const fileHistorySchema = z.object({
@@ -190,7 +198,7 @@ const appConfigSchema = z.object({
 
 const apiConfigSchema = z.object({
   version: z.number().int().positive(),
-  models: z.array(modelConfigSchema),
+  providers: z.array(providerConfigSchema),
 });
 
 // ============================================================================
@@ -238,8 +246,8 @@ export function defaultAppConfig(): AppConfig {
 
 export function defaultApiConfig(): ApiConfig {
   return {
-    version: 1,
-    models: [],
+    version: 2,
+    providers: [],
   };
 }
 
@@ -359,11 +367,11 @@ class ConfigServiceImpl implements ConfigService {
   async updateApiConfig(patch: Partial<ApiConfig>): Promise<void> {
     if (!this.apiConfig) throw new Error(t('config.notLoaded'));
     const merged = deepMerge(this.apiConfig, patch) as ApiConfig;
-    // 空 apiKey 视为不修改（GET 已脱敏），按 id 回填原值，避免 round-trip 清空密钥
-    for (const m of merged.models) {
-      if (!m.apiKey) {
-        const existing = this.apiConfig.models.find((x) => x.id === m.id);
-        if (existing) m.apiKey = existing.apiKey;
+    // 空 apiKey 视为不修改（GET 已脱敏），按 provider id 回填原值，避免 round-trip 清空密钥
+    for (const p of merged.providers) {
+      if (!p.apiKey) {
+        const existing = this.apiConfig.providers.find((x) => x.id === p.id);
+        if (existing) p.apiKey = existing.apiKey;
       }
     }
     const parsed = apiConfigSchema.parse(merged);
@@ -442,6 +450,12 @@ class ConfigServiceImpl implements ConfigService {
       raw = JSON.parse(text);
     } catch (err) {
       throw new Error(t('config.apiJsonInvalid', { error: err instanceof Error ? err.message : String(err) }));
+    }
+    // 一次性迁移：旧版扁平 models（version 1）→ providers 结构（version 2）；
+    // 迁移成功后立即写回磁盘，防止仅内存迁移
+    if (migrateLegacyApiConfig(raw as Record<string, unknown>)) {
+      this.logger.info(t('config.apiConfigMigrated'));
+      this.fs.writeText(path, JSON.stringify(raw, null, 2));
     }
     const result = apiConfigSchema.safeParse(raw);
     if (!result.success) {

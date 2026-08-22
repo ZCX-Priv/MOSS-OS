@@ -10,6 +10,7 @@ import type {
   ServiceRegistry,
 } from '../../../core/types';
 import { ServiceNames } from '../../../core/types';
+import { flattenModels } from '../../../core/provider-utils';
 import type { LLMRouter, ToolRegistry, MCPManager } from '../../contracts';
 import type {
   CompactPreview,
@@ -411,7 +412,7 @@ export class ContextEngineServiceImpl {
 
   /** 摘要模型可选列表（设置页数据源） */
   getSummaryModels(): Array<{ id: string; name: string; model: string }> {
-    return this.config.getApiConfig().models.map(m => ({ id: m.id, name: m.name, model: m.model }));
+    return flattenModels(this.config.getApiConfig()).map(m => ({ id: m.id, name: m.name, model: m.model }));
   }
 
   // ========================================================================
@@ -429,7 +430,7 @@ export class ContextEngineServiceImpl {
       getConfig: () => this.getConfig(),
       getLlm: () => this.services.tryResolve<LLMRouter>(ServiceNames.LLM_ROUTER),
       getApiModels: () =>
-        this.config.getApiConfig().models.map(m => ({ id: m.id, model: m.model })),
+        flattenModels(this.config.getApiConfig()).map(m => ({ id: m.id, model: m.model })),
       persistSession: session => this.sessionStore?.persist(session),
       emitWs: (sessionId, message) => this.emitWs(sessionId, message),
       onCompaction: sessionId => {
@@ -527,10 +528,10 @@ export class ContextEngineServiceImpl {
     }
   }
 
-  /** 模型显示名（apiConfig.models 按 id 查找；缺失回退 id） */
+  /** 模型显示名（providers 扁平视图按 id 查找；缺失回退 id） */
   private lookupModelName(id: string): string {
     try {
-      return this.config.getApiConfig().models.find(m => m.id === id)?.name ?? id;
+      return flattenModels(this.config.getApiConfig()).find(m => m.id === id)?.name ?? id;
     } catch {
       return id;
     }
@@ -579,7 +580,7 @@ export class ContextEngineServiceImpl {
   /** 从模型配置解析上下文窗口（inputTokens 优先，回退旧 contextWindow 档位） */
   private resolveWindowTokens(model: string): number {
     try {
-      const models = this.config.getApiConfig().models;
+      const models = flattenModels(this.config.getApiConfig());
       const found = models.find(m => m.id === model || m.model === model);
       return found?.inputTokens ?? parseContextWindow(found?.contextWindow);
     } catch {

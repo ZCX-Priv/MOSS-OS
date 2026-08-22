@@ -30,7 +30,7 @@ export interface CompactSessionInput {
   logger: Logger;
   /** 静态系统提示词（cache-aligned 摘要请求前缀） */
   staticSystemPrompt: string;
-  /** 已解析的摘要模型请求名（apiConfig.models 的 model 字段或主模型名） */
+  /** 已解析的摘要模型请求名（providers 扁平视图的 model 字段或主模型名） */
   summaryModelId: string;
   /** 摘要模型记录名（遥测记录用：配置值） */
   summaryModelConfigured: string;

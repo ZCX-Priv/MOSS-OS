@@ -12,7 +12,10 @@ import type {
   MessageRole,
   TaskItem,
   TaskGroup,
-  ModelItem,
+  ProviderItem,
+  ProviderModelItem,
+  RemoteModelItem,
+  ProviderBalanceResult,
   AgentItem,
   AgentDetail,
   SkillItem,
@@ -23,7 +26,6 @@ import type {
   AutomationItem,
   AutomationDetail,
   AutomationRun,
-  AutomationTemplate,
   TodoItem,
   ContextFile,
   ResolveDirectoryResult,
@@ -313,30 +315,64 @@ export const api = {
     ),
 
   // ==========================================================================
-  // 模型管理（见文档 3.2.2）
+  // 服务商管理（服务商持有 API 格式/地址/Key，模型挂其下）
   // ==========================================================================
-  listModels: () => request<{ models: ModelItem[]; current: string }>('GET', '/api/models'),
+  listProviders: () =>
+    request<{ providers: ProviderItem[]; current: string }>('GET', '/api/providers'),
   setCurrentModel: (modelId: string) =>
-    request<{ current: string }>('PUT', '/api/models/current', { modelId }),
-  createModel: (data: {
+    request<{ current: string }>('PUT', '/api/providers/current', { modelId }),
+  createProvider: (data: {
     name: string;
-    model: string;
-    format: ModelItem['format'];
+    format: ProviderItem['format'];
     endpoint: string;
     apiKey: string;
-    contextWindow?: string;
-    thinking?: ModelItem['thinking'];
-  }) => request<ModelItem>('POST', '/api/models', data),
-  updateModel: (id: string, patch: Partial<ModelItem>) =>
-    request<ModelItem>('PATCH', `/api/models/${id}`, patch),
-  deleteModel: (id: string) => request<{ deleted: boolean }>('DELETE', `/api/models/${id}`),
-  testModel: (id: string) =>
+    balanceUrl?: string;
+    modelsUrl?: string;
+  }) => request<ProviderItem>('POST', '/api/providers', data),
+  updateProvider: (id: string, patch: Partial<Omit<ProviderItem, 'id' | 'models'>>) =>
+    request<ProviderItem>('PATCH', `/api/providers/${id}`, patch),
+  deleteProvider: (id: string) =>
+    request<{ deleted: boolean }>('DELETE', `/api/providers/${id}`),
+  reorderProviders: (providerIds: string[]) =>
+    request<{ providers: ProviderItem[] }>('PUT', '/api/providers/reorder', { providerIds }),
+  /** 批量/单个添加模型（body 兼容 {models:[...]} 与单对象） */
+  addProviderModels: (
+    providerId: string,
+    models: Array<{
+      name: string;
+      model: string;
+      thinking?: ProviderModelItem['thinking'];
+      contextWindow?: string;
+      inputTokens?: number;
+      outputTokens?: number;
+      temperature?: number;
+      topP?: number;
+      topK?: number;
+    }>,
+  ) =>
+    request<{ provider: ProviderItem; added: number }>(
+      'POST',
+      `/api/providers/${providerId}/models`,
+      { models },
+    ),
+  updateProviderModel: (providerId: string, modelId: string, patch: Partial<ProviderModelItem>) =>
+    request<ProviderModelItem>('PATCH', `/api/providers/${providerId}/models/${modelId}`, patch),
+  deleteProviderModel: (providerId: string, modelId: string) =>
+    request<{ deleted: boolean }>('DELETE', `/api/providers/${providerId}/models/${modelId}`),
+  /** 服务端代理拉取远程模型列表（归一化 {id, name?}[]） */
+  fetchProviderModels: (providerId: string) =>
+    request<{ success: boolean; models: RemoteModelItem[]; url?: string; error?: string }>(
+      'POST',
+      `/api/providers/${providerId}/models/fetch`,
+    ),
+  /** 服务端代理查询余额（OpenAI 兼容计费格式） */
+  fetchProviderBalance: (providerId: string) =>
+    request<ProviderBalanceResult>('POST', `/api/providers/${providerId}/balance`),
+  testProviderModel: (providerId: string, modelId: string) =>
     request<{ success: boolean; latencyMs?: number; error?: string; model?: string }>(
       'POST',
-      `/api/models/${id}/test`,
+      `/api/providers/${providerId}/models/${modelId}/test`,
     ),
-  reorderModels: (modelIds: string[]) =>
-    request<{ models: ModelItem[] }>('PUT', '/api/models/reorder', { modelIds }),
 
   // ==========================================================================
   // Agent 管理（见文档 3.2.3）
@@ -375,8 +411,16 @@ export const api = {
   // ==========================================================================
   listAutomations: () => request<{ automations: AutomationItem[] }>('GET', '/api/automations'),
   getAutomation: (id: string) => request<AutomationDetail>('GET', `/api/automations/${id}`),
-  createAutomation: (data: { title: string; cron: string; prompt: string; agentId?: string }) =>
-    request<AutomationItem>('POST', '/api/automations', data),
+  createAutomation: (data: {
+    title: string;
+    prompt: string;
+    description?: string;
+    icon?: string;
+    agentId?: string;
+    scheduleType?: 'cron' | 'once';
+    cron?: string;
+    runAt?: string;
+  }) => request<AutomationItem>('POST', '/api/automations', data),
   updateAutomation: (id: string, patch: Partial<AutomationDetail>) =>
     request<AutomationItem>('PATCH', `/api/automations/${id}`, patch),
   deleteAutomation: (id: string) =>
@@ -389,8 +433,6 @@ export const api = {
     request<{ paused: boolean }>('POST', `/api/automations/${id}/resume`),
   getAutomationHistory: (id: string) =>
     request<{ history: AutomationRun[] }>('GET', `/api/automations/${id}/history`),
-  listAutomationTemplates: () =>
-    request<{ templates: AutomationTemplate[] }>('GET', '/api/automation-templates'),
 
   // ==========================================================================
   // Todo（见文档 3.2.9）

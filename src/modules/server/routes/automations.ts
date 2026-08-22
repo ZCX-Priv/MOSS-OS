@@ -1,7 +1,7 @@
 // src/modules/server/routes/automations.ts
-// 自动化任务 CRUD + 触发/暂停/恢复 + 历史 + 模板
+// 自动化任务 CRUD + 触发/暂停/恢复 + 历史
 // GET    /api/automations              —— 列出所有
-// POST   /api/automations              —— 创建
+// POST   /api/automations              —— 创建（scheduleType: cron 周期 / once 一次性定时）
 // GET    /api/automations/:id          —— 获取详情（含 history）
 // PATCH  /api/automations/:id          —— 更新
 // DELETE /api/automations/:id          —— 删除
@@ -9,7 +9,6 @@
 // POST   /api/automations/:id/pause    —— 暂停
 // POST   /api/automations/:id/resume   —— 恢复
 // GET    /api/automations/:id/history  —— 历史
-// GET    /api/automation-templates     —— 内置模板
 
 import type { HttpRequest, HttpResponse, RouteHandler } from '../types';
 import type { ServiceRegistry } from '../../../core/types';
@@ -42,21 +41,27 @@ export function createCreateAutomationHandler(services: ServiceRegistry): RouteH
     }
     const body = (req.body ?? {}) as {
       title?: string;
-      cron?: string;
       prompt?: string;
       description?: string;
+      icon?: string;
       agentId?: string;
+      scheduleType?: 'cron' | 'once';
+      cron?: string;
+      runAt?: string;
     };
-    if (!body.title || !body.cron || !body.prompt) {
+    if (!body.title || !body.prompt) {
       return { status: 400, body: { error: ErrorCode.AUTOMATION_FIELDS_REQUIRED } };
     }
     try {
       const item = svc.create({
         title: body.title,
-        cron: body.cron,
         prompt: body.prompt,
         description: body.description,
+        icon: body.icon,
         agentId: body.agentId,
+        scheduleType: body.scheduleType,
+        cron: body.cron,
+        runAt: body.runAt,
       });
       return { status: 201, body: item };
     } catch (err) {
@@ -198,7 +203,7 @@ export function createResumeAutomationHandler(services: ServiceRegistry): RouteH
 }
 
 // ============================================================================
-// 历史 / 模板
+// 历史
 // ============================================================================
 
 export function createAutomationHistoryHandler(services: ServiceRegistry): RouteHandler {
@@ -212,15 +217,5 @@ export function createAutomationHistoryHandler(services: ServiceRegistry): Route
       return { status: 503, body: { error: ErrorCode.AUTOMATION_SERVICE_UNAVAILABLE } };
     }
     return { status: 200, body: { history: svc.getHistory(id) } };
-  };
-}
-
-export function createListAutomationTemplatesHandler(services: ServiceRegistry): RouteHandler {
-  return async (): Promise<HttpResponse> => {
-    const svc = resolveService(services);
-    if (!svc) {
-      return { status: 200, body: { templates: [] } };
-    }
-    return { status: 200, body: { templates: svc.listTemplates() } };
   };
 }

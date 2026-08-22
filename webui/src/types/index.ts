@@ -9,7 +9,7 @@ export type SettingsSection =
   | 'render'
   | 'anim'
   | 'agent'
-  | 'model'
+  | 'provider'
   | 'context'
   | 'tools'
   | 'specs'

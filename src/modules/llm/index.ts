@@ -2,6 +2,7 @@
 // LLM 适配模块入口：注册 LLMRouter 服务。
 
 import { t } from '../../core/i18n';
+import { flattenModels } from '../../core/provider-utils';
 import type { Module, ModuleContext } from '../../core/types';
 import { ServiceNames } from '../../core/types';
 import { LLMRouterImpl } from './router';
@@ -16,7 +17,7 @@ class LLMModule implements Module {
 
     const apiCfg = ctx.config.getApiConfig();
     ctx.logger.info(t('llm.moduleInitialized'), {
-      modelCount: apiCfg.models.length,
+      modelCount: flattenModels(apiCfg).length,
     });
   }
 }

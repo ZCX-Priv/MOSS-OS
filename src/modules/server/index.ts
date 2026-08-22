@@ -35,14 +35,19 @@ import { createSpecsHandler, createUpdateSpecHandler } from './routes/specs';
 import { createListToolsHandler, createUpdateToolHandler } from './routes/tools';
 import { createVersionHandler } from './routes/version';
 import {
-  createListModelsHandler,
+  createListProvidersHandler,
   createSetCurrentModelHandler,
-  createCreateModelHandler,
-  createUpdateModelHandler,
-  createDeleteModelHandler,
-  createTestModelHandler,
-  createReorderModelsHandler,
-} from './routes/models';
+  createCreateProviderHandler,
+  createUpdateProviderHandler,
+  createDeleteProviderHandler,
+  createReorderProvidersHandler,
+  createAddProviderModelsHandler,
+  createUpdateProviderModelHandler,
+  createDeleteProviderModelHandler,
+  createTestProviderModelHandler,
+  createFetchProviderModelsHandler,
+  createProviderBalanceHandler,
+} from './routes/providers';
 import { createListTodosHandler, createReplaceTodosHandler } from './routes/todos';
 import {
   createLogFilesHandler,
@@ -86,7 +91,6 @@ import { createListAutomationsHandler,
   createPauseAutomationHandler,
   createResumeAutomationHandler,
   createAutomationHistoryHandler,
-  createListAutomationTemplatesHandler,
 } from './routes/automations';
 import {
   createResolveDirectoryHandler,
@@ -228,14 +232,19 @@ class ServerModule implements Module {
     this.router.addRoute({ method: 'GET', pattern: '/api/tools', handler: createListToolsHandler(services), auth: true });
     this.router.addRoute({ method: 'PATCH', pattern: '/api/tools/:name', handler: createUpdateToolHandler(config), auth: true });
 
-    // models
-    this.router.addRoute({ method: 'GET', pattern: '/api/models', handler: createListModelsHandler(config), auth: true });
-    this.router.addRoute({ method: 'PUT', pattern: '/api/models/current', handler: createSetCurrentModelHandler(config), auth: true });
-    this.router.addRoute({ method: 'PUT', pattern: '/api/models/reorder', handler: createReorderModelsHandler(config), auth: true });
-    this.router.addRoute({ method: 'POST', pattern: '/api/models', handler: createCreateModelHandler(config), auth: true });
-    this.router.addRoute({ method: 'POST', pattern: '/api/models/:id/test', handler: createTestModelHandler(services), auth: true });
-    this.router.addRoute({ method: 'PATCH', pattern: '/api/models/:id', handler: createUpdateModelHandler(config), auth: true });
-    this.router.addRoute({ method: 'DELETE', pattern: '/api/models/:id', handler: createDeleteModelHandler(config), auth: true });
+    // providers（服务商 + 旗下模型；静态路由先于 :id 参数路由注册）
+    this.router.addRoute({ method: 'GET', pattern: '/api/providers', handler: createListProvidersHandler(config), auth: true });
+    this.router.addRoute({ method: 'PUT', pattern: '/api/providers/current', handler: createSetCurrentModelHandler(config), auth: true });
+    this.router.addRoute({ method: 'PUT', pattern: '/api/providers/reorder', handler: createReorderProvidersHandler(config), auth: true });
+    this.router.addRoute({ method: 'POST', pattern: '/api/providers', handler: createCreateProviderHandler(config), auth: true });
+    this.router.addRoute({ method: 'PATCH', pattern: '/api/providers/:id', handler: createUpdateProviderHandler(config), auth: true });
+    this.router.addRoute({ method: 'DELETE', pattern: '/api/providers/:id', handler: createDeleteProviderHandler(config), auth: true });
+    this.router.addRoute({ method: 'POST', pattern: '/api/providers/:id/models', handler: createAddProviderModelsHandler(config), auth: true });
+    this.router.addRoute({ method: 'POST', pattern: '/api/providers/:id/models/fetch', handler: createFetchProviderModelsHandler(config, this.ctx.logger), auth: true });
+    this.router.addRoute({ method: 'POST', pattern: '/api/providers/:id/balance', handler: createProviderBalanceHandler(config, this.ctx.logger), auth: true });
+    this.router.addRoute({ method: 'POST', pattern: '/api/providers/:id/models/:modelId/test', handler: createTestProviderModelHandler(services), auth: true });
+    this.router.addRoute({ method: 'PATCH', pattern: '/api/providers/:id/models/:modelId', handler: createUpdateProviderModelHandler(config), auth: true });
+    this.router.addRoute({ method: 'DELETE', pattern: '/api/providers/:id/models/:modelId', handler: createDeleteProviderModelHandler(config), auth: true });
 
     // todos
     this.router.addRoute({ method: 'GET', pattern: '/api/todos/:sessionId', handler: createListTodosHandler(env), auth: true });
@@ -279,7 +288,6 @@ class ServerModule implements Module {
     this.router.addRoute({ method: 'POST', pattern: '/api/automations/:id/pause', handler: createPauseAutomationHandler(services), auth: true });
     this.router.addRoute({ method: 'POST', pattern: '/api/automations/:id/resume', handler: createResumeAutomationHandler(services), auth: true });
     this.router.addRoute({ method: 'GET', pattern: '/api/automations/:id/history', handler: createAutomationHistoryHandler(services), auth: true });
-    this.router.addRoute({ method: 'GET', pattern: '/api/automation-templates', handler: createListAutomationTemplatesHandler(services), auth: true });
 
     // filesystem（浏览器端文件夹选择：后端原生对话框拿真实绝对路径 + 搜索回退）
     this.router.addRoute({ method: 'POST', pattern: '/api/filesystem/pick-directory', handler: createPickDirectoryHandler(env), auth: true });
