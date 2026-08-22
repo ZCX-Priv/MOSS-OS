@@ -609,6 +609,22 @@ export const en = {
   taskInput: {
     placeholder: 'Helps you organize literature reviews, write PPTs, analyze Excel and other daily work, delivering professional-grade output.',
     selectFolder: 'Select folder…',
+    uploadAttachment: 'Upload attachment',
+    commands: 'Commands',
+    skills: 'Skills',
+    noCommands: 'No commands available',
+    noSkills: 'No skills available',
+    removeAttachment: 'Remove attachment',
+    attachmentTag: '[Attachments]',
+    removeMention: 'Remove',
+    noResults: 'No results',
+    mentionGroups: {
+      recent: 'Recent',
+      commands: 'Commands',
+      plugins: 'Plugins',
+      agents: 'Agents',
+      files: 'Files',
+    },
   },
   permissionMode: {
     title: 'Execution Permission',

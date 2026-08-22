@@ -609,6 +609,22 @@ export const zh = {
   taskInput: {
     placeholder: '帮你整理论文综述、编写 PPT、分析 Excel 等日常工作，输出专业级工作成果。',
     selectFolder: '选择文件夹…',
+    uploadAttachment: '上传附件',
+    commands: '命令',
+    skills: '技能',
+    noCommands: '暂无可用命令',
+    noSkills: '暂无可用技能',
+    removeAttachment: '移除附件',
+    attachmentTag: '[附件]',
+    removeMention: '移除',
+    noResults: '无匹配结果',
+    mentionGroups: {
+      recent: '最近使用',
+      commands: '命令',
+      plugins: '插件',
+      agents: '智能体',
+      files: '文件',
+    },
   },
   permissionMode: {
     title: '执行权限',
