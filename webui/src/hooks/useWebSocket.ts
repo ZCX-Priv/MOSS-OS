@@ -346,37 +346,6 @@ export function useWebSocket(): void {
         });
         break;
       }
-      case 'skill-mode': {
-        if (!sessionId) return;
-        const event = (msg.payload ?? {}) as {
-          action?: 'enter' | 'switch' | 'exit' | 'error';
-          name?: string;
-          greet?: string;
-          icon?: string;
-          message?: string;
-        };
-        if (event.action === 'enter' || event.action === 'switch') {
-          s.setActiveSkill(sessionId, {
-            name: event.name ?? '',
-            ...(event.icon ? { icon: event.icon } : {}),
-            ...(event.greet ? { greet: event.greet } : {}),
-          });
-          // greet 欢迎语写入消息流（居中系统提示样式）
-          if (event.greet) {
-            s.addMessage(sessionId, {
-              id: genId(),
-              role: 'system',
-              content: event.greet,
-              timestamp: new Date().toISOString(),
-            });
-          }
-        } else if (event.action === 'exit') {
-          s.setActiveSkill(sessionId, undefined);
-        } else if (event.action === 'error') {
-          toast.error(i18n.t('task.skillModeError', { name: event.name ?? '', message: event.message ?? '' }));
-        }
-        break;
-      }
       case 'stats-updated': {
         if (!sessionId) return;
         const event = (msg.payload ?? {}) as { stats?: RunStats };

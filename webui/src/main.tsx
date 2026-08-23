@@ -8,7 +8,7 @@ import { idbGet, idbSet, migrateLegacyDatabase } from './utils/idb'
 import { useStore, type PersistedState, LEGACY_DEFAULT_WORKING_DIRECTORY, DEFAULT_WORKING_DIRECTORY } from './store'
 import { isValidRenderSettings } from './render/core/types'
 import { isValidAnimationSettings } from './types/animation'
-import i18n, { type Locale, LOCALE_STORAGE_KEY } from './i18n'
+import i18n, { type Locale, resolveLocale, LOCALE_STORAGE_KEY } from './i18n'
 import './styles/global.css'
 
 type ThemeMode = 'light' | 'dark' | 'system';
@@ -24,17 +24,14 @@ async function initTheme() {
 }
 
 // 防止语言闪烁：在 React 渲染前异步从 IndexedDB 读取语言并初始化 i18n
+// 存储值为用户选择（'auto' | 'zh' | 'en'）；未设置过时默认 'auto'，实际语言由 resolveLocale 解析
 async function initLocale() {
   const stored = await idbGet<Locale>(LOCALE_STORAGE_KEY);
-  const browserLang = navigator.language.toLowerCase();
   const locale: Locale =
-    stored === 'zh' || stored === 'en'
-      ? stored
-      : browserLang.startsWith('zh')
-        ? 'zh'
-        : 'en';
-  await i18n.changeLanguage(locale);
-  document.documentElement.lang = locale;
+    stored === 'zh' || stored === 'en' || stored === 'auto' ? stored : 'auto';
+  const resolved = resolveLocale(locale);
+  await i18n.changeLanguage(resolved);
+  document.documentElement.lang = resolved;
 }
 
 // store 中需要持久化的 key 列表（与 store 内 idbSet 使用的 key 保持一致）

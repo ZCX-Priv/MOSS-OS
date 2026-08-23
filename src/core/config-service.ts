@@ -201,6 +201,8 @@ const appConfigSchema = z.object({
     .optional(),
   // Skill 启停（可选）
   skills: z.record(z.string(), z.object({ enabled: z.boolean().optional() })).optional(),
+  // 自定义斜杠命令启停（~/.moss/commands/<name>.md；缺省启用）
+  commands: z.record(z.string(), z.object({ enabled: z.boolean().optional() })).optional(),
   security: z.object({
     authToken: z.string(),
     bindLocalhostOnly: z.boolean(),

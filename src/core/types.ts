@@ -234,6 +234,8 @@ export interface AppConfig {
   };
   /** Skill 启停（name → { enabled }，缺省视为启用） */
   skills?: Record<string, { enabled?: boolean }>;
+  /** 自定义斜杠命令启停（~/.moss/commands/<name>.md；name → { enabled }，缺省视为启用） */
+  commands?: Record<string, { enabled?: boolean }>;
   security: {
     authToken: string;
     bindLocalhostOnly: boolean;
@@ -446,6 +448,8 @@ export const ServiceNames = {
   SERVER_INSTANCE: 'server.instance',
   /** Skill 注册表（由 tools 模块注册） */
   SKILL_REGISTRY: 'skill.registry',
+  /** Command 注册表（由 tools 模块注册：~/.moss/commands/*.md 自定义斜杠命令） */
+  COMMAND_REGISTRY: 'command.registry',
   /** Spec 注册表（由 tools 模块注册） */
   SPEC_REGISTRY: 'spec.registry',
   /** Agent 注册表（由 agenteam 模块注册） */

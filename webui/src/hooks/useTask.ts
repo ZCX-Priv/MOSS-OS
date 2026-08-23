@@ -9,6 +9,9 @@
 // 4. 生成 runId（用于隔离不同 run 的事件）
 // 5. 写入用户消息到 store
 // 6. wsClient.send({type:'task.stream', sessionId, payload:{message,model,cwd,runId}})
+//
+// command/skill 一次性注入：TaskInput 在发送前已完成模板渲染（$ARGUMENTS 替换），
+// 本 hook 收到的 text 即最终文本，直接透传。
 
 import { useCallback } from 'react';
 import { useStore } from '../store';
@@ -46,27 +49,6 @@ async function ensureTaskGroup(name: string): Promise<string | undefined> {
   }
 }
 
-/**
- * 解析消息开头的 skill 模式指令：
- *   /skill:<name> <正文> → { skill: name, message: 正文 }（正文空时用默认占位）
- *   /skill:exit          → { skill: null, message: 原文 }（退出模式；原文保留供 LLM 记录）
- *   其他                  → { skill: undefined, message: 原文 }
- */
-function parseSkillPrefix(text: string): { skill: string | null | undefined; message: string } {
-  const m = text.match(/^\/skill:([a-z0-9-]+)\s*([\s\S]*)$/i);
-  if (!m) return { skill: undefined, message: text };
-  const [, name, rest] = m;
-  if (name.toLowerCase() === 'exit') {
-    return { skill: null, message: text };
-  }
-  const body = rest.trim();
-  return {
-    skill: name,
-    // 独占指令时给一句自然语言占位，LLM 立即按 skill 模式响应
-    message: body || `（进入 ${name} 技能模式）`,
-  };
-}
-
 export function useTask() {
   const addMessage = useStore((s) => s.addMessage);
   const setActiveSession = useStore((s) => s.setActiveSession);
@@ -81,9 +63,8 @@ export function useTask() {
   const sendMessage = useCallback(
     async (text: string, opts?: { taskId?: string; sessionId?: string }): Promise<string | undefined> => {
       if (!text.trim()) return undefined;
-      // /skill:<name> 前缀解析（激活/切换/退出技能模式）
-      const { skill, message: parsed } = parseSkillPrefix(text.trim());
-      const content = parsed;
+      // command/skill 的一次性注入渲染在 TaskInput 已完成，此处收到的即为最终文本
+      const content = text.trim();
 
       const state = useStore.getState();
 
@@ -144,7 +125,7 @@ export function useTask() {
       addMessage(sessionId, userMsg);
       setGenerating(sessionId, true);
 
-      // 6. 通过 WS 发送流式任务请求（带 runId + agentId + skill 模式 + 权限模式）
+      // 6. 通过 WS 发送流式任务请求（带 runId + agentId + 权限模式）
       wsClient.send({
         type: 'task.stream',
         sessionId,
@@ -154,8 +135,6 @@ export function useTask() {
           agentId: state.currentAgent || undefined,
           cwd: state.workingDirectory || undefined,
           runId,
-          // skill 模式：undefined=不涉及；string=激活/切换；null=退出
-          ...(skill !== undefined ? { skill } : {}),
           // 权限模式（会话级覆盖优先，缺省回退全局默认；后端 safety 统一决策）
           permissionMode: state.permissionModeBySession[sessionId] ?? state.permissionMode,
         },

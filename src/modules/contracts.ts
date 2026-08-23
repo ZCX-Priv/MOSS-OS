@@ -192,13 +192,6 @@ export interface AgentRunInput {
   /** Agent 配置 ID（可选；指定后按该 Agent 的 systemPrompt/model/tools/maxTurns/maxTokens/maxTokens 执行） */
   agentId?: string;
   /**
-   * Skill 模式切换（/ 菜单触发）：
-   *   - 非空字符串：激活/切换到该 skill（首次=注入系统提示词后；切换=卸载旧注入并锚定到本次用户消息后）
-   *   - null：退出模式（卸载全部注入）
-   *   - undefined：不涉及模式操作
-   */
-  skill?: string | null;
-  /**
    * 权限模式（前端 PermissionModeSelector 会话级传递）：
    * 'ask'=手动审批 / 'auto'=自动审批（L2 放行 L3 确认） / 'skip'=完全访问（仅查禁用）
    */

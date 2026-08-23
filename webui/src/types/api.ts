@@ -40,13 +40,6 @@ export interface ToolResult {
   };
 }
 
-/** 会话当前激活的 skill 模式（skill-mode 事件维护） */
-export interface ActiveSkillState {
-  name: string;
-  icon?: string;
-  greet?: string;
-}
-
 /** 右侧边栏标签页类型 */
 export type SidebarTabType = 'summary' | 'terminal';
 
@@ -507,12 +500,16 @@ export interface SkillItem {
   name: string;
   description: string;
   source: 'user';
+  /** skill 正文（GET /api/skills 列表实际返回；一次性注入渲染用） */
+  prompt?: string;
   /** 启停（config.skills[name].enabled，缺省 true） */
   enabled?: boolean;
   /** Lucide 图标名（kebab-case） */
   icon?: string;
   /** 切入模式欢迎语 */
   greet?: string;
+  /** 激活时建议允许的工具列表 */
+  allowedTools?: string[];
   /** 目录式 skill 的附属文件清单（references/scripts/assets 相对路径） */
   files?: string[];
   /** 目录式 skill 根目录 */
@@ -524,6 +521,30 @@ export interface SkillDetail extends SkillItem {
   sourceFile?: string;
   /** 自定义 svg 图标内容（icon 以 .svg 结尾时后端返回） */
   iconSvg?: string;
+}
+
+/** 自定义斜杠命令（~/.moss/commands/<name>.md；一次性注入的提示词模板） */
+export interface CommandItem {
+  /** 命令名（= 文件名去扩展名） */
+  name: string;
+  description: string;
+  /** prompt 模板（可含 $ARGUMENTS 占位符） */
+  prompt: string;
+  /** 启停（config.commands[name].enabled，缺省 true） */
+  enabled?: boolean;
+  /** 参数提示（菜单展示，如 "[issue-number]"） */
+  argumentHint?: string;
+  /** Lucide 图标名（kebab-case） */
+  icon?: string;
+}
+
+/** 创建/更新自定义斜杠命令的请求体（POST /api/commands、PUT /api/commands/:name） */
+export interface CommandUpsertBody {
+  name?: string;
+  description?: string;
+  prompt: string;
+  argumentHint?: string;
+  icon?: string;
 }
 
 export interface SpecItem {
@@ -625,7 +646,6 @@ export type AgentEvent =
   | { type: 'ask'; sessionId: string; toolCallId: string; question: string; answerType?: PendingAsk['answerType']; options?: AskOption[]; defaultAnswer?: string; formSchema?: Record<string, unknown>; runId?: string }
   | { type: 'ask-timeout'; sessionId: string; toolCallId: string; runId?: string }
   | { type: 'confirm-required'; sessionId: string; toolCallId: string; toolName: string; question: string; details?: unknown; runId?: string }
-  | { type: 'skill-mode'; sessionId: string; action: 'enter' | 'switch' | 'exit' | 'error'; name?: string; greet?: string; icon?: string; message?: string; runId?: string }
   | { type: 'stats-updated'; sessionId: string; stats: RunStats; runId?: string }
   | { type: 'error'; sessionId: string; message: string; runId?: string }
   | { type: 'done'; sessionId: string; finishReason: string; runId?: string };
@@ -709,6 +729,26 @@ export interface ResolveDirectoryResult {
 export interface SuggestPath {
   path: string;
   label: string;
+}
+
+/** # 文件提及菜单搜索结果（GET /api/filesystem/search-files） */
+export interface SearchedFile {
+  /** 文件绝对路径 */
+  path: string;
+  /** 文件名（含扩展名） */
+  name: string;
+  /** 所在目录绝对路径 */
+  dir: string;
+  /** 小写扩展名（无扩展名为空串） */
+  ext: string;
+}
+
+/** 原生文件选择结果（POST /api/filesystem/pick-file） */
+export interface PickedFile {
+  /** 文件绝对路径（附件以路径引用，文件留在原位） */
+  path: string;
+  name: string;
+  size: number;
 }
 
 // ============================================================================

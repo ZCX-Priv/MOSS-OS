@@ -40,7 +40,8 @@ import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import type { SettingsSection } from '../../types';
 import { useTheme } from '../../contexts/ThemeContext';
-import { useLocale } from '../../hooks/useLocale';
+import { useI18n } from '../../contexts/I18nContext';
+import type { Locale } from '../../i18n';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -64,11 +65,13 @@ import {
 import { useAgents } from '../../hooks/useAgents';
 import { useTools } from '../../hooks/useTools';
 import { useSpecs } from '../../hooks/useSpecs';
+import { useCommands } from '../../hooks/useCommands';
 import { useConfig } from '../../hooks/useConfig';
 import { useReducedMotion } from '../../hooks/useAnimationClass';
 import { useStore } from '../../store';
 import { api } from '../../api/http';
 import { TOOL_ICON_MAP } from '../../lib/tool-icons';
+import { SKILL_ICON_CHOICES, resolveSkillIcon } from '../../lib/skill-icons';
 import type { SpecDetail, SafetyConfig, LogLevel, LogsConfig, LogFileInfo, ContextEngineConfig } from '../../types/api';
 
 // 服务商设置页（App.tsx 从本模块导入）
@@ -135,7 +138,8 @@ export const settingsSearchIndex: SearchableSetting[] = [
   { labelKey: 'settings.safety.sandboxTitle', descriptionKey: 'settings.safety.sandboxDesc', section: 'safety' },
   { labelKey: 'settings.safety.rulesTitle', descriptionKey: 'settings.safety.rulesDesc', section: 'safety' },
   { labelKey: 'settings.placeholder.indexTitle', descriptionKey: 'settings.placeholder.indexDesc', section: 'index' },
-  { labelKey: 'settings.placeholder.commandsTitle', descriptionKey: 'settings.placeholder.commandsDesc', section: 'commands' },
+  { labelKey: 'settings.commands.title', descriptionKey: 'settings.commands.subtitle', section: 'commands' },
+  { labelKey: 'settings.commands.createCommand', section: 'commands' },
   { labelKey: 'settings.placeholder.rulesTitle', descriptionKey: 'settings.placeholder.rulesDesc', section: 'rules' },
   { labelKey: 'settings.placeholder.memoryTitle', descriptionKey: 'settings.placeholder.memoryDesc', section: 'memory' },
   { labelKey: 'settings.placeholder.hooksTitle', descriptionKey: 'settings.placeholder.hooksDesc', section: 'hooks' },
@@ -145,11 +149,6 @@ export const settingsSearchIndex: SearchableSetting[] = [
   { labelKey: 'settings.general.theme', descriptionKey: 'settings.general.selectTheme', section: 'general' },
   { labelKey: 'settings.general.language', descriptionKey: 'settings.general.languageDesc', section: 'general' },
   { labelKey: 'settings.general.sendShortcut', descriptionKey: 'settings.general.sendShortcutDesc', section: 'general' },
-  { labelKey: 'settings.general.editorSettings', descriptionKey: 'settings.general.editorSettingsDesc', section: 'general' },
-  { labelKey: 'settings.general.shortcutSettings', descriptionKey: 'settings.general.shortcutSettingsDesc', section: 'general' },
-  { labelKey: 'settings.general.importConfig', descriptionKey: 'settings.general.importConfigDesc', section: 'general' },
-  { labelKey: 'settings.general.localLink', descriptionKey: 'settings.general.localLinkDesc', section: 'general' },
-  { labelKey: 'settings.general.markdownOpen', descriptionKey: 'settings.general.markdownOpenDesc', section: 'general' },
 
   // 智能体设置详细项
   { labelKey: 'settings.agent.builtIn', section: 'agent' },
@@ -1238,7 +1237,7 @@ export function LogsSettings() {
 export function GeneralSettings() {
   const { t } = useTranslation();
   const { mode, setMode } = useTheme();
-  const { locale, setLocale } = useLocale();
+  const { locale, setLocale } = useI18n();
   const sendShortcut = useStore((s) => s.sendShortcut);
   const setSendShortcut = useStore((s) => s.setSendShortcut);
   // 主题切换动画的扩散圆心：记录最后一次点击选项的坐标
@@ -1296,11 +1295,15 @@ export function GeneralSettings() {
               <div className="text-sm text-foreground">{t('settings.general.language')}</div>
               <div className="text-xs text-muted-foreground">{t('settings.general.languageDesc')}</div>
             </div>
-            <Select value={locale} onValueChange={(v) => setLocale(v as 'zh' | 'en')}>
+            <Select value={locale} onValueChange={(v) => setLocale(v as Locale)}>
               <SelectTrigger className="w-40">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
+                <SelectItem value="auto">
+                  <Globe className="size-3.5" />
+                  {t('settings.general.autoDetect')}
+                </SelectItem>
                 <SelectItem value="zh">
                   <Globe className="size-3.5" />
                   {t('settings.general.simplifiedChinese')}
@@ -1336,53 +1339,6 @@ export function GeneralSettings() {
                 <SelectItem value="ctrl-enter">{t('settings.general.sendWithCtrlEnter')}</SelectItem>
               </SelectContent>
             </Select>
-          </div>
-          <div className="flex items-center justify-between gap-4 py-3">
-            <div className="flex flex-col gap-0.5">
-              <div className="text-sm text-foreground">{t('settings.general.editorSettings')}</div>
-              <div className="text-xs text-muted-foreground">{t('settings.general.editorSettingsDesc')}</div>
-            </div>
-            <Button variant="outline">{t('settings.general.goToSettings')}</Button>
-          </div>
-          <div className="flex items-center justify-between gap-4 py-3">
-            <div className="flex flex-col gap-0.5">
-              <div className="text-sm text-foreground">{t('settings.general.shortcutSettings')}</div>
-              <div className="text-xs text-muted-foreground">{t('settings.general.shortcutSettingsDesc')}</div>
-            </div>
-            <Button variant="outline" className="gap-1.5">
-              <span>{t('settings.general.vscodeShortcutStyle')}</span>
-              <ChevronDown className="size-3.5 opacity-70" />
-            </Button>
-          </div>
-          <div className="flex items-center justify-between gap-4 py-3">
-            <div className="flex flex-col gap-0.5">
-              <div className="text-sm text-foreground">{t('settings.general.importConfig')}</div>
-              <div className="text-xs text-muted-foreground">{t('settings.general.importConfigDesc')}</div>
-            </div>
-            <Button variant="outline" className="gap-1.5">
-              <span>{t('settings.general.import')}</span>
-              <ChevronDown className="size-3.5 opacity-70" />
-            </Button>
-          </div>
-          <div className="flex items-center justify-between gap-4 py-3">
-            <div className="flex flex-col gap-0.5">
-              <div className="text-sm text-foreground">{t('settings.general.localLink')}</div>
-              <div className="text-xs text-muted-foreground">{t('settings.general.localLinkDesc')}</div>
-            </div>
-            <Button variant="outline" className="gap-1.5">
-              <span>{t('settings.general.systemBrowser')}</span>
-              <ChevronDown className="size-3.5 opacity-70" />
-            </Button>
-          </div>
-          <div className="flex items-center justify-between gap-4 py-3">
-            <div className="flex flex-col gap-0.5">
-              <div className="text-sm text-foreground">{t('settings.general.markdownOpen')}</div>
-              <div className="text-xs text-muted-foreground">{t('settings.general.markdownOpenDesc')}</div>
-            </div>
-            <Button variant="outline" className="gap-1.5">
-              <span>{t('settings.general.codeEditor')}</span>
-              <ChevronDown className="size-3.5 opacity-70" />
-            </Button>
           </div>
         </div>
       </div>
@@ -1569,7 +1525,7 @@ export function ToolsSettings() {
     : tools;
 
   return (
-    <div className="flex flex-col gap-4 p-6">
+    <div className="flex flex-col gap-6 p-6">
       {/* 页头：说明与搜索同一行（移动端换行堆叠） */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-col gap-1">
@@ -1589,44 +1545,46 @@ export function ToolsSettings() {
       </div>
 
       {/* 执行策略：工具调用最大轮数（面向小时级长程任务） */}
-      <Card className="flex flex-col gap-3 p-4">
+      <div className="flex flex-col gap-3">
         <div className="text-sm font-medium text-foreground">{t('settings.tools.execPolicyTitle')}</div>
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex min-w-0 flex-col gap-0.5">
-            <span className="text-sm text-foreground">{t('settings.tools.maxTurnsLabel')}</span>
-            <span className="text-xs text-muted-foreground">{t('settings.tools.maxTurnsDesc')}</span>
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            {unlimited ? (
-              <span className="text-sm tabular-nums text-muted-foreground">
-                {t('settings.tools.maxTurnsUnlimited')}
-              </span>
-            ) : (
-              <Input
-                type="number"
-                min={200}
-                max={100000}
-                value={maxTurnsDraft}
-                onChange={(e) => setMaxTurnsDraft(e.target.value)}
-                onBlur={commitMaxTurnsDraft}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') e.currentTarget.blur();
-                }}
-                className="h-8 w-24 text-right"
-                aria-label={t('settings.tools.maxTurnsLabel')}
+        <div className="flex flex-col divide-y divide-border">
+          <div className="flex items-center justify-between gap-4 py-3">
+            <div className="flex min-w-0 flex-col gap-0.5">
+              <span className="text-sm text-foreground">{t('settings.tools.maxTurnsLabel')}</span>
+              <span className="text-xs text-muted-foreground">{t('settings.tools.maxTurnsDesc')}</span>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              {unlimited ? (
+                <span className="text-sm tabular-nums text-muted-foreground">
+                  {t('settings.tools.maxTurnsUnlimited')}
+                </span>
+              ) : (
+                <Input
+                  type="number"
+                  min={200}
+                  max={100000}
+                  value={maxTurnsDraft}
+                  onChange={(e) => setMaxTurnsDraft(e.target.value)}
+                  onBlur={commitMaxTurnsDraft}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') e.currentTarget.blur();
+                  }}
+                  className="h-8 w-24 text-right"
+                  aria-label={t('settings.tools.maxTurnsLabel')}
+                />
+              )}
+              <Switch
+                checked={unlimited}
+                onCheckedChange={(v) => void patchMaxTurns(v ? 0 : 200)}
+                aria-label={t('settings.tools.maxTurnsUnlimited')}
               />
-            )}
-            <Switch
-              checked={unlimited}
-              onCheckedChange={(v) => void patchMaxTurns(v ? 0 : 200)}
-              aria-label={t('settings.tools.maxTurnsUnlimited')}
-            />
+            </div>
           </div>
+          {!unlimited && (
+            <div className="py-3 text-xs text-muted-foreground">{t('settings.tools.maxTurnsMinHint')}</div>
+          )}
         </div>
-        {!unlimited && (
-          <div className="text-xs text-muted-foreground">{t('settings.tools.maxTurnsMinHint')}</div>
-        )}
-      </Card>
+      </div>
 
       <div className="flex flex-col gap-2">
         {filteredTools.length === 0 && (
@@ -1793,11 +1751,319 @@ export function SpecsSettings() {
   );
 }
 
+/* ===== 命令设置（自定义斜杠命令 CRUD；底层 = ~/.moss/commands/<name>.md） ===== */
+
+/** 命令名规则：与后端 use_command/registry 一致 */
+const COMMAND_NAME_RE = /^[a-z][a-z0-9-]*$/;
+
+interface CommandFormState {
+  name: string;
+  description: string;
+  icon: string;
+  argumentHint: string;
+  prompt: string;
+}
+
+const EMPTY_COMMAND_FORM: CommandFormState = {
+  name: '',
+  description: '',
+  icon: 'sparkles',
+  argumentHint: '',
+  prompt: '',
+};
+
+export function CommandsSettings() {
+  const { t } = useTranslation();
+  const { commands, toggleCommand, createCommand, updateCommand, removeCommand } = useCommands();
+
+  // 表单弹窗：null=关闭；{mode:'create'}=新建；{mode:'edit', name}=编辑
+  const [form, setForm] = useState<{ mode: 'create' } | { mode: 'edit'; name: string } | null>(null);
+  const [formState, setFormState] = useState<CommandFormState>(EMPTY_COMMAND_FORM);
+  const [formLoading, setFormLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  // 删除确认弹窗
+  const [deleting, setDeleting] = useState<string | null>(null);
+
+  const openCreate = () => {
+    setFormState(EMPTY_COMMAND_FORM);
+    setForm({ mode: 'create' });
+  };
+
+  const openEdit = (name: string) => {
+    const cmd = commands.find((c) => c.name === name);
+    if (!cmd) return;
+    setForm({ mode: 'edit', name });
+    setFormState({
+      name: cmd.name,
+      description: cmd.description ?? '',
+      icon: cmd.icon ?? 'sparkles',
+      argumentHint: cmd.argumentHint ?? '',
+      prompt: cmd.prompt ?? '',
+    });
+  };
+
+  const nameError =
+    form?.mode === 'create' && formState.name && !COMMAND_NAME_RE.test(formState.name)
+      ? t('settings.commands.nameInvalid')
+      : form?.mode === 'create' &&
+          formState.name &&
+          commands.some((c) => c.name === formState.name)
+        ? t('settings.commands.nameExists')
+        : null;
+  const promptError = !formState.prompt.trim() ? t('settings.commands.promptRequired') : null;
+  const canSubmit =
+    !saving && !formLoading && !nameError && !promptError && formState.name.trim().length > 0;
+
+  const submit = async () => {
+    if (!canSubmit || !form) return;
+    setSaving(true);
+    const body = {
+      ...(form.mode === 'create' ? { name: formState.name.trim() } : {}),
+      description: formState.description.trim(),
+      icon: formState.icon || 'sparkles',
+      argumentHint: formState.argumentHint.trim(),
+      prompt: formState.prompt,
+    };
+    try {
+      if (form.mode === 'create') {
+        await createCommand(body);
+        toast.success(t('settings.commands.created'));
+      } else {
+        await updateCommand(form.name, body);
+        toast.success(t('settings.commands.updated'));
+      }
+      setForm(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!deleting) return;
+    const name = deleting;
+    setDeleting(null);
+    try {
+      await removeCommand(name);
+      toast.success(t('settings.commands.deleted'));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-4 p-6">
+      {/* 页头：说明与新建按钮 */}
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-1">
+          <h1 className="text-xl font-semibold text-foreground">{t('settings.commands.title')}</h1>
+          <p className="text-sm text-muted-foreground">{t('settings.commands.subtitle')}</p>
+        </div>
+        <Button variant="outline" className="gap-1.5 self-start" onClick={openCreate}>
+          <Plus className="size-4" />
+          <span>{t('settings.commands.createCommand')}</span>
+        </Button>
+      </div>
+
+      {/* 命令列表 */}
+      <div className="flex flex-col gap-2">
+        {commands.length === 0 && (
+          <div className="py-12 text-center text-sm text-muted-foreground">
+            {t('settings.commands.noCommands')}
+          </div>
+        )}
+        {commands.map((cmd) => {
+          const Icon = resolveSkillIcon(cmd.icon);
+          return (
+            <Card key={cmd.name} className="flex flex-row items-center gap-3 p-3">
+              <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                <Icon className="size-5" />
+              </div>
+              <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <div className="flex items-center gap-2">
+                  <h3 className="font-mono text-sm font-medium text-foreground">/{cmd.name}</h3>
+                  {cmd.argumentHint && (
+                    <span className="font-mono text-[11px] text-muted-foreground">
+                      {cmd.argumentHint}
+                    </span>
+                  )}
+                </div>
+                <p className="truncate text-xs text-muted-foreground">
+                  {cmd.description || '—'}
+                </p>
+              </div>
+              <Switch
+                checked={cmd.enabled !== false}
+                onCheckedChange={(checked) => void toggleCommand(cmd.name, checked).catch(() => toast.error(t('settings.commands.updated')))}
+                aria-label={cmd.enabled !== false ? t('common.close') : t('common.open')}
+              />
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 w-8 shrink-0 p-0 text-muted-foreground hover:text-foreground"
+                onClick={() => openEdit(cmd.name)}
+                title={t('settings.commands.editCommand')}
+              >
+                <Pencil className="size-3.5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 w-8 shrink-0 p-0 text-muted-foreground hover:text-destructive"
+                onClick={() => setDeleting(cmd.name)}
+                title={t('common.delete')}
+              >
+                <Trash2 className="size-3.5" />
+              </Button>
+            </Card>
+          );
+        })}
+      </div>
+
+      {/* 新建/编辑表单弹窗 */}
+      <Dialog open={form !== null} onOpenChange={(o) => !o && !saving && setForm(null)}>
+        <DialogContent size="lg">
+          <DialogHeader>
+            <DialogTitle>
+              {form?.mode === 'edit'
+                ? t('settings.commands.editCommand')
+                : t('settings.commands.createCommand')}
+            </DialogTitle>
+            <DialogDescription>{t('settings.commands.subtitle')}</DialogDescription>
+          </DialogHeader>
+          <DialogBody>
+            {formLoading ? (
+              <div className="flex items-center justify-center gap-2 py-8 text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" />
+              </div>
+            ) : (
+              <div className="flex flex-col gap-4">
+                {/* 命令名 */}
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="cmd-name">{t('settings.commands.name')}</Label>
+                  <Input
+                    id="cmd-name"
+                    value={formState.name}
+                    disabled={form?.mode === 'edit'}
+                    onChange={(e) => setFormState((s) => ({ ...s, name: e.target.value }))}
+                    placeholder="my-command"
+                    className="font-mono"
+                  />
+                  {nameError ? (
+                    <span className="text-xs text-destructive">{nameError}</span>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">
+                      {form?.mode === 'edit'
+                        ? t('settings.commands.nameLocked')
+                        : t('settings.commands.nameDesc')}
+                    </span>
+                  )}
+                </div>
+                {/* 描述 */}
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="cmd-desc">{t('settings.commands.description')}</Label>
+                  <Input
+                    id="cmd-desc"
+                    value={formState.description}
+                    onChange={(e) => setFormState((s) => ({ ...s, description: e.target.value }))}
+                  />
+                </div>
+                {/* 图标 + 参数提示（两列） */}
+                <div className="flex flex-col gap-4 sm:flex-row">
+                  <div className="flex flex-1 flex-col gap-1.5">
+                    <Label>{t('settings.commands.icon')}</Label>
+                    <Select
+                      value={formState.icon}
+                      onValueChange={(v) => setFormState((s) => ({ ...s, icon: v }))}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-64">
+                        {SKILL_ICON_CHOICES.map((choice) => {
+                          const ChoiceIcon = resolveSkillIcon(choice);
+                          return (
+                            <SelectItem key={choice} value={choice}>
+                              <ChoiceIcon className="size-3.5" />
+                              <span className="font-mono text-xs">{choice}</span>
+                            </SelectItem>
+                          );
+                        })}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex flex-1 flex-col gap-1.5">
+                    <Label htmlFor="cmd-arg">{t('settings.commands.argumentHint')}</Label>
+                    <Input
+                      id="cmd-arg"
+                      value={formState.argumentHint}
+                      onChange={(e) => setFormState((s) => ({ ...s, argumentHint: e.target.value }))}
+                      placeholder="[issue 编号]"
+                      className="font-mono"
+                    />
+                    <span className="text-xs text-muted-foreground">
+                      {t('settings.commands.argumentHintDesc')}
+                    </span>
+                  </div>
+                </div>
+                {/* Prompt */}
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="cmd-prompt">{t('settings.commands.prompt')}</Label>
+                  <Textarea
+                    id="cmd-prompt"
+                    value={formState.prompt}
+                    onChange={(e) => setFormState((s) => ({ ...s, prompt: e.target.value }))}
+                    className="min-h-[200px] font-mono text-xs"
+                    placeholder={t('settings.commands.promptDesc')}
+                  />
+                  {promptError && (
+                    <span className="text-xs text-destructive">{promptError}</span>
+                  )}
+                </div>
+              </div>
+            )}
+          </DialogBody>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setForm(null)} disabled={saving}>
+              {t('common.cancel')}
+            </Button>
+            <Button size="sm" onClick={() => void submit()} disabled={!canSubmit}>
+              {saving ? <Loader2 className="size-3.5 animate-spin" /> : null}
+              {t('common.save')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 删除确认弹窗 */}
+      <Dialog open={deleting !== null} onOpenChange={(o) => !o && setDeleting(null)}>
+        <DialogContent size="sm">
+          <DialogHeader>
+            <DialogTitle>{t('common.delete')}</DialogTitle>
+            <DialogDescription>
+              {t('settings.commands.deleteConfirm', { name: deleting ?? '' })}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setDeleting(null)}>
+              {t('common.cancel')}
+            </Button>
+            <Button variant="destructive" size="sm" onClick={() => void confirmDelete()}>
+              {t('common.delete')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
 /* ===== 占位 section 路由组件（按 section 查表渲染 PlaceholderSettings） ===== */
 const PLACEHOLDER_SECTION_KEYS: Record<string, { titleKey: string; descKey: string }> = {
   index: { titleKey: 'settings.placeholder.indexTitle', descKey: 'settings.placeholder.indexDesc' },
   appearance: { titleKey: 'settings.placeholder.appearanceTitle', descKey: 'settings.placeholder.appearanceDesc' },
-  commands: { titleKey: 'settings.placeholder.commandsTitle', descKey: 'settings.placeholder.commandsDesc' },
   rules: { titleKey: 'settings.placeholder.rulesTitle', descKey: 'settings.placeholder.rulesDesc' },
   memory: { titleKey: 'settings.placeholder.memoryTitle', descKey: 'settings.placeholder.memoryDesc' },
   hooks: { titleKey: 'settings.placeholder.hooksTitle', descKey: 'settings.placeholder.hooksDesc' },

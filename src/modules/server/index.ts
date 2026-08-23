@@ -30,7 +30,18 @@ import {
   createUpdateMcpServerHandler,
   createDeleteMcpServerHandler,
 } from './routes/mcp';
-import { createListSkillsHandler, createGetSkillHandler, createUpdateSkillHandler } from './routes/skills';
+import {
+  createListSkillsHandler,
+  createGetSkillHandler,
+  createUpdateSkillHandler,
+} from './routes/skills';
+import {
+  createListCommandsHandler,
+  createCreateCommandHandler,
+  createUpdateCommandHandler,
+  createDeleteCommandHandler,
+  createToggleCommandHandler,
+} from './routes/commands';
 import { createSpecsHandler, createUpdateSpecHandler } from './routes/specs';
 import { createListToolsHandler, createUpdateToolHandler } from './routes/tools';
 import { createVersionHandler } from './routes/version';
@@ -99,6 +110,8 @@ import {
   createResolveDirectoryHandler,
   createSuggestPathsHandler,
   createPickDirectoryHandler,
+  createPickFileHandler,
+  createSearchFilesHandler,
   createGetRootsHandler,
   createUpdateRootsHandler,
   createReadFileHandler,
@@ -227,6 +240,12 @@ class ServerModule implements Module {
     this.router.addRoute({ method: 'GET', pattern: '/api/skills', handler: createListSkillsHandler(services), auth: true });
     this.router.addRoute({ method: 'GET', pattern: '/api/skills/:name', handler: createGetSkillHandler(services), auth: true });
     this.router.addRoute({ method: 'PATCH', pattern: '/api/skills/:name', handler: createUpdateSkillHandler(services, config), auth: true });
+    // commands（自定义斜杠命令：~/.moss/commands/<name>.md）
+    this.router.addRoute({ method: 'GET', pattern: '/api/commands', handler: createListCommandsHandler(services), auth: true });
+    this.router.addRoute({ method: 'POST', pattern: '/api/commands', handler: createCreateCommandHandler(services, env), auth: true });
+    this.router.addRoute({ method: 'PUT', pattern: '/api/commands/:name', handler: createUpdateCommandHandler(services, env), auth: true });
+    this.router.addRoute({ method: 'DELETE', pattern: '/api/commands/:name', handler: createDeleteCommandHandler(services), auth: true });
+    this.router.addRoute({ method: 'PATCH', pattern: '/api/commands/:name', handler: createToggleCommandHandler(services, config), auth: true });
     this.router.addRoute({ method: 'GET', pattern: '/api/specs', handler: createSpecsHandler(services), auth: true });
     // specs 保存（写回 ~/.moss/agent/prompts/main/spec/ 下文件）
     this.router.addRoute({ method: 'PUT', pattern: '/api/specs', handler: createUpdateSpecHandler(services, env), auth: true });
@@ -298,8 +317,11 @@ class ServerModule implements Module {
 
     // filesystem（浏览器端文件夹选择：后端原生对话框拿真实绝对路径 + 搜索回退）
     this.router.addRoute({ method: 'POST', pattern: '/api/filesystem/pick-directory', handler: createPickDirectoryHandler(env), auth: true });
+    this.router.addRoute({ method: 'POST', pattern: '/api/filesystem/pick-file', handler: createPickFileHandler(env, config), auth: true });
     this.router.addRoute({ method: 'POST', pattern: '/api/filesystem/resolve-directory', handler: createResolveDirectoryHandler(env), auth: true });
     this.router.addRoute({ method: 'GET', pattern: '/api/filesystem/suggest-paths', handler: createSuggestPathsHandler(env), auth: true });
+    // # 文件提及菜单：工作目录递归文件名搜索
+    this.router.addRoute({ method: 'GET', pattern: '/api/filesystem/search-files', handler: createSearchFilesHandler(env), auth: true });
     // 文件只读预览（渲染模块取 docx/pdf/图片/3D 模型二进制；走 filesys roots 权限 + 白名单）
     this.router.addRoute({ method: 'GET', pattern: '/api/filesystem/raw', handler: createReadFileHandler(this.ctx.services), auth: true });
 

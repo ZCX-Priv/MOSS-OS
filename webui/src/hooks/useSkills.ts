@@ -1,5 +1,6 @@
 // UI/src/hooks/useSkills.ts
 // Skills 查询 hook：挂载时拉取 skills 列表写入 store；toggleSkill 启停（乐观更新）。
+// （自定义斜杠命令的 CRUD 见 useCommands.ts —— command 与 skill 是两个体系）
 
 import { useEffect, useCallback } from 'react';
 import { useStore } from '../store';

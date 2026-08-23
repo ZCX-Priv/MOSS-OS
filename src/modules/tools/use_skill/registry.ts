@@ -126,23 +126,85 @@ class SkillRegistryImpl implements SkillRegistry {
 }
 
 /**
- * 首次启动播种：若 ~/.moss/skills 不存在，从内置目录递归复制（目录式 + 单文件模板）。
- * 仅当目标目录不存在时执行，用户删除的 skill 不会被重新添加。
- * 播种失败不阻断启动，仅记录日志。
+ * 逐 skill 播种（带 manifest）：把包内 skills/ 下未播种过的目录式 skill 复制到 ~/.moss/skills/。
+ * - manifest（~/.moss/skills/.seed-manifest.json）记录已播种的 skill 名；
+ *   已记录（含用户后来删除的）永不补种，未记录的新内置 skill（如版本升级新增）会补种。
+ * - 用户目录已存在同名 skill 时不覆盖（保留用户修改），仅补记 manifest。
+ * - 播种失败不阻断启动，仅记录日志。
  */
+const SEED_MANIFEST_FILE = '.seed-manifest.json';
+
 function seedBuiltinSkills(builtinDir: string, userDir: string, logger: Logger): void {
   try {
-    // 目录已存在则跳过（用户已初始化过，不覆盖其修改/删除）
+    // 内置目录不存在（开发模式异常）：无种子可播
+    let builtinEntries: string[];
+    try {
+      builtinEntries = readdirSync(builtinDir);
+    } catch {
+      return;
+    }
+    // 确保用户目录存在
     try {
       nodeFs.statSync(userDir);
-      return;
     } catch {
-      // 目录不存在，继续播种
+      nodeFs.mkdirSync(userDir, { recursive: true });
     }
-    nodeFs.cpSync(builtinDir, userDir, { recursive: true });
-    logger.info(t('tools.seededSkills', { dir: userDir }), {});
+
+    // 读取播种 manifest（不存在视为空）
+    let seeded: string[] = [];
+    try {
+      const raw = nodeFs.readFileSync(join(userDir, SEED_MANIFEST_FILE), 'utf8') as string;
+      const parsed = JSON.parse(raw) as unknown;
+      if (Array.isArray(parsed)) {
+        seeded = parsed.filter((n): n is string => typeof n === 'string');
+      }
+    } catch {
+      // 首次播种（manifest 不存在）
+    }
+
+    let changed = false;
+    for (const entry of builtinEntries) {
+      // 仅处理目录式内置 skill（<name>/SKILL.md）
+      const builtinSkillDir = join(builtinDir, entry);
+      try {
+        if (!statSync(builtinSkillDir).isDirectory()) continue;
+        if (!fileExists(join(builtinSkillDir, 'SKILL.md'))) continue;
+      } catch {
+        continue;
+      }
+      // 已播种过（含用户删除后不再补种）
+      if (seeded.includes(entry)) continue;
+      const targetDir = join(userDir, entry);
+      try {
+        if (!fileExists(targetDir)) {
+          nodeFs.cpSync(builtinSkillDir, targetDir, { recursive: true });
+          logger.info(t('tools.seededSkill', { name: entry }), {});
+        }
+        // 用户目录已有同名（用户自建）：不覆盖，仅记录
+        seeded.push(entry);
+        changed = true;
+      } catch (err) {
+        logger.warn(t('tools.seedSkillFailed', { file: entry }), {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    if (changed) {
+      try {
+        nodeFs.writeFileSync(
+          join(userDir, SEED_MANIFEST_FILE),
+          JSON.stringify(seeded, null, 2),
+          'utf8',
+        );
+      } catch (err) {
+        logger.warn(t('tools.seedManifestWriteFailed'), {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
   } catch (err) {
-    // 内置目录不存在（开发模式异常）或复制失败
+    // 播种整体失败：不阻断启动
     logger.warn(t('tools.seedBuiltinSkillsFailed'), {
       error: err instanceof Error ? err.message : String(err),
     });

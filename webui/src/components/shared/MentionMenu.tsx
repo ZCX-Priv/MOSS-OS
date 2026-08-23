@@ -13,6 +13,10 @@ interface MentionMenuProps {
   activeIndex: number;
   onHover: (index: number) => void;
   onSelect: (item: MentionItem) => void;
+  /** 空态文案（缺省"无匹配结果"；如 # 菜单无工作目录时的提示） */
+  emptyText?: string;
+  /** 加载中（# 菜单异步搜索期间显示"搜索中…"，优先于空态） */
+  loading?: boolean;
 }
 
 /** 组内项顺序保持传入顺序，跨组拼接为扁平下标 */
@@ -31,7 +35,7 @@ function groupItems(items: MentionItem[]): Array<{ group: MentionGroup; items: M
   return sections;
 }
 
-export function MentionMenu({ items, activeIndex, onHover, onSelect }: MentionMenuProps) {
+export function MentionMenu({ items, activeIndex, onHover, onSelect, emptyText, loading }: MentionMenuProps) {
   const { t } = useTranslation();
   const sections = groupItems(items);
 
@@ -42,9 +46,13 @@ export function MentionMenu({ items, activeIndex, onHover, onSelect }: MentionMe
       onMouseDown={(e) => e.preventDefault()}
     >
       <div className="max-h-80 overflow-y-auto">
-        {items.length === 0 ? (
+        {loading && items.length === 0 ? (
           <div className="px-3 py-6 text-center text-xs text-muted-foreground">
-            {t('taskInput.noResults')}
+            {t('taskInput.searching')}
+          </div>
+        ) : items.length === 0 ? (
+          <div className="px-3 py-6 text-center text-xs text-muted-foreground">
+            {emptyText ?? t('taskInput.noResults')}
           </div>
         ) : (
           sections.map((section) => (

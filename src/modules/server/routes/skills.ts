@@ -1,5 +1,6 @@
 // src/modules/server/routes/skills.ts
 // GET /api/skills, GET /api/skills/:name, PATCH /api/skills/:name（启停）
+// （自定义斜杠命令 CRUD 见 routes/commands.ts —— command 与 skill 是两个体系）
 
 import type { HttpRequest, HttpResponse, RouteHandler } from '../types';
 import type { ConfigService, ServiceRegistry } from '../../../core/types';

@@ -3,10 +3,21 @@ import { initReactI18next } from 'react-i18next';
 import { zh } from './locales/zh';
 import { en } from './locales/en';
 
+/** 用户可选语言（含"自动检测"） */
+export const LOCALE_CHOICES = ['auto', 'zh', 'en'] as const;
+export type Locale = (typeof LOCALE_CHOICES)[number];
+/** 实际生效语言（i18next 与后端只认 zh/en） */
+export type ResolvedLocale = 'zh' | 'en';
+/** 拥有翻译资源的语言 */
 export const SUPPORTED_LOCALES = ['zh', 'en'] as const;
-export type Locale = (typeof SUPPORTED_LOCALES)[number];
-export const DEFAULT_LOCALE: Locale = 'zh';
+export const DEFAULT_LOCALE: Locale = 'auto';
 export const LOCALE_STORAGE_KEY = 'moss-locale';
+
+/** 把用户选择解析为实际语言：auto → 按浏览器语言检测（zh* 开头取 zh，否则 en） */
+export function resolveLocale(locale: Locale): ResolvedLocale {
+  if (locale !== 'auto') return locale;
+  return navigator.language.toLowerCase().startsWith('zh') ? 'zh' : 'en';
+}
 
 export const resources = {
   zh: { translation: zh },
@@ -15,7 +26,7 @@ export const resources = {
 
 i18n.use(initReactI18next).init({
   resources,
-  lng: DEFAULT_LOCALE,
+  lng: resolveLocale(DEFAULT_LOCALE),
   fallbackLng: 'zh',
   interpolation: { escapeValue: false },
   returnNull: false,

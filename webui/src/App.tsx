@@ -28,6 +28,7 @@ import {
   SafetySettings,
   LogsSettings,
   AboutSettings,
+  CommandsSettings,
   PlaceholderSection,
   RenderSettingsSection,
   AnimSettingsSection,
@@ -41,6 +42,9 @@ import { useWebSocket } from './hooks/useWebSocket';
 import { useConfig } from './hooks/useConfig';
 import { useTools } from './hooks/useTools';
 import { useAnimationClass } from './hooks/useAnimationClass';
+import { useSkills } from './hooks/useSkills';
+import { useAgents } from './hooks/useAgents';
+import { useCommands } from './hooks/useCommands';
 import { useStore } from './store';
 
 export default function App() {
@@ -52,6 +56,11 @@ export default function App() {
   useTools();
   // 动画开关 → <html> class 桥接（含 prefers-reduced-motion 实时监听）
   useAnimationClass();
+  // / @ 菜单数据预载（skills / agents / commands）：根组件一次性拉取，
+  // WS resources.changed 自动刷新——首页输入 / @ 即有数据，不再依赖特定页面挂载
+  useSkills();
+  useAgents();
+  useCommands();
 
   const [overlay, setOverlay] = useState<OverlayType>(null);
   const { pathname } = useLocation();
@@ -179,7 +188,7 @@ export default function App() {
               <Route path="safety" element={<SafetySettings />} />
               <Route path="logs" element={<LogsSettings />} />
               <Route path="about" element={<AboutSettings />} />
-              <Route path="commands" element={<PlaceholderSection section="commands" />} />
+              <Route path="commands" element={<CommandsSettings />} />
               <Route path="hooks" element={<PlaceholderSection section="hooks" />} />
               {/* 旧路径重定向（并入 Tab 后保留兼容：搜索索引/书签仍指向旧地址） */}
               <Route path="render" element={<Navigate to="/settings/appearance/render" replace />} />

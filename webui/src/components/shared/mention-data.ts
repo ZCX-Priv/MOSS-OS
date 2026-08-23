@@ -1,26 +1,19 @@
 // webui/src/components/shared/mention-data.ts
-// 输入框 / @ # 触发菜单的类型、触发解析与 mock 数据（本轮纯样式占位，不接接口）。
+// 输入框 / @ # 触发菜单的类型、触发解析与过滤工具。
+// 数据源由调用方动态注入（commands/skills/agents/文件搜索 API），本模块不含静态数据。
 
 import type { LucideIcon } from 'lucide-react';
-import {
-  ListTree,
-  Target,
-  Globe,
-  Video,
-  Image,
-  Bot,
-  Code2,
-  LineChart,
-  FileCode,
-  FileJson,
-  FileText,
-  BookOpen,
-} from 'lucide-react';
 
 export type MentionKind = 'command' | 'agent' | 'file';
 
+/**
+ * / 菜单的命令项类型：command（~/.moss/commands/）或 skill（~/.moss/skills/）。
+ * 两者都通过 / 菜单调起、一次性注入（渲染后作为单条用户消息发送）。
+ */
+export type MentionCommandSource = 'command' | 'skill';
+
 /** 分组 key，对应 i18n taskInput.mentionGroups.<group> */
-export type MentionGroup = 'recent' | 'commands' | 'plugins' | 'agents' | 'files';
+export type MentionGroup = 'recent' | 'commands' | 'skills' | 'agents' | 'files';
 
 export interface MentionItem {
   id: string;
@@ -29,8 +22,10 @@ export interface MentionItem {
   name: string;
   desc: string;
   icon: LucideIcon;
-  /** 图标着色类（各项独立色彩，复刻参考图） */
+  /** 图标着色类（各项独立色彩） */
   iconClass: string;
+  /** command/skill 项的注入载荷（选中时快照；发送时渲染 $ARGUMENTS） */
+  data?: MentionChipData;
 }
 
 export type MentionTrigger = '/' | '@' | '#';
@@ -42,6 +37,15 @@ export interface TriggerMatch {
   query: string;
   /** 触发符在文本中的下标（含触发符，删除区间起点） */
   tokenStart: number;
+}
+
+/** command/skill chip 载荷：选中时刻的注入快照 */
+export interface MentionChipData {
+  /** 来源体系：command（自定义命令）/ skill（技能） */
+  source: MentionCommandSource;
+  name: string;
+  /** prompt 模板（可含 $ARGUMENTS 占位符） */
+  prompt: string;
 }
 
 const TRIGGER_KIND: Record<MentionTrigger, MentionKind> = {
@@ -68,157 +72,67 @@ export function detectTrigger(text: string, cursorPos: number): TriggerMatch | n
   };
 }
 
-// ============================================================================
-// Mock 数据（展示用，名称/描述为数据本身，不做 i18n）
-// ============================================================================
-
-export const COMMAND_ITEMS: MentionItem[] = [
-  {
-    id: 'cmd-plan-recent',
-    kind: 'command',
-    group: 'recent',
-    name: 'Plan',
-    desc: '优先规划任务的执行方向，用户确认后再执行',
-    icon: ListTree,
-    iconClass: 'text-violet-400',
-  },
-  {
-    id: 'cmd-plan',
-    kind: 'command',
-    group: 'commands',
-    name: 'Plan',
-    desc: '优先规划任务的执行方向，用户确认后再执行',
-    icon: ListTree,
-    iconClass: 'text-violet-400',
-  },
-  {
-    id: 'cmd-goal',
-    kind: 'command',
-    group: 'commands',
-    name: 'Goal',
-    desc: '启动一个以目标为导向的任务，并持续运行直到完成',
-    icon: Target,
-    iconClass: 'text-blue-400',
-  },
-  {
-    id: 'cmd-browser',
-    kind: 'command',
-    group: 'commands',
-    name: 'Browser',
-    desc: '启用浏览器操作模式进行网页自动化',
-    icon: Globe,
-    iconClass: 'text-cyan-400',
-  },
-  {
-    id: 'plugin-seedance',
-    kind: 'command',
-    group: 'plugins',
-    name: 'Seedance（视频生成）',
-    desc: '使用 Seedance 将你的创意变成精彩视频。描述想要的画面、风格和动态效果，即可更准确地生成理想视频',
-    icon: Video,
-    iconClass: 'text-violet-400',
-  },
-  {
-    id: 'plugin-seedream',
-    kind: 'command',
-    group: 'plugins',
-    name: 'Seedream（图片生成）',
-    desc: '使用 Seedream 将你的创意变成精美图片。描述想要的画面、风格和细节，即可更准确地生成理想图片',
-    icon: Image,
-    iconClass: 'text-fuchsia-400',
-  },
-];
-
-export const AGENT_ITEMS: MentionItem[] = [
-  {
-    id: 'agent-default',
-    kind: 'agent',
-    group: 'agents',
-    name: 'MOSS',
-    desc: '默认智能体，处理日常各类任务',
-    icon: Bot,
-    iconClass: 'text-emerald-400',
-  },
-  {
-    id: 'agent-coder',
-    kind: 'agent',
-    group: 'agents',
-    name: 'Coder',
-    desc: '专注代码编写、重构与调试的工程智能体',
-    icon: Code2,
-    iconClass: 'text-blue-400',
-  },
-  {
-    id: 'agent-analyst',
-    kind: 'agent',
-    group: 'agents',
-    name: 'Analyst',
-    desc: '擅长数据分析、表格处理与图表洞察',
-    icon: LineChart,
-    iconClass: 'text-amber-400',
-  },
-  {
-    id: 'agent-writer',
-    kind: 'agent',
-    group: 'agents',
-    name: 'Writer',
-    desc: '专注文档撰写、润色与结构化表达',
-    icon: BookOpen,
-    iconClass: 'text-rose-400',
-  },
-];
-
-export const FILE_ITEMS: MentionItem[] = [
-  {
-    id: 'file-taskpage',
-    kind: 'file',
-    group: 'files',
-    name: 'TaskPage.tsx',
-    desc: 'webui/src/components/pages/TaskPage.tsx',
-    icon: FileCode,
-    iconClass: 'text-sky-400',
-  },
-  {
-    id: 'file-taskinput',
-    kind: 'file',
-    group: 'files',
-    name: 'TaskInput.tsx',
-    desc: 'webui/src/components/shared/TaskInput.tsx',
-    icon: FileCode,
-    iconClass: 'text-sky-400',
-  },
-  {
-    id: 'file-package',
-    kind: 'file',
-    group: 'files',
-    name: 'package.json',
-    desc: 'webui/package.json',
-    icon: FileJson,
-    iconClass: 'text-amber-400',
-  },
-  {
-    id: 'file-readme',
-    kind: 'file',
-    group: 'files',
-    name: 'README.md',
-    desc: 'README.md',
-    icon: FileText,
-    iconClass: 'text-slate-400',
-  },
-];
-
-export const MENTION_ITEMS: Record<MentionKind, MentionItem[]> = {
-  command: COMMAND_ITEMS,
-  agent: AGENT_ITEMS,
-  file: FILE_ITEMS,
-};
-
-/** 按关键字过滤（匹配名称或描述，大小写不敏感），保持原分组顺序 */
-export function filterMentionItems(kind: MentionKind, query: string): MentionItem[] {
-  const items = MENTION_ITEMS[kind];
+/** 按关键字过滤（匹配名称或描述，大小写不敏感），保持传入分组顺序 */
+export function filterMentionItems(items: MentionItem[], query: string): MentionItem[] {
   const q = query.trim().toLowerCase();
   if (!q) return items;
   return items.filter(
     (it) => it.name.toLowerCase().includes(q) || it.desc.toLowerCase().includes(q),
   );
+}
+
+/**
+ * 一次性注入模板渲染（command 与 skill 统一）：
+ * - 模板含 $ARGUMENTS → 替换为 args（args 为空则替换为空串）
+ * - 模板不含占位符且 args 非空 → 模板 + 空行 + args
+ */
+export function renderPromptTemplate(prompt: string, args: string): string {
+  if (prompt.includes('$ARGUMENTS')) {
+    return prompt.replace(/\$ARGUMENTS/g, args);
+  }
+  const trimmedArgs = args.trim();
+  return trimmedArgs ? `${prompt}\n\n${trimmedArgs}` : prompt;
+}
+
+// ============================================================================
+// 最近使用命令（localStorage 持久化，最多 5 条去重；选中时移到最前）
+// 存储结构：["cmd:<name>" | "skill:<name>"]；旧版纯 name 数据视为 skill:name 兼容。
+// ============================================================================
+
+const RECENT_COMMANDS_KEY = 'moss.recent-commands';
+const RECENT_COMMANDS_MAX = 5;
+
+/** 解析存储条目 → {source, name}；旧版纯 name 视为 skill */
+function parseRecentEntry(entry: string): { source: MentionCommandSource; name: string } {
+  if (entry.startsWith('cmd:')) return { source: 'command', name: entry.slice(4) };
+  if (entry.startsWith('skill:')) return { source: 'skill', name: entry.slice(6) };
+  return { source: 'skill', name: entry };
+}
+
+export function readRecentCommands(): Array<{ source: MentionCommandSource; name: string }> {
+  try {
+    const raw = localStorage.getItem(RECENT_COMMANDS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((n): n is string => typeof n === 'string' && n.length > 0)
+      .map(parseRecentEntry);
+  } catch {
+    return [];
+  }
+}
+
+/** 记录一次命令使用：置顶去重，超出上限截断 */
+export function touchRecentCommand(source: MentionCommandSource, name: string): void {
+  const key = source === 'command' ? `cmd:${name}` : `skill:${name}`;
+  try {
+    const prev = readRecentCommands().map(
+      (e) => (e.source === 'command' ? `cmd:${e.name}` : `skill:${e.name}`),
+    );
+    const next = [key, ...prev.filter((k) => k !== key)].slice(0, RECENT_COMMANDS_MAX);
+    localStorage.setItem(RECENT_COMMANDS_KEY, JSON.stringify(next));
+  } catch {
+    // localStorage 不可用（隐私模式等）：静默放弃持久化
+  }
 }

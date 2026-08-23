@@ -22,6 +22,8 @@ import type {
   AgentDetail,
   SkillItem,
   SkillDetail,
+  CommandItem,
+  CommandUpsertBody,
   SpecItem,
   SpecDetail,
   ToolItem,
@@ -32,6 +34,8 @@ import type {
   ContextFile,
   ResolveDirectoryResult,
   SuggestPath,
+  SearchedFile,
+  PickedFile,
   RunStats,
   LogFileInfo,
   LogQueryResult,
@@ -182,14 +186,12 @@ export const api = {
     const resp = await request<{
       sessionId: string;
       messages: unknown[];
-      activeSkill?: { name: string; mode: 'system' | 'message' };
       permissionMode?: 'ask' | 'auto' | 'skip';
       lastRunStats?: RunStats;
     }>('GET', `/api/session/${id}`);
     return {
       sessionId: resp.sessionId,
       messages: adaptAgentMessages(resp.messages),
-      ...(resp.activeSkill ? { activeSkill: resp.activeSkill } : {}),
       ...(resp.permissionMode ? { permissionMode: resp.permissionMode } : {}),
       ...(resp.lastRunStats ? { lastRunStats: resp.lastRunStats } : {}),
     };
@@ -413,6 +415,20 @@ export const api = {
   getSkill: (name: string) => request<{ skill: SkillDetail }>('GET', `/api/skills/${name}`),
   updateSkill: (name: string, patch: { enabled: boolean }) =>
     request<{ name: string; enabled: boolean }>('PATCH', `/api/skills/${encodeURIComponent(name)}`, patch),
+  /** 自定义斜杠命令列表（~/.moss/commands/<name>.md；含 prompt 供前端渲染注入） */
+  listCommands: () => request<{ commands: CommandItem[] }>('GET', '/api/commands'),
+  /** 创建自定义斜杠命令（写 <name>.md，热重载自动生效） */
+  createCommand: (data: CommandUpsertBody) =>
+    request<{ name: string }>('POST', '/api/commands', data),
+  /** 更新自定义斜杠命令内容（重写 <name>.md；禁止改名） */
+  updateCommand: (name: string, data: CommandUpsertBody) =>
+    request<{ name: string }>('PUT', `/api/commands/${encodeURIComponent(name)}`, data),
+  /** 删除自定义斜杠命令（删 <name>.md 文件） */
+  deleteCommand: (name: string) =>
+    request<{ name: string }>('DELETE', `/api/commands/${encodeURIComponent(name)}`),
+  /** 切换命令启停（写 config.commands[name].enabled，热生效） */
+  toggleCommand: (name: string, enabled: boolean) =>
+    request<{ name: string; enabled: boolean }>('PATCH', `/api/commands/${encodeURIComponent(name)}`, { enabled }),
   listSpecs: () => request<{ specs: SpecItem[] }>('GET', '/api/specs'),
   // detail 用 query 形式规避路径参数含斜杠问题
   getSpec: (id: string) =>
@@ -492,10 +508,19 @@ export const api = {
   // ==========================================================================
   pickDirectory: () =>
     request<{ path: string | null }>('POST', '/api/filesystem/pick-directory'),
+  /** 原生多文件选择对话框（附件"纯路径引用"数据源；后端自动授权父目录进 filesys roots） */
+  pickFiles: () =>
+    request<{ files: PickedFile[]; grantedRoots?: string[] }>('POST', '/api/filesystem/pick-file'),
   resolveDirectory: (folderName: string, hint?: string) =>
     request<ResolveDirectoryResult>('POST', '/api/filesystem/resolve-directory', {
       folderName,
       hint,
     }),
   suggestPaths: () => request<{ paths: SuggestPath[] }>('GET', '/api/filesystem/suggest-paths'),
+  /** # 文件提及菜单：指定目录递归模糊搜索文件名（上限 50 条） */
+  searchFiles: (dir: string, q: string) =>
+    request<{ files: SearchedFile[] }>(
+      'GET',
+      `/api/filesystem/search-files?dir=${encodeURIComponent(dir)}&q=${encodeURIComponent(q)}`,
+    ),
 };

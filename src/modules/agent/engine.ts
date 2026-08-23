@@ -226,11 +226,6 @@ export class AgentEngineImpl implements AgentEngine {
       input.permissionMode ?? session.permissionMode ?? safety?.getDefaultMode() ?? 'ask';
     this.sessions.setPermissionMode(session, permissionMode);
 
-    // skill 模式处理（/ 菜单触发：payload.skill 非空=激活/切换；null=退出）
-    if (input.skill !== undefined) {
-      this.applySkillMode(session, input.skill, onEvent, sessionId);
-    }
-
     // 工具集（含 MCP 工具）
     let mcpTools: Array<{ server: string; name: string; description?: string; inputSchema?: unknown }> = [];
     try {
@@ -1454,84 +1449,6 @@ export class AgentEngineImpl implements AgentEngine {
       resolveSkillPrompt: name => this.resolveSkillPrompt(name),
     });
     return view.messages;
-  }
-
-  /**
-   * skill 模式处理（/ 菜单触发，会话级持久）。
-   * 规则（用户确认的设计）：
-   *   - 首次激活：skill 内容（不含元数据）注入系统提示词后（activeSkill.mode='system'）
-   *   - 切换 skill：卸载旧注入（system 模式=不再拼接；message 模式=物理删除 skill-inject 消息），
-   *     新 skill 内容作为 skill-inject system 消息锚定在本次用户消息后（activeSkill.mode='message'）
-   *   - 退出（null）：卸载全部注入
-   * 注入/卸载结果通过 skill-mode AgentEvent 推送前端（greet 欢迎语 + icon；不写入 session.messages）。
-   */
-  private applySkillMode(
-    session: Session,
-    skillName: string | null,
-    onEvent: (event: AgentEvent) => void,
-    sessionId: string,
-  ): void {
-    const prev = session.activeSkill;
-
-    // 1. 卸载旧注入
-    if (prev?.mode === 'message') {
-      // 物理删除 skill-inject 消息（role=system 且 name=skill-inject）
-      session.messages = session.messages.filter(
-        m => !(m.role === 'system' && m.name === 'skill-inject'),
-      );
-    }
-    // system 模式的卸载 = activeSkill 置空后视图构建不再拼接
-    session.activeSkill = undefined;
-
-    // 2. 退出模式
-    if (skillName === null) {
-      onEvent({
-        type: 'skill-mode',
-        sessionId,
-        action: 'exit',
-        ...(prev ? { name: prev.name } : {}),
-      });
-      return;
-    }
-
-    // 3. 激活/切换
-    const registry = this.services.tryResolve<SkillRegistry>(ServiceNames.SKILL_REGISTRY);
-    const skill = registry?.get(skillName);
-    if (!registry || !skill || !registry.isEnabled(skillName)) {
-      onEvent({
-        type: 'skill-mode',
-        sessionId,
-        action: 'error',
-        name: skillName,
-        message: `skill "${skillName}" not found or disabled`,
-      });
-      return;
-    }
-
-    if (!prev) {
-      // 首次激活：注入系统提示词后（全文运行时从注册表解析，不持久化）
-      session.activeSkill = { name: skill.name, mode: 'system' };
-    } else {
-      // 切换：锚定到本次用户消息后（addUserMessage 已执行，append 即紧跟其后）。
-      // 消息只持久化单行占位标题 + metadata.skillName，发送视图由 run 循环替换为注册表全文。
-      session.activeSkill = { name: skill.name, mode: 'message' };
-      session.messages.push({
-        role: 'system',
-        content: `# Active Skill: ${skill.name}`,
-        name: 'skill-inject',
-        metadata: { skillName: skill.name },
-        timestamp: new Date().toISOString(),
-      });
-    }
-
-    onEvent({
-      type: 'skill-mode',
-      sessionId,
-      action: prev ? 'switch' : 'enter',
-      name: skill.name,
-      ...(skill.greet ? { greet: skill.greet } : {}),
-      ...(skill.icon ? { icon: skill.icon } : {}),
-    });
   }
 
   /**

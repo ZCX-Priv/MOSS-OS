@@ -164,6 +164,138 @@ export function createSuggestPathsHandler(env: Environment): RouteHandler {
 }
 
 // ============================================================================
+// GET /api/filesystem/search-files?dir=<绝对路径>&q=<关键字>
+// # 文件提及菜单数据源：
+// - q 为空 → 仅列 dir 第一层文件（readdir 单层，毫秒级；菜单打开即出）
+// - q 非空 → 递归 BFS 模糊搜索文件名（大小写不敏感；SKIP_NAMES 跳过巨型/系统目录，
+//   深度/节点数/时间三重上限防爆炸），上限 50 条
+// - 模块级 TTL 缓存（30s / 100 条）：重复输入/重开菜单秒回
+// ============================================================================
+
+const SF_MAX_DEPTH = 6;
+const SF_MAX_VISIT = 3000;
+const SF_TIMEOUT_MS = 1500;
+const SF_MAX_RESULTS = 50;
+const SF_CACHE_TTL_MS = 30 * 1000;
+const SF_CACHE_MAX = 100;
+
+interface SearchedFile {
+  path: string;
+  name: string;
+  dir: string;
+  ext: string;
+}
+
+/** 结果缓存：key = `${dir}|${q}`（Map 保持插入序，超容量逐出最旧） */
+const sfCache = new Map<string, { files: SearchedFile[]; at: number }>();
+
+function sfCacheGet(key: string): SearchedFile[] | null {
+  const hit = sfCache.get(key);
+  if (!hit) return null;
+  if (Date.now() - hit.at > SF_CACHE_TTL_MS) {
+    sfCache.delete(key);
+    return null;
+  }
+  return hit.files;
+}
+
+function sfCacheSet(key: string, files: SearchedFile[]): void {
+  if (sfCache.size >= SF_CACHE_MAX) {
+    // 逐出最旧（Map 首个 key）
+    const oldest = sfCache.keys().next().value;
+    if (oldest !== undefined) sfCache.delete(oldest);
+  }
+  sfCache.set(key, { files, at: Date.now() });
+}
+
+/** q 为空：浅层列 dir 第一层文件（按名称排序取前 50） */
+function searchShallow(dir: string): SearchedFile[] {
+  let entries: Dirent[];
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const files: SearchedFile[] = entries
+    .filter((e) => e.isFile() && !SKIP_NAMES.has(e.name.toLowerCase()))
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+    .slice(0, SF_MAX_RESULTS)
+    .map((e) => ({
+      path: join(dir, e.name),
+      name: e.name,
+      dir,
+      ext: extname(e.name).slice(1).toLowerCase(),
+    }));
+  return files;
+}
+
+/** q 非空：递归 BFS 模糊搜索 */
+function searchRecursive(dir: string, q: string, isWin: boolean): SearchedFile[] {
+  const files: SearchedFile[] = [];
+  const queue: Array<{ dir: string; depth: number }> = [{ dir, depth: 0 }];
+  const seen = new Set<string>([isWin ? dir.toLowerCase() : dir]);
+  const start = Date.now();
+  const timedOut = () => Date.now() - start > SF_TIMEOUT_MS;
+  let visited = 0;
+
+  while (queue.length > 0 && files.length < SF_MAX_RESULTS && visited < SF_MAX_VISIT && !timedOut()) {
+    const { dir: cur, depth } = queue.shift()!;
+    visited++;
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(cur, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const ent of entries) {
+      if (files.length >= SF_MAX_RESULTS || timedOut()) break;
+      const full = join(cur, ent.name);
+      if (ent.isFile()) {
+        if (ent.name.toLowerCase().includes(q)) {
+          files.push({
+            path: full,
+            name: ent.name,
+            dir: cur,
+            ext: extname(ent.name).slice(1).toLowerCase(),
+          });
+        }
+      } else if (ent.isDirectory()) {
+        const lower = ent.name.toLowerCase();
+        if (SKIP_NAMES.has(lower)) continue;
+        const key = isWin ? full.toLowerCase() : full;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        if (depth + 1 < SF_MAX_DEPTH) {
+          queue.push({ dir: full, depth: depth + 1 });
+        }
+      }
+    }
+  }
+  return files;
+}
+
+export function createSearchFilesHandler(_env: Environment): RouteHandler {
+  return async (req: HttpRequest): Promise<HttpResponse> => {
+    const dir = (req.query.dir ?? '').trim();
+    const q = (req.query.q ?? '').trim().toLowerCase();
+    if (!dir || !isDirectorySafe(dir)) {
+      return { status: 200, body: { files: [] } };
+    }
+
+    // 缓存命中直接返回（提及菜单场景容忍秒级陈旧）
+    const key = `${dir}|${q}`;
+    const cached = sfCacheGet(key);
+    if (cached) {
+      return { status: 200, body: { files: cached } };
+    }
+
+    const files = q ? searchRecursive(dir, q, _env.isWindows) : searchShallow(dir);
+    sfCacheSet(key, files);
+    return { status: 200, body: { files } };
+  };
+}
+
+// ============================================================================
 // POST /api/filesystem/pick-directory
 // 通过 nativefiledialog-for-bun 调用系统原生文件夹选择对话框，返回用户真实选择的绝对路径。
 // 库优先用 FFI（Bun.dlopen 加载 nfd.dll/libnfd.dylib/libnfd.so）调用现代原生对话框
@@ -192,6 +324,89 @@ export function createPickDirectoryHandler(env: Environment): RouteHandler {
     const path = await pickDirectoryNative(env);
     return { status: 200, body: { path } };
   };
+}
+
+// ============================================================================
+// POST /api/filesystem/pick-file
+// 系统原生多文件选择对话框（nfd.openFiles），返回真实绝对路径 + stat 元数据。
+// 附件"纯路径引用"方案的数据源：文件留在原位，消息仅引用路径，agent 用 filesys 工具读取。
+// 自动授权：把每个选中文件的父目录合并进 config.filesys.roots（去重），保证 agent 可读。
+// ============================================================================
+
+interface PickedFile {
+  path: string;
+  name: string;
+  size: number;
+}
+
+export function createPickFileHandler(
+  env: Environment,
+  config: ConfigService,
+): RouteHandler {
+  return async (): Promise<HttpResponse> => {
+    let picked: string[] | null;
+    try {
+      // openFiles：用户取消返回 null，成功返回绝对路径数组，错误抛 NativeDialogError
+      picked = await nfd.openFiles();
+    } catch {
+      return { status: 200, body: { files: [], error: ErrorCode.FS_PICK_FILE_FAILED } };
+    }
+    if (!picked || picked.length === 0) {
+      return { status: 200, body: { files: [] } };
+    }
+
+    // stat 元数据 + 父目录收集
+    const files: PickedFile[] = [];
+    const parents = new Set<string>();
+    for (const p of picked) {
+      try {
+        const st = statSync(p);
+        if (!st.isFile()) continue;
+        files.push({ path: p, name: basenameOf(p), size: st.size });
+        parents.add(dirnameOf(p));
+      } catch {
+        // 文件消失/不可访问：跳过
+      }
+    }
+
+    // 自动授权：父目录合并进 filesys roots（去重；已存在的跳过）
+    const grantedRoots: string[] = [];
+    if (parents.size > 0) {
+      try {
+        const cfg = config.getAppConfig();
+        const existing: string[] = Array.isArray(cfg.filesys?.roots) ? cfg.filesys.roots : [];
+        const known = new Set(existing.map((r) => (env.isWindows ? r.toLowerCase() : r)));
+        const merged = [...existing];
+        for (const parent of parents) {
+          if (!isDirectorySafe(parent)) continue;
+          const key = env.isWindows ? parent.toLowerCase() : parent;
+          if (known.has(key)) continue;
+          known.add(key);
+          merged.push(normalize(parent));
+          grantedRoots.push(parent);
+        }
+        if (grantedRoots.length > 0) {
+          await config.updateAppConfig({ filesys: { roots: merged } } as never);
+        }
+      } catch {
+        // 授权失败不阻断选择结果（agent 读取时由权限体系兜底提示）
+      }
+    }
+
+    return { status: 200, body: { files, grantedRoots } };
+  };
+}
+
+/** 路径 → 文件名（跨平台分隔符） */
+function basenameOf(p: string): string {
+  const parts = p.split(/[\\/]/).filter(Boolean);
+  return parts[parts.length - 1] ?? p;
+}
+
+/** 路径 → 父目录（跨平台分隔符；无分隔符返回原路径） */
+function dirnameOf(p: string): string {
+  const idx = Math.max(p.lastIndexOf('\\'), p.lastIndexOf('/'));
+  return idx > 0 ? p.slice(0, idx) : p;
 }
 
 // ============================================================================

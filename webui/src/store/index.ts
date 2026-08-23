@@ -25,7 +25,7 @@ import type {
   SkillItem,
   SpecItem,
   ToolItem,
-  ActiveSkillState,
+  CommandItem,
   SidebarTab,
   SidebarTabType,
   PermissionMode,
@@ -102,9 +102,11 @@ interface UIState {
   /** 表单打开序号（每次 open 递增；作为 Dialog key 强制重挂载，保证表单状态独立不继承上次输入） */
   automationFormSeq: number;
 
-  // --- Skills / Specs ---
+  // --- Skills / Specs / Commands ---
   skills: SkillItem[];
   specs: SpecItem[];
+  /** 自定义斜杠命令（~/.moss/commands/<name>.md；/ 菜单与设置页数据源） */
+  commands: CommandItem[];
 
   // --- 工具（完整列表，含 enabled/source，供工具管理 UI） ---
   tools: ToolItem[];
@@ -116,9 +118,6 @@ interface UIState {
   // --- MCP ---
   mcpServers: McpServer[];
   mcpTools: McpTool[];
-
-  // --- Skill 模式（会话级；skill-mode 事件维护） ---
-  activeSkillBySession: Record<string, ActiveSkillState | undefined>;
 
   // --- 运行统计（会话级；stats-updated 事件维护，run 级口径每次发送重置） ---
   runStatsBySession: Record<string, RunStats | undefined>;
@@ -253,9 +252,10 @@ interface UIActions {
   openAutomationForm: (editingId?: string) => void;
   closeAutomationForm: () => void;
 
-  // Skills / Specs
+  // Skills / Specs / Commands
   setSkills: (s: SkillItem[]) => void;
   setSpecs: (s: SpecItem[]) => void;
+  setCommands: (c: CommandItem[]) => void;
 
   // 工具
   setTools: (t: ToolItem[]) => void;
@@ -268,9 +268,6 @@ interface UIActions {
   // MCP
   setMcpServers: (s: McpServer[]) => void;
   setMcpTools: (t: McpTool[]) => void;
-
-  // Skill 模式（skill-mode 事件：enter/switch 设置，exit/error 清除）
-  setActiveSkill: (sessionId: string, skill: ActiveSkillState | undefined) => void;
 
   // 运行统计（stats-updated 事件；sendMessage 时清空旧 run 数据）
   setRunStats: (sessionId: string, stats: RunStats | undefined) => void;
@@ -414,9 +411,10 @@ export const useStore = create<Store>((set) => ({
   automationFormEditingId: null,
   automationFormSeq: 0,
 
-  // --- Skills / Specs ---
+  // --- Skills / Specs / Commands ---
   skills: [],
   specs: [],
+  commands: [],
 
   // --- 工具 ---
   tools: [],
@@ -428,7 +426,6 @@ export const useStore = create<Store>((set) => ({
   // --- MCP ---
   mcpServers: [],
   mcpTools: [],
-  activeSkillBySession: {},
   runStatsBySession: {},
   hubActiveModuleBySession: {},
 
@@ -473,7 +470,6 @@ export const useStore = create<Store>((set) => ({
       const { [id]: _omitTodos, ...restTodos } = state.todosBySession;
       const { [id]: _omitCtx, ...restCtx } = state.contextBySession;
       const { [id]: _omitReadSeq, ...restReadSeq } = state.contextFileReadSeqBySession;
-      const { [id]: _omitSkill, ...restSkill } = state.activeSkillBySession;
       const { [id]: _omitPerm, ...restPermModes } = state.permissionModeBySession;
       const { [id]: _omitBackup, ...restBackups } = state.truncateBackups;
       const { [id]: _omitStats, ...restStats } = state.runStatsBySession;
@@ -486,7 +482,6 @@ export const useStore = create<Store>((set) => ({
         todosBySession: restTodos,
         contextBySession: restCtx,
         contextFileReadSeqBySession: restReadSeq,
-        activeSkillBySession: restSkill,
         permissionModeBySession: restPermModes,
         truncateBackups: restBackups,
         runStatsBySession: restStats,
@@ -700,9 +695,10 @@ export const useStore = create<Store>((set) => ({
     })),
   closeAutomationForm: () => set({ automationFormOpen: false, automationFormEditingId: null }),
 
-  // --- Actions: Skills / Specs ---
+  // --- Actions: Skills / Specs / Commands ---
   setSkills: (skills) => set({ skills }),
   setSpecs: (specs) => set({ specs }),
+  setCommands: (commands) => set({ commands }),
 
   // --- Actions: 工具 ---
   setTools: (tools) => set({ tools }),
@@ -718,12 +714,6 @@ export const useStore = create<Store>((set) => ({
   // --- Actions: MCP ---
   setMcpServers: (mcpServers) => set({ mcpServers }),
   setMcpTools: (mcpTools) => set({ mcpTools }),
-
-  // --- Actions: Skill 模式 ---
-  setActiveSkill: (sessionId, skill) =>
-    set((state) => ({
-      activeSkillBySession: { ...state.activeSkillBySession, [sessionId]: skill },
-    })),
 
   // --- Actions: 运行统计 ---
   setRunStats: (sessionId, stats) =>

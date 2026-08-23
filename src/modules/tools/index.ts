@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { existsSync, statSync, watch, type FSWatcher } from 'node:fs';
 import { ToolRegistryImpl } from './registry';
 import { createSkillRegistry } from './use_skill/registry';
+import { createCommandRegistry } from './use_command/registry';
 import { createSpecRegistry } from './get_spec/registry';
 import { BUILTIN_TOOL_NAMES } from './manifest';
 import { loadToolsFromDir, loadToolFromDir, resolveBuiltinDir } from './loader';
@@ -28,6 +29,7 @@ class ToolsModule implements Module {
     this.ctx = ctx;
     this.registry = new ToolRegistryImpl(ctx.logger, ctx.config);
     const skillRegistry = createSkillRegistry(ctx.env, ctx.logger, ctx.eventBus, ctx.config);
+    const commandRegistry = createCommandRegistry(ctx.env, ctx.logger, ctx.eventBus, ctx.config);
     const specRegistry = createSpecRegistry(ctx.env, ctx.logger, ctx.eventBus);
 
     // 1. 加载并注册内置工具（从 tools 目录，按 config 过滤）
@@ -41,6 +43,9 @@ class ToolsModule implements Module {
       scope: 'tools',
     });
     ctx.services.register(ServiceNames.SKILL_REGISTRY, skillRegistry, {
+      scope: 'tools',
+    });
+    ctx.services.register(ServiceNames.COMMAND_REGISTRY, commandRegistry, {
       scope: 'tools',
     });
     ctx.services.register(ServiceNames.SPEC_REGISTRY, specRegistry, {

@@ -24,6 +24,7 @@ import {
   CircleAlert,
   Package,
   Zap,
+  Paperclip,
 } from 'lucide-react';
 import {
   Dialog,
@@ -92,6 +93,22 @@ const EMPTY_TODOS: TodoItem[] = [];
 // 单条消息正文渲染上限：超长内容（如 base64/大文件摘录）截断渲染，防止一次性布局卡死滚动
 const MAX_RENDER_CHARS = 6000;
 
+// 用户消息尾部附件块（TaskInput 发送时生成）：空行 + 标签行（以：/: 结尾）+ 连续"- 绝对路径"行。
+// 标签行文本随 i18n 变化故按结构匹配；路径特征校验（Windows 盘符 / Unix 根）避免误伤普通列表。
+const ATTACHMENT_BLOCK_RE =
+  /\n\n[^\n]+[:：]\n((?:- (?:[A-Za-z]:[\\/][^\n]+|\/[^\n]+)\n?)+)$/;
+
+function parseAttachmentBlock(content: string): { body: string; paths: string[] } | null {
+  const m = ATTACHMENT_BLOCK_RE.exec(content);
+  if (!m) return null;
+  const paths = m[1]
+    .split('\n')
+    .map((l) => l.replace(/^- /, '').trim())
+    .filter(Boolean);
+  if (paths.length === 0) return null;
+  return { body: content.slice(0, m.index), paths };
+}
+
 // 根据当前小时返回问候语 i18n key
 function getGreetingKey(): string {
   const h = new Date().getHours();
@@ -144,8 +161,6 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
   const todos = useStore((s) => s.todosBySession[taskId] ?? EMPTY_TODOS);
   const pendingAsks = useStore((s) => s.pendingAsks);
   const pendingConfirms = useStore((s) => s.pendingConfirms);
-  // 当前会话激活的 skill 模式（Badge 展示 + 一键退出）
-  const activeSkill = useStore((s) => s.activeSkillBySession[taskId]);
   // 当前会话 run 统计（中控岛下方指标栏）与中控岛展开模块
   const runStats = useStore((s) => s.runStatsBySession[taskId]);
   const hubActiveModule = useStore((s) => s.hubActiveModuleBySession[taskId]);
@@ -343,10 +358,6 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
             useStore.getState().setMessages(taskId, resp.messages);
           }
         }
-        // 刷新后恢复 skill 模式 Badge（greet 不重复注入）
-        if (resp.activeSkill) {
-          useStore.getState().setActiveSkill(taskId, { name: resp.activeSkill.name });
-        }
         // 刷新后恢复会话级权限模式（PermissionModeSelector 徽章回显）
         if (resp.permissionMode) {
           useStore.getState().setPermissionMode(resp.permissionMode, taskId);
@@ -466,9 +477,8 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
     contextTabUserTouchedRef.current = false;
     setContextTab('system');
   }, [taskId]);
-  // 受控值防御：contextTab 指向的条件 tab（skill/summary）消失时回退"系统"
+  // 受控值防御：contextTab 指向的条件 tab（summary）消失时回退"系统"
   const contextTabValue =
-    (contextTab === 'skill' && !activeSkill) ||
     (contextTab === 'summary' && !contextStats?.breakdown?.summary)
       ? 'system'
       : contextTab;
@@ -742,9 +752,6 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
                 <TabsList>
                   <TabsTrigger value="system">{t('context.tabSystem')}</TabsTrigger>
                   <TabsTrigger value="files">{t('task.files')}</TabsTrigger>
-                  {activeSkill && (
-                    <TabsTrigger value="skill">{t('context.tabSkill')}</TabsTrigger>
-                  )}
                   {contextStats?.breakdown?.summary ? (
                     <TabsTrigger value="summary">{t('context.tabSummary')}</TabsTrigger>
                   ) : null}
@@ -810,21 +817,6 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
                     </div>
                   </ScrollArea>
                 </TabsContent>
-
-                {/* 技能标签页：当前活跃 skill 说明 */}
-                {activeSkill && (
-                  <TabsContent value="skill" className="flex-1 min-h-0 overflow-hidden">
-                    <ScrollArea className="h-full">
-                      <div className="flex flex-col gap-1 px-1 py-2 text-xs text-muted-foreground">
-                        <div className="flex items-center gap-1.5">
-                          <Sparkles className="size-3.5 text-primary" />
-                          <span className="font-medium text-foreground">{activeSkill.name}</span>
-                        </div>
-                        <span>{t('context.skillActiveDesc')}</span>
-                      </div>
-                    </ScrollArea>
-                  </TabsContent>
-                )}
 
                 {/* 摘要标签页：活跃压缩摘要全文 */}
                 {contextStats?.breakdown?.summary ? (
@@ -1197,25 +1189,6 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
 
         {/* Task Input */}
         <div className="shrink-0 p-3 pt-1.5">
-          {/* 当前 skill 模式 Badge（点击 ✕ 发送 /skill:exit 退出） */}
-          {activeSkill && (
-            <div className="mb-2 flex items-center gap-1.5">
-              <span className="inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700 dark:border-blue-500/40 dark:bg-blue-500/10 dark:text-blue-300">
-                <Sparkles className="size-3" />
-                {t('task.skillModeActive', { name: activeSkill.name })}
-              </span>
-              <button
-                type="button"
-                title={t('task.skillModeExit')}
-                aria-label={t('task.skillModeExit')}
-                disabled={isGenerating}
-                onClick={() => void handleSend('/skill:exit')}
-                className="flex size-5 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
-              >
-                <X className="size-3" />
-              </button>
-            </div>
-          )}
           <TaskInput
             variant="task"
             isGenerating={isGenerating}
@@ -1488,8 +1461,18 @@ const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap,
       ? '…' + message.content.slice(-MAX_RENDER_CHARS)
       : message.content.slice(0, MAX_RENDER_CHARS) + '…'
     : message.content;
+  // 用户消息尾部附件块解析（TaskInput 发送时生成：空行 + 标签行 + "- 绝对路径"行）。
+  // 标签行文本随 i18n 变化，故按结构匹配；路径特征校验（盘符 / Unix 根）避免误伤普通列表。
+  const userAttachments = message.role === 'user' ? parseAttachmentBlock(message.content) : null;
+  const userBody = userAttachments ? userAttachments.body : message.content;
+  const userBodyOverLimit = userBody.length > MAX_RENDER_CHARS;
+  const userBodyDisplay = userBodyOverLimit && !expanded
+    ? message.streaming
+      ? '…' + userBody.slice(-MAX_RENDER_CHARS)
+      : userBody.slice(0, MAX_RENDER_CHARS) + '…'
+    : userBody;
 
-  // skill-mode greet：居中系统提示气泡
+  // 系统提示消息：居中气泡（防御性保留；skill 持久模式已废弃，正常流程不再产生）
   if (message.role === 'system') {
     return (
       <div className="flex justify-center">
@@ -1520,7 +1503,21 @@ const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap,
     return (
       <div className="group flex flex-col items-end gap-1">
         <div className="max-w-[80%] rounded-2xl border border-border bg-indigo-100 px-3 py-2 text-sm text-foreground shadow-sm break-words whitespace-pre-wrap dark:bg-blue-600 dark:text-white dark:shadow-[0_2px_14px_rgba(37,99,235,0.35)]">
-        {displayContent}
+        {userBodyDisplay}
+        {userAttachments && userAttachments.paths.length > 0 && (
+          <div className="mt-2 flex flex-col gap-1">
+            {userAttachments.paths.map((p) => (
+              <div
+                key={p}
+                className="flex items-center gap-1.5 rounded-md border border-foreground/10 bg-foreground/5 px-2 py-1"
+                title={p}
+              >
+                <Paperclip className="size-3 shrink-0 opacity-70" />
+                <span className="truncate font-mono text-xs">{p}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
       {overLimit && (
         <button

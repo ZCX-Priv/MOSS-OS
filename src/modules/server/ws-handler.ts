@@ -136,8 +136,6 @@ export class WsHandler {
       cwd?: string;
       runId?: string;
       agentId?: string;
-      /** skill 模式（/ 菜单触发）：非空=激活/切换；null=退出；缺省=不涉及 */
-      skill?: string | null;
       /** 权限模式（前端 PermissionModeSelector 会话级传递）：ask/auto/skip；缺省=会话记忆/全局默认 */
       permissionMode?: 'ask' | 'auto' | 'skip';
     };
@@ -169,8 +167,6 @@ export class WsHandler {
         onEvent,
         signal: abortController.signal,
         runId,
-        // skill 模式透传：undefined=不涉及；string=激活/切换；null=退出
-        skill: payload.skill,
         // 权限模式透传（会话级；缺省时 engine 回退会话记忆/全局默认）
         permissionMode: payload.permissionMode,
       });
