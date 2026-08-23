@@ -1003,7 +1003,7 @@ function IconPicker({ value, onChange }: { value: string; onChange: (icon: strin
               autoFocus
             />
           </div>
-          <div className="grid max-h-52 grid-cols-8 gap-1 overflow-y-auto">
+          <div className="grid max-h-52 grid-cols-[repeat(auto-fill,minmax(2.25rem,1fr))] gap-1 overflow-y-auto p-0.5">
             {/* 默认项 */}
             <button
               type="button"

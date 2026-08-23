@@ -2,14 +2,14 @@
 // 可复用 lucide 图标选择器：全量图标（1700+）+ 搜索 + 分页网格。
 // value/onChange 均为 kebab-case 图标名（如 'calendar-clock'）。
 // 供自动化任务表单及未来任意需要选图标的场景复用。
+// 注意：弹出层为内联展开面板（非 Popover Portal）——modal Dialog 内
+// react-remove-scroll 会拦截 Portal 外的 wheel 事件导致无法滚动。
 
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronsUpDown, X } from 'lucide-react';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { ALL_ICON_NAMES, getLucideIcon } from '../../lib/icons';
 
 /** 无搜索时每页渲染数量 */
@@ -60,51 +60,47 @@ export function IconPicker({ value, onChange, disabled }: IconPickerProps) {
   };
 
   return (
-    <Popover
-      open={open}
-      onOpenChange={(o) => {
-        setOpen(o);
-        if (!o) resetPanelState();
-      }}
-    >
-      <PopoverTrigger asChild>
-        <Button
-          variant="outline"
-          className="w-full justify-start gap-2 font-normal"
-          disabled={disabled}
-        >
-          {CurrentIcon ? (
-            <CurrentIcon className="size-4 shrink-0" />
-          ) : (
-            <ChevronsUpDown className="size-4 shrink-0 opacity-50" />
-          )}
-          <span className="truncate">{value || t('iconPicker.placeholder')}</span>
-          {value && (
-            <span
-              role="button"
-              tabIndex={0}
-              className="ml-auto flex size-5 shrink-0 items-center justify-center rounded-md opacity-60 transition-opacity hover:opacity-100"
-              onClick={handleClear}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') handleClear(e as unknown as React.MouseEvent);
-              }}
-              title={t('iconPicker.clear')}
-            >
-              <X className="size-3.5" />
-            </span>
-          )}
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent className="w-80 p-0" align="start">
-        <div className="border-b p-2">
+    <div className="flex flex-col gap-2">
+      {/* 触发按钮：点击展开/收起内联面板 */}
+      <Button
+        type="button"
+        variant="outline"
+        className="w-full justify-start gap-2 font-normal"
+        disabled={disabled}
+        onClick={() => setOpen((p) => !p)}
+      >
+        {CurrentIcon ? (
+          <CurrentIcon className="size-4 shrink-0" />
+        ) : (
+          <ChevronsUpDown className="size-4 shrink-0 opacity-50" />
+        )}
+        <span className="truncate">{value || t('iconPicker.placeholder')}</span>
+        {value && (
+          <span
+            role="button"
+            tabIndex={0}
+            className="ml-auto flex size-5 shrink-0 items-center justify-center rounded-md opacity-60 transition-opacity hover:opacity-100"
+            onClick={handleClear}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') handleClear(e as unknown as React.MouseEvent);
+            }}
+            title={t('iconPicker.clear')}
+          >
+            <X className="size-3.5" />
+          </span>
+        )}
+      </Button>
+
+      {/* 展开面板：搜索 + 滚动网格（内联渲染，处于 Dialog 子树内可正常滚动） */}
+      {open && (
+        <div className="flex flex-col gap-2 rounded-lg border border-border p-2">
           <Input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={t('iconPicker.searchPlaceholder')}
+            autoFocus
           />
-        </div>
-        <ScrollArea className="h-64">
-          <div className="grid grid-cols-8 gap-1 p-2">
+          <div className="grid max-h-64 grid-cols-[repeat(auto-fill,minmax(2.25rem,1fr))] gap-1 overflow-y-auto p-0.5">
             {shown.map((name) => {
               const Icon = getLucideIcon(name);
               if (!Icon) return null;
@@ -123,14 +119,15 @@ export function IconPicker({ value, onChange, disabled }: IconPickerProps) {
                 </button>
               );
             })}
+            {shown.length === 0 && (
+              <div className="col-span-full py-8 text-center text-sm text-muted-foreground">
+                {t('iconPicker.noResults')}
+              </div>
+            )}
           </div>
-          {shown.length === 0 && (
-            <div className="py-8 text-center text-sm text-muted-foreground">
-              {t('iconPicker.noResults')}
-            </div>
-          )}
+          {/* 加载更多 / 截断提示：网格下方固定区，始终可见 */}
           {!query && visibleCount < filtered.length && (
-            <div className="p-2">
+            <div className="shrink-0 p-1">
               <Button
                 variant="outline"
                 size="sm"
@@ -142,12 +139,12 @@ export function IconPicker({ value, onChange, disabled }: IconPickerProps) {
             </div>
           )}
           {query && filtered.length > SEARCH_LIMIT && (
-            <div className="p-2 text-center text-xs text-muted-foreground">
+            <div className="shrink-0 p-1 text-center text-xs text-muted-foreground">
               {t('iconPicker.resultTruncated', { shown: SEARCH_LIMIT, total: filtered.length })}
             </div>
           )}
-        </ScrollArea>
-      </PopoverContent>
-    </Popover>
+        </div>
+      )}
+    </div>
   );
 }

@@ -573,7 +573,7 @@ export const en = {
   automation: {
     title: 'Automation',
     subtitle: 'Configure automated tasks to let MOSS run workflows on schedule; credits are consumed based on actual usage during task execution',
-    manualCreate: 'Manual Create',
+    manualCreate: 'Create',
     createInTask: 'Create in Task',
     configured: 'Configured',
     history: 'History',
@@ -655,7 +655,7 @@ export const en = {
   },
   iconPicker: {
     placeholder: 'Pick an icon',
-    searchPlaceholder: 'Search icons… (English name)',
+    searchPlaceholder: 'Search icons',
     clear: 'Clear selection',
     loadMore: 'Load more',
     noResults: 'No matching icons',

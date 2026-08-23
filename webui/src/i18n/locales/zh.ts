@@ -255,7 +255,7 @@ export const zh = {
       testFail: '连通失败：{{error}}',
       icon: '图标',
       defaultIcon: '默认',
-      iconSearch: '搜索图标',
+      iconSearch: '搜索图标（英文名）',
       addMenu: '添加',
       services: '服务',
       addService: '添加服务',
@@ -573,7 +573,7 @@ export const zh = {
   automation: {
     title: '自动化',
     subtitle: '配置自动化任务，让 MOSS 按计划执行工作流，任务运行时将按实际用量消耗积分',
-    manualCreate: '手动新建',
+    manualCreate: '新建',
     createInTask: '在任务中创建',
     configured: '已配置',
     history: '执行历史',
@@ -655,7 +655,7 @@ export const zh = {
   },
   iconPicker: {
     placeholder: '选择图标',
-    searchPlaceholder: '搜索图标…（英文名）',
+    searchPlaceholder: '搜索图标（英文名）',
     clear: '取消选择',
     loadMore: '加载更多',
     noResults: '无匹配图标',
