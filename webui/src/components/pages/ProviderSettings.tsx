@@ -18,6 +18,8 @@ import {
   Loader2,
   ChevronRight,
   ChevronLeft,
+  Brain,
+  ServerCrash,
   CircleDollarSign,
   RefreshCw,
   Pencil,
@@ -373,12 +375,11 @@ export function ProviderSettings() {
         </DndContext>
       )}
 
-      {/* 服务商新建/编辑弹窗（新建成功后自动拉取模型列表） */}
+      {/* 服务商新建/编辑弹窗 */}
       <AddProviderDialog
         open={providerDialogOpen}
         onOpenChange={setProviderDialogOpen}
         editingProvider={editingProvider}
-        onCreated={setPickProvider}
       />
 
       {/* 远程模型勾选弹窗（实时搜索；勾选提交 → 分页添加弹窗） */}
@@ -599,11 +600,11 @@ function SortableProviderCard({
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="w-auto min-w-40">
               <DropdownMenuItem className="gap-1.5" onSelect={onAddModel}>
-                <Plus className="size-3.5" />
+                <Brain className="size-3.5" />
                 {t('settings.provider.addModel')}
               </DropdownMenuItem>
               <DropdownMenuItem className="gap-1.5" onSelect={onAddService}>
-                <Server className="size-3.5" />
+                <ServerCrash className="size-3.5" />
                 {t('settings.provider.addService')}
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -767,24 +768,21 @@ function SortableProviderCard({
   );
 }
 
-/* ===== 服务商弹窗（新建/编辑共用；图标选择 + 新建成功后自动拉取模型列表） ===== */
+/* ===== 服务商弹窗（新建/编辑共用；图标选择） ===== */
 interface AddProviderDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   editingProvider: ProviderItem | null;
-  /** 新建成功后回调（用于打开模型勾选弹窗） */
-  onCreated: (provider: ProviderItem) => void;
 }
 
 function AddProviderDialog({
   open,
   onOpenChange,
   editingProvider,
-  onCreated,
 }: AddProviderDialogProps) {
   const { t } = useTranslation();
   const isEdit = !!editingProvider;
-  const { createProvider, updateProvider, fetchProviderModels } = useProviders();
+  const { createProvider, updateProvider } = useProviders();
 
   const [name, setName] = useState('');
   const [format, setFormat] = useState<ProviderItem['format']>('openai-chat');
@@ -837,15 +835,9 @@ function AddProviderDialog({
         await updateProvider(editingProvider.id, payload);
         toast.success(t('settings.provider.updateSuccess'));
       } else {
-        const provider = await createProvider(payload);
+        await createProvider(payload);
         toast.success(t('settings.provider.createSuccess'));
-        // 新建成功 → 自动拉取远程模型列表
-        const result = await fetchProviderModels(provider.id);
-        if (result.success && result.models.length > 0) {
-          onCreated(provider);
-        } else if (!result.success) {
-          toast.error(t('settings.provider.fetchFail', { error: result.error ?? '' }));
-        }
+        // 不再自动拉取模型列表（用户手动点"获取模型列表"）
       }
       onOpenChange(false);
     } catch {

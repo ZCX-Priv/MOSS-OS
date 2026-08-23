@@ -89,6 +89,7 @@ export function useProviders() {
       apiKey: string;
       balanceUrl?: string;
       modelsUrl?: string;
+      icon?: string;
     }) => {
       try {
         const provider = await api.createProvider(data);

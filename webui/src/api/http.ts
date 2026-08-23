@@ -332,6 +332,7 @@ export const api = {
     apiKey: string;
     balanceUrl?: string;
     modelsUrl?: string;
+    icon?: string;
   }) => request<ProviderItem>('POST', '/api/providers', data),
   updateProvider: (id: string, patch: Partial<Omit<ProviderItem, 'id' | 'models'>>) =>
     request<ProviderItem>('PATCH', `/api/providers/${id}`, patch),

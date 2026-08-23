@@ -16,12 +16,6 @@ import {
   HistoryTab,
 } from './components/pages/AutomationPage';
 import {
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuItem,
-} from '@/components/ui/dropdown-menu';
-import {
   SettingsPage,
   GeneralSettings,
   AgentSettings,
@@ -125,27 +119,15 @@ export default function App() {
                     >
                       <Search />
                     </Button>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          title={t('settings.provider.addMenu')}
-                          aria-label={t('settings.provider.addMenu')}
-                        >
-                          <Plus />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="w-auto min-w-36">
-                        <DropdownMenuItem
-                          className="gap-1.5"
-                          onSelect={() => useStore.getState().requestProviderDialog()}
-                        >
-                          <Plus className="size-3.5" />
-                          {t('settings.provider.addProvider')}
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      title={t('settings.provider.addProvider')}
+                      aria-label={t('settings.provider.addProvider')}
+                      onClick={() => useStore.getState().requestProviderDialog()}
+                    >
+                      <Plus />
+                    </Button>
                   </>
                 )}
               </div>

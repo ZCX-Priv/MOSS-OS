@@ -149,6 +149,7 @@ export function createCreateProviderHandler(config: ConfigService): RouteHandler
       apiKey?: string;
       balanceUrl?: string;
       modelsUrl?: string;
+      icon?: string;
     };
     if (!body.name || !body.format || !body.endpoint) {
       return { status: 400, body: { error: ErrorCode.PROVIDER_FIELDS_REQUIRED } };
@@ -164,6 +165,8 @@ export function createCreateProviderHandler(config: ConfigService): RouteHandler
         models: [],
         ...(body.balanceUrl?.trim() ? { balanceUrl: body.balanceUrl.trim() } : {}),
         ...(body.modelsUrl?.trim() ? { modelsUrl: body.modelsUrl.trim() } : {}),
+        // 品牌图标（空串 = 默认 Server，不落库；与 update handler 语义一致）
+        ...(body.icon?.trim() ? { icon: body.icon.trim() } : {}),
       };
       await config.updateApiConfig({ providers: [...apiConfig.providers, newProvider] });
       return { status: 201, body: newProvider };
