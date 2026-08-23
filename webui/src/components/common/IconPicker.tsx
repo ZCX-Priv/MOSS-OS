@@ -5,7 +5,7 @@
 
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ChevronsUpDown } from 'lucide-react';
+import { ChevronsUpDown, X } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -19,7 +19,8 @@ const SEARCH_LIMIT = 200;
 
 interface IconPickerProps {
   value?: string;
-  onChange: (name: string) => void;
+  /** 选中图标名（kebab-case）；传 undefined 表示取消选择（回退默认展示） */
+  onChange: (name?: string) => void;
   disabled?: boolean;
 }
 
@@ -50,6 +51,14 @@ export function IconPicker({ value, onChange, disabled }: IconPickerProps) {
     resetPanelState();
   };
 
+  /** 取消选择：清空图标（调用方回退默认展示，如标题首字符） */
+  const handleClear = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onChange(undefined);
+    setOpen(false);
+    resetPanelState();
+  };
+
   return (
     <Popover
       open={open}
@@ -70,6 +79,20 @@ export function IconPicker({ value, onChange, disabled }: IconPickerProps) {
             <ChevronsUpDown className="size-4 shrink-0 opacity-50" />
           )}
           <span className="truncate">{value || t('iconPicker.placeholder')}</span>
+          {value && (
+            <span
+              role="button"
+              tabIndex={0}
+              className="ml-auto flex size-5 shrink-0 items-center justify-center rounded-md opacity-60 transition-opacity hover:opacity-100"
+              onClick={handleClear}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') handleClear(e as unknown as React.MouseEvent);
+              }}
+              title={t('iconPicker.clear')}
+            >
+              <X className="size-3.5" />
+            </span>
+          )}
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-80 p-0" align="start">

@@ -10,7 +10,16 @@
 // format/endpoint/apiKey/balanceUrl/modelsUrl，模型挂其下（名称 + 模型 id + 模型级配置）。
 
 import type { HttpRequest, HttpResponse, RouteHandler } from '../types';
-import type { ConfigService, ProviderConfig, ProviderModelConfig, ServiceRegistry, Logger, ModelConfig } from '../../../core/types';
+import type {
+  ConfigService,
+  ProviderConfig,
+  ProviderModelConfig,
+  ProviderServiceConfig,
+  ThinkingLevelConfig,
+  ServiceRegistry,
+  Logger,
+  ModelConfig,
+} from '../../../core/types';
 import { ServiceNames } from '../../../core/types';
 import type { LLMRouter } from '../../contracts';
 import { ErrorCode } from '../../../core/error-codes';
@@ -20,6 +29,14 @@ import { httpRequest } from '../../llm/client';
 
 /** 外部请求超时（模型列表/余额查询，远低于 LLM 默认 120s） */
 const EXTERNAL_TIMEOUT_MS = 15_000;
+
+/** 默认思考强度等级库（provider.thinkingLevels 未定义时生效；与前端 DEFAULT_LEVELS 一致） */
+const DEFAULT_THINKING_LEVELS: ThinkingLevelConfig[] = [
+  { id: 'off', label: 'Off', effort: 'off' },
+  { id: 'low', label: 'Low', effort: 'low' },
+  { id: 'medium', label: 'Medium', effort: 'medium' },
+  { id: 'high', label: 'High', effort: 'high' },
+];
 
 type ThinkingPatch = {
   enabled?: boolean;
@@ -172,6 +189,9 @@ export function createUpdateProviderHandler(config: ConfigService): RouteHandler
       apiKey?: string;
       balanceUrl?: string;
       modelsUrl?: string;
+      icon?: string;
+      thinkingLevels?: ThinkingLevelConfig[];
+      services?: ProviderServiceConfig[];
     };
     try {
       const apiConfig = config.getApiConfig();
@@ -180,6 +200,18 @@ export function createUpdateProviderHandler(config: ConfigService): RouteHandler
         return { status: 404, body: { error: ErrorCode.PROVIDER_NOT_FOUND } };
       }
       const existing = apiConfig.providers[idx];
+
+      // thinkingLevels 专项校验：至少保留 1 个等级，每条 id/label/effort 非空
+      if (body.thinkingLevels !== undefined) {
+        const levels = body.thinkingLevels;
+        if (!Array.isArray(levels) || levels.length === 0) {
+          return { status: 400, body: { error: 'THINKING_LEVELS_KEEP_ONE' } };
+        }
+        if (levels.some((l) => !l.id?.trim() || !l.label?.trim() || !l.effort?.trim())) {
+          return { status: 400, body: { error: 'THINKING_LEVELS_INVALID' } };
+        }
+      }
+
       const newProvider: ProviderConfig = {
         id: existing.id,
         name: body.name ?? existing.name,
@@ -202,7 +234,72 @@ export function createUpdateProviderHandler(config: ConfigService): RouteHandler
           : existing.modelsUrl !== undefined
             ? { modelsUrl: existing.modelsUrl }
             : {}),
+        ...(body.icon !== undefined
+          ? body.icon.trim()
+            ? { icon: body.icon.trim() }
+            : {}
+          : existing.icon !== undefined
+            ? { icon: existing.icon }
+            : {}),
+        ...(body.services !== undefined ? { services: body.services } : {}),
+        ...(body.thinkingLevels !== undefined ? { thinkingLevels: body.thinkingLevels } : {}),
       };
+
+      // thinkingLevels 变更：原子回退旗下使用被删等级的模型
+      let models = existing.models;
+      if (body.thinkingLevels !== undefined) {
+        const oldLevels = existing.thinkingLevels ?? DEFAULT_THINKING_LEVELS;
+        const oldEfforts = new Set(oldLevels.map((l) => l.effort));
+        const newEfforts = new Set(body.thinkingLevels.map((l) => l.effort));
+        const removed = oldLevels.filter((l) => !newEfforts.has(l.effort));
+        if (removed.length > 0) {
+          // 回退目标映射：被删等级 → 原列表前一个（更低档）；最低档则后一个
+          const fallbackMap = new Map<string, ThinkingLevelConfig>();
+          for (let i = 0; i < oldLevels.length; i++) {
+            const lvl = oldLevels[i];
+            if (newEfforts.has(lvl.effort)) continue;
+            const prev = i > 0 ? oldLevels[i - 1] : undefined;
+            const next = i + 1 < oldLevels.length ? oldLevels[i + 1] : undefined;
+            const target = prev ?? next;
+            if (target && newEfforts.has(target.effort)) {
+              fallbackMap.set(lvl.effort, target);
+            } else if (target) {
+              // 目标也被删（连环删）：沿原列表继续向前找
+              let j = i - 1;
+              let found: ThinkingLevelConfig | undefined;
+              while (j >= 0) {
+                if (newEfforts.has(oldLevels[j].effort)) { found = oldLevels[j]; break; }
+                j--;
+              }
+              if (!found) {
+                j = i + 1;
+                while (j < oldLevels.length) {
+                  if (newEfforts.has(oldLevels[j].effort)) { found = oldLevels[j]; break; }
+                  j++;
+                }
+              }
+              if (found) fallbackMap.set(lvl.effort, found);
+            }
+          }
+          if (fallbackMap.size > 0) {
+            models = existing.models.map((m) => {
+              const target = m.thinking.enabled && m.thinking.effort
+                ? fallbackMap.get(m.thinking.effort)
+                : undefined;
+              if (!target) return m;
+              return {
+                ...m,
+                thinking:
+                  target.effort === 'off'
+                    ? { enabled: false }
+                    : { enabled: true, effort: target.effort, label: target.label },
+              };
+            });
+          }
+        }
+      }
+      newProvider.models = models;
+
       const newProviders = [...apiConfig.providers];
       newProviders[idx] = newProvider;
       await config.updateApiConfig({ providers: newProviders });
@@ -466,6 +563,169 @@ export function createDeleteProviderModelHandler(config: ConfigService): RouteHa
           agent: { ...appConfig.agent, defaultModel: '' },
         });
       }
+      return { status: 200, body: { deleted: true } };
+    } catch (err) {
+      return {
+        status: 400,
+        body: { error: err instanceof Error ? err.message : String(err) },
+      };
+    }
+  };
+}
+
+// ============================================================================
+// 服务商附加服务 CRUD（当前仅文件存储）
+// ============================================================================
+
+/** 生成服务 id：service_{timestamp}_{random} */
+function generateServiceId(): string {
+  return `service_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+export function createAddProviderServiceHandler(config: ConfigService): RouteHandler {
+  return async (req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
+    const id = params?.id;
+    if (!id) {
+      return { status: 400, body: { error: ErrorCode.PROVIDER_ID_REQUIRED } };
+    }
+    const body = (req.body ?? {}) as {
+      name?: string;
+      type?: ProviderServiceConfig['type'];
+      endpoint?: string;
+      apiKey?: string;
+      maxQuota?: number;
+      quotaUnit?: ProviderServiceConfig['quotaUnit'];
+    };
+    if (!body.name || !body.endpoint) {
+      return { status: 400, body: { error: ErrorCode.PROVIDER_FIELDS_REQUIRED } };
+    }
+    try {
+      const apiConfig = config.getApiConfig();
+      const idx = apiConfig.providers.findIndex((p) => p.id === id);
+      if (idx < 0) {
+        return { status: 404, body: { error: ErrorCode.PROVIDER_NOT_FOUND } };
+      }
+      const provider = apiConfig.providers[idx];
+      const newService: ProviderServiceConfig = {
+        id: generateServiceId(),
+        name: body.name,
+        type: body.type ?? 'file-storage',
+        endpoint: body.endpoint,
+        apiKey: body.apiKey ?? '',
+        ...(body.maxQuota !== undefined ? { maxQuota: body.maxQuota } : {}),
+        ...(body.quotaUnit !== undefined ? { quotaUnit: body.quotaUnit } : {}),
+      };
+      const newProvider: ProviderConfig = {
+        ...provider,
+        services: [...(provider.services ?? []), newService],
+      };
+      const newProviders = [...apiConfig.providers];
+      newProviders[idx] = newProvider;
+      await config.updateApiConfig({ providers: newProviders });
+      return { status: 201, body: newService };
+    } catch (err) {
+      return {
+        status: 400,
+        body: { error: err instanceof Error ? err.message : String(err) },
+      };
+    }
+  };
+}
+
+export function createUpdateProviderServiceHandler(config: ConfigService): RouteHandler {
+  return async (req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
+    const providerId = params?.id;
+    const serviceId = params?.serviceId;
+    if (!providerId) {
+      return { status: 400, body: { error: ErrorCode.PROVIDER_ID_REQUIRED } };
+    }
+    if (!serviceId) {
+      return { status: 400, body: { error: ErrorCode.ID_REQUIRED } };
+    }
+    const body = (req.body ?? {}) as {
+      name?: string;
+      type?: ProviderServiceConfig['type'];
+      endpoint?: string;
+      apiKey?: string;
+      maxQuota?: number;
+      quotaUnit?: ProviderServiceConfig['quotaUnit'];
+    };
+    try {
+      const apiConfig = config.getApiConfig();
+      const pIdx = apiConfig.providers.findIndex((p) => p.id === providerId);
+      if (pIdx < 0) {
+        return { status: 404, body: { error: ErrorCode.PROVIDER_NOT_FOUND } };
+      }
+      const provider = apiConfig.providers[pIdx];
+      const services = provider.services ?? [];
+      const sIdx = services.findIndex((s) => s.id === serviceId);
+      if (sIdx < 0) {
+        return { status: 404, body: { error: ErrorCode.PROVIDER_SERVICE_NOT_FOUND } };
+      }
+      const existing = services[sIdx];
+      // 空 apiKey 视为不修改（保留原值）
+      const newService: ProviderServiceConfig = {
+        id: existing.id,
+        name: body.name ?? existing.name,
+        type: body.type ?? existing.type,
+        endpoint: body.endpoint ?? existing.endpoint,
+        apiKey: body.apiKey !== undefined && body.apiKey !== '' ? body.apiKey : existing.apiKey,
+        ...(body.maxQuota !== undefined
+          ? { maxQuota: body.maxQuota }
+          : existing.maxQuota !== undefined
+            ? { maxQuota: existing.maxQuota }
+            : {}),
+        ...(body.quotaUnit !== undefined
+          ? { quotaUnit: body.quotaUnit }
+          : existing.quotaUnit !== undefined
+            ? { quotaUnit: existing.quotaUnit }
+            : {}),
+      };
+      const newServices = [...services];
+      newServices[sIdx] = newService;
+      const newProvider = { ...provider, services: newServices };
+      const newProviders = [...apiConfig.providers];
+      newProviders[pIdx] = newProvider;
+      await config.updateApiConfig({ providers: newProviders });
+      return { status: 200, body: newService };
+    } catch (err) {
+      return {
+        status: 400,
+        body: { error: err instanceof Error ? err.message : String(err) },
+      };
+    }
+  };
+}
+
+export function createDeleteProviderServiceHandler(config: ConfigService): RouteHandler {
+  return async (_req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
+    const providerId = params?.id;
+    const serviceId = params?.serviceId;
+    if (!providerId) {
+      return { status: 400, body: { error: ErrorCode.PROVIDER_ID_REQUIRED } };
+    }
+    if (!serviceId) {
+      return { status: 400, body: { error: ErrorCode.ID_REQUIRED } };
+    }
+    try {
+      const apiConfig = config.getApiConfig();
+      const pIdx = apiConfig.providers.findIndex((p) => p.id === providerId);
+      if (pIdx < 0) {
+        return { status: 404, body: { error: ErrorCode.PROVIDER_NOT_FOUND } };
+      }
+      const provider = apiConfig.providers[pIdx];
+      const services = provider.services ?? [];
+      const exists = services.some((s) => s.id === serviceId);
+      if (!exists) {
+        return { status: 404, body: { error: ErrorCode.PROVIDER_SERVICE_NOT_FOUND } };
+      }
+      const newProvider: ProviderConfig = {
+        ...provider,
+        services: services.filter((s) => s.id !== serviceId),
+      };
+      const newProviders = [...apiConfig.providers];
+      newProviders[pIdx] = newProvider;
+      await config.updateApiConfig({ providers: newProviders });
       return { status: 200, body: { deleted: true } };
     } catch (err) {
       return {

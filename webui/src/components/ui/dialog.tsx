@@ -76,7 +76,7 @@ function DialogContent({
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(
-          "fixed top-1/2 left-1/2 z-50 grid max-h-[80dvh] w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          "fixed top-1/2 left-1/2 z-50 flex max-h-[80dvh] w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-y-auto rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
           dialogSizeClasses[size],
           className
         )}
@@ -87,7 +87,7 @@ function DialogContent({
           <DialogPrimitive.Close data-slot="dialog-close" asChild>
             <Button
               variant="ghost"
-              className="absolute top-2 right-2"
+              className="absolute top-3 right-3 z-20"
               size="icon-sm"
             >
               <XIcon
@@ -105,7 +105,13 @@ function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       data-slot="dialog-header"
-      className={cn("flex flex-col gap-2", className)}
+      // sticky 固定头：负边距（-mx-4/-mt-4）抵消容器 p-4 实现背景通栏到弹窗顶；
+      // pb-5（20px）承载标题与内容的间距并让背景覆盖该区域，滚动时内容从背景
+      // 边缘下方滚过、无缝隙穿字。不使用侵入相邻元素的负 margin（会导致重叠）。
+      className={cn(
+        "sticky top-0 z-10 -mx-4 -mt-4 flex shrink-0 flex-col gap-2 bg-popover px-4 pt-4 pb-5",
+        className
+      )}
       {...props}
     />
   )
@@ -123,8 +129,10 @@ function DialogFooter({
   return (
     <div
       data-slot="dialog-footer"
+      // sticky 固定尾：mt-auto 在内容不足时把 footer 推到弹窗最底部（flex 列布局）；
+      // 内容溢出滚动时 sticky bottom-0 接管钉住底部。pt-4 承载内容与 footer 的间距。
       className={cn(
-        "-mx-4 -mb-4 flex flex-col-reverse gap-2 rounded-b-xl border-t bg-muted/50 p-4 sm:flex-row sm:justify-end",
+        "sticky bottom-0 z-10 -mx-4 -mb-4 mt-auto flex shrink-0 flex-col-reverse gap-2 rounded-b-xl border-t bg-muted/50 px-4 pt-4 pb-4 sm:flex-row sm:justify-end",
         className
       )}
       {...props}

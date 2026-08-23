@@ -9,14 +9,13 @@
 import { useState, useRef, useLayoutEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
-import { SlidersHorizontal, Plus, ChevronDown } from 'lucide-react';
+import { SlidersHorizontal, Plus, ChevronDown, Server } from 'lucide-react';
 import { useStore } from '../../store';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
 import {
@@ -27,33 +26,43 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import {
   Sheet,
   SheetContent,
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
-import { toEffortLevel } from '../../lib/model-utils';
+import { DEFAULT_LEVELS } from '../../lib/model-utils';
+import { getProviderIcon } from '../../lib/provider-icons';
+import { ThinkingLevelTags } from '../pages/ProviderSettings';
 import { useProviders } from '../../hooks/useProviders';
 import { useIsMobile } from '../../hooks/use-mobile';
-import type { ProviderModelItem } from '../../types/api';
+import type { ProviderItem, ProviderModelItem } from '../../types/api';
 
 /** 渲染上下文：模型 + 所属服务商 id（调参写回用） */
 interface ModelWithContext extends ProviderModelItem {
   providerId: string;
 }
 
+/** 服务商分组标题（品牌图标 + 名称；未配置 fallback Server） */
+function GroupLabel({ provider, className }: { provider: ProviderItem; className?: string }) {
+  const Logo = getProviderIcon(provider.icon);
+  return (
+    <div className={cn('flex items-center gap-1.5 text-xs font-medium text-muted-foreground', className)}>
+      {Logo ? (
+        <Logo size={14} />
+      ) : (
+        <Server className="size-3.5" />
+      )}
+      <span className="truncate">{provider.name}</span>
+    </div>
+  );
+}
+
 export function ModelSelector() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const { providers, currentModel, setCurrent, updateProviderModel } = useProviders();
+  const { providers, currentModel, setCurrent, updateProviderModel, updateProvider } = useProviders();
   const isMobile = useIsMobile();
   const currentModelName = providers
     .flatMap((p) => p.models)
@@ -96,10 +105,7 @@ export function ModelSelector() {
   }, [mainOpen]);
 
   /** 渲染模型参数设置区（桌面子菜单与移动端内联共用） */
-  const renderSettings = (model: ModelWithContext) => {
-    const thinking = model.thinking;
-    const level = toEffortLevel(thinking);
-    const customText = `${t('settings.provider.thinkingCustom')} · ${thinking?.label ?? thinking?.effort ?? ''}`;
+  const renderSettings = (model: ModelWithContext, provider: ProviderItem) => {
     return (
       <>
         {/* 上下文窗口：输入 / 输出 */}
@@ -140,44 +146,18 @@ export function ModelSelector() {
           </div>
         </div>
 
-        {/* 思考强度 */}
-        <div className="mt-4 flex flex-col gap-2">
-          <label className="text-sm font-medium text-foreground">
-            {t('settings.provider.thinkingLevel')}
-          </label>
-          <Select
-            value={level}
-            onValueChange={(v) => {
-              const next = v as 'off' | 'low' | 'medium' | 'high' | 'custom';
-              if (next === 'off') {
-                void updateProviderModel(model.providerId, model.id, {
-                  thinking: { ...thinking, enabled: false },
-                });
-              } else if (next === 'custom') {
-                // 保持现有自定义值（effort/label），仅启用
-                void updateProviderModel(model.providerId, model.id, {
-                  thinking: { ...thinking, enabled: true },
-                });
-              } else {
-                void updateProviderModel(model.providerId, model.id, {
-                  thinking: { ...thinking, enabled: true, effort: next },
-                });
-              }
+        {/* 思考强度（标签化：服务商级等级库） */}
+        <div className="mt-4">
+          <ThinkingLevelTags
+            levels={provider.thinkingLevels ?? DEFAULT_LEVELS}
+            value={model.thinking}
+            onThinkingChange={(thinking) => {
+              void updateProviderModel(model.providerId, model.id, { thinking });
             }}
-          >
-            <SelectTrigger className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="off">{t('settings.provider.thinkingOff')}</SelectItem>
-              <SelectItem value="low">{t('settings.provider.thinkingLow')}</SelectItem>
-              <SelectItem value="medium">{t('settings.provider.thinkingMedium')}</SelectItem>
-              <SelectItem value="high">{t('settings.provider.thinkingHigh')}</SelectItem>
-              <SelectItem value="custom">
-                {level === 'custom' ? customText : t('settings.provider.thinkingCustom')}
-              </SelectItem>
-            </SelectContent>
-          </Select>
+            onLevelsChange={(levels) => {
+              void updateProvider(model.providerId, { thinkingLevels: levels });
+            }}
+          />
         </div>
       </>
     );
@@ -209,10 +189,8 @@ export function ModelSelector() {
               )}
               {providers.map((provider) => (
                 <div key={provider.id} className="flex flex-col">
-                  {/* 服务商分组标题 */}
-                  <div className="px-2 pb-1 pt-2 text-xs font-medium text-muted-foreground">
-                    {provider.name}
-                  </div>
+                  {/* 服务商分组标题（含品牌图标） */}
+                  <GroupLabel provider={provider} />
                   {provider.models.length === 0 ? (
                     <div className="px-2 py-1.5 text-xs text-muted-foreground/60">
                       {t('modelSelector.noModelsInProvider', { defaultValue: '暂无模型' })}
@@ -250,7 +228,7 @@ export function ModelSelector() {
                           </div>
                           {expandedId === model.id && (
                             <div className="border-t px-1 py-3">
-                              {renderSettings({ ...model, providerId: provider.id })}
+                              {renderSettings({ ...model, providerId: provider.id }, provider)}
                             </div>
                           )}
                         </div>
@@ -319,10 +297,8 @@ export function ModelSelector() {
         )}
         {providers.map((provider) => (
           <div key={provider.id}>
-            {/* 服务商分组标题 */}
-            <DropdownMenuLabel className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
-              {provider.name}
-            </DropdownMenuLabel>
+            {/* 服务商分组标题（品牌图标 + 名称） */}
+            <GroupLabel provider={provider} className="px-2 py-1.5" />
             {provider.models.map((model) => {
               const isSelected = currentModel === model.id;
               return (
@@ -392,7 +368,7 @@ export function ModelSelector() {
                         }
                       }}
                     >
-                      {renderSettings({ ...model, providerId: provider.id })}
+                      {renderSettings({ ...model, providerId: provider.id }, provider)}
                     </PopoverContent>
                   </Popover>
                 </DropdownMenuItem>

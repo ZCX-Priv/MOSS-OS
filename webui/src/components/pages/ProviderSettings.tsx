@@ -1,9 +1,11 @@
 // UI/src/components/pages/ProviderSettings.tsx
-// 服务商设置页：服务商卡片（API 格式/地址/Key/自定义查询地址）+ 旗下模型管理。
-// - 添加服务商（可选自定义余额查询地址、模型列表获取地址）
+// 服务商设置页：服务商卡片（品牌图标 + API 格式/地址/Key/自定义查询地址）+ 旗下模型与服务管理。
+// - 添加服务商（图标选择 + 可选自定义余额查询地址、模型列表获取地址）
 // - 新建后自动拉取远程模型列表 → 勾选弹窗（实时搜索）批量添加
 // - 手动添加模型（名称 + 模型 id + 模型级高级配置）
+// - 附加服务（文件存储：api地址/key/最大限额）
 // - 余额查询（CircleDollarSign 按钮 → 弹窗，OpenAI 兼容计费格式解析）
+// - 思考强度标签化（服务商级等级库，可增删，至少保留 1 个，删除自动回退）
 
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -17,6 +19,10 @@ import {
   ChevronRight,
   CircleDollarSign,
   RefreshCw,
+  Pencil,
+  Server,
+  X,
+  Check,
 } from 'lucide-react';
 import {
   DndContext,
@@ -45,6 +51,12 @@ import { Slider } from '@/components/ui/slider';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible';
 import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from '@/components/ui/dropdown-menu';
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -53,8 +65,15 @@ import {
 } from '@/components/ui/dialog';
 import { useProviders, type UseProvidersResult } from '../../hooks/useProviders';
 import { useStore } from '../../store';
-import { parseLegacyWindow, toEffortLevel } from '../../lib/model-utils';
-import type { ProviderItem, ProviderModelItem, RemoteModelItem } from '../../types/api';
+import { parseLegacyWindow, DEFAULT_LEVELS, generateLevelId } from '../../lib/model-utils';
+import { getProviderIcon, PROVIDER_ICON_LIST } from '../../lib/provider-icons';
+import type {
+  ProviderItem,
+  ProviderModelItem,
+  ProviderServiceItem,
+  RemoteModelItem,
+  ThinkingLevelItem,
+} from '../../types/api';
 
 const FORMAT_OPTIONS = [
   { value: 'openai-chat', label: 'OpenAI Chat' },
@@ -62,6 +81,49 @@ const FORMAT_OPTIONS = [
   { value: 'anthropic', label: 'Anthropic' },
   { value: 'gemini', label: 'Gemini' },
 ] as const;
+
+/* ===== 卡片头图标按钮（统一小图标 + title 提示） ===== */
+function IconActionButton({
+  title,
+  onClick,
+  danger,
+  disabled,
+  children,
+}: {
+  title: string;
+  onClick: () => void;
+  danger?: boolean;
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={title}
+      title={title}
+      disabled={disabled}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      className={cn(
+        'inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50',
+        danger && 'hover:text-destructive',
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+/** 服务商品牌图标（未配置/未命中 fallback lucide Server） */
+function ProviderLogo({ icon, className, size = 20 }: { icon?: string; className?: string; size?: number }) {
+  const Logo = getProviderIcon(icon);
+  if (!Logo) {
+    return <Server className={cn('size-4 text-muted-foreground', className)} />;
+  }
+  return <Logo size={size} className={className} />;
+}
 
 /* ===== 服务商设置页 ===== */
 export function ProviderSettings() {
@@ -80,6 +142,8 @@ export function ProviderSettings() {
   const [balanceProvider, setBalanceProvider] = useState<ProviderItem | null>(null);
   const [modelDialogProvider, setModelDialogProvider] = useState<ProviderItem | null>(null);
   const [editingModel, setEditingModel] = useState<ProviderModelItem | null>(null);
+  const [serviceDialogProvider, setServiceDialogProvider] = useState<ProviderItem | null>(null);
+  const [editingService, setEditingService] = useState<ProviderServiceItem | null>(null);
   const [query, setQuery] = useState('');
   const [formatFilter, setFormatFilter] = useState<'all' | ProviderItem['format']>('all');
   const providerDialogRequest = useStore((s) => s.providerDialogRequest);
@@ -117,6 +181,16 @@ export function ProviderSettings() {
   const openEditModel = (provider: ProviderItem, model: ProviderModelItem) => {
     setModelDialogProvider(provider);
     setEditingModel(model);
+  };
+
+  const openAddService = (provider: ProviderItem) => {
+    setServiceDialogProvider(provider);
+    setEditingService(null);
+  };
+
+  const openEditService = (provider: ProviderItem, service: ProviderServiceItem) => {
+    setServiceDialogProvider(provider);
+    setEditingService(service);
   };
 
   const openPick = (provider: ProviderItem) => {
@@ -165,47 +239,45 @@ export function ProviderSettings() {
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      {/* 页头 */}
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-2xl font-semibold text-foreground">
+      {/* 页头 + 筛选：单行紧凑（窄屏上下堆叠） */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-0.5">
+          <h1 className="text-xl font-semibold text-foreground">
             {t('settings.provider.title')}
           </h1>
-          <p className="text-sm text-muted-foreground">{t('settings.provider.subtitle')}</p>
+          <p className="text-xs text-muted-foreground">{t('settings.provider.subtitle')}</p>
         </div>
-        <Button className="gap-1.5" onClick={openAdd}>
-          <Plus className="size-3.5" />
-          {t('settings.provider.addProvider')}
-        </Button>
-      </div>
-
-      {/* 搜索与筛选 */}
-      <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end">
-        <Select
-          value={formatFilter}
-          onValueChange={(v) => setFormatFilter(v as 'all' | ProviderItem['format'])}
-        >
-          <SelectTrigger className="w-full sm:w-40">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">{t('settings.provider.allFormats')}</SelectItem>
-            {FORMAT_OPTIONS.map((opt) => (
-              <SelectItem key={opt.value} value={opt.value}>
-                {opt.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <div className="relative w-full sm:max-w-64">
-          <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            type="text"
-            placeholder={t('settings.provider.searchPlaceholder')}
-            className="pl-8"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
+        <div className="flex items-center gap-2">
+          <Select
+            value={formatFilter}
+            onValueChange={(v) => setFormatFilter(v as 'all' | ProviderItem['format'])}
+          >
+            <SelectTrigger className="w-full shrink-0 sm:w-36">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">{t('settings.provider.allFormats')}</SelectItem>
+              {FORMAT_OPTIONS.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value}>
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <div className="relative w-full shrink sm:w-52">
+            <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              type="text"
+              placeholder={t('settings.provider.searchPlaceholder')}
+              className="pl-8"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          </div>
+          <Button className="shrink-0 gap-1.5" onClick={openAdd}>
+            <Plus className="size-3.5" />
+            {t('settings.provider.addProvider')}
+          </Button>
         </div>
       </div>
 
@@ -235,7 +307,9 @@ export function ProviderSettings() {
                   onEdit={() => openEdit(provider)}
                   onDelete={() => void handleDelete(provider)}
                   onAddModel={() => openAddModel(provider)}
+                  onAddService={() => openAddService(provider)}
                   onEditModel={(model) => openEditModel(provider, model)}
+                  onEditService={(service) => openEditService(provider, service)}
                   onFetchModels={() => openPick(provider)}
                 />
               ))}
@@ -289,6 +363,21 @@ export function ProviderSettings() {
           editingModel={editingModel}
         />
       )}
+
+      {/* 添加/编辑服务弹窗（文件存储） */}
+      {serviceDialogProvider && (
+        <AddServiceDialog
+          open={!!serviceDialogProvider}
+          onOpenChange={(o) => {
+            if (!o) {
+              setServiceDialogProvider(null);
+              setEditingService(null);
+            }
+          }}
+          provider={serviceDialogProvider}
+          editingService={editingService}
+        />
+      )}
     </div>
   );
 }
@@ -302,7 +391,9 @@ interface SortableProviderCardProps {
   onEdit: () => void;
   onDelete: () => void;
   onAddModel: () => void;
+  onAddService: () => void;
   onEditModel: (model: ProviderModelItem) => void;
+  onEditService: (service: ProviderServiceItem) => void;
   onFetchModels: () => void;
 }
 
@@ -314,7 +405,9 @@ function SortableProviderCard({
   onEdit,
   onDelete,
   onAddModel,
+  onAddService,
   onEditModel,
+  onEditService,
   onFetchModels,
 }: SortableProviderCardProps) {
   const { t } = useTranslation();
@@ -322,7 +415,7 @@ function SortableProviderCard({
     id: provider.id,
   });
   const [testingId, setTestingId] = useState<string | null>(null);
-  const { testProviderModel, deleteProviderModel } = useProviders();
+  const { testProviderModel, deleteProviderModel, deleteProviderService } = useProviders();
 
   const handleTest = async (model: ProviderModelItem) => {
     setTestingId(model.id);
@@ -348,6 +441,16 @@ function SortableProviderCard({
     }
   };
 
+  const handleDeleteService = async (service: ProviderServiceItem) => {
+    if (!window.confirm(t('settings.provider.deleteServiceConfirm'))) return;
+    try {
+      await deleteProviderService(provider.id, service.id);
+      toast.success(t('settings.provider.serviceDeleteSuccess'));
+    } catch {
+      // 错误已由 hook toast
+    }
+  };
+
   return (
     <div
       ref={setNodeRef}
@@ -357,8 +460,8 @@ function SortableProviderCard({
         isDragging && 'opacity-50 shadow-lg',
       )}
     >
-      {/* 卡片头 */}
-      <div className="flex items-center gap-3 border-b border-border/60 p-4">
+      {/* 卡片头（单行紧凑：图标 + 名称 + endpoint + 操作按钮组） */}
+      <div className="flex items-center gap-2.5 border-b border-border/60 p-3">
         <button
           type="button"
           className="cursor-grab shrink-0 text-muted-foreground/50 hover:text-muted-foreground active:cursor-grabbing"
@@ -367,53 +470,55 @@ function SortableProviderCard({
         >
           <GripVertical className="size-4" />
         </button>
-        <div className="flex min-w-0 flex-1 flex-col gap-1">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-semibold text-foreground">{provider.name}</span>
-            <Badge variant="secondary" className="font-normal">
-              {provider.format}
-            </Badge>
-            <span className="text-xs text-muted-foreground">
-              {t('settings.provider.modelCount', { count: provider.models.length })}
-            </span>
-          </div>
+        {/* 品牌图标 */}
+        <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted">
+          <ProviderLogo icon={provider.icon} />
+        </div>
+        {/* 名称 + endpoint 同行 */}
+        <div className="flex min-w-0 flex-1 items-baseline gap-2">
+          <span className="shrink-0 text-sm font-semibold text-foreground">{provider.name}</span>
           <span className="truncate text-xs text-muted-foreground">{provider.endpoint}</span>
         </div>
-        {/* 操作区 */}
-        <div className="flex shrink-0 items-center gap-4">
-          <button
-            type="button"
-            className="flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
-            onClick={(e) => {
-              e.stopPropagation();
-              onBalance();
-            }}
-            aria-label={t('settings.provider.balanceTitle')}
-            title={t('settings.provider.balanceTitle')}
-          >
-            <CircleDollarSign className="size-3.5" />
-          </button>
-          <button
-            type="button"
-            className="text-xs text-muted-foreground transition-colors hover:text-foreground"
-            onClick={(e) => {
-              e.stopPropagation();
-              onEdit();
-            }}
-          >
-            {t('settings.provider.edit')}
-          </button>
-          <button
-            type="button"
-            className="text-muted-foreground transition-colors hover:text-destructive"
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete();
-            }}
-            aria-label={t('settings.provider.delete')}
-          >
-            <Trash2 className="size-3.5" />
-          </button>
+        <span className="shrink-0 text-xs text-muted-foreground">
+          {t('settings.provider.modelCount', { count: provider.models.length })}
+        </span>
+        {/* 操作按钮组（全部图标化） */}
+        <div className="flex shrink-0 items-center gap-0.5">
+          {/* + 菜单：添加模型 / 添加服务 */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                aria-label={t('settings.provider.addMenu')}
+                title={t('settings.provider.addMenu')}
+                className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                <Plus className="size-4" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem className="gap-1.5" onSelect={onAddModel}>
+                <Plus className="size-3.5" />
+                {t('settings.provider.addModel')}
+              </DropdownMenuItem>
+              <DropdownMenuItem className="gap-1.5" onSelect={onAddService}>
+                <Server className="size-3.5" />
+                {t('settings.provider.addService')}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <IconActionButton title={t('settings.provider.fetchModels')} onClick={onFetchModels}>
+            <RefreshCw className="size-4" />
+          </IconActionButton>
+          <IconActionButton title={t('settings.provider.balanceTitle')} onClick={onBalance}>
+            <CircleDollarSign className="size-4" />
+          </IconActionButton>
+          <IconActionButton title={t('settings.provider.edit')} onClick={onEdit}>
+            <Pencil className="size-4" />
+          </IconActionButton>
+          <IconActionButton title={t('settings.provider.delete')} onClick={onDelete} danger>
+            <Trash2 className="size-4" />
+          </IconActionButton>
         </div>
       </div>
 
@@ -479,27 +584,20 @@ function SortableProviderCard({
                     {isTesting && <Loader2 className="size-3 animate-spin" />}
                     {isTesting ? t('settings.provider.testing') : t('settings.provider.test')}
                   </button>
-                  <button
-                    type="button"
-                    className="text-xs text-muted-foreground transition-colors hover:text-foreground"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onEditModel(model);
-                    }}
+                  <IconActionButton
+                    title={t('settings.provider.edit')}
+                    onClick={() => onEditModel(model)}
                   >
-                    {t('settings.provider.edit')}
-                  </button>
-                  <button
-                    type="button"
-                    className="text-muted-foreground transition-colors hover:text-destructive"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void handleDeleteModel(model);
-                    }}
-                    aria-label={t('settings.provider.delete')}
+                    <Pencil className="size-3.5" />
+                  </IconActionButton>
+                  <IconActionButton
+                    title={t('settings.provider.delete')}
+                    danger
+                    disabled={isTesting}
+                    onClick={() => void handleDeleteModel(model)}
                   >
                     <Trash2 className="size-3.5" />
-                  </button>
+                  </IconActionButton>
                 </div>
               </div>
             );
@@ -507,22 +605,48 @@ function SortableProviderCard({
         )}
       </div>
 
-      {/* 卡片尾：添加模型 / 获取模型列表 */}
-      <div className="flex items-center gap-2 border-t border-border/60 px-4 py-2.5">
-        <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs" onClick={onAddModel}>
-          <Plus className="size-3" />
-          {t('settings.provider.addModel')}
-        </Button>
-        <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs" onClick={onFetchModels}>
-          <RefreshCw className="size-3" />
-          {t('settings.provider.fetchModels')}
-        </Button>
-      </div>
+      {/* 服务区块（文件存储等附加服务） */}
+      {(provider.services?.length ?? 0) > 0 && (
+        <div className="border-t border-border/60">
+          <div className="px-4 pb-0.5 pt-2.5 text-xs font-medium text-muted-foreground">
+            {t('settings.provider.services')} · {provider.services!.length}
+          </div>
+          {provider.services!.map((service) => (
+            <div
+              key={service.id}
+              className="flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-muted/50"
+            >
+              <Badge variant="outline" className="shrink-0 font-normal">
+                {t('settings.provider.fileStorage')}
+              </Badge>
+              <span className="shrink-0 text-sm text-foreground">{service.name}</span>
+              <span className="flex-1 truncate text-xs text-muted-foreground">
+                {service.endpoint}
+              </span>
+              {service.maxQuota !== undefined && (
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  {service.maxQuota} {service.quotaUnit ?? 'GB'}
+                </span>
+              )}
+              <IconActionButton title={t('settings.provider.edit')} onClick={() => onEditService(service)}>
+                <Pencil className="size-3.5" />
+              </IconActionButton>
+              <IconActionButton
+                title={t('settings.provider.delete')}
+                danger
+                onClick={() => void handleDeleteService(service)}
+              >
+                <Trash2 className="size-3.5" />
+              </IconActionButton>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
-/* ===== 服务商弹窗（新建/编辑共用；新建成功后自动拉取模型列表） ===== */
+/* ===== 服务商弹窗（新建/编辑共用；图标选择 + 新建成功后自动拉取模型列表） ===== */
 interface AddProviderDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -547,6 +671,7 @@ function AddProviderDialog({
   const [apiKey, setApiKey] = useState('');
   const [balanceUrl, setBalanceUrl] = useState('');
   const [modelsUrl, setModelsUrl] = useState('');
+  const [icon, setIcon] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   // 弹窗打开时同步表单数据
@@ -559,6 +684,7 @@ function AddProviderDialog({
       setApiKey(''); // 留空 = 不修改
       setBalanceUrl(editingProvider.balanceUrl ?? '');
       setModelsUrl(editingProvider.modelsUrl ?? '');
+      setIcon(editingProvider.icon ?? '');
     } else {
       setName('');
       setFormat('openai-chat');
@@ -566,6 +692,7 @@ function AddProviderDialog({
       setApiKey('');
       setBalanceUrl('');
       setModelsUrl('');
+      setIcon('');
     }
   }, [open, editingProvider]);
 
@@ -583,6 +710,7 @@ function AddProviderDialog({
         apiKey: apiKey.trim(),
         ...(balanceUrl.trim() ? { balanceUrl: balanceUrl.trim() } : {}),
         ...(modelsUrl.trim() ? { modelsUrl: modelsUrl.trim() } : {}),
+        ...(icon ? { icon } : {}),
       };
       if (isEdit && editingProvider) {
         await updateProvider(editingProvider.id, payload);
@@ -618,6 +746,11 @@ function AddProviderDialog({
         </DialogHeader>
 
         <div className="flex flex-col gap-3">
+          {/* 品牌图标 */}
+          <div className="flex flex-col gap-1.5">
+            <Label>{t('settings.provider.icon')}</Label>
+            <IconPicker value={icon} onChange={setIcon} />
+          </div>
           {/* 服务商名称 */}
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="provider-name">{t('settings.provider.providerName')}</Label>
@@ -707,6 +840,252 @@ function AddProviderDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/* ===== 图标选择器（内联展开：搜索 + 网格；未选择 = 默认 Server） ===== */
+function IconPicker({ value, onChange }: { value: string; onChange: (icon: string) => void }) {
+  const { t } = useTranslation();
+  const [expanded, setExpanded] = useState(false);
+  const [query, setQuery] = useState('');
+
+  const q = query.trim().toLowerCase();
+  const filtered = PROVIDER_ICON_LIST.filter(
+    (e) => !q || e.name.toLowerCase().includes(q) || e.key.toLowerCase().includes(q),
+  );
+  const Selected = getProviderIcon(value);
+
+  return (
+    <div className="flex flex-col gap-2">
+      {/* 图标槽 */}
+      <button
+        type="button"
+        onClick={() => setExpanded((p) => !p)}
+        className="group relative flex size-12 items-center justify-center rounded-lg border border-border transition-colors hover:border-ring hover:bg-muted/50"
+        aria-label={t('settings.provider.icon')}
+      >
+        {Selected ? (
+          <Selected size={24} />
+        ) : (
+          <Server className="size-5 text-muted-foreground" />
+        )}
+        {!value && (
+          <span className="absolute -top-1.5 -right-1.5 rounded-full bg-muted px-1.5 text-[10px] text-muted-foreground">
+            {t('settings.provider.defaultIcon')}
+          </span>
+        )}
+      </button>
+
+      {/* 展开面板：搜索 + 网格 */}
+      {expanded && (
+        <div className="flex flex-col gap-2 rounded-lg border border-border p-2">
+          <div className="relative">
+            <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              type="text"
+              placeholder={t('settings.provider.iconSearch')}
+              className="h-8 pl-8 text-sm"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              autoFocus
+            />
+          </div>
+          <div className="grid max-h-52 grid-cols-8 gap-1 overflow-y-auto">
+            {/* 默认项 */}
+            <button
+              type="button"
+              title={t('settings.provider.defaultIcon')}
+              onClick={() => {
+                onChange('');
+                setExpanded(false);
+              }}
+              className={cn(
+                'flex size-9 items-center justify-center rounded-md transition-colors hover:bg-muted',
+                !value && 'ring-2 ring-primary',
+              )}
+            >
+              <Server className="size-4 text-muted-foreground" />
+            </button>
+            {filtered.map((entry) => (
+              <button
+                key={entry.key}
+                type="button"
+                title={entry.name}
+                onClick={() => {
+                  onChange(entry.key);
+                  setExpanded(false);
+                }}
+                className={cn(
+                  'flex size-9 items-center justify-center rounded-md transition-colors hover:bg-muted',
+                  value === entry.key && 'ring-2 ring-primary',
+                )}
+              >
+                <entry.Icon size={18} />
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ===== 思考强度标签组（服务商级等级库：单选 + 可增删 + 删除回退 + 保底 1 个） ===== */
+interface ThinkingLevelTagsProps {
+  /** 有效等级库（调用方已 fallback DEFAULT_LEVELS） */
+  levels: ThinkingLevelItem[];
+  /** 当前模型 thinking */
+  value: ProviderModelItem['thinking'];
+  /** 选中等级（单选生效） */
+  onThinkingChange: (thinking: ProviderModelItem['thinking']) => void;
+  /** 等级库变更（增/删，整组写回 provider） */
+  onLevelsChange: (levels: ThinkingLevelItem[]) => void;
+}
+
+export function ThinkingLevelTags({ levels, value, onThinkingChange, onLevelsChange }: ThinkingLevelTagsProps) {
+  const { t } = useTranslation();
+  const [adding, setAdding] = useState(false);
+  const [newLabel, setNewLabel] = useState('');
+  const [newEffort, setNewEffort] = useState('');
+
+  /** 当前生效的 effort 值（enabled=false 视为 off） */
+  const currentEffort = value.enabled ? value.effort : 'off';
+
+  /** 选中某等级 → thinking（off 档 = 关闭思考） */
+  const selectLevel = (level: ThinkingLevelItem) => {
+    if (level.effort === 'off') {
+      onThinkingChange({ enabled: false });
+    } else {
+      onThinkingChange({ enabled: true, effort: level.effort, label: level.label });
+    }
+  };
+
+  /** 删除等级：整组写回 provider（后端原子回退旗下模型）；若删的是当前档，本地立即切到回退目标 */
+  const removeLevel = (index: number) => {
+    if (levels.length <= 1) return; // 保底：至少保留 1 个（UI 已隐藏 x，双保险）
+    const target = levels[index];
+    const next = levels.filter((_, i) => i !== index);
+    onLevelsChange(next);
+    if (currentEffort === target.effort) {
+      // 回退目标：原列表前一个（更低档）；无前一个用后一个
+      const fallback = index > 0 ? levels[index - 1] : levels[index + 1];
+      if (fallback) selectLevel(fallback);
+    }
+  };
+
+  /** 添加等级：追加到列表末尾（最高档） */
+  const addLevel = () => {
+    const label = newLabel.trim();
+    const effort = newEffort.trim();
+    if (!label || !effort) {
+      toast.error(t('settings.provider.levelRequired'));
+      return;
+    }
+    onLevelsChange([...levels, { id: generateLevelId(), label, effort }]);
+    setNewLabel('');
+    setNewEffort('');
+    setAdding(false);
+  };
+
+  /** 当前值不在等级库（历史数据/等级被删）：额外渲染一个"当前值"标签 */
+  const orphanEffort =
+    currentEffort !== 'off' && !levels.some((l) => l.effort === currentEffort)
+      ? currentEffort
+      : null;
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Label>{t('settings.provider.thinkingLevel')}</Label>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {levels.map((level, index) => {
+          const isCurrent = currentEffort === level.effort;
+          // 当前选中的等级不可删（正在使用）；保底：至少保留 1 个（length<=1 时全不可删）
+          const canRemove = levels.length > 1 && !isCurrent;
+          return (
+            <span
+              key={level.id}
+              className={cn(
+                'group/tag relative inline-flex items-center gap-1 rounded-full border py-1 pl-2.5 pr-2 text-xs transition-colors',
+                isCurrent
+                  ? 'border-primary bg-primary text-primary-foreground'
+                  : 'border-border text-foreground hover:bg-muted',
+                canRemove && 'pr-6',
+              )}
+            >
+              <button
+                type="button"
+                className="transition-opacity"
+                onClick={() => selectLevel(level)}
+              >
+                {level.label}
+              </button>
+              {isCurrent && (
+                <span className="rounded-full bg-primary-foreground/20 px-1.5 py-px text-[10px] leading-none">
+                  {t('settings.provider.current')}
+                </span>
+              )}
+              {canRemove && (
+                <button
+                  type="button"
+                  aria-label={t('settings.provider.delete')}
+                  title={t('settings.provider.delete')}
+                  onClick={() => removeLevel(index)}
+                  className={cn(
+                    'absolute right-1.5 top-1/2 -translate-y-1/2 rounded-full p-0.5 opacity-40 transition-opacity hover:opacity-100',
+                    isCurrent && 'opacity-70',
+                  )}
+                >
+                  <X className="size-3" />
+                </button>
+              )}
+            </span>
+          );
+        })}
+
+        {/* 孤儿值：当前 effort 不在等级库（历史数据），显示为只读标签 */}
+        {orphanEffort !== null && (
+          <span className="inline-flex items-center gap-1 rounded-full border border-primary bg-primary text-primary-foreground py-1 pl-2.5 pr-2 text-xs">
+            {orphanEffort}
+            <span className="rounded-full bg-primary-foreground/20 px-1.5 py-px text-[10px] leading-none">
+              {t('settings.provider.current')}
+            </span>
+          </span>
+        )}
+
+        {/* 添加按钮 */}
+        <button
+          type="button"
+          onClick={() => setAdding((p) => !p)}
+          className="inline-flex items-center gap-0.5 rounded-full border border-dashed border-border py-1 pl-2.5 pr-2 text-xs text-muted-foreground transition-colors hover:border-ring hover:text-foreground"
+        >
+          <Plus className="size-3" />
+          {t('settings.provider.addLevel')}
+        </button>
+      </div>
+
+      {/* 添加输入区（内联展开） */}
+      {adding && (
+        <div className="flex items-center gap-2">
+          <Input
+            className="h-8 w-32 text-sm"
+            placeholder={t('settings.provider.levelLabel')}
+            value={newLabel}
+            onChange={(e) => setNewLabel(e.target.value)}
+            autoFocus
+          />
+          <Input
+            className="h-8 w-32 text-sm"
+            placeholder={t('settings.provider.levelEffort')}
+            value={newEffort}
+            onChange={(e) => setNewEffort(e.target.value)}
+          />
+          <Button size="sm" className="h-8 gap-1" onClick={addLevel}>
+            <Check className="size-3.5" />
+            {t('settings.provider.confirm')}
+          </Button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -970,7 +1349,10 @@ function BalanceDialog({ open, onOpenChange, provider }: BalanceDialogProps) {
         </DialogHeader>
 
         <div className="flex flex-col gap-3">
-          <div className="text-sm font-medium text-foreground">{provider.name}</div>
+          <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+            <ProviderLogo icon={provider.icon} size={16} />
+            {provider.name}
+          </div>
 
           {loading ? (
             <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
@@ -1027,7 +1409,167 @@ function BalanceDialog({ open, onOpenChange, provider }: BalanceDialogProps) {
   );
 }
 
-/* ===== 模型弹窗（手动添加/编辑共用；模型级高级配置保留） ===== */
+/* ===== 服务弹窗（添加/编辑文件存储服务共用） ===== */
+interface AddServiceDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  provider: ProviderItem;
+  editingService: ProviderServiceItem | null;
+}
+
+function AddServiceDialog({ open, onOpenChange, provider, editingService }: AddServiceDialogProps) {
+  const { t } = useTranslation();
+  const isEdit = !!editingService;
+  const { addProviderService, updateProviderService } = useProviders();
+
+  const [name, setName] = useState('');
+  const [endpoint, setEndpoint] = useState('');
+  const [apiKey, setApiKey] = useState('');
+  const [maxQuota, setMaxQuota] = useState('');
+  const [quotaUnit, setQuotaUnit] = useState<'MB' | 'GB' | 'TB'>('GB');
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    if (editingService) {
+      setName(editingService.name);
+      setEndpoint(editingService.endpoint);
+      setApiKey(''); // 留空 = 不修改
+      setMaxQuota(editingService.maxQuota !== undefined ? String(editingService.maxQuota) : '');
+      setQuotaUnit(editingService.quotaUnit ?? 'GB');
+    } else {
+      setName('');
+      setEndpoint('');
+      setApiKey('');
+      setMaxQuota('');
+      setQuotaUnit('GB');
+    }
+  }, [open, editingService]);
+
+  const handleSubmit = async () => {
+    if (!name.trim() || !endpoint.trim()) {
+      toast.error(t('settings.provider.serviceFieldsRequired'));
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const payload = {
+        name: name.trim(),
+        type: 'file-storage' as const,
+        endpoint: endpoint.trim(),
+        apiKey: apiKey.trim(),
+        ...(maxQuota.trim() ? { maxQuota: Math.max(1, Math.floor(Number(maxQuota))) } : {}),
+        quotaUnit,
+      };
+      if (isEdit && editingService) {
+        await updateProviderService(provider.id, editingService.id, payload);
+        toast.success(t('settings.provider.serviceUpdateSuccess'));
+      } else {
+        await addProviderService(provider.id, payload);
+        toast.success(t('settings.provider.serviceAddSuccess'));
+      }
+      onOpenChange(false);
+    } catch {
+      // 错误已由 hook toast
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent size="md">
+        <DialogHeader>
+          <DialogTitle>
+            {isEdit
+              ? t('settings.provider.editServiceTitle')
+              : t('settings.provider.addServiceTitle')}
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="flex flex-col gap-3">
+          {/* 服务名称 */}
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="service-name">{t('settings.provider.serviceName')}</Label>
+            <Input
+              id="service-name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder={t('settings.provider.serviceNamePlaceholder')}
+            />
+          </div>
+          {/* 服务类型（当前仅文件存储） */}
+          <div className="flex flex-col gap-1.5">
+            <Label>{t('settings.provider.serviceType')}</Label>
+            <div className="flex h-8 items-center gap-2">
+              <Badge variant="outline" className="font-normal">
+                {t('settings.provider.fileStorage')}
+              </Badge>
+            </div>
+          </div>
+          {/* API 地址 */}
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="service-endpoint">{t('settings.provider.serviceEndpoint')}</Label>
+            <Input
+              id="service-endpoint"
+              value={endpoint}
+              onChange={(e) => setEndpoint(e.target.value)}
+              placeholder={t('settings.provider.endpointPlaceholder')}
+            />
+          </div>
+          {/* API Key */}
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="service-apikey">{t('settings.provider.apiKey')}</Label>
+            <Input
+              id="service-apikey"
+              type="password"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder={isEdit ? t('settings.provider.apiKeyKeep') : 'sk-...'}
+            />
+          </div>
+          {/* 最大限额 + 单位 */}
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="service-quota">{t('settings.provider.maxQuota')}</Label>
+            <div className="flex items-center gap-2">
+              <Input
+                id="service-quota"
+                type="number"
+                min={1}
+                className="flex-1"
+                value={maxQuota}
+                onChange={(e) => setMaxQuota(e.target.value)}
+                placeholder="10"
+              />
+              <Select value={quotaUnit} onValueChange={(v) => setQuotaUnit(v as 'MB' | 'GB' | 'TB')}>
+                <SelectTrigger className="w-20">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="MB">MB</SelectItem>
+                  <SelectItem value="GB">GB</SelectItem>
+                  <SelectItem value="TB">TB</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
+            {t('settings.provider.cancel')}
+          </Button>
+          <Button onClick={handleSubmit} disabled={submitting}>
+            {submitting && <Loader2 className="size-3.5 animate-spin" />}
+            {t('settings.provider.save')}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ===== 模型弹窗（手动添加/编辑共用；思考强度标签化） ===== */
 interface ProviderModelDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -1043,7 +1585,7 @@ function ProviderModelDialog({
 }: ProviderModelDialogProps) {
   const { t } = useTranslation();
   const isEdit = !!editingModel;
-  const { addProviderModels, updateProviderModel } = useProviders();
+  const { addProviderModels, updateProviderModel, updateProvider } = useProviders();
 
   const [name, setName] = useState('');
   const [model, setModel] = useState('');
@@ -1052,10 +1594,11 @@ function ProviderModelDialog({
   const [temperature, setTemperature] = useState(1.0);
   const [topP, setTopP] = useState(1.0);
   const [topK, setTopK] = useState(0);
-  const [effortLevel, setEffortLevel] = useState<'off' | 'low' | 'medium' | 'high' | 'custom'>('off');
-  const [customLabel, setCustomLabel] = useState('');
-  const [customEffort, setCustomEffort] = useState('');
+  const [thinking, setThinking] = useState<ProviderModelItem['thinking']>({ enabled: false });
   const [submitting, setSubmitting] = useState(false);
+
+  /** 有效等级库（未配置 = 默认库） */
+  const levels = provider.thinkingLevels ?? DEFAULT_LEVELS;
 
   // 弹窗打开时同步表单数据
   useEffect(() => {
@@ -1070,10 +1613,7 @@ function ProviderModelDialog({
       setTemperature(editingModel.temperature ?? 1.0);
       setTopP(editingModel.topP ?? 1.0);
       setTopK(editingModel.topK ?? 0);
-      const lv = toEffortLevel(editingModel.thinking);
-      setEffortLevel(lv);
-      setCustomLabel(lv === 'custom' ? (editingModel.thinking?.label ?? '') : '');
-      setCustomEffort(lv === 'custom' ? (editingModel.thinking?.effort ?? '') : '');
+      setThinking(editingModel.thinking);
     } else {
       setName('');
       setModel('');
@@ -1082,19 +1622,20 @@ function ProviderModelDialog({
       setTemperature(1.0);
       setTopP(1.0);
       setTopK(0);
-      setEffortLevel('off');
-      setCustomLabel('');
-      setCustomEffort('');
+      setThinking({ enabled: false });
     }
   }, [open, editingModel]);
+
+  /** 等级库变更（ThinkingLevelTags 增/删）→ 整组写回 provider */
+  const handleLevelsChange = (next: ThinkingLevelItem[]) => {
+    void updateProvider(provider.id, { thinkingLevels: next }).catch(() => {
+      // 错误已由 hook toast
+    });
+  };
 
   const handleSubmit = async () => {
     if (!name.trim() || !model.trim()) {
       toast.error(t('settings.provider.modelFieldsRequired'));
-      return;
-    }
-    if (effortLevel === 'custom' && !customEffort.trim()) {
-      toast.error(t('settings.provider.customEffortRequired'));
       return;
     }
     setSubmitting(true);
@@ -1107,16 +1648,7 @@ function ProviderModelDialog({
         temperature,
         topP,
         topK,
-        thinking:
-          effortLevel === 'off'
-            ? { enabled: false }
-            : effortLevel === 'custom'
-              ? {
-                  enabled: true,
-                  effort: customEffort.trim(),
-                  ...(customLabel.trim() ? { label: customLabel.trim() } : {}),
-                }
-              : { enabled: true, effort: effortLevel },
+        thinking,
       };
       if (isEdit && editingModel) {
         await updateProviderModel(provider.id, editingModel.id, {
@@ -1248,48 +1780,13 @@ function ProviderModelDialog({
                     onValueChange={(v) => setTopK(Math.round(v[0] ?? 0))}
                   />
                 </div>
-                {/* 思考强度 */}
-                <div className="flex flex-col gap-1.5">
-                  <Label>{t('settings.provider.thinkingLevel')}</Label>
-                  <Select
-                    value={effortLevel}
-                    onValueChange={(v) => setEffortLevel(v as typeof effortLevel)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="off">{t('settings.provider.thinkingOff')}</SelectItem>
-                      <SelectItem value="low">{t('settings.provider.thinkingLow')}</SelectItem>
-                      <SelectItem value="medium">{t('settings.provider.thinkingMedium')}</SelectItem>
-                      <SelectItem value="high">{t('settings.provider.thinkingHigh')}</SelectItem>
-                      <SelectItem value="custom">{t('settings.provider.thinkingCustom')}</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                {/* 自定义等级：名称 + 参数 */}
-                {effortLevel === 'custom' && (
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="flex flex-col gap-1.5">
-                      <Label htmlFor="pm-custom-label">{t('settings.provider.customName')}</Label>
-                      <Input
-                        id="pm-custom-label"
-                        value={customLabel}
-                        onChange={(e) => setCustomLabel(e.target.value)}
-                        placeholder="Deep"
-                      />
-                    </div>
-                    <div className="flex flex-col gap-1.5">
-                      <Label htmlFor="pm-custom-effort">{t('settings.provider.customEffort')}</Label>
-                      <Input
-                        id="pm-custom-effort"
-                        value={customEffort}
-                        onChange={(e) => setCustomEffort(e.target.value)}
-                        placeholder="xhigh"
-                      />
-                    </div>
-                  </div>
-                )}
+                {/* 思考强度（标签化：服务商级等级库） */}
+                <ThinkingLevelTags
+                  levels={levels}
+                  value={thinking}
+                  onThinkingChange={setThinking}
+                  onLevelsChange={handleLevelsChange}
+                />
               </div>
             </CollapsibleContent>
           </Collapsible>

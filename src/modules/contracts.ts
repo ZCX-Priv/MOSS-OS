@@ -133,6 +133,12 @@ export interface AgentEngine {
   run(input: AgentRunInput): Promise<AgentRunResult>;
 
   /**
+   * 创建真实任务（侧边栏可见；task.id 即 sessionId）。
+   * automation 等后台模块用它把运行挂到真实任务上。
+   */
+  createTask(title: string, groupId?: string): import('./agent/task-store').TaskItem;
+
+  /**
    * 前端回复 ask 工具的提问（accept=已回答 / cancel=取消）。
    * @returns true 表示匹配到 pending ask 并已 resolve；false 表示无匹配（可能已超时或不存在）。
    */

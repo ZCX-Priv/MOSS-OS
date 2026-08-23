@@ -42,6 +42,7 @@ export function createCreateAutomationHandler(services: ServiceRegistry): RouteH
     const body = (req.body ?? {}) as {
       title?: string;
       prompt?: string;
+      cwd?: string;
       description?: string;
       icon?: string;
       agentId?: string;
@@ -49,13 +50,14 @@ export function createCreateAutomationHandler(services: ServiceRegistry): RouteH
       cron?: string;
       runAt?: string;
     };
-    if (!body.title || !body.prompt) {
+    if (!body.title || !body.prompt || !body.cwd) {
       return { status: 400, body: { error: ErrorCode.AUTOMATION_FIELDS_REQUIRED } };
     }
     try {
       const item = svc.create({
         title: body.title,
         prompt: body.prompt,
+        cwd: body.cwd,
         description: body.description,
         icon: body.icon,
         agentId: body.agentId,

@@ -35,6 +35,8 @@ export default defineConfig({
       workbox: {
         globPatterns: ['**/*.{js,css,png,svg,ico,woff2}'],
         navigateFallbackDenylist: [/^\/api\//, /^\/ws/],
+        // 主 chunk 含 @lobehub/icons 品牌图标（约 +0.8MB raw），放宽预缓存上限
+        maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
       },
       devOptions: { enabled: true },
     }),

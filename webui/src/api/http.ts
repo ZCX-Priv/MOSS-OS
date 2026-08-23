@@ -14,6 +14,8 @@ import type {
   TaskGroup,
   ProviderItem,
   ProviderModelItem,
+  ProviderServiceItem,
+  ThinkingLevelItem,
   RemoteModelItem,
   ProviderBalanceResult,
   AgentItem,
@@ -373,6 +375,20 @@ export const api = {
       'POST',
       `/api/providers/${providerId}/models/${modelId}/test`,
     ),
+  /** 服务商附加服务 CRUD（当前仅文件存储） */
+  addProviderService: (providerId: string, data: Omit<ProviderServiceItem, 'id'>) =>
+    request<ProviderServiceItem>('POST', `/api/providers/${providerId}/services`, data),
+  updateProviderService: (providerId: string, serviceId: string, patch: Partial<ProviderServiceItem>) =>
+    request<ProviderServiceItem>(
+      'PATCH',
+      `/api/providers/${providerId}/services/${serviceId}`,
+      patch,
+    ),
+  deleteProviderService: (providerId: string, serviceId: string) =>
+    request<{ deleted: boolean }>(
+      'DELETE',
+      `/api/providers/${providerId}/services/${serviceId}`,
+    ),
 
   // ==========================================================================
   // Agent 管理（见文档 3.2.3）
@@ -414,6 +430,7 @@ export const api = {
   createAutomation: (data: {
     title: string;
     prompt: string;
+    cwd: string;
     description?: string;
     icon?: string;
     agentId?: string;

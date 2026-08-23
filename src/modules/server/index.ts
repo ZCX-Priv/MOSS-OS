@@ -47,6 +47,9 @@ import {
   createTestProviderModelHandler,
   createFetchProviderModelsHandler,
   createProviderBalanceHandler,
+  createAddProviderServiceHandler,
+  createUpdateProviderServiceHandler,
+  createDeleteProviderServiceHandler,
 } from './routes/providers';
 import { createListTodosHandler, createReplaceTodosHandler } from './routes/todos';
 import {
@@ -245,6 +248,10 @@ class ServerModule implements Module {
     this.router.addRoute({ method: 'POST', pattern: '/api/providers/:id/models/:modelId/test', handler: createTestProviderModelHandler(services), auth: true });
     this.router.addRoute({ method: 'PATCH', pattern: '/api/providers/:id/models/:modelId', handler: createUpdateProviderModelHandler(config), auth: true });
     this.router.addRoute({ method: 'DELETE', pattern: '/api/providers/:id/models/:modelId', handler: createDeleteProviderModelHandler(config), auth: true });
+    // services（服务商附加服务，当前仅文件存储）
+    this.router.addRoute({ method: 'POST', pattern: '/api/providers/:id/services', handler: createAddProviderServiceHandler(config), auth: true });
+    this.router.addRoute({ method: 'PATCH', pattern: '/api/providers/:id/services/:serviceId', handler: createUpdateProviderServiceHandler(config), auth: true });
+    this.router.addRoute({ method: 'DELETE', pattern: '/api/providers/:id/services/:serviceId', handler: createDeleteProviderServiceHandler(config), auth: true });
 
     // todos
     this.router.addRoute({ method: 'GET', pattern: '/api/todos/:sessionId', handler: createListTodosHandler(env), auth: true });

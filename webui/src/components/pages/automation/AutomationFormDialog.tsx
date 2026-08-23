@@ -3,13 +3,14 @@
 // 支持两种调度：周期（预设 每小时/每天/每周/每月 + 自定义 cron，含下次执行预览）
 // 与 定时（一次性，datetime-local 选择未来时间）。
 // 可选 lucide 图标（IconPicker 复用组件）与执行 Agent。
-// 打开状态由 store（automationFormOpen/automationFormEditingId）驱动，
-// 父级用 key={editingId ?? 'new'} 重挂载以重置表单。
+// 打开状态由 store（automationFormOpen/automationFormEditingId/automationFormSeq）驱动，
+// 父级用 key={automationFormSeq} 重挂载：每次打开均为全新表单（新建空白/编辑预填），不继承上次输入。
 
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { CronExpressionParser } from 'cron-parser';
+import { Folder, FolderOpen, X } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -34,6 +35,7 @@ import { IconPicker } from '../../common/IconPicker';
 import { useStore } from '../../../store';
 import { useAutomations } from '../../../hooks/useAutomations';
 import { api } from '../../../api/http';
+import { describeCron } from '../../../lib/cron-describe';
 import type { AgentItem } from '../../../types/api';
 
 /** 周期预设 */
@@ -43,6 +45,8 @@ interface FormState {
   title: string;
   description: string;
   icon?: string;
+  /** 工作目录（必填，绝对路径） */
+  cwd: string;
   scheduleType: 'cron' | 'once';
   preset: CronPreset;
   time: string; // HH:mm
@@ -100,7 +104,8 @@ function isoToLocalInput(iso?: string): string {
 }
 
 export function AutomationFormDialog() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const locale = i18n.language.startsWith('zh') ? 'zh' : 'en';
   const open = useStore((s) => s.automationFormOpen);
   const editingId = useStore((s) => s.automationFormEditingId);
   const closeAutomationForm = useStore((s) => s.closeAutomationForm);
@@ -113,6 +118,7 @@ export function AutomationFormDialog() {
   const { createAutomation, updateAutomation } = useAutomations();
   const [agents, setAgents] = useState<AgentItem[]>([]);
   const [saving, setSaving] = useState(false);
+  const [pickingCwd, setPickingCwd] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [form, setForm] = useState<FormState>(() => {
@@ -122,6 +128,7 @@ export function AutomationFormDialog() {
         title: editing.title,
         description: editing.description ?? '',
         icon: editing.icon,
+        cwd: editing.cwd ?? '',
         scheduleType: editing.scheduleType,
         preset: detected.preset,
         time: detected.time ?? '09:00',
@@ -137,6 +144,7 @@ export function AutomationFormDialog() {
       title: '',
       description: '',
       icon: undefined,
+      cwd: '',
       scheduleType: 'cron',
       preset: 'daily',
       time: '09:00',
@@ -171,6 +179,19 @@ export function AutomationFormDialog() {
     setError(null);
   };
 
+  /** 选择工作目录：后端原生文件夹对话框（path 为 null = 用户取消，静默） */
+  const handlePickCwd = async () => {
+    setPickingCwd(true);
+    try {
+      const { path } = await api.pickDirectory();
+      if (path) setField('cwd', path);
+    } catch {
+      toast.error(t('automation.form.cwdPickFailed'));
+    } finally {
+      setPickingCwd(false);
+    }
+  };
+
   /** 当前周期配置生成的 cron（custom 预设时为原始输入） */
   const builtCron = useMemo(
     () => (form.scheduleType === 'cron' ? buildCron(form.preset, form) : ''),
@@ -194,6 +215,10 @@ export function AutomationFormDialog() {
     }
     if (!form.prompt.trim()) {
       setError(t('automation.form.promptRequired'));
+      return;
+    }
+    if (!form.cwd.trim()) {
+      setError(t('automation.form.cwdRequired'));
       return;
     }
     let cron: string | undefined;
@@ -229,6 +254,7 @@ export function AutomationFormDialog() {
         title: form.title.trim(),
         description: form.description.trim() || undefined,
         icon: form.icon || undefined,
+        cwd: form.cwd.trim(),
         prompt: form.prompt.trim(),
         agentId: form.agentId || undefined,
         scheduleType: form.scheduleType,
@@ -289,6 +315,46 @@ export function AutomationFormDialog() {
           <div className="flex flex-col gap-1.5">
             <Label>{t('automation.form.iconLabel')}</Label>
             <IconPicker value={form.icon} onChange={(name) => setField('icon', name)} />
+          </div>
+
+          {/* 工作目录（必填） */}
+          <div className="flex flex-col gap-1.5">
+            <Label>{t('automation.form.cwdLabel')}</Label>
+            <div className="flex items-center gap-2">
+              <div className="flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-lg border border-input px-2.5 text-sm">
+                <Folder className="size-3.5 shrink-0 text-muted-foreground" />
+                {form.cwd ? (
+                  <span className="truncate" title={form.cwd}>
+                    {form.cwd}
+                  </span>
+                ) : (
+                  <span className="truncate text-muted-foreground">
+                    {t('automation.form.cwdNotSelected')}
+                  </span>
+                )}
+              </div>
+              {form.cwd && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-8 shrink-0 text-muted-foreground"
+                  onClick={() => setField('cwd', '')}
+                  title={t('automation.form.cwdClear')}
+                >
+                  <X className="size-4" />
+                </Button>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 shrink-0 gap-1.5"
+                onClick={() => void handlePickCwd()}
+                disabled={pickingCwd}
+              >
+                <FolderOpen className="size-4" />
+                {t('automation.form.cwdSelectBtn')}
+              </Button>
+            </div>
           </div>
 
           {/* 调度方式 */}
@@ -403,7 +469,7 @@ export function AutomationFormDialog() {
                 {/* 自定义 cron */}
                 {form.preset === 'custom' && (
                   <div className="flex flex-col gap-1.5">
-                    <Label htmlFor="automation-cron">{t('automation.form.customCronLabel')}</Label>
+                    <Label htmlFor="automation-cron">{t('automation.form.customRuleLabel')}</Label>
                     <Input
                       id="automation-cron"
                       value={form.customCron}
@@ -414,18 +480,15 @@ export function AutomationFormDialog() {
                   </div>
                 )}
 
-                {/* cron 预览 + 下次执行 */}
-                {builtCron && (
+                {/* 自然语言描述 + 下次执行（不展示原始表达式） */}
+                {builtCron && nextRunPreview && (
                   <div className="flex flex-col gap-1 rounded-md bg-muted px-2.5 py-2 text-xs text-muted-foreground">
-                    <span className="flex items-center gap-1.5">
-                      {t('automation.form.cronPreview')}:
-                      <code className="rounded bg-background px-1 py-0.5 font-mono">{builtCron}</code>
+                    <span className="font-medium text-foreground">
+                      {describeCron(builtCron, locale)}
                     </span>
-                    {nextRunPreview && (
-                      <span>
-                        {t('automation.form.nextRunPreview')}: {nextRunPreview}
-                      </span>
-                    )}
+                    <span>
+                      {t('automation.form.nextRunPreview')}: {nextRunPreview}
+                    </span>
                   </div>
                 )}
               </div>

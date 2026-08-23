@@ -372,6 +372,28 @@ export interface ContextFile {
 // 模型管理（见文档 3.2.2）
 // ============================================================================
 
+/** 服务商思考强度等级（等级库条目；预设档 id 固定 off/low/medium/high） */
+export interface ThinkingLevelItem {
+  id: string;
+  /** 显示名，如 "极致" / "关闭" */
+  label: string;
+  /** API 参数值：'off'/'low'/'medium'/'high'/自定义（如 'xhigh'） */
+  effort: string;
+}
+
+/** 服务商附加服务（当前仅文件存储） */
+export interface ProviderServiceItem {
+  id: string;
+  name: string;
+  type: 'file-storage';
+  endpoint: string;
+  apiKey: string;
+  /** 最大限额数值 */
+  maxQuota?: number;
+  /** 限额单位 */
+  quotaUnit?: 'MB' | 'GB' | 'TB';
+}
+
 /** 服务商配置（与后端 ProviderConfig 对齐）：持有 API 格式/地址/Key 及自定义查询地址 */
 export interface ProviderItem {
   /** 内部唯一 id（如 "provider_1734..."） */
@@ -385,6 +407,12 @@ export interface ProviderItem {
   balanceUrl?: string;
   /** 自定义模型列表获取地址（空 = 按 API 格式自动推断） */
   modelsUrl?: string;
+  /** 品牌图标 key（@lobehub/icons 的 provider key；空 = 默认 Server 图标） */
+  icon?: string;
+  /** 思考强度等级库（服务商级，有序；undefined = 默认库 [off,low,medium,high]） */
+  thinkingLevels?: ThinkingLevelItem[];
+  /** 附加服务（文件存储等） */
+  services?: ProviderServiceItem[];
   models: ProviderModelItem[];
 }
 
@@ -530,6 +558,8 @@ export interface AutomationItem {
   runAt?: string;
   /** once 任务被调度器执行后标记 true（保留在列表，改 runAt 后重新启用） */
   completed?: boolean;
+  /** 执行工作目录（绝对路径） */
+  cwd: string;
   /** 触发时发送给 agent 的消息 */
   prompt: string;
   agentId?: string;
@@ -547,6 +577,8 @@ export interface AutomationDetail extends AutomationItem {
 export interface AutomationRun {
   id: string;
   automationId: string;
+  /** 本次运行创建的真实任务 id（点击跳转 /task/:taskId） */
+  taskId?: string;
   startedAt: string;
   finishedAt?: string;
   status: 'running' | 'success' | 'failed' | 'timeout';

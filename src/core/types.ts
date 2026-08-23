@@ -267,7 +267,44 @@ export interface ProviderConfig {
   balanceUrl?: string;
   /** 自定义模型列表获取地址（空 = 按 format 推断默认值） */
   modelsUrl?: string;
+  /** 品牌图标 key（@lobehub/icons 的 provider key，如 'openai'；空 = 默认 Server 图标） */
+  icon?: string;
+  /**
+   * 思考强度等级库（服务商级，有序：位置越靠后档位越高）。
+   * 预设初始库为 [off, low, medium, high]，全部可增删（至少保留 1 个）。
+   * effort==='off' 的等级选中时表示关闭思考（thinking.enabled=false）。
+   * undefined = 使用默认库（前端 fallback 渲染，不写盘）；一旦增删过即整体持久化。
+   */
+  thinkingLevels?: ThinkingLevelConfig[];
+  /** 附加服务（文件存储等） */
+  services?: ProviderServiceConfig[];
   models: ProviderModelConfig[];
+}
+
+/**
+ * 服务商思考强度等级（等级库条目）。
+ * 预设档 id 固定 'off'/'low'/'medium'/'high'；自定义档 level_{ts}_{rand}。
+ */
+export interface ThinkingLevelConfig {
+  id: string;
+  /** 显示名，如 "极致" / "关闭" */
+  label: string;
+  /** API 参数值：'off'/'low'/'medium'/'high'/自定义（如 'xhigh'） */
+  effort: string;
+}
+
+/** 服务商附加服务（当前仅文件存储） */
+export interface ProviderServiceConfig {
+  /** 内部唯一 id（如 "service_1734..."） */
+  id: string;
+  name: string;
+  type: 'file-storage';
+  endpoint: string;
+  apiKey: string;
+  /** 最大限额数值 */
+  maxQuota?: number;
+  /** 限额单位 */
+  quotaUnit?: 'MB' | 'GB' | 'TB';
 }
 
 /** 服务商下的模型：名称 + 模型 id + 模型级高级配置 */

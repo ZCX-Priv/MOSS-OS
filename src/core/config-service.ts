@@ -47,6 +47,22 @@ const providerModelConfigSchema = z.object({
   topK: z.number().int().min(0).max(100).optional(),
 });
 
+const thinkingLevelSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  effort: z.string().min(1),
+});
+
+const providerServiceSchema = z.object({
+  id: z.string().min(1),
+  name: z.string(),
+  type: z.literal('file-storage'),
+  endpoint: z.string(),
+  apiKey: z.string(),
+  maxQuota: z.number().positive().optional(),
+  quotaUnit: z.enum(['MB', 'GB', 'TB']).optional(),
+});
+
 const providerConfigSchema = z.object({
   id: z.string().min(1),
   name: z.string(),
@@ -55,6 +71,9 @@ const providerConfigSchema = z.object({
   apiKey: z.string(),
   balanceUrl: z.string().optional(),
   modelsUrl: z.string().optional(),
+  icon: z.string().optional(),
+  thinkingLevels: z.array(thinkingLevelSchema).optional(),
+  services: z.array(providerServiceSchema).optional(),
   models: z.array(providerModelConfigSchema).default([]),
 });
 

@@ -99,6 +99,8 @@ interface UIState {
   automationFormOpen: boolean;
   /** 编辑模式的任务 id（null = 新建） */
   automationFormEditingId: string | null;
+  /** 表单打开序号（每次 open 递增；作为 Dialog key 强制重挂载，保证表单状态独立不继承上次输入） */
+  automationFormSeq: number;
 
   // --- Skills / Specs ---
   skills: SkillItem[];
@@ -406,6 +408,7 @@ export const useStore = create<Store>((set) => ({
   automationHistory: {},
   automationFormOpen: false,
   automationFormEditingId: null,
+  automationFormSeq: 0,
 
   // --- Skills / Specs ---
   skills: [],
@@ -685,7 +688,11 @@ export const useStore = create<Store>((set) => ({
       },
     })),
   openAutomationForm: (editingId) =>
-    set({ automationFormOpen: true, automationFormEditingId: editingId ?? null }),
+    set((state) => ({
+      automationFormOpen: true,
+      automationFormEditingId: editingId ?? null,
+      automationFormSeq: state.automationFormSeq + 1,
+    })),
   closeAutomationForm: () => set({ automationFormOpen: false, automationFormEditingId: null }),
 
   // --- Actions: Skills / Specs ---

@@ -83,6 +83,7 @@ export function useAutomations() {
     async (data: {
       title: string;
       prompt: string;
+      cwd: string;
       description?: string;
       icon?: string;
       agentId?: string;

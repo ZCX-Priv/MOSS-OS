@@ -5,7 +5,14 @@
 import { useEffect, useCallback } from 'react';
 import { useStore } from '../store';
 import { api } from '../api/http';
-import type { ProviderItem, ProviderModelItem, RemoteModelItem, ProviderBalanceResult } from '../types/api';
+import type {
+  ProviderItem,
+  ProviderModelItem,
+  ProviderServiceItem,
+  ThinkingLevelItem,
+  RemoteModelItem,
+  ProviderBalanceResult,
+} from '../types/api';
 import { toast } from 'sonner';
 
 export type UseProvidersResult = ReturnType<typeof useProviders>;
@@ -63,11 +70,54 @@ export function useProviders() {
   );
 
   const updateProvider = useCallback(
-    async (id: string, patch: Partial<Omit<ProviderItem, 'id' | 'models'>>) => {
+    async (id: string, patch: Partial<Omit<ProviderItem, 'id' | 'models'>> & {
+      thinkingLevels?: ThinkingLevelItem[];
+    }) => {
       try {
         const provider = await api.updateProvider(id, patch);
         await load();
         return provider;
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : String(err));
+        throw err;
+      }
+    },
+    [load],
+  );
+
+  const addProviderService = useCallback(
+    async (providerId: string, data: Omit<ProviderServiceItem, 'id'>) => {
+      try {
+        const service = await api.addProviderService(providerId, data);
+        await load();
+        return service;
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : String(err));
+        throw err;
+      }
+    },
+    [load],
+  );
+
+  const updateProviderService = useCallback(
+    async (providerId: string, serviceId: string, patch: Partial<ProviderServiceItem>) => {
+      try {
+        const service = await api.updateProviderService(providerId, serviceId, patch);
+        await load();
+        return service;
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : String(err));
+        throw err;
+      }
+    },
+    [load],
+  );
+
+  const deleteProviderService = useCallback(
+    async (providerId: string, serviceId: string) => {
+      try {
+        await api.deleteProviderService(providerId, serviceId);
+        await load();
       } catch (err) {
         toast.error(err instanceof Error ? err.message : String(err));
         throw err;
@@ -204,6 +254,9 @@ export function useProviders() {
     addProviderModels,
     updateProviderModel,
     deleteProviderModel,
+    addProviderService,
+    updateProviderService,
+    deleteProviderService,
     fetchProviderModels,
     fetchProviderBalance,
     testProviderModel,

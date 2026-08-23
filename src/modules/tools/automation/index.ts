@@ -18,6 +18,7 @@ const UPDATABLE_FIELDS = [
   'cron',
   'runAt',
   'prompt',
+  'cwd',
   'agentId',
   'enabled',
   'paused',
@@ -40,6 +41,7 @@ export default {
       cron?: string;
       runAt?: string;
       prompt?: string;
+      cwd?: string;
       agentId?: string;
       enabled?: boolean;
       paused?: boolean;
@@ -53,10 +55,14 @@ export default {
         if (!p.prompt || typeof p.prompt !== 'string' || p.prompt.trim() === '') {
           return errorResult(t('tools.automationPromptRequired'));
         }
+        if (!p.cwd || typeof p.cwd !== 'string' || p.cwd.trim() === '') {
+          return errorResult(t('tools.automationCwdRequired'));
+        }
         try {
           const item = svc.create({
             title: p.title,
             prompt: p.prompt,
+            cwd: p.cwd,
             description: p.description,
             icon: p.icon,
             agentId: p.agentId,

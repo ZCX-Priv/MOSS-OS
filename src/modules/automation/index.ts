@@ -32,6 +32,8 @@ export interface AutomationItem {
   runAt?: string;
   /** once 任务被调度器执行后标记 true；调度器不再调度；编辑改 runAt 时重置 */
   completed?: boolean;
+  /** 执行工作目录（绝对路径；旧数据迁移补 env.homeDir） */
+  cwd: string;
   prompt: string;
   agentId?: string;
   enabled: boolean;
@@ -44,6 +46,8 @@ export interface AutomationItem {
 export interface AutomationRun {
   id: string;
   automationId: string;
+  /** 本次运行创建的真实任务 id（task.id 即 sessionId；前端跳转 /task/:taskId 用） */
+  taskId?: string;
   startedAt: string;
   finishedAt?: string;
   status: 'running' | 'success' | 'failed' | 'timeout';
@@ -67,12 +71,19 @@ interface HistoryStoreData {
 // AutomationService 实现
 // ============================================================================
 
+/** 运行时间戳（本地时间 MM-dd HH:mm），用于生成真实任务标题 */
+function formatRunStamp(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 export interface AutomationService {
   list(): AutomationItem[];
   get(id: string): AutomationItem | null;
   create(data: {
     title: string;
     prompt: string;
+    cwd: string;
     description?: string;
     icon?: string;
     agentId?: string;
@@ -134,7 +145,7 @@ class AutomationServiceImpl implements AutomationService {
   }
 
   /**
-   * 旧数据迁移：无 scheduleType 的条目补 'cron'；
+   * 旧数据迁移：无 scheduleType 的条目补 'cron'；无 cwd 补默认主目录；
    * once 任务 runAt 已过期且未执行 → 标记 completed（跳过不补跑）。
    */
   private migrate(): void {
@@ -143,6 +154,10 @@ class AutomationServiceImpl implements AutomationService {
     for (const a of this.data.automations) {
       if (a.scheduleType !== 'cron' && a.scheduleType !== 'once') {
         a.scheduleType = 'cron';
+        dirty = true;
+      }
+      if (typeof a.cwd !== 'string' || a.cwd.trim() === '') {
+        a.cwd = this.env.homeDir;
         dirty = true;
       }
       if (
@@ -242,6 +257,7 @@ class AutomationServiceImpl implements AutomationService {
   create(data: {
     title: string;
     prompt: string;
+    cwd: string;
     description?: string;
     icon?: string;
     agentId?: string;
@@ -250,6 +266,9 @@ class AutomationServiceImpl implements AutomationService {
     runAt?: string;
   }): AutomationItem {
     const scheduleType = data.scheduleType ?? 'cron';
+    if (!data.cwd || typeof data.cwd !== 'string' || data.cwd.trim() === '') {
+      throw new Error(t('automation.cwdRequiredThrow'));
+    }
     let cron: string | undefined;
     let runAt: string | undefined;
 
@@ -282,6 +301,7 @@ class AutomationServiceImpl implements AutomationService {
       scheduleType,
       cron,
       runAt,
+      cwd: data.cwd,
       prompt: data.prompt,
       agentId: data.agentId,
       enabled: true,
@@ -302,6 +322,14 @@ class AutomationServiceImpl implements AutomationService {
 
     // 不允许通过 patch 修改 id / createdAt
     const { id: _omitId, createdAt: _omitCreatedAt, ...allowedPatch } = patch;
+
+    // cwd 如提供必须为非空字符串
+    if (
+      allowedPatch.cwd !== undefined &&
+      (typeof allowedPatch.cwd !== 'string' || allowedPatch.cwd.trim() === '')
+    ) {
+      throw new Error(t('automation.cwdRequiredThrow'));
+    }
 
     // 仅当调度相关字段发生变化时才校验（纯改标题等不应被旧 runAt 阻塞）
     const scheduleTouched =
@@ -538,7 +566,7 @@ class AutomationServiceImpl implements AutomationService {
       this.save();
     }
 
-    // 记录运行开始
+    // 记录运行开始（taskId 在创建真实任务成功后补写）
     const run: AutomationRun = {
       id: runId,
       automationId: item.id,
@@ -556,9 +584,6 @@ class AutomationServiceImpl implements AutomationService {
 
     this.logger.info(t('automation.runStarted', { id: item.id, runId }));
 
-    // 临时 sessionId
-    const sessionId = `auto_sess_${runId}`;
-
     // 事件转发到 WS（可选：只转发到 server.broadcastWS）
     const onEvent = (event: AgentEvent): void => {
       // 仅转发错误与完成事件，避免刷屏
@@ -574,11 +599,17 @@ class AutomationServiceImpl implements AutomationService {
       if (!agent) {
         throw new Error(t('automation.agentEngineUnavailableThrow'));
       }
+      // 创建真实任务（侧边栏可见，task.id 即 sessionId），并广播给前端
+      const task = agent.createTask(`[自动化] ${item.title} · ${formatRunStamp(new Date())}`);
+      server?.broadcastWS({ type: 'task.created', payload: { task } });
+      this.updateHistoryRun(item.id, runId, { taskId: task.id });
+
+      const sessionId = task.sessionId ?? task.id;
       const result = await agent.run({
         sessionId,
         userMessage: item.prompt,
         agentId: item.agentId,
-        cwd: this.env.homeDir,
+        cwd: item.cwd || this.env.homeDir,
         onEvent,
         signal: controller.signal,
       });
