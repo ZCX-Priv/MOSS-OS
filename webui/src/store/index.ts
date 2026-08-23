@@ -317,6 +317,10 @@ interface UIActions {
   requestProviderDialog: () => void;
   clearProviderDialogRequest: () => void;
 
+  // 移动端服务商页 header 搜索按钮：切换搜索框显隐（seq 计数，避免连续点击不触发）
+  providerSearchSeq: number;
+  toggleProviderSearch: () => void;
+
   // 右侧边栏标签页
   /** 新建标签页，返回新标签 id；自动设为活跃 */
   addSidebarTab: (type: SidebarTabType, title: string, toolCallId?: string) => string;
@@ -448,6 +452,7 @@ export const useStore = create<Store>((set) => ({
 
   // 模型菜单"添加服务商"跳转设置页并打开弹窗的信号
   providerDialogRequest: false,
+  providerSearchSeq: 0,
 
   // --- 右侧边栏标签页（IndexedDB 持久化） ---
   sidebarTabs: [defaultSidebarTab()],
@@ -819,6 +824,8 @@ export const useStore = create<Store>((set) => ({
   // --- Actions: 服务商添加弹窗信号 ---
   requestProviderDialog: () => set({ providerDialogRequest: true }),
   clearProviderDialogRequest: () => set({ providerDialogRequest: false }),
+  toggleProviderSearch: () =>
+    set((state) => ({ providerSearchSeq: state.providerSearchSeq + 1 })),
 
   // --- Actions: 右侧边栏标签页 ---
   addSidebarTab: (type, title, toolCallId) => {

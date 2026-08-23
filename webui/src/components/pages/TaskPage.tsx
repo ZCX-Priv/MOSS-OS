@@ -39,7 +39,6 @@ import { MarkdownRenderer } from '../../render';
 import type { OverlayType } from '../../types';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import {
   DropdownMenu,
@@ -1750,11 +1749,11 @@ const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap,
           })}
         </div>
       )}
-      {/* 错误消息 */}
+      {/* 错误消息（无背景无边框，保持红色文字；历史恢复经 http.ts 保留 isError） */}
       {message.isError && (
-        <Card className="border-destructive/50 p-2 text-xs text-destructive">
+        <div className="whitespace-pre-wrap break-words text-xs text-destructive">
           {message.content}
-        </Card>
+        </div>
       )}
     </div>
   );

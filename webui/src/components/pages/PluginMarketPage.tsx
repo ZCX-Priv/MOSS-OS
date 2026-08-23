@@ -27,6 +27,7 @@ import {
 import { useSkills } from '../../hooks/useSkills';
 import { useMcp } from '../../hooks/useMcp';
 import { api } from '../../api/http';
+import { ConfirmDialog } from '../shared/ConfirmDialog';
 import type { McpServer } from '../../types/api';
 
 // Outlet context 类型：搜索框 query 与 setQuery 共享给子组件
@@ -201,6 +202,9 @@ export function McpTab() {
   const [form, setForm] = useState<McpServerForm>(EMPTY_MCP_FORM);
   const [saving, setSaving] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  // 删除确认弹窗（替代原生 confirm）
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const q = query.trim().toLowerCase();
   const filteredServers = q
@@ -317,13 +321,7 @@ export function McpTab() {
                   )}
                   <Button
                     variant="ghost" size="icon-sm" title={t('common.delete')}
-                    onClick={() => {
-                      if (window.confirm(t('plugins.mcpDeleteConfirm', { name: server.name }))) {
-                        void remove(server.name).catch((err: unknown) =>
-                          toast.error(err instanceof Error ? err.message : t('plugins.mcpDeleteFailed')),
-                        );
-                      }
-                    }}
+                    onClick={() => setDeleteTarget(server.name)}
                   >
                     <Trash2 className="size-4" />
                   </Button>
@@ -367,6 +365,29 @@ export function McpTab() {
           );
         })}
       </div>
+
+      {/* 删除服务器确认弹窗 */}
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title={t('common.confirmDelete')}
+        description={t('plugins.mcpDeleteConfirm', { name: deleteTarget ?? '' })}
+        destructive
+        loading={deleting}
+        onConfirm={() => {
+          if (!deleteTarget) return;
+          const name = deleteTarget;
+          setDeleting(true);
+          void remove(name)
+            .catch((err: unknown) =>
+              toast.error(err instanceof Error ? err.message : t('plugins.mcpDeleteFailed')),
+            )
+            .finally(() => {
+              setDeleting(false);
+              setDeleteTarget(null);
+            });
+        }}
+        onOpenChange={(o) => !o && setDeleteTarget(null)}
+      />
 
       {/* 添加服务器弹窗 */}
       <Dialog open={addOpen} onOpenChange={(o) => !saving && setAddOpen(o)}>

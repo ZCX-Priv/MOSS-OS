@@ -5,6 +5,7 @@
 import { useEffect, useCallback } from 'react';
 import { useStore } from '../store';
 import { api } from '../api/http';
+import i18n from '../i18n';
 import type {
   ProviderItem,
   ProviderModelItem,
@@ -14,6 +15,30 @@ import type {
   ProviderBalanceResult,
 } from '../types/api';
 import { toast } from 'sonner';
+
+/** 模型是否存在于任一服务商（按 id 或 model 字段匹配，与后端 findModelInProviders 一致） */
+function isModelExists(providers: ProviderItem[], modelId: string): boolean {
+  return providers.some((p) => p.models.some((m) => m.id === modelId || m.model === modelId));
+}
+
+/** 第一个有模型的服务商的第一个模型（"默认模型"回退目标）；无可用模型返回 null */
+function findFirstAvailableModel(providers: ProviderItem[]): ProviderModelItem | null {
+  for (const p of providers) {
+    if (p.models.length > 0) return p.models[0];
+  }
+  return null;
+}
+
+/** 自动切换当前模型并提示（回退失败静默，由后续 load 兜底） */
+async function switchCurrentModel(fallback: ProviderModelItem): Promise<void> {
+  try {
+    await api.setCurrentModel(fallback.id);
+    useStore.getState().setCurrentModel(fallback.id);
+    toast.info(i18n.t('settings.provider.modelAutoSwitched', { name: fallback.name }));
+  } catch {
+    // 回退失败保持原状
+  }
+}
 
 export type UseProvidersResult = ReturnType<typeof useProviders>;
 
@@ -25,7 +50,15 @@ export function useProviders() {
     try {
       const { providers, current } = await api.listProviders();
       setProviders(providers);
-      if (current) setCurrentModel(current);
+      if (current && !isModelExists(providers, current)) {
+        // current 指向不存在的模型（配置残留/外部变更）：自动回退到第一个可用模型
+        const fallback = findFirstAvailableModel(providers);
+        if (fallback) {
+          await switchCurrentModel(fallback);
+        }
+      } else if (current) {
+        setCurrentModel(current);
+      }
     } catch (err) {
       console.warn('useProviders load failed:', err);
     }
@@ -128,8 +161,17 @@ export function useProviders() {
 
   const deleteProvider = useCallback(
     async (id: string) => {
+      // 删除前预判：该服务商是否含当前选中模型 → 计算回退目标（其他服务商第一个可用模型）
+      const state = useStore.getState();
+      const target = state.providers.find((p) => p.id === id);
+      const hadCurrent = !!target && target.models.some((m) => m.id === state.currentModel);
+      const fallback = hadCurrent
+        ? findFirstAvailableModel(state.providers.filter((p) => p.id !== id))
+        : null;
       try {
         await api.deleteProvider(id);
+        // 先切 current 再 reload，避免 load 内部回退到非预期目标
+        if (fallback) await switchCurrentModel(fallback);
         await load();
       } catch (err) {
         toast.error(err instanceof Error ? err.message : String(err));
@@ -195,8 +237,20 @@ export function useProviders() {
 
   const deleteProviderModel = useCallback(
     async (providerId: string, modelId: string) => {
+      // 删除前预判：删的是当前选中模型 → 回退目标优先同服务商剩余模型，否则其他服务商第一个可用模型
+      const state = useStore.getState();
+      const wasCurrent = state.currentModel === modelId;
+      let fallback: ProviderModelItem | null = null;
+      if (wasCurrent) {
+        const provider = state.providers.find((p) => p.id === providerId);
+        const remaining = provider?.models.filter((m) => m.id !== modelId) ?? [];
+        fallback =
+          remaining[0] ?? findFirstAvailableModel(state.providers.filter((p) => p.id !== providerId));
+      }
       try {
         await api.deleteProviderModel(providerId, modelId);
+        // 先切 current 再 reload，避免 load 内部回退到非预期目标
+        if (fallback) await switchCurrentModel(fallback);
         await load();
       } catch (err) {
         toast.error(err instanceof Error ? err.message : String(err));

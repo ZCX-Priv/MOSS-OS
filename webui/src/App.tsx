@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Plus } from 'lucide-react';
+import { Plus, Search } from 'lucide-react';
 import type { OverlayType } from './types';
 import { Sidebar } from './components/layout/Sidebar';
 import { TaskPage } from './components/pages/TaskPage';
@@ -15,6 +15,12 @@ import {
   ConfiguredTab,
   HistoryTab,
 } from './components/pages/AutomationPage';
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from '@/components/ui/dropdown-menu';
 import {
   SettingsPage,
   GeneralSettings,
@@ -63,6 +69,7 @@ export default function App() {
   const isPluginsRoute = pathname.startsWith('/plugins');
   const isAutomationRoute = pathname.startsWith('/automation');
   const isSettingsRoute = pathname.startsWith('/settings');
+  const isProviderRoute = pathname.startsWith('/settings/provider');
   const mobileTitle = isPluginsRoute
     ? t('plugins.title')
     : isAutomationRoute
@@ -106,6 +113,40 @@ export default function App() {
                   >
                     <Plus />
                   </Button>
+                )}
+                {/* 服务商设置页：搜索 + 添加（移动端收纳进 header；页面内工具行仅筛选占一行） */}
+                {isProviderRoute && (
+                  <>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      title={t('settings.provider.searchPlaceholder')}
+                      onClick={() => useStore.getState().toggleProviderSearch()}
+                    >
+                      <Search />
+                    </Button>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          title={t('settings.provider.addMenu')}
+                          aria-label={t('settings.provider.addMenu')}
+                        >
+                          <Plus />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-auto min-w-36">
+                        <DropdownMenuItem
+                          className="gap-1.5"
+                          onSelect={() => useStore.getState().requestProviderDialog()}
+                        >
+                          <Plus className="size-3.5" />
+                          {t('settings.provider.addProvider')}
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </>
                 )}
               </div>
             </header>

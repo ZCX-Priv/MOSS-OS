@@ -142,6 +142,8 @@ function adaptAgentMessages(raw: unknown[]): TaskMessage[] {
       thinking: m.thinking,
       toolCalls: m.toolCalls,
       todoSnapshot: m.todoSnapshot,
+      // 历史恢复保留错误标记（否则刷新后错误消息变成普通正文渲染）
+      ...(m.isError ? { isError: true } : {}),
       timestamp: m.timestamp ?? new Date().toISOString(),
     });
   }

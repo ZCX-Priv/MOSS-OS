@@ -64,9 +64,14 @@ export function ModelSelector() {
   const navigate = useNavigate();
   const { providers, currentModel, setCurrent, updateProviderModel, updateProvider } = useProviders();
   const isMobile = useIsMobile();
+  const hasAnyModel = providers.some((p) => p.models.length > 0);
   const currentModelName = providers
     .flatMap((p) => p.models)
     .find((m) => m.id === currentModel)?.name;
+  // 触发按钮文案：无任何可用模型时显示"暂无模型"
+  const triggerLabel = hasAnyModel
+    ? (currentModelName || t('modelSelector.auto'))
+    : t('modelSelector.noModels');
 
   // 桌面端子菜单控制
   const [mainOpen, setMainOpen] = useState(false);
@@ -173,7 +178,7 @@ export function ModelSelector() {
           className="min-w-0 shrink gap-1.5 rounded-[min(var(--radius-md),12px)]"
           onClick={() => setSheetOpen(true)}
         >
-          <span className="min-w-0 flex-1 truncate">{currentModelName || t('modelSelector.auto')}</span>
+          <span className="min-w-0 flex-1 truncate">{triggerLabel}</span>
           <ChevronDown className="size-3 shrink-0 opacity-70" />
         </Button>
         <Sheet open={sheetOpen} onOpenChange={setSheetOpen}>
@@ -182,9 +187,9 @@ export function ModelSelector() {
               <SheetTitle>{t('modelSelector.title')}</SheetTitle>
             </SheetHeader>
             <div className="flex flex-col gap-1 px-1 pb-2 pt-2">
-              {providers.length === 0 && (
+              {!hasAnyModel && (
                 <div className="px-2 py-4 text-xs text-muted-foreground">
-                  {t('modelSelector.noModels', { defaultValue: '暂无可用模型' })}
+                  {t('modelSelector.noModels')}
                 </div>
               )}
               {providers.map((provider) => (
@@ -268,7 +273,7 @@ export function ModelSelector() {
     >
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" size="sm" className="min-w-0 shrink gap-1.5 rounded-[min(var(--radius-md),12px)]">
-          <span className="min-w-0 flex-1 truncate">{currentModelName || t('modelSelector.auto')}</span>
+          <span className="min-w-0 flex-1 truncate">{triggerLabel}</span>
           <ChevronDown className="size-3 shrink-0 opacity-70" />
         </Button>
       </DropdownMenuTrigger>
@@ -290,9 +295,9 @@ export function ModelSelector() {
         }}
         className="w-64 max-h-[min(20rem,var(--radix-dropdown-menu-content-available-height))] overflow-y-auto p-1"
       >
-        {providers.length === 0 && (
+        {!hasAnyModel && (
           <div className="px-2 py-4 text-xs text-muted-foreground">
-            {t('modelSelector.noModels', { defaultValue: '暂无可用模型' })}
+            {t('modelSelector.noModels')}
           </div>
         )}
         {providers.map((provider) => (

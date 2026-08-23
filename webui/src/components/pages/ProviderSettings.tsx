@@ -17,6 +17,7 @@ import {
   GripVertical,
   Loader2,
   ChevronRight,
+  ChevronLeft,
   CircleDollarSign,
   RefreshCw,
   Pencil,
@@ -66,6 +67,7 @@ import {
 } from '@/components/ui/dialog';
 import { useProviders, type UseProvidersResult } from '../../hooks/useProviders';
 import { useStore } from '../../store';
+import { ConfirmDialog } from '../shared/ConfirmDialog';
 import { parseLegacyWindow, DEFAULT_LEVELS, generateLevelId } from '../../lib/model-utils';
 import { getProviderIcon, PROVIDER_ICON_LIST } from '../../lib/provider-icons';
 import type {
@@ -147,8 +149,19 @@ export function ProviderSettings() {
   const [editingService, setEditingService] = useState<ProviderServiceItem | null>(null);
   const [query, setQuery] = useState('');
   const [formatFilter, setFormatFilter] = useState<'all' | ProviderItem['format']>('all');
+  // 删除服务商确认弹窗（替代原生 confirm）
+  const [deleteConfirmProvider, setDeleteConfirmProvider] = useState<ProviderItem | null>(null);
+  const [deletingProvider, setDeletingProvider] = useState(false);
+  // 远程模型勾选 → 分页「添加模型」弹窗
+  const [batchPick, setBatchPick] = useState<{
+    provider: ProviderItem;
+    models: Array<{ name: string; model: string }>;
+  } | null>(null);
   const providerDialogRequest = useStore((s) => s.providerDialogRequest);
   const clearProviderDialogRequest = useStore((s) => s.clearProviderDialogRequest);
+  // 移动端 header 搜索按钮信号：seq 计数 → 切换搜索框显隐
+  const providerSearchSeq = useStore((s) => s.providerSearchSeq);
+  const [searchOpen, setSearchOpen] = useState(false);
 
   // 从模型选择器"添加服务商"跳转过来时自动打开添加弹窗
   useEffect(() => {
@@ -158,6 +171,13 @@ export function ProviderSettings() {
       setProviderDialogOpen(true);
     }
   }, [providerDialogRequest, clearProviderDialogRequest]);
+
+  // header 搜索按钮：切换移动端搜索框显隐
+  useEffect(() => {
+    if (providerSearchSeq > 0) {
+      setSearchOpen((v) => !v);
+    }
+  }, [providerSearchSeq]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -198,20 +218,21 @@ export function ProviderSettings() {
     setPickProvider(provider);
   };
 
-  const handleDelete = async (provider: ProviderItem) => {
-    if (
-      !window.confirm(
-        t('settings.provider.deleteConfirm', { count: provider.models.length }),
-      )
-    ) {
-      return;
-    }
-    try {
-      await deleteProvider(provider.id);
-      toast.success(t('settings.provider.deleteSuccess'));
-    } catch {
-      // 错误已由 hook toast
-    }
+  const handleDelete = () => {
+    if (!deleteConfirmProvider) return;
+    const provider = deleteConfirmProvider;
+    setDeletingProvider(true);
+    void (async () => {
+      try {
+        await deleteProvider(provider.id);
+        toast.success(t('settings.provider.deleteSuccess'));
+        setDeleteConfirmProvider(null);
+      } catch {
+        // 错误已由 hook toast
+      } finally {
+        setDeletingProvider(false);
+      }
+    })();
   };
 
   const handleDragEnd = (event: DragEndEvent) => {
@@ -240,15 +261,45 @@ export function ProviderSettings() {
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      {/* 页头 + 筛选：单行紧凑（窄屏上下堆叠） */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      {/* 页头：移动端筛选独占一行（搜索/添加收纳进全局 header 按钮）；桌面端单行紧凑 */}
+      <div className="flex flex-col gap-3">
         <div className="flex flex-col gap-0.5">
           <h1 className="text-xl font-semibold text-foreground">
             {t('settings.provider.title')}
           </h1>
           <p className="text-xs text-muted-foreground">{t('settings.provider.subtitle')}</p>
         </div>
-        <div className="flex items-center gap-2">
+
+        {/* 移动端搜索展开行：header 搜索按钮触发，出现在筛选上方 */}
+        {searchOpen && (
+          <div className="flex items-center gap-2 sm:hidden">
+            <div className="relative min-w-0 flex-1">
+              <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                type="text"
+                placeholder={t('settings.provider.searchPlaceholder')}
+                className="pl-8"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                autoFocus
+              />
+            </div>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              shrink-0
+              aria-label={t('common.close')}
+              onClick={() => {
+                setQuery('');
+                setSearchOpen(false);
+              }}
+            >
+              <X className="size-4" />
+            </Button>
+          </div>
+        )}
+
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <Select
             value={formatFilter}
             onValueChange={(v) => setFormatFilter(v as 'all' | ProviderItem['format'])}
@@ -265,20 +316,23 @@ export function ProviderSettings() {
               ))}
             </SelectContent>
           </Select>
-          <div className="relative w-full shrink sm:w-52">
-            <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              type="text"
-              placeholder={t('settings.provider.searchPlaceholder')}
-              className="pl-8"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
+          {/* 桌面端搜索框 + 添加按钮（移动端由 header 按钮替代） */}
+          <div className="hidden items-center gap-2 sm:flex">
+            <div className="relative w-full shrink sm:w-52">
+              <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                type="text"
+                placeholder={t('settings.provider.searchPlaceholder')}
+                className="pl-8"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+              />
+            </div>
+            <Button className="shrink-0 gap-1.5" onClick={openAdd}>
+              <Plus className="size-3.5" />
+              {t('settings.provider.addProvider')}
+            </Button>
           </div>
-          <Button className="shrink-0 gap-1.5" onClick={openAdd}>
-            <Plus className="size-3.5" />
-            {t('settings.provider.addProvider')}
-          </Button>
         </div>
       </div>
 
@@ -306,7 +360,7 @@ export function ProviderSettings() {
                   onSelectModel={(modelId) => void setCurrent(modelId)}
                   onBalance={() => setBalanceProvider(provider)}
                   onEdit={() => openEdit(provider)}
-                  onDelete={() => void handleDelete(provider)}
+                  onDelete={() => setDeleteConfirmProvider(provider)}
                   onAddModel={() => openAddModel(provider)}
                   onAddService={() => openAddService(provider)}
                   onEditModel={(model) => openEditModel(provider, model)}
@@ -327,7 +381,7 @@ export function ProviderSettings() {
         onCreated={setPickProvider}
       />
 
-      {/* 远程模型勾选弹窗（实时搜索） */}
+      {/* 远程模型勾选弹窗（实时搜索；勾选提交 → 分页添加弹窗） */}
       {pickProvider && (
         <ModelPickDialog
           open={!!pickProvider}
@@ -336,6 +390,7 @@ export function ProviderSettings() {
           }}
           provider={pickProvider}
           fetchProviderModels={fetchProviderModels}
+          onPick={(models) => setBatchPick({ provider: pickProvider, models })}
         />
       )}
 
@@ -365,6 +420,19 @@ export function ProviderSettings() {
         />
       )}
 
+      {/* 远程勾选批量添加：分页「添加模型」弹窗（每页一个模型） */}
+      {batchPick && (
+        <ProviderModelDialog
+          open
+          onOpenChange={(o) => {
+            if (!o) setBatchPick(null);
+          }}
+          provider={batchPick.provider}
+          editingModel={null}
+          batchModels={batchPick.models}
+        />
+      )}
+
       {/* 添加/编辑服务弹窗（文件存储） */}
       {serviceDialogProvider && (
         <AddServiceDialog
@@ -379,6 +447,19 @@ export function ProviderSettings() {
           editingService={editingService}
         />
       )}
+
+      {/* 删除服务商确认弹窗 */}
+      <ConfirmDialog
+        open={!!deleteConfirmProvider}
+        title={t('common.confirmDelete')}
+        description={t('settings.provider.deleteConfirm', {
+          count: deleteConfirmProvider?.models.length ?? 0,
+        })}
+        destructive
+        loading={deletingProvider}
+        onConfirm={handleDelete}
+        onOpenChange={(o) => !o && setDeleteConfirmProvider(null)}
+      />
     </div>
   );
 }
@@ -417,6 +498,11 @@ function SortableProviderCard({
   });
   const [testingId, setTestingId] = useState<string | null>(null);
   const { testProviderModel, deleteProviderModel, deleteProviderService } = useProviders();
+  // 删除模型/服务确认弹窗（替代原生 confirm）
+  const [deleteModelTarget, setDeleteModelTarget] = useState<ProviderModelItem | null>(null);
+  const [deletingModel, setDeletingModel] = useState(false);
+  const [deleteServiceTarget, setDeleteServiceTarget] = useState<ProviderServiceItem | null>(null);
+  const [deletingService, setDeletingService] = useState(false);
 
   const handleTest = async (model: ProviderModelItem) => {
     setTestingId(model.id);
@@ -432,24 +518,38 @@ function SortableProviderCard({
     }
   };
 
-  const handleDeleteModel = async (model: ProviderModelItem) => {
-    if (!window.confirm(t('settings.provider.deleteModelConfirm'))) return;
-    try {
-      await deleteProviderModel(provider.id, model.id);
-      toast.success(t('settings.provider.deleteModelSuccess'));
-    } catch {
-      // 错误已由 hook toast
-    }
+  const handleDeleteModel = () => {
+    if (!deleteModelTarget) return;
+    const model = deleteModelTarget;
+    setDeletingModel(true);
+    void (async () => {
+      try {
+        await deleteProviderModel(provider.id, model.id);
+        toast.success(t('settings.provider.deleteModelSuccess'));
+        setDeleteModelTarget(null);
+      } catch {
+        // 错误已由 hook toast
+      } finally {
+        setDeletingModel(false);
+      }
+    })();
   };
 
-  const handleDeleteService = async (service: ProviderServiceItem) => {
-    if (!window.confirm(t('settings.provider.deleteServiceConfirm'))) return;
-    try {
-      await deleteProviderService(provider.id, service.id);
-      toast.success(t('settings.provider.serviceDeleteSuccess'));
-    } catch {
-      // 错误已由 hook toast
-    }
+  const handleDeleteService = () => {
+    if (!deleteServiceTarget) return;
+    const service = deleteServiceTarget;
+    setDeletingService(true);
+    void (async () => {
+      try {
+        await deleteProviderService(provider.id, service.id);
+        toast.success(t('settings.provider.serviceDeleteSuccess'));
+        setDeleteServiceTarget(null);
+      } catch {
+        // 错误已由 hook toast
+      } finally {
+        setDeletingService(false);
+      }
+    })();
   };
 
   return (
@@ -497,7 +597,7 @@ function SortableProviderCard({
                 <Plus className="size-4" />
               </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
+            <DropdownMenuContent align="start" className="w-auto min-w-40">
               <DropdownMenuItem className="gap-1.5" onSelect={onAddModel}>
                 <Plus className="size-3.5" />
                 {t('settings.provider.addModel')}
@@ -595,7 +695,7 @@ function SortableProviderCard({
                     title={t('settings.provider.delete')}
                     danger
                     disabled={isTesting}
-                    onClick={() => void handleDeleteModel(model)}
+                    onClick={() => setDeleteModelTarget(model)}
                   >
                     <Trash2 className="size-3.5" />
                   </IconActionButton>
@@ -635,7 +735,7 @@ function SortableProviderCard({
               <IconActionButton
                 title={t('settings.provider.delete')}
                 danger
-                onClick={() => void handleDeleteService(service)}
+                onClick={() => setDeleteServiceTarget(service)}
               >
                 <Trash2 className="size-3.5" />
               </IconActionButton>
@@ -643,6 +743,26 @@ function SortableProviderCard({
           ))}
         </div>
       )}
+
+      {/* 删除模型/服务确认弹窗 */}
+      <ConfirmDialog
+        open={!!deleteModelTarget}
+        title={t('common.confirmDelete')}
+        description={t('settings.provider.deleteModelConfirm')}
+        destructive
+        loading={deletingModel}
+        onConfirm={handleDeleteModel}
+        onOpenChange={(o) => !o && setDeleteModelTarget(null)}
+      />
+      <ConfirmDialog
+        open={!!deleteServiceTarget}
+        title={t('common.confirmDelete')}
+        description={t('settings.provider.deleteServiceConfirm')}
+        destructive
+        loading={deletingService}
+        onConfirm={handleDeleteService}
+        onOpenChange={(o) => !o && setDeleteServiceTarget(null)}
+      />
     </div>
   );
 }
@@ -1090,23 +1210,23 @@ export function ThinkingLevelTags({ levels, value, onThinkingChange, onLevelsCha
   );
 }
 
-/* ===== 远程模型勾选弹窗（实时搜索 + 已添加标记 + 批量添加） ===== */
+/* ===== 远程模型勾选弹窗（实时搜索 + 已添加标记 + 勾选后进入分页添加） ===== */
 interface ModelPickDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   provider: ProviderItem;
   fetchProviderModels: UseProvidersResult['fetchProviderModels'];
+  /** 勾选提交 → 打开分页「添加模型」弹窗填写详细信息 */
+  onPick: (models: Array<{ name: string; model: string }>) => void;
 }
 
-function ModelPickDialog({ open, onOpenChange, provider, fetchProviderModels }: ModelPickDialogProps) {
+function ModelPickDialog({ open, onOpenChange, provider, fetchProviderModels, onPick }: ModelPickDialogProps) {
   const { t } = useTranslation();
-  const { addProviderModels } = useProviders();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [remoteModels, setRemoteModels] = useState<RemoteModelItem[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState('');
-  const [submitting, setSubmitting] = useState(false);
 
   const loadModels = async () => {
     setLoading(true);
@@ -1172,21 +1292,14 @@ function ModelPickDialog({ open, onOpenChange, provider, fetchProviderModels }: 
     });
   };
 
-  const handleSubmit = async () => {
+  const handleSubmit = () => {
     if (selected.size === 0) return;
-    setSubmitting(true);
-    try {
-      const models = remoteModels
-        .filter((m) => selected.has(m.id))
-        .map((m) => ({ name: m.name ?? m.id, model: m.id }));
-      const result = await addProviderModels(provider.id, models);
-      toast.success(t('settings.provider.addSelectedSuccess', { count: result.added }));
-      onOpenChange(false);
-    } catch {
-      // 错误已由 hook toast
-    } finally {
-      setSubmitting(false);
-    }
+    // 勾选模型 → 分页「添加模型」弹窗填写详细配置后批量入库
+    const models = remoteModels
+      .filter((m) => selected.has(m.id))
+      .map((m) => ({ name: m.name ?? m.id, model: m.id }));
+    onPick(models);
+    onOpenChange(false);
   };
 
   return (
@@ -1290,11 +1403,10 @@ function ModelPickDialog({ open, onOpenChange, provider, fetchProviderModels }: 
           <span className="mr-auto text-xs text-muted-foreground">
             {t('settings.provider.selectedCount', { count: selected.size })}
           </span>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
             {t('settings.provider.cancel')}
           </Button>
-          <Button onClick={handleSubmit} disabled={submitting || selected.size === 0}>
-            {submitting && <Loader2 className="size-3.5 animate-spin" />}
+          <Button onClick={handleSubmit} disabled={selected.size === 0}>
             {t('settings.provider.addSelected', { count: selected.size })}
           </Button>
         </DialogFooter>
@@ -1572,12 +1684,26 @@ function AddServiceDialog({ open, onOpenChange, provider, editingService }: AddS
   );
 }
 
-/* ===== 模型弹窗（手动添加/编辑共用；思考强度标签化） ===== */
+/* ===== 模型弹窗（手动添加/编辑/远程批量添加共用；思考强度标签化） ===== */
+/** 单个模型表单草稿 */
+interface ModelDraft {
+  name: string;
+  model: string;
+  inputTokens: string;
+  outputTokens: string;
+  temperature: number;
+  topP: number;
+  topK: number;
+  thinking: ProviderModelItem['thinking'];
+}
+
 interface ProviderModelDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   provider: ProviderItem;
   editingModel: ProviderModelItem | null;
+  /** 远程模型批量添加（分页模式，每页一个模型） */
+  batchModels?: Array<{ name: string; model: string }>;
 }
 
 function ProviderModelDialog({
@@ -1585,49 +1711,69 @@ function ProviderModelDialog({
   onOpenChange,
   provider,
   editingModel,
+  batchModels,
 }: ProviderModelDialogProps) {
   const { t } = useTranslation();
   const isEdit = !!editingModel;
+  const isBatch = !editingModel && !!batchModels && batchModels.length > 0;
   const { addProviderModels, updateProviderModel, updateProvider } = useProviders();
 
-  const [name, setName] = useState('');
-  const [model, setModel] = useState('');
-  const [inputTokens, setInputTokens] = useState('');
-  const [outputTokens, setOutputTokens] = useState('');
-  const [temperature, setTemperature] = useState(1.0);
-  const [topP, setTopP] = useState(1.0);
-  const [topK, setTopK] = useState(0);
-  const [thinking, setThinking] = useState<ProviderModelItem['thinking']>({ enabled: false });
+  /** 统一草稿数组：单模型场景长度恒为 1；批量场景每页一项（切页暂存不丢失） */
+  const [drafts, setDrafts] = useState<ModelDraft[]>([]);
+  const [page, setPage] = useState(0);
   const [submitting, setSubmitting] = useState(false);
 
   /** 有效等级库（未配置 = 默认库） */
   const levels = provider.thinkingLevels ?? DEFAULT_LEVELS;
+  const draft = drafts[page];
+
+  /** 新建默认草稿：输入 200000 / 输出 128000 / 思考等级 high（label 取等级库定义） */
+  const makeDefaultDraft = (name: string, model: string): ModelDraft => {
+    const highLevel = levels.find((l) => l.effort === 'high');
+    return {
+      name,
+      model,
+      inputTokens: '200000',
+      outputTokens: '128000',
+      temperature: 1.0,
+      topP: 1.0,
+      topK: 0,
+      thinking: { enabled: true, effort: 'high', label: highLevel?.label ?? 'High' },
+    };
+  };
 
   // 弹窗打开时同步表单数据
   useEffect(() => {
     if (!open) return;
+    setPage(0);
     if (editingModel) {
-      setName(editingModel.name);
-      setModel(editingModel.model);
-      setInputTokens(
-        String(editingModel.inputTokens ?? parseLegacyWindow(editingModel.contextWindow) ?? ''),
-      );
-      setOutputTokens(String(editingModel.outputTokens ?? ''));
-      setTemperature(editingModel.temperature ?? 1.0);
-      setTopP(editingModel.topP ?? 1.0);
-      setTopK(editingModel.topK ?? 0);
-      setThinking(editingModel.thinking);
+      setDrafts([
+        {
+          name: editingModel.name,
+          model: editingModel.model,
+          inputTokens: String(
+            editingModel.inputTokens ?? parseLegacyWindow(editingModel.contextWindow) ?? '',
+          ),
+          outputTokens: String(editingModel.outputTokens ?? ''),
+          temperature: editingModel.temperature ?? 1.0,
+          topP: editingModel.topP ?? 1.0,
+          topK: editingModel.topK ?? 0,
+          thinking: editingModel.thinking,
+        },
+      ]);
+    } else if (batchModels && batchModels.length > 0) {
+      // 远程勾选批量添加：每页一个模型，均预填默认高级配置
+      setDrafts(batchModels.map((m) => makeDefaultDraft(m.name, m.model)));
     } else {
-      setName('');
-      setModel('');
-      setInputTokens('');
-      setOutputTokens('');
-      setTemperature(1.0);
-      setTopP(1.0);
-      setTopK(0);
-      setThinking({ enabled: false });
+      setDrafts([makeDefaultDraft('', '')]);
     }
-  }, [open, editingModel]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, editingModel, batchModels]);
+
+  /** 更新当前页草稿 */
+  const updateDraft = (patch: Partial<ModelDraft>) => {
+    setDrafts((prev) => prev.map((d, i) => (i === page ? { ...d, ...patch } : d)));
+  };
 
   /** 等级库变更（ThinkingLevelTags 增/删）→ 整组写回 provider */
   const handleLevelsChange = (next: ThinkingLevelItem[]) => {
@@ -1637,31 +1783,36 @@ function ProviderModelDialog({
   };
 
   const handleSubmit = async () => {
-    if (!name.trim() || !model.trim()) {
+    if (!draft) return;
+    // 批量模式校验所有页；单模式校验当前页
+    const targets = isBatch ? drafts : [draft];
+    if (targets.some((d) => !d.name.trim() || !d.model.trim())) {
       toast.error(t('settings.provider.modelFieldsRequired'));
       return;
     }
     setSubmitting(true);
     try {
-      const advanced = {
-        inputTokens: inputTokens.trim() ? Math.max(1, Math.floor(Number(inputTokens))) : undefined,
-        outputTokens: outputTokens.trim()
-          ? Math.max(1, Math.floor(Number(outputTokens)))
+      const toPayload = (d: ModelDraft) => ({
+        name: d.name.trim(),
+        model: d.model.trim(),
+        inputTokens: d.inputTokens.trim() ? Math.max(1, Math.floor(Number(d.inputTokens))) : undefined,
+        outputTokens: d.outputTokens.trim()
+          ? Math.max(1, Math.floor(Number(d.outputTokens)))
           : undefined,
-        temperature,
-        topP,
-        topK,
-        thinking,
-      };
+        temperature: d.temperature,
+        topP: d.topP,
+        topK: d.topK,
+        thinking: d.thinking,
+      });
       if (isEdit && editingModel) {
-        await updateProviderModel(provider.id, editingModel.id, {
-          name: name.trim(),
-          model: model.trim(),
-          ...advanced,
-        });
+        const d = drafts[0];
+        await updateProviderModel(provider.id, editingModel.id, toPayload(d));
         toast.success(t('settings.provider.updateModelSuccess'));
+      } else if (isBatch) {
+        const result = await addProviderModels(provider.id, drafts.map(toPayload));
+        toast.success(t('settings.provider.addSelectedSuccess', { count: result.added }));
       } else {
-        await addProviderModels(provider.id, [{ name: name.trim(), model: model.trim(), ...advanced }]);
+        await addProviderModels(provider.id, [toPayload(draft)]);
         toast.success(t('settings.provider.addModelSuccess'));
       }
       onOpenChange(false);
@@ -1683,14 +1834,15 @@ function ProviderModelDialog({
           </DialogTitle>
         </DialogHeader>
 
-        <DialogBody>
+        {draft && (
+          <DialogBody>
           {/* 模型名称 */}
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="pm-name">{t('settings.provider.modelName')}</Label>
             <Input
               id="pm-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
+              value={draft.name}
+              onChange={(e) => updateDraft({ name: e.target.value })}
               placeholder={t('settings.provider.modelNamePlaceholder')}
             />
           </div>
@@ -1699,13 +1851,13 @@ function ProviderModelDialog({
             <Label htmlFor="pm-model">{t('settings.provider.modelId')}</Label>
             <Input
               id="pm-model"
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
+              value={draft.model}
+              onChange={(e) => updateDraft({ model: e.target.value })}
               placeholder={t('settings.provider.modelIdPlaceholder')}
             />
           </div>
-          {/* 高级配置（默认折叠） */}
-          <Collapsible defaultOpen={isEdit}>
+          {/* 高级配置（始终默认折叠；切页重置折叠态） */}
+          <Collapsible defaultOpen={false} key={page}>
             <CollapsibleTrigger className="group flex w-full items-center gap-1 rounded-md py-1 text-sm text-muted-foreground transition-colors hover:text-foreground data-[state=open]:text-foreground">
               <ChevronRight className="size-3.5 transition-transform group-data-[state=open]:rotate-90" />
               <span>{t('settings.provider.advancedConfig')}</span>
@@ -1720,8 +1872,8 @@ function ProviderModelDialog({
                       id="pm-input-tokens"
                       type="number"
                       min={1}
-                      value={inputTokens}
-                      onChange={(e) => setInputTokens(e.target.value)}
+                      value={draft.inputTokens}
+                      onChange={(e) => updateDraft({ inputTokens: e.target.value })}
                       placeholder="200000"
                     />
                   </div>
@@ -1731,8 +1883,8 @@ function ProviderModelDialog({
                       id="pm-output-tokens"
                       type="number"
                       min={1}
-                      value={outputTokens}
-                      onChange={(e) => setOutputTokens(e.target.value)}
+                      value={draft.outputTokens}
+                      onChange={(e) => updateDraft({ outputTokens: e.target.value })}
                       placeholder="8192"
                     />
                   </div>
@@ -1742,15 +1894,15 @@ function ProviderModelDialog({
                   <div className="flex items-center justify-between">
                     <Label>{t('settings.provider.temperature')}</Label>
                     <span className="text-sm tabular-nums text-muted-foreground">
-                      {temperature.toFixed(1)}
+                      {draft.temperature.toFixed(1)}
                     </span>
                   </div>
                   <Slider
-                    value={[temperature]}
+                    value={[draft.temperature]}
                     min={0}
                     max={2}
                     step={0.1}
-                    onValueChange={(v) => setTemperature(v[0] ?? 1)}
+                    onValueChange={(v) => updateDraft({ temperature: v[0] ?? 1 })}
                   />
                 </div>
                 {/* Top P */}
@@ -1758,44 +1910,71 @@ function ProviderModelDialog({
                   <div className="flex items-center justify-between">
                     <Label>{t('settings.provider.topP')}</Label>
                     <span className="text-sm tabular-nums text-muted-foreground">
-                      {topP.toFixed(2)}
+                      {draft.topP.toFixed(2)}
                     </span>
                   </div>
                   <Slider
-                    value={[topP]}
+                    value={[draft.topP]}
                     min={0}
                     max={1}
                     step={0.05}
-                    onValueChange={(v) => setTopP(v[0] ?? 1)}
+                    onValueChange={(v) => updateDraft({ topP: v[0] ?? 1 })}
                   />
                 </div>
                 {/* Top K */}
                 <div className="flex flex-col gap-2">
                   <div className="flex items-center justify-between">
                     <Label>{t('settings.provider.topK')}</Label>
-                    <span className="text-sm tabular-nums text-muted-foreground">{topK}</span>
+                    <span className="text-sm tabular-nums text-muted-foreground">{draft.topK}</span>
                   </div>
                   <Slider
-                    value={[topK]}
+                    value={[draft.topK]}
                     min={0}
                     max={100}
                     step={1}
-                    onValueChange={(v) => setTopK(Math.round(v[0] ?? 0))}
+                    onValueChange={(v) => updateDraft({ topK: Math.round(v[0] ?? 0) })}
                   />
                 </div>
                 {/* 思考强度（标签化：服务商级等级库） */}
                 <ThinkingLevelTags
                   levels={levels}
-                  value={thinking}
-                  onThinkingChange={setThinking}
+                  value={draft.thinking}
+                  onThinkingChange={(thinking) => updateDraft({ thinking })}
                   onLevelsChange={handleLevelsChange}
                 />
               </div>
             </CollapsibleContent>
           </Collapsible>
         </DialogBody>
+        )}
 
-        <DialogFooter>
+        <DialogFooter className="items-center">
+          {/* 批量分页：左侧后退/前进 + 页码 */}
+          {isBatch && drafts.length > 1 && (
+            <div className="mr-auto flex items-center gap-1">
+              <Button
+                variant="outline"
+                size="icon-sm"
+                aria-label={t('settings.provider.prevModel')}
+                disabled={page === 0 || submitting}
+                onClick={() => setPage((p) => Math.max(0, p - 1))}
+              >
+                <ChevronLeft className="size-3.5" />
+              </Button>
+              <span className="min-w-12 text-center text-xs tabular-nums text-muted-foreground">
+                {page + 1} / {drafts.length}
+              </span>
+              <Button
+                variant="outline"
+                size="icon-sm"
+                aria-label={t('settings.provider.nextModel')}
+                disabled={page >= drafts.length - 1 || submitting}
+                onClick={() => setPage((p) => Math.min(drafts.length - 1, p + 1))}
+              >
+                <ChevronRight className="size-3.5" />
+              </Button>
+            </div>
+          )}
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
             {t('settings.provider.cancel')}
           </Button>
