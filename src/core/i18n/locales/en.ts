@@ -460,6 +460,7 @@ export const en = {
     onceRunAtInvalid: 'runAt of one-shot automation {{id}} is invalid; scheduling skipped',
     onceSkippedExpired: 'runAt of one-shot automation {{id}} has expired; marked completed without running',
     onceCompleted: 'one-shot automation completed: {{id}}',
+    systemGroup: 'System',
     cronParseFailed: 'Failed to parse cron for automation {{id}}',
     runFailed: 'Automation run failed: {{id}}',
     runStarted: 'Automation run started: {{id}} (run {{runId}})',

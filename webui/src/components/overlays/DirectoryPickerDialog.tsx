@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { Folder } from 'lucide-react';
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogHeader,
   DialogTitle,
@@ -35,6 +36,7 @@ export function DirectoryPickerDialog({
         <DialogHeader>
           <DialogTitle>{t('directoryPicker.selectTitle')}</DialogTitle>
         </DialogHeader>
+        <DialogBody>
         <ScrollArea className="max-h-[50dvh]">
           <div className="flex flex-col gap-1 pr-2">
             {candidates.map((c) => (
@@ -53,6 +55,7 @@ export function DirectoryPickerDialog({
             ))}
           </div>
         </ScrollArea>
+        </DialogBody>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>
             {t('directoryPicker.manualInput')}

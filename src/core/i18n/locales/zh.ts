@@ -460,6 +460,7 @@ export const zh = {
     onceRunAtInvalid: '定时任务 {{id}} 的 runAt 无效，已跳过调度',
     onceSkippedExpired: '定时任务 {{id}} 的执行时间已过期，标记为已完成（不补跑）',
     onceCompleted: '一次性定时任务已完成: {{id}}',
+    systemGroup: '本机',
     cronParseFailed: '解析自动化 {{id}} 的 cron 表达式失败',
     runFailed: '自动化运行失败: {{id}}',
     runStarted: '自动化运行开始: {{id}} (run {{runId}})',

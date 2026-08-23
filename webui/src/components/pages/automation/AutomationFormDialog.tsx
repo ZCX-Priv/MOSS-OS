@@ -10,9 +10,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { CronExpressionParser } from 'cron-parser';
-import { Folder, FolderOpen, X } from 'lucide-react';
+import { ChevronDown, FolderInput, FolderOpen, Monitor } from 'lucide-react';
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -31,8 +32,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { IconPicker } from '../../common/IconPicker';
-import { useStore } from '../../../store';
+import { useStore, SYSTEM_WORKING_DIRECTORY } from '../../../store';
 import { useAutomations } from '../../../hooks/useAutomations';
 import { api } from '../../../api/http';
 import { describeCron } from '../../../lib/cron-describe';
@@ -103,6 +111,12 @@ function isoToLocalInput(iso?: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+/** 路径 → 目录名（D:\test → test；与 TaskInput 的 dirName 同规则） */
+function dirName(path: string): string {
+  const seg = path.split(/[\\/]/).filter(Boolean).pop();
+  return seg ?? path;
+}
+
 export function AutomationFormDialog() {
   const { t, i18n } = useTranslation();
   const locale = i18n.language.startsWith('zh') ? 'zh' : 'en';
@@ -110,6 +124,8 @@ export function AutomationFormDialog() {
   const editingId = useStore((s) => s.automationFormEditingId);
   const closeAutomationForm = useStore((s) => s.closeAutomationForm);
   const automations = useStore((s) => s.automations);
+  const recentDirectories = useStore((s) => s.recentDirectories);
+  const addRecentDirectory = useStore((s) => s.addRecentDirectory);
   const editing = useMemo(
     () => automations.find((a) => a.id === editingId) ?? null,
     [automations, editingId],
@@ -128,7 +144,7 @@ export function AutomationFormDialog() {
         title: editing.title,
         description: editing.description ?? '',
         icon: editing.icon,
-        cwd: editing.cwd ?? '',
+        cwd: editing.cwd || SYSTEM_WORKING_DIRECTORY,
         scheduleType: editing.scheduleType,
         preset: detected.preset,
         time: detected.time ?? '09:00',
@@ -144,7 +160,7 @@ export function AutomationFormDialog() {
       title: '',
       description: '',
       icon: undefined,
-      cwd: '',
+      cwd: SYSTEM_WORKING_DIRECTORY,
       scheduleType: 'cron',
       preset: 'daily',
       time: '09:00',
@@ -179,12 +195,15 @@ export function AutomationFormDialog() {
     setError(null);
   };
 
-  /** 选择工作目录：后端原生文件夹对话框（path 为 null = 用户取消，静默） */
+  /** 选择工作目录：后端原生文件夹对话框（path 为 null = 用户取消，静默）；成功写入共享最近目录 */
   const handlePickCwd = async () => {
     setPickingCwd(true);
     try {
       const { path } = await api.pickDirectory();
-      if (path) setField('cwd', path);
+      if (path) {
+        setField('cwd', path);
+        addRecentDirectory(path);
+      }
     } catch {
       toast.error(t('automation.form.cwdPickFailed'));
     } finally {
@@ -286,7 +305,7 @@ export function AutomationFormDialog() {
           <DialogDescription>{t('automation.form.description')}</DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-col gap-4 overflow-y-auto px-1">
+        <DialogBody className="gap-4">
           {/* 标题 */}
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="automation-title">{t('automation.form.titleLabel')}</Label>
@@ -317,44 +336,74 @@ export function AutomationFormDialog() {
             <IconPicker value={form.icon} onChange={(name) => setField('icon', name)} />
           </div>
 
-          {/* 工作目录（必填） */}
+          {/* 工作目录（必填，下拉：本机默认 + 最近目录 + 选择文件夹） */}
           <div className="flex flex-col gap-1.5">
             <Label>{t('automation.form.cwdLabel')}</Label>
-            <div className="flex items-center gap-2">
-              <div className="flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-lg border border-input px-2.5 text-sm">
-                <Folder className="size-3.5 shrink-0 text-muted-foreground" />
-                {form.cwd ? (
-                  <span className="truncate" title={form.cwd}>
-                    {form.cwd}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" className="w-full justify-start gap-2 font-normal">
+                  {form.cwd === SYSTEM_WORKING_DIRECTORY ? (
+                    <Monitor className="size-4 shrink-0 text-muted-foreground" />
+                  ) : (
+                    <FolderOpen className="size-4 shrink-0 text-muted-foreground" />
+                  )}
+                  <span className="min-w-0 flex-1 truncate text-left">
+                    {form.cwd === SYSTEM_WORKING_DIRECTORY
+                      ? t('directoryPicker.system')
+                      : dirName(form.cwd)}
                   </span>
-                ) : (
-                  <span className="truncate text-muted-foreground">
-                    {t('automation.form.cwdNotSelected')}
-                  </span>
-                )}
-              </div>
-              {form.cwd && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="size-8 shrink-0 text-muted-foreground"
-                  onClick={() => setField('cwd', '')}
-                  title={t('automation.form.cwdClear')}
-                >
-                  <X className="size-4" />
+                  <ChevronDown className="size-4 shrink-0 opacity-70" />
                 </Button>
-              )}
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-8 shrink-0 gap-1.5"
-                onClick={() => void handlePickCwd()}
-                disabled={pickingCwd}
-              >
-                <FolderOpen className="size-4" />
-                {t('automation.form.cwdSelectBtn')}
-              </Button>
-            </div>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" collisionPadding={8} className="min-w-[18rem]">
+                <div className="px-2 py-1 text-[11px] text-muted-foreground">
+                  {t('directoryPicker.recent')}
+                </div>
+                <DropdownMenuItem
+                  onSelect={() => setField('cwd', SYSTEM_WORKING_DIRECTORY)}
+                  className="gap-2 py-1.5"
+                >
+                  <Monitor className="size-3.5 shrink-0 text-muted-foreground" />
+                  <div className="flex min-w-0 flex-col">
+                    <span className="truncate text-sm font-medium">
+                      {t('directoryPicker.system')}
+                    </span>
+                    <span className="truncate text-xs text-muted-foreground">
+                      {t('directoryPicker.systemDesc')}
+                    </span>
+                  </div>
+                </DropdownMenuItem>
+                {recentDirectories.length > 0 && (
+                  <div className="max-h-[10.5rem] overflow-y-auto pr-1">
+                    {recentDirectories.map((dir) => (
+                      <DropdownMenuItem
+                        key={dir}
+                        onSelect={() => setField('cwd', dir)}
+                        className="gap-2 py-1.5"
+                        title={dir}
+                      >
+                        <FolderOpen className="size-3.5 shrink-0 text-muted-foreground" />
+                        <div className="flex min-w-0 flex-col">
+                          <span className="truncate text-sm font-medium">{dirName(dir)}</span>
+                          <span className="truncate font-mono text-xs text-muted-foreground">
+                            {dir}
+                          </span>
+                        </div>
+                      </DropdownMenuItem>
+                    ))}
+                  </div>
+                )}
+                <DropdownMenuSeparator className="mx-2" />
+                <DropdownMenuItem
+                  onSelect={() => void handlePickCwd()}
+                  disabled={pickingCwd}
+                  className="gap-1.5"
+                >
+                  <FolderInput className="size-3.5" />
+                  <span>{t('directoryPicker.pickFolder')}</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
 
           {/* 调度方式 */}
@@ -542,7 +591,7 @@ export function AutomationFormDialog() {
           </div>
 
           {error && <p className="text-sm text-destructive">{error}</p>}
-        </div>
+        </DialogBody>
 
         <DialogFooter>
           <Button variant="outline" onClick={closeAutomationForm} disabled={saving}>

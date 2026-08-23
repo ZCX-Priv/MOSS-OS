@@ -5,7 +5,7 @@
 
 import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react';
 import { Loader2, TriangleAlert } from 'lucide-react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog';
+import { Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog';
 import { detectFileKind, fileNameOf, fileExtension } from './detector';
 import { fetchFileBuffer, fetchFileObjectUrl, mimeOfPath } from './fetcher';
 import { MarkdownRenderer } from '../markdown/MarkdownRenderer';
@@ -134,9 +134,9 @@ export function FilePreviewDialog({ path, open, onOpenChange }: FilePreviewDialo
             {fileNameOf(path)}
           </DialogTitle>
         </DialogHeader>
-        <div className="min-h-0 overflow-hidden">
+        <DialogBody className="gap-0 overflow-y-hidden px-0 py-0">
           <Suspense fallback={<Loading />}>{renderBody()}</Suspense>
-        </div>
+        </DialogBody>
       </DialogContent>
     </Dialog>
   );

@@ -77,6 +77,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogHeader,
   DialogTitle,
@@ -89,6 +90,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import {
   AlertDialog,
   AlertDialogAction,
+  AlertDialogBody,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
@@ -165,11 +167,22 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
     }
   };
 
+  /** 删除后若活跃任务已不存在（被删），回到"新建任务"页（与侧边栏"新任务"按钮行为一致） */
+  const goHomeIfTaskGone = (activeIdBefore: string | null) => {
+    if (!activeIdBefore) return;
+    if (useStore.getState().tasks.some((t) => t.id === activeIdBefore)) return;
+    useStore.getState().setActiveSession(null);
+    useStore.getState().setActiveTaskId(null);
+    navigate('/');
+  };
+
   const handleDeleteGroup = async () => {
     if (deleteGroupId) {
       // 勾选：连组内任务（含 session 文件）一并删除；未勾选：组内任务迁回默认分组
+      const activeBefore = useStore.getState().activeTaskId;
       await deleteTaskGroup(deleteGroupId, 'default', deleteGroupAlsoTasks);
       setDeleteGroupId(null);
+      goHomeIfTaskGone(activeBefore);
     }
   };
 
@@ -220,6 +233,7 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
 
   const handleBatchDelete = async () => {
     // 逐个直调 API + 本地移除，最后统一刷新（避免 N 次全量加载；同时感知空文件夹分组的自动销毁）
+    const activeBefore = useStore.getState().activeTaskId;
     for (const id of selectedIds) {
       try {
         await api.deleteTask(id);
@@ -231,6 +245,7 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
     setSelectedIds(new Set());
     setBatchDeleteOpen(false);
     await reload();
+    goHomeIfTaskGone(activeBefore);
   };
 
   // 碰撞检测：指针下有任务（sortable item）时优先任务（保证组内/跨组精确落点）；
@@ -766,14 +781,16 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
           <DialogTitle>{t('sidebar.newGroup')}</DialogTitle>
           <DialogDescription>{t('sidebar.newGroupDesc')}</DialogDescription>
         </DialogHeader>
-        <Input
-          autoFocus
-          value={newGroupName}
-          onChange={(e) => setNewGroupName(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') void handleCreateGroup();
-          }}
-        />
+        <DialogBody>
+          <Input
+            autoFocus
+            value={newGroupName}
+            onChange={(e) => setNewGroupName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void handleCreateGroup();
+            }}
+          />
+        </DialogBody>
         <DialogFooter>
           <Button variant="outline" onClick={() => setNewGroupOpen(false)}>
             {t('common.cancel')}
@@ -792,14 +809,16 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
           <DialogTitle>{t('sidebar.renameGroup')}</DialogTitle>
           <DialogDescription>{t('sidebar.renameGroupDesc')}</DialogDescription>
         </DialogHeader>
-        <Input
-          autoFocus
-          value={renameGroupName}
-          onChange={(e) => setRenameGroupName(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') void handleRenameGroup();
-          }}
-        />
+        <DialogBody>
+          <Input
+            autoFocus
+            value={renameGroupName}
+            onChange={(e) => setRenameGroupName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void handleRenameGroup();
+            }}
+          />
+        </DialogBody>
         <DialogFooter>
           <Button variant="outline" onClick={() => setRenameGroup(null)}>
             {t('common.cancel')}
@@ -831,13 +850,15 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
             </div>
           </div>
         </AlertDialogHeader>
-        <label className="flex cursor-pointer items-center gap-2 rounded-md px-1 py-1 text-sm select-none">
-          <Checkbox
-            checked={deleteGroupAlsoTasks}
-            onCheckedChange={(v) => setDeleteGroupAlsoTasks(v === true)}
-          />
-          {t('sidebar.deleteGroupAlsoDeleteTasks')}
-        </label>
+        <AlertDialogBody>
+          <label className="flex cursor-pointer items-center gap-2 rounded-md px-1 py-1 text-sm select-none">
+            <Checkbox
+              checked={deleteGroupAlsoTasks}
+              onCheckedChange={(v) => setDeleteGroupAlsoTasks(v === true)}
+            />
+            {t('sidebar.deleteGroupAlsoDeleteTasks')}
+          </label>
+        </AlertDialogBody>
         <AlertDialogFooter>
           <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
           <AlertDialogAction
@@ -860,13 +881,15 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
           <DialogTitle>{t('sidebar.renameTask')}</DialogTitle>
           <DialogDescription>{t('sidebar.renameTaskDesc')}</DialogDescription>
         </DialogHeader>
-        <Input
-          value={renameTitle}
-          onChange={(e) => setRenameTitle(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') void handleRename();
-          }}
-        />
+        <DialogBody>
+          <Input
+            value={renameTitle}
+            onChange={(e) => setRenameTitle(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void handleRename();
+            }}
+          />
+        </DialogBody>
         <DialogFooter>
           <Button variant="outline" onClick={() => setRenameTask(null)}>
             {t('common.cancel')}
@@ -891,7 +914,11 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
       confirmText={t('sidebar.delete')}
       cancelText={t('common.cancel')}
       onConfirm={async () => {
-        if (deleteTaskId) await deleteTask(deleteTaskId);
+        if (deleteTaskId) {
+          const activeBefore = useStore.getState().activeTaskId;
+          await deleteTask(deleteTaskId);
+          goHomeIfTaskGone(activeBefore);
+        }
         setDeleteTaskId(null);
       }}
     />

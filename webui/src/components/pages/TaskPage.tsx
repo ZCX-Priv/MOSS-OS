@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -945,8 +946,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
                 {t('task.truncateDescription')}
               </DialogDescription>
             </DialogHeader>
-            {/* min-w-0：DialogContent 是 grid 布局，grid item 需显式 min-width:0，否则长文本 nowrap min-content 会撑破弹窗 */}
-            <div className="flex min-w-0 flex-col gap-3 text-sm">
+            <DialogBody className="text-sm">
               {truncateLoading ? (
                 <div className="flex items-center justify-center gap-2 py-4 text-muted-foreground">
                   <Loader2 className="size-4 animate-spin" />
@@ -1001,7 +1001,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
                   </div>
                 </>
               )}
-            </div>
+            </DialogBody>
             <DialogFooter>
               <Button
                 variant="outline"
@@ -1037,7 +1037,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
               </DialogTitle>
               <DialogDescription>{t('context.compactDialogDesc')}</DialogDescription>
             </DialogHeader>
-            <div className="flex flex-col gap-3">
+            <DialogBody>
               {compactPreviewLoading ? (
                 <div className="flex items-center gap-2 py-6 text-xs text-muted-foreground">
                   <Loader2 className="size-3.5 animate-spin" />
@@ -1080,7 +1080,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
                   {t('context.compactNothing')}
                 </div>
               )}
-            </div>
+            </DialogBody>
             <DialogFooter>
               <Button
                 variant="outline"

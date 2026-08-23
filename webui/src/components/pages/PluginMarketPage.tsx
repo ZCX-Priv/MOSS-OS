@@ -19,7 +19,7 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+  Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from '@/components/ui/dialog';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -375,7 +375,7 @@ export function McpTab() {
             <DialogTitle>{t('plugins.mcpAdd')}</DialogTitle>
             <DialogDescription>{t('plugins.mcpAddDesc')}</DialogDescription>
           </DialogHeader>
-          <div className="flex flex-col gap-3">
+          <DialogBody>
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="mcp-name">{t('plugins.mcpName')}</Label>
               <Input
@@ -436,7 +436,7 @@ export function McpTab() {
                 />
               </div>
             )}
-          </div>
+          </DialogBody>
           <DialogFooter>
             <Button variant="outline" size="sm" onClick={() => setAddOpen(false)} disabled={saving}>
               {t('common.cancel')}

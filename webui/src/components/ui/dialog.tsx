@@ -62,58 +62,79 @@ function DialogOverlay({
 function DialogContent({
   className,
   children,
-  showCloseButton = true,
   size = "md",
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
-  showCloseButton?: boolean
   size?: DialogSize
 }) {
-  const { t } = useTranslation()
   return (
     <DialogPortal>
       <DialogOverlay />
       <DialogPrimitive.Content
         data-slot="dialog-content"
+        // 三段式容器：自身 overflow-hidden 不滚动，仅 DialogBody 滚动；不再渲染 absolute X（移入 DialogHeader）
         className={cn(
-          "fixed top-1/2 left-1/2 z-50 flex max-h-[80dvh] w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-y-auto rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          "fixed top-1/2 left-1/2 z-50 flex max-h-[80dvh] w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl bg-popover text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
           dialogSizeClasses[size],
           className
         )}
         {...props}
       >
         {children}
-        {showCloseButton && (
-          <DialogPrimitive.Close data-slot="dialog-close" asChild>
-            <Button
-              variant="ghost"
-              className="absolute top-3 right-3 z-20"
-              size="icon-sm"
-            >
-              <XIcon
-              />
-              <span className="sr-only">{t('ui.close')}</span>
-            </Button>
-          </DialogPrimitive.Close>
-        )}
       </DialogPrimitive.Content>
     </DialogPortal>
   )
 }
 
-function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
+/** 中间内容区：弹窗内唯一滚动区。flex-1 min-h-0 吸收剩余高度，内容超出时仅本区域滚动，头尾固定不动 */
+function DialogBody({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
-      data-slot="dialog-header"
-      // sticky 固定头：负边距（-mx-4/-mt-4）抵消容器 p-4 实现背景通栏到弹窗顶；
-      // pb-5（20px）承载标题与内容的间距并让背景覆盖该区域，滚动时内容从背景
-      // 边缘下方滚过、无缝隙穿字。不使用侵入相邻元素的负 margin（会导致重叠）。
+      data-slot="dialog-body"
       className={cn(
-        "sticky top-0 z-10 -mx-4 -mt-4 flex shrink-0 flex-col gap-2 bg-popover px-4 pt-4 pb-5",
+        "flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-2",
         className
       )}
       {...props}
     />
+  )
+}
+
+function DialogHeader({
+  className,
+  showCloseButton = true,
+  children,
+  ...props
+}: React.ComponentProps<"div"> & {
+  showCloseButton?: boolean
+}) {
+  const { t } = useTranslation()
+  return (
+    <div
+      data-slot="dialog-header"
+      // 固定头：shrink-0 不随内容滚动。X 与标题处于同一 flex 行（items-start），
+      // -mt-1.5 使 X（size-7=28px）的垂直中心与标题行（text-base leading-none=16px）对齐
+      className={cn(
+        "flex shrink-0 items-start justify-between gap-2 px-4 pt-4 pb-3",
+        className
+      )}
+      {...props}
+    >
+      <div className="flex min-w-0 flex-1 flex-col gap-2">{children}</div>
+      {showCloseButton && (
+        <DialogPrimitive.Close data-slot="dialog-close" asChild>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="-mt-1.5 shrink-0"
+          >
+            <XIcon
+            />
+            <span className="sr-only">{t('ui.close')}</span>
+          </Button>
+        </DialogPrimitive.Close>
+      )}
+    </div>
   )
 }
 
@@ -129,10 +150,10 @@ function DialogFooter({
   return (
     <div
       data-slot="dialog-footer"
-      // sticky 固定尾：mt-auto 在内容不足时把 footer 推到弹窗最底部（flex 列布局）；
-      // 内容溢出滚动时 sticky bottom-0 接管钉住底部。pt-4 承载内容与 footer 的间距。
+      // 固定尾：容器为 overflow-hidden 的 flex 列，footer 作为最后一个 shrink-0 子项
+      // 始终钉在弹窗底部，不随 DialogBody 滚动
       className={cn(
-        "sticky bottom-0 z-10 -mx-4 -mb-4 mt-auto flex shrink-0 flex-col-reverse gap-2 rounded-b-xl border-t bg-muted/50 px-4 pt-4 pb-4 sm:flex-row sm:justify-end",
+        "flex shrink-0 flex-col-reverse gap-2 rounded-b-xl border-t bg-muted/50 px-4 py-3 sm:flex-row sm:justify-end",
         className
       )}
       {...props}
@@ -181,6 +202,7 @@ function DialogDescription({
 
 export {
   Dialog,
+  DialogBody,
   DialogClose,
   DialogContent,
   DialogDescription,

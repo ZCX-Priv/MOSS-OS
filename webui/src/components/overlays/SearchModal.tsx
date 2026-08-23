@@ -1,13 +1,15 @@
 import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
-import { Code, FolderOpen, MessageSquare } from 'lucide-react';
+import { Code, FolderOpen, MessageSquare, XIcon } from 'lucide-react';
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
 import {
   Command,
   CommandEmpty,
@@ -89,9 +91,16 @@ export function SearchModal({ open, onClose }: SearchModalProps) {
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent size="md" className="gap-0 overflow-hidden p-0 h-[80svh] max-h-[600px] sm:h-[600px]">
-        <DialogHeader className="sr-only">
+        <DialogHeader className="sr-only" showCloseButton={false}>
           <DialogTitle>{t('search.placeholder')}</DialogTitle>
         </DialogHeader>
+        {/* 可见关闭入口：sr-only 头部不渲染 X，这里显式补一个（布局与旧版一致，浮于搜索框右上） */}
+        <DialogClose asChild>
+          <Button variant="ghost" size="icon-sm" className="absolute top-3 right-3 z-20">
+            <XIcon />
+            <span className="sr-only">{t('ui.close')}</span>
+          </Button>
+        </DialogClose>
         <Command shouldFilter={false}>
           <CommandInput
             placeholder={t('search.placeholder')}

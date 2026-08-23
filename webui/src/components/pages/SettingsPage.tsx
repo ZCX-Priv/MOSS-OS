@@ -54,6 +54,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible';
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogHeader,
@@ -1763,18 +1764,20 @@ export function SpecsSettings() {
             <DialogTitle>{detail ? detail.id : t('common.loading')}</DialogTitle>
             <DialogDescription>{detail?.description}</DialogDescription>
           </DialogHeader>
-          {loading ? (
-            <div className="flex items-center justify-center gap-2 py-8 text-muted-foreground">
-              <Loader2 className="size-4 animate-spin" />
-            </div>
-          ) : detail ? (
-            <Textarea
-              value={content}
-              onChange={(e) => setContent(e.target.value)}
-              disabled={saving}
-              className="min-h-[50vh] font-mono text-xs"
-            />
-          ) : null}
+          <DialogBody>
+            {loading ? (
+              <div className="flex items-center justify-center gap-2 py-8 text-muted-foreground">
+                <Loader2 className="size-4 animate-spin" />
+              </div>
+            ) : detail ? (
+              <Textarea
+                value={content}
+                onChange={(e) => setContent(e.target.value)}
+                disabled={saving}
+                className="min-h-[50vh] font-mono text-xs"
+              />
+            ) : null}
+          </DialogBody>
           <DialogFooter>
             <Button variant="outline" size="sm" onClick={() => setDetail(null)} disabled={saving}>
               {t('common.cancel')}

@@ -71,8 +71,8 @@
       },
       "cwd": {
         "type": "string",
-        "description": "任务执行的工作目录绝对路径（触发时以该目录运行）。create 必填；update 可选",
-        "description_en": "Absolute working directory path the task runs in. Required for create; optional for update"
+        "description": "任务执行的工作目录绝对路径，或 \"__system__\" 表示本机（全盘访问）。create 必填；update 可选",
+        "description_en": "Absolute working directory path the task runs in, or \"__system__\" for system-wide access. Required for create; optional for update"
       },
       "agentId": {
         "type": "string",

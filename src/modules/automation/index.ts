@@ -13,6 +13,7 @@ import type { Module, ModuleContext, Environment, Logger, ServiceRegistry, Event
 import { ServiceNames } from '../../core/types';
 import type { AgentEngine, AgentEvent } from '../contracts';
 import type { ServerInstanceLike } from '../contracts';
+import { SYSTEM_SCOPE } from '../filesys/roots';
 
 // ============================================================================
 // 类型定义（与前端 webui/src/types/api.ts 对齐）
@@ -32,7 +33,7 @@ export interface AutomationItem {
   runAt?: string;
   /** once 任务被调度器执行后标记 true；调度器不再调度；编辑改 runAt 时重置 */
   completed?: boolean;
-  /** 执行工作目录（绝对路径；旧数据迁移补 env.homeDir） */
+  /** 执行工作目录（绝对路径，或 '__system__' 表示本机全盘访问；旧数据迁移补 __system__） */
   cwd: string;
   prompt: string;
   agentId?: string;
@@ -145,7 +146,7 @@ class AutomationServiceImpl implements AutomationService {
   }
 
   /**
-   * 旧数据迁移：无 scheduleType 的条目补 'cron'；无 cwd 补默认主目录；
+   * 旧数据迁移：无 scheduleType 的条目补 'cron'；无 cwd 补本机作用域（__system__）；
    * once 任务 runAt 已过期且未执行 → 标记 completed（跳过不补跑）。
    */
   private migrate(): void {
@@ -157,7 +158,7 @@ class AutomationServiceImpl implements AutomationService {
         dirty = true;
       }
       if (typeof a.cwd !== 'string' || a.cwd.trim() === '') {
-        a.cwd = this.env.homeDir;
+        a.cwd = SYSTEM_SCOPE;
         dirty = true;
       }
       if (
@@ -599,9 +600,22 @@ class AutomationServiceImpl implements AutomationService {
       if (!agent) {
         throw new Error(t('automation.agentEngineUnavailableThrow'));
       }
-      // 创建真实任务（侧边栏可见，task.id 即 sessionId），并广播给前端
-      const task = agent.createTask(`[自动化] ${item.title} · ${formatRunStamp(new Date())}`);
-      server?.broadcastWS({ type: 'task.created', payload: { task } });
+      // 按工作目录派生文件夹分组（与前端发消息的分组规则一致）：本机 → "本机"组；路径 → 目录名组；
+      // 大小写不敏感查找，无则新建 folder 分组（空组由 task-store 自动销毁）
+      const scopeCwd = item.cwd || SYSTEM_SCOPE;
+      const groupName = scopeCwd === SYSTEM_SCOPE
+        ? t('automation.systemGroup')
+        : (scopeCwd.split(/[\\/]/).filter(Boolean).pop() ?? scopeCwd);
+      let group = agent.listTaskGroups().find(g =>
+        scopeCwd === SYSTEM_SCOPE
+          ? ['本机', 'system'].includes(g.name.toLowerCase())
+          : g.name.toLowerCase() === groupName.toLowerCase(),
+      );
+      if (!group) group = agent.createTaskGroup(groupName, 'folder');
+
+      // 创建真实任务（侧边栏可见，task.id 即 sessionId），并广播给前端（携带分组供即时渲染）
+      const task = agent.createTask(`[自动化] ${item.title} · ${formatRunStamp(new Date())}`, group.id);
+      server?.broadcastWS({ type: 'task.created', payload: { task, group } });
       this.updateHistoryRun(item.id, runId, { taskId: task.id });
 
       const sessionId = task.sessionId ?? task.id;
@@ -609,7 +623,7 @@ class AutomationServiceImpl implements AutomationService {
         sessionId,
         userMessage: item.prompt,
         agentId: item.agentId,
-        cwd: item.cwd || this.env.homeDir,
+        cwd: scopeCwd,
         onEvent,
         signal: controller.signal,
       });

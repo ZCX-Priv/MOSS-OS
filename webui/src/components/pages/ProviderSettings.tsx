@@ -58,6 +58,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogHeader,
   DialogTitle,
@@ -745,7 +746,7 @@ function AddProviderDialog({
           </DialogTitle>
         </DialogHeader>
 
-        <div className="flex flex-col gap-3">
+        <DialogBody>
           {/* 品牌图标 */}
           <div className="flex flex-col gap-1.5">
             <Label>{t('settings.provider.icon')}</Label>
@@ -827,7 +828,7 @@ function AddProviderDialog({
               </div>
             </CollapsibleContent>
           </Collapsible>
-        </div>
+        </DialogBody>
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
@@ -1195,6 +1196,7 @@ function ModelPickDialog({ open, onOpenChange, provider, fetchProviderModels }: 
           <DialogTitle>{t('settings.provider.pickTitle', { name: provider.name })}</DialogTitle>
         </DialogHeader>
 
+        <DialogBody>
         {/* 实时搜索框 */}
         <div className="relative">
           <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -1282,6 +1284,7 @@ function ModelPickDialog({ open, onOpenChange, provider, fetchProviderModels }: 
             </>
           )}
         </div>
+        </DialogBody>
 
         <DialogFooter className="items-center">
           <span className="mr-auto text-xs text-muted-foreground">
@@ -1348,7 +1351,7 @@ function BalanceDialog({ open, onOpenChange, provider }: BalanceDialogProps) {
           <DialogTitle>{t('settings.provider.balanceTitle')}</DialogTitle>
         </DialogHeader>
 
-        <div className="flex flex-col gap-3">
+        <DialogBody>
           <div className="flex items-center gap-2 text-sm font-medium text-foreground">
             <ProviderLogo icon={provider.icon} size={16} />
             {provider.name}
@@ -1391,7 +1394,7 @@ function BalanceDialog({ open, onOpenChange, provider }: BalanceDialogProps) {
               </Button>
             </div>
           )}
-        </div>
+        </DialogBody>
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
@@ -1487,7 +1490,7 @@ function AddServiceDialog({ open, onOpenChange, provider, editingService }: AddS
           </DialogTitle>
         </DialogHeader>
 
-        <div className="flex flex-col gap-3">
+        <DialogBody>
           {/* 服务名称 */}
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="service-name">{t('settings.provider.serviceName')}</Label>
@@ -1553,7 +1556,7 @@ function AddServiceDialog({ open, onOpenChange, provider, editingService }: AddS
               </Select>
             </div>
           </div>
-        </div>
+        </DialogBody>
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
@@ -1680,7 +1683,7 @@ function ProviderModelDialog({
           </DialogTitle>
         </DialogHeader>
 
-        <div className="flex flex-col gap-3">
+        <DialogBody>
           {/* 模型名称 */}
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="pm-name">{t('settings.provider.modelName')}</Label>
@@ -1790,7 +1793,7 @@ function ProviderModelDialog({
               </div>
             </CollapsibleContent>
           </Collapsible>
-        </div>
+        </DialogBody>
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>

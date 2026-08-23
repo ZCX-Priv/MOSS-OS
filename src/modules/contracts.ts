@@ -138,6 +138,12 @@ export interface AgentEngine {
    */
   createTask(title: string, groupId?: string): import('./agent/task-store').TaskItem;
 
+  /** 列出全部分组（automation 按 cwd 派生文件夹分组用） */
+  listTaskGroups(): import('./agent/task-store').TaskGroup[];
+
+  /** 创建分组（source='folder' 的空组由 task-store 自动销毁） */
+  createTaskGroup(name: string, source?: 'folder' | 'manual'): import('./agent/task-store').TaskGroup;
+
   /**
    * 前端回复 ask 工具的提问（accept=已回答 / cancel=取消）。
    * @returns true 表示匹配到 pending ask 并已 resolve；false 表示无匹配（可能已超时或不存在）。

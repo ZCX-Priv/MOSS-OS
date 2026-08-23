@@ -30,6 +30,7 @@ import type {
   AgentEvent,
   TaskMessage,
   TaskItem,
+  TaskGroup,
   TodoItem,
   ContextFile,
   AutomationRun,
@@ -690,8 +691,16 @@ export function useWebSocket(): void {
         break;
       }
       case 'task.created': {
-        const payload = (msg.payload ?? {}) as { task?: TaskItem };
-        if (payload.task) useStore.getState().addTask(payload.task);
+        const payload = (msg.payload ?? {}) as { task?: TaskItem; group?: TaskGroup };
+        if (payload.task) {
+          const s = useStore.getState();
+          // 新分组（如自动化按 cwd 新建的文件夹分组）不在列表时补入，保证侧边栏即时渲染
+          const group = payload.group;
+          if (group && !s.taskGroups.some((g) => g.id === group.id)) {
+            s.addTaskGroup(group);
+          }
+          s.addTask(payload.task);
+        }
         break;
       }
       case 'task.updated': {
