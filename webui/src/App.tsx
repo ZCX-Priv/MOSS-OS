@@ -22,6 +22,7 @@ import {
   ProviderSettings,
   ContextSettings,
   ContextEngineSettings,
+  FileIndexSettings,
   AppearanceSettings,
   ToolsSettings,
   SpecsSettings,
@@ -276,7 +277,7 @@ export default function App() {
               <Route path="context" element={<ContextSettings />}>
                 <Route index element={<ContextEngineSettings />} />
                 <Route path="specs" element={<SpecsSettings />} />
-                <Route path="index" element={<PlaceholderSection section="index" embedded />} />
+                <Route path="index" element={<FileIndexSettings />} />
                 <Route path="rules" element={<PlaceholderSection section="rules" embedded />} />
                 <Route path="memory" element={<PlaceholderSection section="memory" embedded />} />
               </Route>

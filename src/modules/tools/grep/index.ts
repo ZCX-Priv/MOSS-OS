@@ -20,6 +20,7 @@ import {
   isBinaryBufferHead,
   SUPPORTED_TYPES,
 } from '../shared/search-core';
+import { getFileIndex } from '../shared/file-index-hint';
 import type { ToolContext, ToolResult } from '../types';
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024;
@@ -344,23 +345,56 @@ export default {
     if (pathIsFile) {
       await processFile('', searchPath);
     } else {
-      try {
-        for await (const entry of walkFiles(searchPath, {
-          signal: ctx.signal,
-          noIgnore,
-          dot: p.dot === true,
-        })) {
-          if (ctx.signal?.aborted) break;
-          if (!filePassesFilters(entry.rel)) continue;
-          await processFile(entry.rel, entry.abs);
-          // 提前终止：输出行数/命中文件数达收集窗口（count 模式 totalMatches 为部分和，见 metadata）
-          if (lines.length >= collectLimit) {
-            stoppedEarly = true;
-            break;
+      // ---- 索引加速枚举（文件索引引擎就绪时跳过目录遍历；口径同 glob 工具）----
+      let indexedFiles: Array<{ rel: string; abs: string }> | null = null;
+      if (!p.path && !noIgnore && p.dot !== true) {
+        const fileIndex = getFileIndex(ctx);
+        if (fileIndex) {
+          try {
+            const list = await fileIndex.listTextFiles(searchPath);
+            if (list) {
+              indexedFiles = list.map(e => ({ rel: e.rel, abs: `${searchPath}/${e.rel}` }));
+            }
+          } catch {
+            // 索引路径异常 → 回退遍历
           }
-          if (outputMode === 'files_with_matches' && matchedFiles.length >= collectLimit + FILES_BUFFER) {
-            stoppedEarly = true;
-            break;
+        }
+      }
+
+      try {
+        if (indexedFiles) {
+          // 索引枚举路径：内存列表过滤 + 处理（kind=binary 已在索引侧排除）
+          for (const entry of indexedFiles) {
+            if (ctx.signal?.aborted) break;
+            if (!filePassesFilters(entry.rel)) continue;
+            await processFile(entry.rel, entry.abs);
+            if (lines.length >= collectLimit) {
+              stoppedEarly = true;
+              break;
+            }
+            if (outputMode === 'files_with_matches' && matchedFiles.length >= collectLimit + FILES_BUFFER) {
+              stoppedEarly = true;
+              break;
+            }
+          }
+        } else {
+          for await (const entry of walkFiles(searchPath, {
+            signal: ctx.signal,
+            noIgnore,
+            dot: p.dot === true,
+          })) {
+            if (ctx.signal?.aborted) break;
+            if (!filePassesFilters(entry.rel)) continue;
+            await processFile(entry.rel, entry.abs);
+            // 提前终止：输出行数/命中文件数达收集窗口（count 模式 totalMatches 为部分和，见 metadata）
+            if (lines.length >= collectLimit) {
+              stoppedEarly = true;
+              break;
+            }
+            if (outputMode === 'files_with_matches' && matchedFiles.length >= collectLimit + FILES_BUFFER) {
+              stoppedEarly = true;
+              break;
+            }
           }
         }
       } catch (err) {

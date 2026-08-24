@@ -155,6 +155,29 @@ const contextSchema = z.object({
       enabled: z.boolean().default(true),
     })
     .default({}),
+  // 文件索引模块（三引擎，默认全关；图谱/SAG 依赖索引引擎，开启时联动）
+  fileIndex: z
+    .object({
+      indexing: z
+        .object({
+          enabled: z.boolean().default(false),
+        })
+        .default({}),
+      graph: z
+        .object({
+          enabled: z.boolean().default(false),
+        })
+        .default({}),
+      sag: z
+        .object({
+          enabled: z.boolean().default(false),
+          llmModel: z.string().default('inherit'),
+          llmMaxChunks: z.number().int().min(0).max(100000).default(2000),
+        })
+        .default({}),
+      ignore: z.array(z.string()).default([]),
+    })
+    .default({}),
 });
 
 const appConfigSchema = z.object({
@@ -253,6 +276,7 @@ export function defaultAppConfig(): AppConfig {
       toolPruning: { ...DEFAULT_CONTEXT_CONFIG.toolPruning },
       healer: { ...DEFAULT_CONTEXT_CONFIG.healer },
       telemetry: { ...DEFAULT_CONTEXT_CONFIG.telemetry },
+      fileIndex: { ...DEFAULT_CONTEXT_CONFIG.fileIndex },
     },
     safety: {
       defaultMode: 'ask',

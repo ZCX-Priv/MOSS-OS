@@ -17,6 +17,7 @@ import type {
   PreparedRequest,
 } from '../types';
 import { buildStaticSystemPrompt, buildRequestView, ensureEnvContext } from '../compiler';
+import { ensureProjectContext } from '../file-index/project-context';
 import { compactSession, resolveSummaryModel } from '../compressor';
 import { estimateTextTokens, estimateMessagesTokens } from '../budgeter/estimator';
 import { shouldCompact, needsHardCeiling, compactionActive } from './triggers';
@@ -45,6 +46,8 @@ export interface GovernorDeps {
   onCompaction(sessionId: string, record: CompactionRecord): void;
   /** 降级遥测回调 */
   onDegraded(sessionId: string, reason: string): void;
+  /** 项目概要文本（文件索引模块；图谱/SAG 开启时注入锚定消息，关闭返回 null） */
+  getProjectOverview?(cwd: string): Promise<string | null>;
 }
 
 export interface PrepareRequestInput {
@@ -90,6 +93,20 @@ export async function prepareRequest(
       sessionId: session.id,
       error: err instanceof Error ? err.message : String(err),
     });
+  }
+
+  // ===== 1.5 项目概要锚定（文件索引：图谱/SAG 开启时注入大局观）=====
+  if (deps.getProjectOverview && (config.fileIndex.graph.enabled || config.fileIndex.sag.enabled)) {
+    try {
+      if (await ensureProjectContext(session, () => deps.getProjectOverview!(cwd))) {
+        deps.persistSession(session);
+      }
+    } catch (err) {
+      deps.logger.warn('context: ensureProjectContext failed', {
+        sessionId: session.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   // ===== 2. 静态系统提示（skill system 模式注入）=====

@@ -52,6 +52,7 @@ import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Progress } from '@/components/ui/progress';
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible';
 import {
   Dialog,
@@ -67,13 +68,14 @@ import { useTools } from '../../hooks/useTools';
 import { useSpecs } from '../../hooks/useSpecs';
 import { useCommands } from '../../hooks/useCommands';
 import { useConfig } from '../../hooks/useConfig';
+import { useFileIndex } from '../../hooks/useFileIndex';
 import { useReducedMotion } from '../../hooks/useAnimationClass';
 import { useStore } from '../../store';
 import { eventToShortcut, formatShortcutLabel } from '../../utils/shortcut';
 import { api } from '../../api/http';
 import { TOOL_ICON_MAP } from '../../lib/tool-icons';
 import { SKILL_ICON_CHOICES, resolveSkillIcon } from '../../lib/skill-icons';
-import type { SpecDetail, SafetyConfig, LogLevel, LogsConfig, LogFileInfo, ContextEngineConfig } from '../../types/api';
+import type { SpecDetail, SafetyConfig, LogLevel, LogsConfig, LogFileInfo, ContextEngineConfig, FileIndexConfig } from '../../types/api';
 
 // 服务商设置页（App.tsx 从本模块导入）
 export { ProviderSettings } from './ProviderSettings';
@@ -1086,6 +1088,291 @@ export function ContextEngineSettings() {
           </ContextSettingRow>
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ===== 文件索引设置（上下文>索引 Tab：三引擎开关 + 状态 + 重建） ===== */
+
+const FILE_INDEX_FALLBACK: FileIndexConfig = {
+  indexing: { enabled: false },
+  graph: { enabled: false },
+  sag: { enabled: false, llmModel: 'inherit', llmMaxChunks: 2000 },
+  ignore: [],
+};
+
+/** 字节数格式化（KB/MB） */
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+/** 引擎状态徽章 */
+function EngineStateBadge({ state, enabled }: { state: string; enabled: boolean }) {
+  const { t } = useTranslation();
+  if (!enabled) return <Badge variant="secondary">{t('settings.fileIndex.stateDisabled')}</Badge>;
+  if (state === 'scanning')
+    return <Badge className="bg-blue-600/15 text-blue-600">{t('settings.fileIndex.stateScanning')}</Badge>;
+  if (state === 'ready')
+    return <Badge className="bg-emerald-600/15 text-emerald-600">{t('settings.fileIndex.stateReady')}</Badge>;
+  if (state === 'error')
+    return <Badge className="bg-red-500/15 text-red-600">{t('settings.fileIndex.stateError')}</Badge>;
+  return <Badge variant="secondary">{t('settings.fileIndex.stateDisabled')}</Badge>;
+}
+
+/** 单引擎状态卡（统计行 + 进度条） */
+function EngineStatusCard({
+  title,
+  state,
+  enabled,
+  progress,
+  storeBytes,
+  error,
+  stats,
+}: {
+  title: string;
+  state: string;
+  enabled: boolean;
+  progress: { phase: string; percent: number } | null;
+  storeBytes: number;
+  error: string | null;
+  stats: string[];
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-border px-4 py-3">
+      <div className="flex items-center justify-between">
+        <span className="text-sm font-medium text-foreground">{title}</span>
+        <EngineStateBadge state={state} enabled={enabled} />
+      </div>
+      {state === 'scanning' && progress ? (
+        <div className="flex flex-col gap-1">
+          <Progress value={progress.percent} className="h-1.5" />
+          <span className="text-xs text-muted-foreground">
+            {t('settings.fileIndex.building', { percent: progress.percent })}
+          </span>
+        </div>
+      ) : null}
+      {stats.length > 0 ? (
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+          {stats.map((s) => (
+            <span key={s}>{s}</span>
+          ))}
+        </div>
+      ) : null}
+      <div className="flex items-center justify-between text-xs text-muted-foreground">
+        <span>{t('settings.fileIndex.storeSize', { size: formatBytes(storeBytes) })}</span>
+      </div>
+      {error ? <span className="text-xs text-red-600">{error}</span> : null}
+    </div>
+  );
+}
+
+export function FileIndexSettings() {
+  const { t } = useTranslation();
+  const { appConfig, updateAppConfig } = useConfig();
+  const fileIndex = appConfig?.context?.fileIndex ?? FILE_INDEX_FALLBACK;
+  const cwd = appConfig?.agent?.workingDirectory || undefined;
+  const { status, rebuild } = useFileIndex(cwd);
+  const [rebuildOpen, setRebuildOpen] = useState(false);
+  const [rebuilding, setRebuilding] = useState(false);
+
+  const patchFileIndex = (patch: Partial<FileIndexConfig>) => {
+    void updateAppConfig({ context: { ...(appConfig?.context ?? CONTEXT_FALLBACK), fileIndex: { ...fileIndex, ...patch } } }).catch(() => {
+      // toast 已在 useConfig 内处理
+    });
+  };
+
+  // 开关联动：graph/sag 开启 → indexing 强制开启；indexing 关闭 → graph/sag 一并关闭
+  const setIndexing = (v: boolean) => {
+    if (v) {
+      patchFileIndex({ indexing: { enabled: true } });
+    } else {
+      patchFileIndex({
+        indexing: { enabled: false },
+        graph: { enabled: false },
+        sag: { ...fileIndex.sag, enabled: false },
+      });
+    }
+  };
+  const setGraph = (v: boolean) => {
+    if (v) {
+      patchFileIndex({ indexing: { enabled: true }, graph: { enabled: true } });
+      toast.info(t('settings.fileIndex.linkedOn'));
+    } else {
+      patchFileIndex({ graph: { enabled: false } });
+    }
+  };
+  const setSag = (v: boolean) => {
+    if (v) {
+      patchFileIndex({ indexing: { enabled: true }, sag: { ...fileIndex.sag, enabled: true } });
+      toast.info(t('settings.fileIndex.linkedOn'));
+    } else {
+      patchFileIndex({ sag: { ...fileIndex.sag, enabled: false } });
+    }
+  };
+
+  const doRebuild = async () => {
+    setRebuilding(true);
+    try {
+      await rebuild();
+      toast.success(t('settings.fileIndex.rebuildStarted'));
+      setRebuildOpen(false);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRebuilding(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-6 p-6">
+      {/* 索引引擎（Everything 式文件列表） */}
+      <div className="flex flex-col gap-1">
+        <div className="text-sm font-medium text-foreground">{t('settings.fileIndex.indexingTitle')}</div>
+        <div className="text-xs text-muted-foreground">{t('settings.fileIndex.indexingDesc')}</div>
+        <div className="mt-2 flex flex-col rounded-lg border border-border px-4">
+          <ContextSettingRow
+            title={t('settings.fileIndex.indexingEnabled')}
+            desc={t('settings.fileIndex.indexingEnabledDesc')}
+          >
+            <Switch checked={fileIndex.indexing.enabled} onCheckedChange={setIndexing} />
+          </ContextSettingRow>
+        </div>
+        {status ? (
+          <div className="mt-2">
+            <EngineStatusCard
+              title={t('settings.fileIndex.indexingTitle')}
+              state={status.indexing.state}
+              enabled={status.indexing.enabled}
+              progress={status.indexing.progress}
+              storeBytes={status.indexing.storeBytes}
+              error={status.indexing.error}
+              stats={[
+                t('settings.fileIndex.statFiles', { count: status.indexing.fileCount }),
+                t('settings.fileIndex.statDirs', { count: status.indexing.dirCount }),
+              ]}
+            />
+          </div>
+        ) : null}
+      </div>
+
+      {/* 图谱引擎 */}
+      <div className="flex flex-col gap-1">
+        <div className="text-sm font-medium text-foreground">{t('settings.fileIndex.graphTitle')}</div>
+        <div className="text-xs text-muted-foreground">{t('settings.fileIndex.graphDesc')}</div>
+        <div className="mt-2 flex flex-col rounded-lg border border-border px-4">
+          <ContextSettingRow
+            title={t('settings.fileIndex.graphEnabled')}
+            desc={t('settings.fileIndex.graphEnabledDesc')}
+          >
+            <Switch checked={fileIndex.graph.enabled} onCheckedChange={setGraph} />
+          </ContextSettingRow>
+        </div>
+        {status ? (
+          <div className="mt-2">
+            <EngineStatusCard
+              title={t('settings.fileIndex.graphTitle')}
+              state={status.graph.state}
+              enabled={status.graph.enabled}
+              progress={status.graph.progress}
+              storeBytes={status.graph.storeBytes}
+              error={status.graph.error}
+              stats={[
+                t('settings.fileIndex.statFiles', { count: status.graph.fileCount }),
+                t('settings.fileIndex.statSymbols', { count: status.graph.symbolCount }),
+                t('settings.fileIndex.statEdges', { count: status.graph.edgeCount }),
+              ]}
+            />
+          </div>
+        ) : null}
+      </div>
+
+      {/* SAG 引擎 */}
+      <div className="flex flex-col gap-1">
+        <div className="text-sm font-medium text-foreground">{t('settings.fileIndex.sagTitle')}</div>
+        <div className="text-xs text-muted-foreground">{t('settings.fileIndex.sagDesc')}</div>
+        <div className="mt-2 flex flex-col rounded-lg border border-border px-4">
+          <ContextSettingRow
+            title={t('settings.fileIndex.sagEnabled')}
+            desc={t('settings.fileIndex.sagEnabledDesc')}
+          >
+            <Switch checked={fileIndex.sag.enabled} onCheckedChange={setSag} />
+          </ContextSettingRow>
+          <ContextSettingRow
+            title={t('settings.fileIndex.sagBudget')}
+            desc={t('settings.fileIndex.sagBudgetDesc')}
+          >
+            <Input
+              type="number"
+              min={0}
+              max={100000}
+              className="w-28"
+              value={fileIndex.sag.llmMaxChunks}
+              disabled={!fileIndex.sag.enabled}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                if (!Number.isNaN(v)) {
+                  patchFileIndex({ sag: { ...fileIndex.sag, llmMaxChunks: Math.max(0, Math.min(100000, Math.floor(v))) } });
+                }
+              }}
+            />
+          </ContextSettingRow>
+        </div>
+        {status ? (
+          <div className="mt-2">
+            <EngineStatusCard
+              title={t('settings.fileIndex.sagTitle')}
+              state={status.sag.state}
+              enabled={status.sag.enabled}
+              progress={status.sag.progress}
+              storeBytes={status.sag.storeBytes}
+              error={status.sag.error}
+              stats={[
+                t('settings.fileIndex.statChunks', { count: status.sag.chunkCount }),
+                t('settings.fileIndex.statEvents', { count: status.sag.eventCount }),
+                t('settings.fileIndex.statEntities', { count: status.sag.entityCount }),
+                t('settings.fileIndex.statLlm', { done: status.sag.llmExtracted, total: status.sag.llmBudget }),
+              ]}
+            />
+          </div>
+        ) : null}
+      </div>
+
+      {/* 重建 */}
+      <div className="flex flex-col gap-2">
+        <div className="text-sm font-medium text-foreground">{t('settings.fileIndex.rebuildTitle')}</div>
+        <div className="text-xs text-muted-foreground">{t('settings.fileIndex.rebuildDesc')}</div>
+        <Button
+          variant="outline"
+          className="w-fit gap-1.5"
+          disabled={!fileIndex.indexing.enabled}
+          onClick={() => setRebuildOpen(true)}
+        >
+          <RefreshCw className="size-3.5" />
+          {t('settings.fileIndex.rebuildButton')}
+        </Button>
+      </div>
+
+      {/* 重建确认弹窗 */}
+      <Dialog open={rebuildOpen} onOpenChange={(o) => !rebuilding && setRebuildOpen(o)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('settings.fileIndex.rebuildTitle')}</DialogTitle>
+            <DialogDescription>{t('settings.fileIndex.rebuildConfirmDesc')}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setRebuildOpen(false)} disabled={rebuilding}>
+              {t('common.cancel')}
+            </Button>
+            <Button onClick={() => void doRebuild()} disabled={rebuilding}>
+              {rebuilding ? <Loader2 className="size-3.5 animate-spin" /> : null}
+              {t('settings.fileIndex.rebuildButton')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

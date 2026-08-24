@@ -112,8 +112,12 @@ function copyToolsModule() {
     process.exit(1);
   }
   // dist 已在 cleanDist 创建；递归复制保留目录结构（含 tool.json + index.ts）
-  // Bun 运行时可直接 import .ts，故复制源码即可
-  cpSync(src, dest, { recursive: true });
+  // Bun 运行时可直接 import .TS，故复制源码即可
+  // 排除 *.test.ts：测试文件相对路径在 dist 结构下失效，会被 bun test 误扫报错
+  cpSync(src, dest, {
+    recursive: true,
+    filter: (srcPath) => !srcPath.endsWith('.test.ts'),
+  });
   log(`Tools module copied: ${dest}`);
 }
 
@@ -131,6 +135,46 @@ function copyAgentPrompts() {
   }
   cpSync(src, dest, { recursive: true });
   log(`Agent prompts copied: ${dest}`);
+}
+
+// ============================================================================
+// 步骤 3d: 复制 tree-sitter wasm 资产到 dist/vendor（图谱引擎运行时加载）
+// 核心 wasm（web-tree-sitter.wasm）+ 常用语言语法 wasm（tree-sitter-wasm 包）。
+// 运行时定位顺序：node_modules（开发模式）→ dist/vendor（安装模式），见 file-index/graph-engine/parser.ts。
+// ============================================================================
+const TREE_SITTER_LANGS = [
+  'typescript', 'tsx', 'javascript', 'python', 'go', 'rust', 'java',
+  'c', 'cpp', 'json', 'yaml', 'toml', 'markdown', 'css', 'html',
+  'bash', 'ruby', 'php', 'lua',
+];
+
+function copyTreeSitterWasm() {
+  log('Copying tree-sitter wasm assets...');
+  const vendorDir = resolve(DIST, 'vendor');
+  mkdirSync(vendorDir, { recursive: true });
+
+  // 核心 wasm
+  const coreSrc = resolve(ROOT, 'node_modules', 'web-tree-sitter', 'web-tree-sitter.wasm');
+  if (!existsSync(coreSrc)) {
+    error(`web-tree-sitter.wasm not found: ${coreSrc}`);
+    process.exit(1);
+  }
+  cpSync(coreSrc, resolve(vendorDir, 'web-tree-sitter.wasm'));
+
+  // 语言 wasm（按需子集，控制包体积；未拷语言运行时自动降级跳过）
+  let copied = 0;
+  for (const lang of TREE_SITTER_LANGS) {
+    const src = resolve(ROOT, 'node_modules', 'tree-sitter-wasm', 'out', lang, `tree-sitter-${lang}.wasm`);
+    if (!existsSync(src)) {
+      log(`  (skip) grammar not found: ${lang}`);
+      continue;
+    }
+    const destDir = resolve(vendorDir, 'tree-sitter-wasm', 'out', lang);
+    mkdirSync(destDir, { recursive: true });
+    cpSync(src, resolve(destDir, `tree-sitter-${lang}.wasm`));
+    copied++;
+  }
+  log(`Tree-sitter wasm copied: core + ${copied} grammars -> ${vendorDir}`);
 }
 
 // ============================================================================
@@ -186,6 +230,7 @@ function main() {
   buildBackend();
   copyToolsModule();
   copyAgentPrompts();
+  copyTreeSitterWasm();
   buildFrontend();
   verifyArtifacts();
   const elapsed = ((Date.now() - startedAt) / 1000).toFixed(2);

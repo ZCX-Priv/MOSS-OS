@@ -188,6 +188,42 @@ export interface ContextEngineConfig {
   toolPruning: ToolPruningConfig;
   healer: HealerConfig;
   telemetry: { enabled: boolean };
+  /** 文件索引模块（三引擎；可选，旧 config 无此段时视为全关） */
+  fileIndex?: FileIndexConfig;
+}
+
+/** 文件索引配置（config.context.fileIndex） */
+export interface FileIndexConfig {
+  indexing: { enabled: boolean };
+  graph: { enabled: boolean };
+  sag: {
+    enabled: boolean;
+    llmModel: string;
+    llmMaxChunks: number;
+  };
+  ignore: string[];
+}
+
+/** 文件索引引擎状态（GET /api/context/file-index/status） */
+export interface FileIndexStatus {
+  projectRoot: string;
+  indexing: FileIndexEngineStatusBase & { fileCount: number; dirCount: number };
+  graph: FileIndexEngineStatusBase & { fileCount: number; symbolCount: number; edgeCount: number };
+  sag: FileIndexEngineStatusBase & {
+    chunkCount: number;
+    eventCount: number;
+    entityCount: number;
+    llmExtracted: number;
+    llmBudget: number;
+  };
+}
+
+interface FileIndexEngineStatusBase {
+  enabled: boolean;
+  state: 'disabled' | 'scanning' | 'ready' | 'error';
+  progress: { phase: string; percent: number } | null;
+  storeBytes: number;
+  error: string | null;
 }
 
 /** 压缩历史记录（session.compactions 元素 / GET /api/context/:id/compactions） */

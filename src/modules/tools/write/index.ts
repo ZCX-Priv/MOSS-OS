@@ -15,6 +15,7 @@
 import { t } from '../../../core/i18n';
 import { ServiceNames } from '../../../core/types';
 import { existsSync, statSync } from 'node:fs';
+import { impactHintFor } from '../shared/file-index-hint';
 import type { FileHistoryService, FilesysService } from '../../contracts';
 import type { ChangeTracker } from '../../file-history/types';
 import type { ToolContext, ToolResult } from '../types';
@@ -151,9 +152,13 @@ export default {
       : t('tools.writeOverwrote', { path: absPath, bytes: writeResult.bytes });
     const diffSection = writeResult.diff ? `\n\n--- unified diff ---\n${writeResult.diff}` : '';
     const backupNote = tracker?.receipt.backedUp ? t('tools.writeBackupNote', { path: tracker.receipt.backupPath ?? '' }) : '';
+    // 影响面注入（图谱开启且就绪时；仅覆盖已有文件的场景有上游可言）
+    const impactNote = writeResult.operation === 'overwrite'
+      ? await impactHintFor(ctx, absPath).then(h => (h ? `\n${h}` : ''))
+      : '';
 
     return {
-      content: [{ type: 'text', text: summary + diffSection + backupNote }],
+      content: [{ type: 'text', text: summary + diffSection + backupNote + impactNote }],
       metadata: {
         path: absPath,
         bytes: writeResult.bytes,

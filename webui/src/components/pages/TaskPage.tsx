@@ -83,6 +83,7 @@ import { CompactionCard } from '../shared/CompactionCard';
 import { MaxTurnsNoticeCard } from '../shared/MaxTurnsNoticeCard';
 import { useStore } from '../../store';
 import { useTask } from '../../hooks/useTask';
+import { useFileIndex } from '../../hooks/useFileIndex';
 import { api } from '../../api/http';
 import { wsClient } from '../../api/ws';
 import type { TaskMessage, TodoItem, SidebarTab, CompactPreview, ContextStats } from '../../types/api';
@@ -90,6 +91,34 @@ import type { TaskMessage, TodoItem, SidebarTab, CompactPreview, ContextStats } 
 // 稳定引用的空数组，避免 useStore 选择器每次返回新 [] 触发 useSyncExternalStore 无限循环
 const EMPTY_MESSAGES: TaskMessage[] = [];
 const EMPTY_TODOS: TodoItem[] = [];
+
+/** 文件索引构建进度条（三引擎构建期间显示于任务页顶部；全就绪/全关时隐藏） */
+function FileIndexProgressBar() {
+  const { t } = useTranslation();
+  const cwd = useStore((s) => s.workingDirectory) || undefined;
+  const { status, building, overallPercent } = useFileIndex(cwd);
+  if (!building || !status) return null;
+  const engineName =
+    status.indexing.state === 'scanning'
+      ? t('settings.fileIndex.indexingTitle')
+      : status.graph.state === 'scanning'
+        ? t('settings.fileIndex.graphTitle')
+        : status.sag.state === 'scanning'
+          ? t('settings.fileIndex.sagTitle')
+          : '';
+  const percent = overallPercent ?? 0;
+  return (
+    <div
+      className="flex shrink-0 items-center gap-2 border-b border-border/60 px-4 py-1.5"
+      title={t('task.fileIndexBuilding', { engine: engineName, percent })}
+    >
+      <Progress value={percent} className="h-1 flex-1" />
+      <span className="shrink-0 text-xs text-muted-foreground">
+        {t('task.fileIndexBuilding', { engine: engineName, percent })}
+      </span>
+    </div>
+  );
+}
 const EMPTY_QUEUE: Array<{ id: string; content: string; timestamp: string }> = [];
 
 // 单条消息正文渲染上限：超长内容（如 base64/大文件摘录）截断渲染，防止一次性布局卡死滚动
@@ -880,6 +909,9 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
             <PanelRight />
           </Button>
         </div>
+
+        {/* 文件索引构建进度（构建期间显示，全就绪时隐藏） */}
+        <FileIndexProgressBar />
 
         {/* Task Messages（relative wrapper：返回底部按钮悬浮于滚动区上方、不随内容滚动） */}
         <div className="relative min-h-0 flex-1">

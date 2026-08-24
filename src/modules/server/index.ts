@@ -124,6 +124,8 @@ import {
   createCompactPreviewHandler,
   createManualCompactHandler,
   createSummaryModelsHandler,
+  createFileIndexStatusHandler,
+  createFileIndexRebuildHandler,
 } from './routes/context';
 import { McpExpose } from '../mcp/expose';
 
@@ -187,6 +189,15 @@ class ServerModule implements Module {
     // 通过 EventBus 解耦，避免 config-service / kernel 直接依赖 server.instance（循环依赖）
     ctx.eventBus.onAction('config:changed', (data) => {
       this.wsHandler.broadcast({ type: 'config.changed', payload: data });
+      // 文件索引配置热重载：开关变化 → 引擎启停（context 引擎缺失时静默跳过）
+      const contextEngine = ctx.services.tryResolve<{
+        onFileIndexConfigChanged(): Promise<void>;
+      }>(ServiceNames.CONTEXT_ENGINE);
+      if (contextEngine) {
+        void contextEngine.onFileIndexConfigChanged().catch(() => {
+          // 配置热重载失败不影响主流程
+        });
+      }
     });
     // 资源文件（skill/spec/tool）热重载事件，转发为 WS resources.changed
     ctx.eventBus.onAction('resources:changed', (data) => {
@@ -352,12 +363,14 @@ class ServerModule implements Module {
     this.router.addRoute({ method: 'GET', pattern: '/api/logs', handler: createQueryLogsHandler(services), auth: true });
     this.router.addRoute({ method: 'POST', pattern: '/api/logs/cleanup', handler: createCleanupLogsHandler(services), auth: true });
 
-    // context（上下文引擎：统计 / 压缩历史 / 手动压缩 / 摘要模型列表）
+    // context（上下文引擎：统计 / 压缩历史 / 手动压缩 / 摘要模型列表 / 文件索引）
     this.router.addRoute({ method: 'GET', pattern: '/api/context/summary-models', handler: createSummaryModelsHandler(services), auth: true });
     this.router.addRoute({ method: 'GET', pattern: '/api/context/:sessionId/stats', handler: createContextStatsHandler(services), auth: true });
     this.router.addRoute({ method: 'GET', pattern: '/api/context/:sessionId/compactions', handler: createContextCompactionsHandler(services), auth: true });
     this.router.addRoute({ method: 'GET', pattern: '/api/context/:sessionId/compact-preview', handler: createCompactPreviewHandler(services), auth: true });
     this.router.addRoute({ method: 'POST', pattern: '/api/context/:sessionId/compact', handler: createManualCompactHandler(services), auth: true });
+    this.router.addRoute({ method: 'GET', pattern: '/api/context/file-index/status', handler: createFileIndexStatusHandler(services), auth: true });
+    this.router.addRoute({ method: 'POST', pattern: '/api/context/file-index/rebuild', handler: createFileIndexRebuildHandler(services), auth: true });
   }
 
   private async startServer(): Promise<void> {

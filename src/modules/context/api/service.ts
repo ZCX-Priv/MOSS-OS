@@ -40,6 +40,7 @@ import {
 } from '../governor';
 import { resolveSummaryModel } from '../compressor';
 import { ensureContextPrompts } from '../prompt-loader';
+import { FileIndexService } from '../file-index';
 
 /** ToolRegistry 鸭子类型（get/listSchemas） */
 interface ToolRegistryLike {
@@ -85,12 +86,20 @@ export class ContextEngineServiceImpl {
   private readonly telemetry = new Map<string, SessionTelemetry>();
   private readonly busySessions = new Set<string>();
   private sessionStore: SessionStoreBridge | null = null;
+  /** 文件索引模块（三引擎；默认关闭，配置打开后激活） */
+  private readonly fileIndex: FileIndexService;
 
   constructor(deps: ContextEngineServiceDeps) {
     this.env = deps.env;
     this.config = deps.config;
     this.services = deps.services;
     this.logger = deps.logger;
+    this.fileIndex = new FileIndexService({
+      env: deps.env,
+      config: deps.config,
+      services: deps.services,
+      logger: deps.logger,
+    });
   }
 
   /** 模块初始化：补充播种 compact/heal 提示词目录 */
@@ -98,7 +107,23 @@ export class ContextEngineServiceImpl {
     ensureContextPrompts(this.env);
     this.logger.info('context: engine initialized', {
       compaction: this.getConfig().compaction.enabled ? 'enabled' : 'disabled',
+      fileIndex: this.getConfig().fileIndex.indexing.enabled ? 'enabled' : 'disabled',
     });
+  }
+
+  /** 模块销毁：停用文件索引（保数据） */
+  async onDestroy(): Promise<void> {
+    await this.fileIndex.stopAll();
+  }
+
+  /** 文件索引服务访问器（glob/grep 工具 / governor 注入 / API 路由使用） */
+  getFileIndex(): FileIndexService {
+    return this.fileIndex;
+  }
+
+  /** 配置热重载：文件索引引擎启停（config:changed 时由 server 路由调用） */
+  async onFileIndexConfigChanged(): Promise<void> {
+    await this.fileIndex.applyConfigChange();
   }
 
   /** agent 模块注入会话存取桥（依赖方向 agent → context） */
@@ -116,6 +141,7 @@ export class ContextEngineServiceImpl {
       toolPruning: { ...DEFAULT_CONTEXT_CONFIG.toolPruning, ...ctx.toolPruning },
       healer: { ...DEFAULT_CONTEXT_CONFIG.healer, ...ctx.healer },
       telemetry: { ...DEFAULT_CONTEXT_CONFIG.telemetry, ...ctx.telemetry },
+      fileIndex: ctx.fileIndex ?? DEFAULT_CONTEXT_CONFIG.fileIndex,
     };
   }
 
@@ -431,6 +457,7 @@ export class ContextEngineServiceImpl {
       getLlm: () => this.services.tryResolve<LLMRouter>(ServiceNames.LLM_ROUTER),
       getApiModels: () =>
         flattenModels(this.config.getApiConfig()).map(m => ({ id: m.id, model: m.model })),
+      getProjectOverview: (cwd: string) => this.fileIndex.projectOverview(cwd),
       persistSession: session => this.sessionStore?.persist(session),
       emitWs: (sessionId, message) => this.emitWs(sessionId, message),
       onCompaction: sessionId => {

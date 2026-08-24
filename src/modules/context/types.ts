@@ -4,6 +4,8 @@
 // agent/session Session 的结构子集（鸭子类型注入）。
 
 import type { UnifiedMessage } from '../llm/types';
+import type { FileIndexConfig } from './file-index/types';
+import { DEFAULT_FILE_INDEX_CONFIG } from './file-index/types';
 
 // ============================================================================
 // 配置（config.context，由 config-service Zod schema 校验，此处为运行时类型）
@@ -49,6 +51,8 @@ export interface ContextEngineConfig {
   toolPruning: ToolPruningConfig;
   healer: HealerConfig;
   telemetry: ContextTelemetryConfig;
+  /** 文件索引模块（三引擎，默认全关） */
+  fileIndex: FileIndexConfig;
 }
 
 export const DEFAULT_COMPACTION_CONFIG: CompactionConfig = {
@@ -82,6 +86,7 @@ export const DEFAULT_CONTEXT_CONFIG: ContextEngineConfig = {
   toolPruning: { ...DEFAULT_TOOL_PRUNING_CONFIG },
   healer: { ...DEFAULT_HEALER_CONFIG },
   telemetry: { ...DEFAULT_CONTEXT_TELEMETRY_CONFIG },
+  fileIndex: { ...DEFAULT_FILE_INDEX_CONFIG },
 };
 
 // ============================================================================

@@ -43,6 +43,8 @@
     "pdf-parse": "^2.4.5",
     "tar": "^7.5.22",
     "trash": "^10.1.1",
+    "tree-sitter-wasm": "^1.1.4",
+    "web-tree-sitter": "^0.26.13",
     "word-extractor": "^1.0.4",
     "xlsx": "^0.18.5",
     "zod": "^3.23.8"
