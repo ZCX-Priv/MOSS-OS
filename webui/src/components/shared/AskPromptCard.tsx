@@ -186,6 +186,7 @@ export function AskPromptCard({ ask, className }: AskPromptCardProps) {
       {answerType === 'text' && (
         <textarea
           value={textAnswer}
+          spellCheck={false}
           onChange={(e) => setTextAnswer(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {

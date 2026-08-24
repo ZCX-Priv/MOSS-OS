@@ -96,28 +96,32 @@ export class MCPManagerImpl implements MCPManager {
     };
   }
 
-  /** 初始化：从 mcps/ 目录与 config.json 加载所有 MCP 服务器并连接（disabled 的跳过） */
+  /**
+   * 初始化：从 mcps/ 目录与 config.json 加载所有 MCP 服务器定义。
+   * 连接在后台逐个进行（不阻塞启动——stdio 子进程握手可达数十秒，
+   * 拖慢 kernel 模块初始化链；连接完成后经 mcp:server:* 事件通知前端刷新）。
+   */
   async initialize(): Promise<void> {
     this.serverDefs = await this.loadServerDefs();
     const names = Array.from(this.serverDefs.keys());
     this.logger.info(t('mcp.managerInitializing'), { serverCount: names.length, names });
 
-    // 并行连接（单服务器失败不影响其他；禁用的跳过）
-    await Promise.allSettled(
-      names.map(async name => {
-        if (this.serverDefs.get(name)?.enabled === false) {
-          this.logger.info(t('mcp.serverDisabledSkip', { name }));
-          return;
-        }
-        try {
-          await this.connect(name);
-        } catch (err) {
-          this.logger.error(t('mcp.connectFailed', { name }), {
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-      }),
-    );
+    // 后台连接（单服务器失败不影响其他；禁用的跳过）
+    for (const name of names) {
+      if (this.serverDefs.get(name)?.enabled === false) {
+        this.logger.info(t('mcp.serverDisabledSkip', { name }));
+        continue;
+      }
+      void this.connect(name).catch(err => {
+        this.logger.error(t('mcp.connectFailed', { name }), {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        void this.eventBus.broadcast('mcp:server:error', {
+          server: name,
+          error: err instanceof Error ? err.message : String(err),
+        }).catch(() => {});
+      });
+    }
 
     // 监听用户 mcps 目录配置变更，实现热重载（仅首次启动时设置）
     this.startWatch();

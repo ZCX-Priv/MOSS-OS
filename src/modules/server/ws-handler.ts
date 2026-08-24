@@ -11,9 +11,122 @@ import { ErrorCode } from '../../core/error-codes';
 
 interface ConnectionState {
   conn: WSConnection;
+  /** 最近一次订阅/操作的 session（兼容展示语义；事件投递以下方 subscribedSessions 为准） */
   sessionId?: string;
-  /** 当前正在运行的 agent.run 的 AbortController，按 sessionId 索引（支持同连接多会话并发流） */
-  activeRuns: Map<string, AbortController>;
+  /** 该连接订阅的全部 session：agent 事件按 sessionId 路由到所有订阅连接 */
+  subscribedSessions: Set<string>;
+}
+
+/**
+ * 高频流式事件合帧器：assistant-text / assistant-thinking / tool-call-delta
+ * 按 key 拼接缓冲，30ms 定时冲刷（消息量从每 token 一条降到每秒 ~33 条）。
+ * 保序：任何非缓冲事件发送前先 flush（见 WsHandler.sendEvent）；
+ * 前端 useWebSocket 对这些类型为字符串累加语义，合帧天然兼容。
+ */
+const BATCH_INTERVAL_MS = 30;
+/** 单 key 拼接上限：超过立即 flush（防极端大文本滞留缓冲） */
+const BATCH_MAX_CHARS = 256 * 1024;
+
+interface BatchedEvent {
+  type: 'assistant-text' | 'assistant-thinking' | 'tool-call-delta';
+  sessionId: string;
+  runId?: string;
+  /** assistant-text / assistant-thinking 拼接文本 */
+  text?: string;
+  /** tool-call-delta 专属 */
+  toolCallId?: string;
+  argumentsDelta?: string;
+}
+
+class EventBatcher {
+  private readonly buffer = new Map<string, BatchedEvent>();
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private readonly flushOut: (msg: Record<string, unknown>) => void;
+
+  constructor(flushOut: (msg: Record<string, unknown>) => void) {
+    this.flushOut = flushOut;
+  }
+
+  isBatchable(type: string): boolean {
+    return type === 'assistant-text' || type === 'assistant-thinking' || type === 'tool-call-delta';
+  }
+
+  /** 缓冲一条高频事件（同 key 拼接 text / argumentsDelta） */
+  push(msg: { type: string; sessionId: string; payload: Record<string, unknown> }): void {
+    const p = msg.payload;
+    const runId = typeof p.runId === 'string' ? p.runId : undefined;
+    if (msg.type === 'tool-call-delta') {
+      const toolCallId = String(p.toolCallId ?? '');
+      const key = `${msg.sessionId}|d|${toolCallId}`;
+      const delta = String(p.argumentsDelta ?? '');
+      const existing = this.buffer.get(key);
+      if (existing && existing.runId === runId) {
+        existing.argumentsDelta = (existing.argumentsDelta ?? '') + delta;
+      } else {
+        this.buffer.set(key, {
+          type: 'tool-call-delta', sessionId: msg.sessionId, runId, toolCallId, argumentsDelta: delta,
+        });
+      }
+    } else {
+      // 't' = text, 'k' = thinking（同轮 text 与 thinking 交替时不互相污染）
+      const kind = msg.type === 'assistant-text' ? 't' : 'k';
+      const key = `${msg.sessionId}|${kind}`;
+      const text = String(p.text ?? '');
+      const existing = this.buffer.get(key);
+      if (existing && existing.runId === runId) {
+        existing.text = (existing.text ?? '') + text;
+      } else {
+        this.buffer.set(key, { type: msg.type as BatchedEvent['type'], sessionId: msg.sessionId, runId, text });
+      }
+    }
+
+    // 超限立即冲刷
+    for (const e of this.buffer.values()) {
+      if ((e.text ?? e.argumentsDelta ?? '').length > BATCH_MAX_CHARS) {
+        this.flush();
+        break;
+      }
+    }
+
+    if (this.timer === null) {
+      this.timer = setTimeout(() => {
+        this.timer = null;
+        this.flush();
+      }, BATCH_INTERVAL_MS);
+    }
+  }
+
+  /** 冲刷全部缓冲（保序：按插入顺序发送） */
+  flush(): void {
+    if (this.timer !== null) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+    if (this.buffer.size === 0) return;
+    const events = Array.from(this.buffer.values());
+    this.buffer.clear();
+    for (const e of events) {
+      if (e.type === 'tool-call-delta') {
+        this.flushOut({
+          type: 'tool-call-delta',
+          sessionId: e.sessionId,
+          payload: {
+            type: 'tool-call-delta',
+            sessionId: e.sessionId,
+            toolCallId: e.toolCallId,
+            argumentsDelta: e.argumentsDelta ?? '',
+            runId: e.runId,
+          },
+        });
+      } else {
+        this.flushOut({
+          type: e.type,
+          sessionId: e.sessionId,
+          payload: { type: e.type, sessionId: e.sessionId, text: e.text ?? '', runId: e.runId },
+        });
+      }
+    }
+  }
 }
 
 export class WsHandler {
@@ -21,10 +134,20 @@ export class WsHandler {
   private readonly messageHandlers: WSMessageHandler[] = [];
   private readonly logger: Logger;
   private readonly services: ServiceRegistry;
+  /**
+   * 运行中任务：sessionId → AbortController（handler 级，与连接解耦）。
+   * WS 断连不再中止任务（弱网闪断/心跳重连曾直接杀死后台任务且前端无从感知——
+   * 长程任务「回复/思考/工具调用卡死」的根因）；仅 task.abort 显式中断。
+   */
+  private readonly activeRuns = new Map<string, AbortController>();
+  private readonly batcher: EventBatcher;
 
   constructor(services: ServiceRegistry, logger: Logger) {
     this.services = services;
     this.logger = logger;
+    this.batcher = new EventBatcher((msg) => {
+      this.sendToSubscribers(String(msg.sessionId), msg);
+    });
   }
 
   onWSMessage(handler: WSMessageHandler): void {
@@ -33,19 +156,12 @@ export class WsHandler {
 
   /** 注册新连接 */
   registerConnection(conn: WSConnection): void {
-    this.states.set(conn.id, { conn, activeRuns: new Map() });
+    this.states.set(conn.id, { conn, subscribedSessions: new Set() });
     this.logger.debug(t('server.wsConnected', { id: conn.id }));
   }
 
-  /** 移除连接 */
+  /** 移除连接：只清订阅，不中止任务（任务与连接解耦，断连后继续跑，重连可恢复） */
   unregisterConnection(id: string): void {
-    const state = this.states.get(id);
-    if (state) {
-      for (const controller of state.activeRuns.values()) {
-        controller.abort();
-      }
-      state.activeRuns.clear();
-    }
     this.states.delete(id);
     this.logger.debug(t('server.wsDisconnected', { id }));
   }
@@ -109,13 +225,30 @@ export class WsHandler {
     }
   }
 
-  /** 发送消息到指定 session 的连接 */
+  /** 发送消息到指定 session 的全部订阅连接 */
   sendToSession(sessionId: string, message: unknown): void {
+    this.sendToSubscribers(sessionId, message);
+  }
+
+  /** 发送消息到订阅该 session 的所有活跃连接（无订阅者时静默丢弃） */
+  private sendToSubscribers(sessionId: string, message: unknown): void {
     const text = JSON.stringify(message);
     for (const state of this.states.values()) {
-      if (state.sessionId === sessionId) {
+      if (state.subscribedSessions.has(sessionId)) {
         state.conn.send(text);
       }
+    }
+  }
+
+  /**
+   * 发送 agent 事件：高频流式类型进合帧缓冲，其余类型先冲刷缓冲再发（保序）。
+   */
+  private sendEvent(sessionId: string, msg: { type: string; sessionId: string; payload: Record<string, unknown> }): void {
+    if (this.batcher.isBatchable(msg.type)) {
+      this.batcher.push(msg);
+    } else {
+      this.batcher.flush();
+      this.sendToSubscribers(sessionId, msg);
     }
   }
 
@@ -147,14 +280,25 @@ export class WsHandler {
 
     const sessionId = msg.sessionId || `sess_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     state.sessionId = sessionId;
+    // 发起连接自动订阅该 session（事件按 session 路由；断连后任务继续，重连可恢复接收）
+    state.subscribedSessions.add(sessionId);
     const runId = payload.runId;
 
-    // 中断控制（按 sessionId 记录，支持并发流各自独立中断）
+    // 中断控制（handler 级，与连接解耦）。同 session 发起新 run 时中止旧 run：
+    // 「打断发送」语义——旧 run 的残余事件由前端 runId 过滤丢弃
     const abortController = new AbortController();
-    state.activeRuns.set(sessionId, abortController);
+    const prevController = this.activeRuns.get(sessionId);
+    this.activeRuns.set(sessionId, abortController);
+    if (prevController) {
+      prevController.abort();
+    }
 
     const onEvent = (event: AgentEvent) => {
-      state.conn.send({ type: event.type, sessionId: event.sessionId, payload: { ...event, runId } });
+      this.sendEvent(sessionId, {
+        type: event.type,
+        sessionId: event.sessionId,
+        payload: { ...event, runId },
+      });
     };
 
     try {
@@ -172,9 +316,9 @@ export class WsHandler {
       });
 
       if (abortController.signal.aborted) {
-        state.conn.send({ type: 'task.aborted', sessionId: result.sessionId, payload: { runId } });
+        this.sendEvent(sessionId, { type: 'task.aborted', sessionId: result.sessionId, payload: { runId } });
       } else {
-        state.conn.send({
+        this.sendEvent(sessionId, {
           type: 'task.done',
           sessionId: result.sessionId,
           payload: {
@@ -186,9 +330,9 @@ export class WsHandler {
       }
     } catch (err) {
       if (abortController.signal.aborted) {
-        state.conn.send({ type: 'task.aborted', sessionId, payload: { runId } });
+        this.sendEvent(sessionId, { type: 'task.aborted', sessionId, payload: { runId } });
       } else {
-        state.conn.send({
+        this.sendEvent(sessionId, {
           type: 'error',
           sessionId,
           payload: { message: err instanceof Error ? err.message : String(err), runId },
@@ -196,14 +340,16 @@ export class WsHandler {
       }
     } finally {
       // 仅当当前记录的仍是自己时才清除，避免误清新流的 controller
-      if (state.activeRuns.get(sessionId) === abortController) {
-        state.activeRuns.delete(sessionId);
+      if (this.activeRuns.get(sessionId) === abortController) {
+        this.activeRuns.delete(sessionId);
       }
+      // 冲净残余缓冲（保序收尾）
+      this.batcher.flush();
     }
   }
 
-  private handleTaskAbort(state: ConnectionState, msg: WSMessage): void {
-    const controller = state.activeRuns.get(msg.sessionId ?? '');
+  private handleTaskAbort(_state: ConnectionState, msg: WSMessage): void {
+    const controller = this.activeRuns.get(msg.sessionId ?? '');
     if (controller) {
       controller.abort();
       this.logger.info(t('server.taskAborted', { sessionId: msg.sessionId ?? '' }));
@@ -213,7 +359,14 @@ export class WsHandler {
   private handleSessionSubscribe(state: ConnectionState, msg: WSMessage): void {
     if (msg.sessionId) {
       state.sessionId = msg.sessionId;
-      state.conn.send({ type: 'session.subscribed', sessionId: msg.sessionId });
+      state.subscribedSessions.add(msg.sessionId);
+      // running：该 session 是否仍有任务在跑（前端重连后据此校正 generating 状态——
+      // 任务与连接解耦后，断连期间任务可能已完成，最终消息需拉历史恢复）
+      state.conn.send({
+        type: 'session.subscribed',
+        sessionId: msg.sessionId,
+        payload: { running: this.activeRuns.has(msg.sessionId) },
+      });
 
       // WS 重连恢复 pending asks：查询该 session 的待答列表，逐条发送 ask 事件（携带完整提问载荷），
       // 前端 useWebSocket 的 ask 处理器会将其加入 store.pendingAsks。
@@ -371,7 +524,12 @@ export class WsHandler {
       return;
     }
     state.sessionId = taskId;
-    state.conn.send({ type: 'session.subscribed', sessionId: taskId });
+    state.subscribedSessions.add(taskId);
+    state.conn.send({
+      type: 'session.subscribed',
+      sessionId: taskId,
+      payload: { running: this.activeRuns.has(taskId) },
+    });
     this.logger.debug(t('server.wsTaskSwitched', { id: taskId }));
   }
 

@@ -26,6 +26,11 @@ function getDB(): Promise<IDBPDatabase<MossDBSchema>> {
         }
       },
     });
+    // 打开失败（隐身模式/配额/库损坏等）不缓存 rejected promise：
+    // 后续调用可重试；期间读写走内存降级，不让 IndexedDB 故障炸掉整个应用
+    dbPromise.catch(() => {
+      dbPromise = null;
+    });
   }
   return dbPromise;
 }
@@ -35,10 +40,15 @@ export async function idbGet<T>(key: string): Promise<T | undefined> {
   if (memoryCache.has(key)) {
     return memoryCache.get(key) as T;
   }
-  const db = await getDB();
-  const value = (await db.get(SETTINGS_STORE, key)) as T | undefined;
-  memoryCache.set(key, value);
-  return value;
+  try {
+    const db = await getDB();
+    const value = (await db.get(SETTINGS_STORE, key)) as T | undefined;
+    memoryCache.set(key, value);
+    return value;
+  } catch {
+    // IndexedDB 不可用：降级纯内存读（undefined = 视为未存储，走调用方默认值）
+    return undefined;
+  }
 }
 
 // 同步读取：仅读内存缓存（需先经过 idbGet 预填充，例如 main.tsx 启动时）
@@ -49,8 +59,12 @@ export function idbGetSync<T>(key: string): T | undefined {
 // 写入：同时更新内存缓存与 IndexedDB
 export async function idbSet<T>(key: string, value: T): Promise<void> {
   memoryCache.set(key, value);
-  const db = await getDB();
-  await db.put(SETTINGS_STORE, value, key);
+  try {
+    const db = await getDB();
+    await db.put(SETTINGS_STORE, value, key);
+  } catch {
+    // IndexedDB 不可用：降级仅内存写（本会话生效，重启回落默认值）
+  }
 }
 
 /**

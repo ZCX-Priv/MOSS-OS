@@ -30,6 +30,14 @@ export class StaticAssets {
   private readonly root: string;
   private readonly indexHtml: string;
   private readonly exists: boolean;
+  /**
+   * 响应内存缓存：filePath → 完整响应（status/headers/body）。
+   * 构建产物不可变（hashed 文件名），首次读盘后驻留内存；
+   * no-cache 语义仅体现在响应头（浏览器仍会 revalidate），缓存的是内容。
+   * 单用户本地应用全量约 10~20MB，无上限缓存可接受；
+   * 消除每请求 readFileSync 同步读盘对 Bun 单线程事件循环的阻塞。
+   */
+  private readonly cache = new Map<string, { status: number; headers: Record<string, string>; body: Buffer }>();
 
   constructor(env: Environment) {
     this.root = join(env.packageRoot, 'dist', 'webui');
@@ -71,6 +79,11 @@ export class StaticAssets {
   }
 
   private serveFile(filePath: string): { status: number; headers: Record<string, string>; body: Buffer } {
+    const cached = this.cache.get(filePath);
+    if (cached) {
+      // 返回副本语义不必要：body 为只读响应负载，多请求共享同一 Buffer 安全
+      return cached;
+    }
     const body = readFileSync(filePath);
     const ext = extname(filePath).toLowerCase();
     const mime = MIME[ext] ?? 'application/octet-stream';
@@ -79,7 +92,7 @@ export class StaticAssets {
     const fileName = filePath.split(/[\\/]/).pop() ?? '';
     const noCache =
       ext === '.html' || fileName === 'sw.js' || fileName === 'registerSW.js' || fileName === 'manifest.webmanifest';
-    return {
+    const resp = {
       status: 200,
       headers: {
         'Content-Type': mime,
@@ -87,5 +100,7 @@ export class StaticAssets {
       },
       body,
     };
+    this.cache.set(filePath, resp);
+    return resp;
   }
 }

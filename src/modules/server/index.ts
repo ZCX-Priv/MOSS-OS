@@ -190,6 +190,17 @@ class ServerModule implements Module {
     ctx.eventBus.onAction('resources:changed', (data) => {
       this.wsHandler.broadcast({ type: 'resources.changed', payload: data });
     });
+    // MCP 连接状态变化（后台连接完成/断开/失败），转发为 WS mcp.status
+    // 前端 useMcp 监听后自动刷新列表（启动后台连接完成时无需手动刷新）
+    ctx.eventBus.onAction('mcp:server:connected', (data) => {
+      this.wsHandler.broadcast({ type: 'mcp.status', payload: data });
+    });
+    ctx.eventBus.onAction('mcp:server:disconnected', (data) => {
+      this.wsHandler.broadcast({ type: 'mcp.status', payload: data });
+    });
+    ctx.eventBus.onAction('mcp:server:error', (data) => {
+      this.wsHandler.broadcast({ type: 'mcp.status', payload: data });
+    });
 
     ctx.logger.info(t('server.started', { host: this.actualHost, port: this.actualPort }), {
       staticAssets: this.assets.isAvailable(),

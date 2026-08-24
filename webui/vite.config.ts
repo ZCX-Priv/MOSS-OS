@@ -17,10 +17,11 @@ export default defineConfig({
     tailwindcss(),
     // PWA：manifest + service worker（autoUpdate 静默更新）。
     // 预缓存全部静态资源（hashed 文件名长缓存）；/api 与 /ws 永不缓存；
-    // dev 模式不启用 SW（避免开发期缓存干扰）
+    // dev 模式（devOptions.enabled）提供 manifest + 空壳 SW，支持安装调试。
+    // 图标：Chrome/Chromium 安装硬性要求 192x192 与 512x512 PNG（由 MOSS.png 真实缩放生成）
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['MOSS.png'],
+      includeAssets: ['MOSS.png', 'icon-192.png', 'icon-512.png'],
       manifest: {
         name: 'MOSS',
         short_name: 'MOSS',
@@ -30,7 +31,11 @@ export default defineConfig({
         display: 'standalone',
         background_color: '#09090b',
         theme_color: '#18181b',
-        icons: [{ src: 'MOSS.png', sizes: '1254x1254', type: 'image/png', purpose: 'any' }],
+        icons: [
+          { src: 'icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+          { src: 'icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+          { src: 'icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+        ],
       },
       workbox: {
         globPatterns: ['**/*.{js,css,png,svg,ico,woff2}'],

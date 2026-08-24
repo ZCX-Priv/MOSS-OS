@@ -81,6 +81,7 @@ export const en = {
     http429Retry: 'HTTP 429, retrying in {{delay}}ms (attempt {{attempt}}/{{maxRetries}})',
     httpRetry: 'HTTP {{status}}, retrying in {{delay}}ms (attempt {{attempt}}/{{maxRetries}})',
     requestTimeoutRetry: 'Request timeout, retrying (attempt {{attempt}}/{{maxRetries}})',
+    requestTimeoutNoRetry: 'Request timed out after {{timeoutMs}}ms, failing fast (no retry)',
     networkErrorRetry: 'Network error, retrying in {{delay}}ms (attempt {{attempt}}/{{maxRetries}}): {{error}}',
     openaiMissingChoices: 'OpenAI Chat response missing choices',
     unknownProviderFormat: 'Unknown provider format: {{format}}',

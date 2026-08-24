@@ -157,12 +157,14 @@ export async function httpRequest(
       if (isAbort && opts.signal?.aborted) {
         throw new LLMError('Request aborted by caller', undefined, false);
       }
-      if (isAbort && attempt <= maxRetries) {
-        logger.warn(t('llm.requestTimeoutRetry', { attempt, maxRetries }));
-        continue;
+      if (isAbort) {
+        // 本地超时（非外部中止）：不重试——120s 已足够长，弱网下快速失败给用户
+        // 明确错误远好于 3 连重试 × 120s 的假死（与函数头注释「超时不重试」对齐）
+        logger.warn(t('llm.requestTimeoutNoRetry', { timeoutMs }));
+        throw new LLMError(`Request timed out after ${timeoutMs}ms`, undefined, false);
       }
       // 网络错误重试
-      if (!isAbort && attempt <= maxRetries) {
+      if (attempt <= maxRetries) {
         const delay = backoffMs(attempt);
         logger.warn(t('llm.networkErrorRetry', { delay, attempt, maxRetries, error: err instanceof Error ? err.message : String(err) }));
         await sleep(delay);

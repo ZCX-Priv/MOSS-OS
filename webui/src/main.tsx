@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { HashRouter } from 'react-router-dom'
 import App from './App.tsx'
+import { ErrorBoundary } from './components/shared/ErrorBoundary'
 import { ThemeProvider } from './contexts/ThemeContext'
 import { I18nProvider } from './contexts/I18nContext'
 import { idbGet, idbSet, migrateLegacyDatabase } from './utils/idb'
@@ -15,23 +16,34 @@ type ThemeMode = 'light' | 'dark' | 'system';
 
 // 防止主题闪烁：在 React 渲染前异步从 IndexedDB 读取主题并设置 data-theme
 async function initTheme() {
-  const stored = await idbGet<ThemeMode>('moss-theme');
-  const mode = stored === 'light' || stored === 'dark' || stored === 'system' ? stored : 'dark';
-  const resolved = mode === 'system'
-    ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
-    : mode;
-  document.documentElement.classList.toggle('dark', resolved === 'dark');
+  try {
+    const stored = await idbGet<ThemeMode>('moss-theme');
+    const mode = stored === 'light' || stored === 'dark' || stored === 'system' ? stored : 'dark';
+    const resolved = mode === 'system'
+      ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+      : mode;
+    document.documentElement.classList.toggle('dark', resolved === 'dark');
+  } catch (err) {
+    // 启动兜底：主题读取失败按默认深色渲染，不阻塞应用启动
+    console.warn('initTheme failed, fallback to dark:', err);
+    document.documentElement.classList.add('dark');
+  }
 }
 
 // 防止语言闪烁：在 React 渲染前异步从 IndexedDB 读取语言并初始化 i18n
 // 存储值为用户选择（'auto' | 'zh' | 'en'）；未设置过时默认 'auto'，实际语言由 resolveLocale 解析
 async function initLocale() {
-  const stored = await idbGet<Locale>(LOCALE_STORAGE_KEY);
-  const locale: Locale =
-    stored === 'zh' || stored === 'en' || stored === 'auto' ? stored : 'auto';
-  const resolved = resolveLocale(locale);
-  await i18n.changeLanguage(resolved);
-  document.documentElement.lang = resolved;
+  try {
+    const stored = await idbGet<Locale>(LOCALE_STORAGE_KEY);
+    const locale: Locale =
+      stored === 'zh' || stored === 'en' || stored === 'auto' ? stored : 'auto';
+    const resolved = resolveLocale(locale);
+    await i18n.changeLanguage(resolved);
+    document.documentElement.lang = resolved;
+  } catch (err) {
+    // 启动兜底：语言初始化失败按默认语言继续，不阻塞应用启动
+    console.warn('initLocale failed, fallback to default locale:', err);
+  }
 }
 
 // store 中需要持久化的 key 列表（与 store 内 idbSet 使用的 key 保持一致）
@@ -81,8 +93,14 @@ async function prefetchStoreState(): Promise<Record<string, unknown>> {
 
 // 先迁移旧库数据到 MOSS-DB，再预填充 store 状态（迁移写入内存缓存后，预填充即可命中）
 async function initPersisted(): Promise<Record<string, unknown>> {
-  await migrateLegacyDatabase();
-  return prefetchStoreState();
+  try {
+    await migrateLegacyDatabase();
+    return await prefetchStoreState();
+  } catch (err) {
+    // 启动兜底：持久化状态读取失败按空状态继续（全部回落默认值）
+    console.warn('initPersisted failed, fallback to defaults:', err);
+    return {};
+  }
 }
 
 function buildPersistedState(data: Record<string, unknown>): PersistedState {
@@ -125,13 +143,34 @@ Promise.all([initTheme(), initLocale(), initPersisted()]).then((results) => {
   useStore.getState().hydratePersisted(buildPersistedState(persisted));
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
-      <ThemeProvider>
-        <I18nProvider>
-          <HashRouter>
-            <App />
-          </HashRouter>
-        </I18nProvider>
-      </ThemeProvider>
+      <ErrorBoundary>
+        <ThemeProvider>
+          <I18nProvider>
+            <HashRouter>
+              <App />
+            </HashRouter>
+          </I18nProvider>
+        </ThemeProvider>
+      </ErrorBoundary>
     </StrictMode>,
   );
+}).catch((err: unknown) => {
+  // 启动链路最后兜底：任何未预期异常也要给用户可见反馈，而非白屏
+  console.error('App bootstrap failed:', err);
+  const root = document.getElementById('root');
+  if (root) {
+    const msg = String(err instanceof Error ? err.message : err).replace(
+      /[<>&]/g,
+      (c: string) => (c === '<' ? '&lt;' : c === '>' ? '&gt;' : '&amp;'),
+    );
+    root.innerHTML = [
+      '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#09090b;color:#e4e4e7;font-family:system-ui,sans-serif;">',
+      '  <div style="max-width:480px;padding:32px;text-align:center;">',
+      '    <h1 style="font-size:20px;margin:0 0 12px;">MOSS 启动失败 / Bootstrap failed</h1>',
+      '    <p style="font-size:13px;color:#a1a1aa;margin:0 0 16px;word-break:break-all;">' + msg + '</p>',
+      '    <button onclick="location.reload()" style="padding:8px 20px;border-radius:8px;border:1px solid #3f3f46;background:#18181b;color:#e4e4e7;cursor:pointer;">重新加载 / Reload</button>',
+      '  </div>',
+      '</div>',
+    ].join('');
+  }
 });

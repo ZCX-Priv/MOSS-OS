@@ -27,6 +27,10 @@ export function useMcp() {
       if (msg.type === 'config.changed' || msg.type === 'resources.changed') {
         void load();
       }
+      // MCP 连接状态变化（启动后台连接完成/断开/失败）后刷新
+      if (msg.type === 'mcp.status') {
+        void load();
+      }
     });
     return unsub;
   }, [load]);

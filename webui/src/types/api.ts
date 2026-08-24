@@ -97,6 +97,12 @@ export interface AppConfig {
   agent: { defaultModel: string; maxTokens: number; maxTurns: number; workingDirectory: string };
   tools: Record<string, { enabled: boolean; requireConfirmation?: boolean; timeout?: number }>;
   mcpServers: Record<string, unknown>;
+  /** 对外 MCP Server 暴露配置（/mcp 端点；可选，旧 config 无此段时视为关闭） */
+  mcpServer?: {
+    enabled: boolean;
+    /** 暴露工具白名单；空数组 = 全部内置工具（requireConfirmation 工具除外） */
+    allowedTools: string[];
+  };
   security: { authToken: string; bindLocalhostOnly: boolean };
   /** 统一权限决策配置（safety 模块；可选，旧 config 无此段时用默认值） */
   safety?: SafetyConfig;

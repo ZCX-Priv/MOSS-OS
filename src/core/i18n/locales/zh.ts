@@ -81,6 +81,7 @@ export const zh = {
     http429Retry: 'HTTP 429，{{delay}}ms 后重试（第 {{attempt}}/{{maxRetries}} 次）',
     httpRetry: 'HTTP {{status}}，{{delay}}ms 后重试（第 {{attempt}}/{{maxRetries}} 次）',
     requestTimeoutRetry: '请求超时，正在重试（第 {{attempt}}/{{maxRetries}} 次）',
+    requestTimeoutNoRetry: '请求超时（{{timeoutMs}}ms），快速失败（不重试）',
     networkErrorRetry: '网络错误，{{delay}}ms 后重试（第 {{attempt}}/{{maxRetries}} 次）: {{error}}',
     openaiMissingChoices: 'OpenAI Chat 响应缺少 choices',
     unknownProviderFormat: '未知的 provider format: {{format}}',

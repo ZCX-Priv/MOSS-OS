@@ -24,6 +24,7 @@ import { useEffect } from 'react';
 import { toast } from 'sonner';
 import { useStore } from '../store';
 import { wsClient } from '../api/ws';
+import { api } from '../api/http';
 import { pendingAssistant, pendingRunId } from '../lib/pending-assistant';
 import i18n from '../i18n';
 import type {
@@ -458,7 +459,38 @@ export function useWebSocket(): void {
       // 会话订阅
       // ====================================================================
       case 'session.subscribed': {
-        if (sessionId) useStore.getState().setActiveSession(sessionId);
+        if (!sessionId) break;
+        useStore.getState().setActiveSession(sessionId);
+        // 重连状态校正：任务与连接解耦后，断连期间任务可能已完成
+        // （done/task.done 事件发往已断连接被丢弃）。running=false 且本地仍
+        // 在生成中 → 拉取会话历史恢复最终消息并收尾生成状态，杜绝 spinner 永转。
+        const subPayload = (msg.payload ?? {}) as { running?: boolean };
+        if (subPayload.running === false && useStore.getState().generatingBySession[sessionId]) {
+          void api
+            .getSessionHistory(sessionId)
+            .then((resp) => {
+              const st = useStore.getState();
+              // 守卫：拉取期间可能已开启新任务（仍生成中才收尾）
+              if (st.generatingBySession[sessionId]) {
+                if (resp.messages && resp.messages.length > 0) {
+                  st.setMessages(sessionId, resp.messages);
+                }
+                st.finalizeStreamingMessages(sessionId);
+                st.setGenerating(sessionId, false);
+                pendingAssistant.delete(sessionId);
+                if (resp.lastRunStats) st.setRunStats(sessionId, resp.lastRunStats);
+              }
+            })
+            .catch(() => {
+              // 历史拉取失败：至少收尾生成状态，避免 spinner 永转
+              const st = useStore.getState();
+              if (st.generatingBySession[sessionId]) {
+                st.finalizeStreamingMessages(sessionId);
+                st.setGenerating(sessionId, false);
+                pendingAssistant.delete(sessionId);
+              }
+            });
+        }
         break;
       }
       case 'session-truncated': {

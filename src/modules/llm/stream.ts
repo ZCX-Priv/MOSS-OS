@@ -15,6 +15,7 @@ export async function* parseSSEStream(
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
+  let timedOut = false;
 
   /**
    * 从 buffer 头部切出一个完整 SSE 事件。
@@ -32,12 +33,15 @@ export async function* parseSSEStream(
     return eventText;
   };
 
-  // 空闲超时：响应头已返回但流中途停滞（弱网半开连接）时，取消读取避免无限挂起
+  // 空闲超时：响应头已返回但流中途停滞（弱网半开连接）时取消读取，
+  // 并向上游抛出明确错误（而非静默截断——静默会让 engine 当作流正常结束，
+  // 用户侧表现为「回复莫名断掉且无任何提示」）。120s 容忍思考型模型的长停顿。
   const IDLE_TIMEOUT_MS = 120_000;
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
   const resetIdle = (): void => {
     if (idleTimer) clearTimeout(idleTimer);
     idleTimer = setTimeout(() => {
+      timedOut = true;
       try {
         reader.cancel();
       } catch {
@@ -50,6 +54,10 @@ export async function* parseSSEStream(
     while (true) {
       resetIdle();
       const { done, value } = await reader.read();
+      // cancel() 使 read 以 done 收尾：此时按超时错误上抛（engine 侧已生成内容仍会保留）
+      if (timedOut) {
+        throw new Error(`SSE stream idle timeout: no data received for ${IDLE_TIMEOUT_MS}ms`);
+      }
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
 
