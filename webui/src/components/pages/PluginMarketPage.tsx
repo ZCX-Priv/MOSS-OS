@@ -2,7 +2,7 @@
 // 插件库：两 tab 路由化
 //   /plugins/skills（技能，默认）| /plugins/mcp（MCP 服务器）
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { toast } from 'sonner';
 import {
   Search, WandSparkles, Wrench, Cable,
@@ -60,16 +60,31 @@ export function PluginMarketPage() {
   const tab = pathname === '/plugins/mcp' ? 'mcp' : 'skills';
   // Badge 计数在布局层拉取
   const { skills } = useSkills();
-  const { servers } = useMcp();
+  const { servers, reload } = useMcp();
+  const requestMcpDialog = useStore((s) => s.requestMcpDialog);
 
   const tabPath = (v: string) => `/plugins/${v}`;
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
-      {/* Header */}
-      <div className="hidden flex-col gap-1 px-6 py-4 md:flex">
-        <h1 className="text-xl font-semibold text-foreground">{t('plugins.title')}</h1>
-        <p className="text-sm text-muted-foreground">{t('plugins.subtitle')}</p>
+      {/* Header：左标题右操作（MCP tab 专属按钮；移动端收纳进全局顶栏，与自动化页一致） */}
+      <div className="hidden items-center justify-between gap-4 px-6 py-4 md:flex">
+        <div className="flex flex-col gap-1">
+          <h1 className="text-xl font-semibold text-foreground">{t('plugins.title')}</h1>
+          <p className="text-sm text-muted-foreground">{t('plugins.subtitle')}</p>
+        </div>
+        {tab === 'mcp' && (
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" className="h-8 gap-1" onClick={() => void reload()}>
+              <RefreshCw className="size-3.5" />
+              {t('common.refresh')}
+            </Button>
+            <Button size="sm" className="h-8 gap-1" onClick={requestMcpDialog}>
+              <Plus className="size-3.5" />
+              {t('plugins.mcpAdd')}
+            </Button>
+          </div>
+        )}
       </div>
 
       {/* Tabs（路由驱动） */}
@@ -336,9 +351,9 @@ function MossServerCard() {
   }, [appConfig, endpoint, t]);
 
   return (
-    <Card className="flex flex-col gap-2 border-primary/30 p-3">
+    <Card className="flex flex-col gap-2 border-primary-strong/30 p-3">
       <div className="flex flex-row items-center gap-3">
-        <div className="relative flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+        <div className="relative flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary-strong/10 text-primary-strong">
           <Server className="size-5" />
           <span
             className={enabled ? 'bg-emerald-500' : 'bg-muted-foreground/40'}
@@ -392,6 +407,24 @@ export function McpTab() {
   // 删除确认弹窗（替代原生 confirm）
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+
+  // 页面头部/移动端全局 header 按钮信号
+  const mcpDialogRequest = useStore((s) => s.mcpDialogRequest);
+  const clearMcpDialogRequest = useStore((s) => s.clearMcpDialogRequest);
+  const mcpRefreshSeq = useStore((s) => s.mcpRefreshSeq);
+
+  // header"添加服务器"按钮 → 打开添加弹窗
+  useEffect(() => {
+    if (mcpDialogRequest) {
+      clearMcpDialogRequest();
+      setAddOpen(true);
+    }
+  }, [mcpDialogRequest, clearMcpDialogRequest]);
+
+  // 移动端全局 header 刷新按钮
+  useEffect(() => {
+    if (mcpRefreshSeq > 0) void reload();
+  }, [mcpRefreshSeq, reload]);
 
   const q = query.trim().toLowerCase();
   const filteredServers = q
@@ -483,19 +516,6 @@ export function McpTab() {
 
   return (
     <div className="p-6">
-      <div className="mb-3 flex items-center justify-between">
-        <p className="text-xs text-muted-foreground">{t('plugins.mcpHint')}</p>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" className="h-8 gap-1" onClick={() => void reload()}>
-            <RefreshCw className="size-3.5" />
-            {t('common.refresh')}
-          </Button>
-          <Button size="sm" className="h-8 gap-1" onClick={() => setAddOpen(true)}>
-            <Plus className="size-3.5" />
-            {t('plugins.mcpAdd')}
-          </Button>
-        </div>
-      </div>
       <div className="flex flex-col gap-2">
         {/* MOSS 自身 MCP 服务器（/mcp 端点）置顶卡片：开关 / 端点预览 / 复制 JSON */}
         <MossServerCard />

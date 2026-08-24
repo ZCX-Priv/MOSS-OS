@@ -41,7 +41,7 @@ export const CompactionCard = memo(function CompactionCard({
           ) : (
             <ChevronRight className="size-3.5 shrink-0" />
           )}
-          <Archive className="size-3.5 shrink-0 text-primary" />
+          <Archive className="size-3.5 shrink-0 text-primary-strong" />
           <span className="font-medium text-foreground">
             {t('context.compactionCardTitle')}
           </span>
@@ -89,7 +89,7 @@ export function CompactionPendingCard() {
   return (
     <div className="flex justify-center py-1">
       <div className="flex items-center gap-2 rounded-lg border border-dashed border-border bg-muted/40 px-3 py-2.5 text-xs text-muted-foreground">
-        <Loader2 className="size-3.5 animate-spin text-primary" />
+        <Loader2 className="size-3.5 animate-spin text-primary-strong" />
         <span>{t('context.compactionRunning')}</span>
       </div>
     </div>

@@ -164,7 +164,7 @@ export function AskPromptCard({ ask, className }: AskPromptCardProps) {
     >
       {/* 头部：标题 + 取消按钮 */}
       <div className="flex items-center gap-1.5">
-        <HelpCircle className="size-3.5 text-primary" />
+        <HelpCircle className="size-3.5 text-primary-strong" />
         <span className="text-xs font-medium text-foreground">{t('task.askTitle')}</span>
         <Button
           variant="ghost"
@@ -266,15 +266,15 @@ export function AskPromptCard({ ask, className }: AskPromptCardProps) {
                 className={cn(
                   'flex w-full items-center gap-2 rounded-md border px-2.5 py-1.5 text-left text-sm transition-colors',
                   checked
-                    ? 'border-primary bg-primary/10 text-foreground'
+                    ? 'border-primary-strong bg-primary-strong/10 text-foreground'
                     : 'border-border text-foreground hover:bg-muted/50',
                 )}
               >
                 {checked ? (
                   isMulti ? (
-                    <CircleCheck className="size-4 shrink-0 text-primary" />
+                    <CircleCheck className="size-4 shrink-0 text-primary-strong" />
                   ) : (
-                    <CircleCheck className="size-4 shrink-0 text-primary" />
+                    <CircleCheck className="size-4 shrink-0 text-primary-strong" />
                   )
                 ) : (
                   <Circle className="size-4 shrink-0 text-muted-foreground" />
@@ -329,7 +329,7 @@ export function AskPromptCard({ ask, className }: AskPromptCardProps) {
           <div
             className={cn(
               'flex w-full items-center gap-2 rounded-md border px-2.5 py-1.5 text-sm',
-              otherOpen ? 'border-primary bg-primary/5' : 'border-border',
+              otherOpen ? 'border-primary-strong bg-primary-strong/5' : 'border-border',
             )}
           >
             <button
@@ -339,7 +339,7 @@ export function AskPromptCard({ ask, className }: AskPromptCardProps) {
               className="flex items-center gap-2 text-left text-foreground"
             >
               {otherOpen ? (
-                <CircleCheck className="size-4 shrink-0 text-primary" />
+                <CircleCheck className="size-4 shrink-0 text-primary-strong" />
               ) : (
                 <Circle className="size-4 shrink-0 text-muted-foreground" />
               )}

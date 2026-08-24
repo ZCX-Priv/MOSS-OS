@@ -267,6 +267,7 @@ export const zh = {
     },
     tools: {
       subtitle: '管理内置与自定义工具的启用状态',
+      listTitle: '工具列表',
       searchPlaceholder: '搜索工具',
       noTools: '暂无工具',
       builtin: '内置',
@@ -560,7 +561,6 @@ export const zh = {
     skillToggleFailed: '切换技能状态失败',
     destructive: '破坏性',
     noMcpServers: '暂无 MCP 服务器',
-    mcpHint: '连接外部 MCP 服务器，为 Agent 提供更多工具。',
     mcpAdd: '添加服务器',
     mcpAddDesc: '配置 stdio 命令或 http/sse 地址连接 MCP 服务器。',
     mcpName: '名称',

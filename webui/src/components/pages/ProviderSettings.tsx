@@ -639,7 +639,7 @@ function SortableProviderCard({
                 key={model.id}
                 className={cn(
                   'flex items-center gap-3 px-4 py-2.5 transition-colors',
-                  isSelected ? 'bg-primary/5' : 'hover:bg-muted/50',
+                  isSelected ? 'bg-primary-strong/5' : 'hover:bg-muted/50',
                 )}
               >
                 {/* 主体可点击区域 */}
@@ -1014,7 +1014,7 @@ function IconPicker({ value, onChange }: { value: string; onChange: (icon: strin
               }}
               className={cn(
                 'flex size-9 items-center justify-center rounded-md transition-colors hover:bg-muted',
-                !value && 'ring-2 ring-primary',
+                !value && 'ring-2 ring-primary-strong',
               )}
             >
               <Server className="size-4 text-muted-foreground" />
@@ -1030,7 +1030,7 @@ function IconPicker({ value, onChange }: { value: string; onChange: (icon: strin
                 }}
                 className={cn(
                   'flex size-9 items-center justify-center rounded-md transition-colors hover:bg-muted',
-                  value === entry.key && 'ring-2 ring-primary',
+                  value === entry.key && 'ring-2 ring-primary-strong',
                 )}
               >
                 <entry.Icon size={18} />
@@ -1118,7 +1118,7 @@ export function ThinkingLevelTags({ levels, value, onThinkingChange, onLevelsCha
             <span
               key={level.id}
               className={cn(
-                'group/tag relative inline-flex items-center gap-1 rounded-full border py-1 pl-2.5 pr-2 text-xs transition-colors',
+                'group/tag relative inline-flex items-center gap-1 rounded-md border py-1 pl-2.5 pr-2 text-xs transition-colors',
                 isCurrent
                   ? 'border-primary bg-primary text-primary-foreground'
                   : 'border-border text-foreground hover:bg-muted',
@@ -1133,7 +1133,7 @@ export function ThinkingLevelTags({ levels, value, onThinkingChange, onLevelsCha
                 {level.label}
               </button>
               {isCurrent && (
-                <span className="rounded-full bg-primary-foreground/20 px-1.5 py-px text-[10px] leading-none">
+                <span className="rounded-sm bg-primary-foreground/20 px-1.5 py-px text-[10px] leading-none">
                   {t('settings.provider.current')}
                 </span>
               )}
@@ -1157,9 +1157,9 @@ export function ThinkingLevelTags({ levels, value, onThinkingChange, onLevelsCha
 
         {/* 孤儿值：当前 effort 不在等级库（历史数据），显示为只读标签 */}
         {orphanEffort !== null && (
-          <span className="inline-flex items-center gap-1 rounded-full border border-primary bg-primary text-primary-foreground py-1 pl-2.5 pr-2 text-xs">
+          <span className="inline-flex items-center gap-1 rounded-md border border-primary bg-primary text-primary-foreground py-1 pl-2.5 pr-2 text-xs">
             {orphanEffort}
-            <span className="rounded-full bg-primary-foreground/20 px-1.5 py-px text-[10px] leading-none">
+            <span className="rounded-sm bg-primary-foreground/20 px-1.5 py-px text-[10px] leading-none">
               {t('settings.provider.current')}
             </span>
           </span>
@@ -1169,7 +1169,7 @@ export function ThinkingLevelTags({ levels, value, onThinkingChange, onLevelsCha
         <button
           type="button"
           onClick={() => setAdding((p) => !p)}
-          className="inline-flex items-center gap-0.5 rounded-full border border-dashed border-border py-1 pl-2.5 pr-2 text-xs text-muted-foreground transition-colors hover:border-ring hover:text-foreground"
+          className="inline-flex items-center gap-0.5 rounded-md border border-dashed border-border py-1 pl-2.5 pr-2 text-xs text-muted-foreground transition-colors hover:border-ring hover:text-foreground"
         >
           <Plus className="size-3" />
           {t('settings.provider.addLevel')}
@@ -1192,6 +1192,19 @@ export function ThinkingLevelTags({ levels, value, onThinkingChange, onLevelsCha
             value={newEffort}
             onChange={(e) => setNewEffort(e.target.value)}
           />
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 gap-1"
+            onClick={() => {
+              setNewLabel('');
+              setNewEffort('');
+              setAdding(false);
+            }}
+          >
+            <X className="size-3.5" />
+            {t('common.cancel')}
+          </Button>
           <Button size="sm" className="h-8 gap-1" onClick={addLevel}>
             <Check className="size-3.5" />
             {t('settings.provider.confirm')}

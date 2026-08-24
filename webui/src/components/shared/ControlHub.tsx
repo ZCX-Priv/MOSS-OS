@@ -63,9 +63,9 @@ export function ControlHub({ status, modules, activeModuleId, onActiveModuleChan
                 className={cn(
                   'inline-flex h-7 min-w-0 items-center gap-1.5 rounded-full border px-2.5 text-xs font-medium transition-colors',
                   isActive
-                    ? 'border-primary/50 bg-primary/10 text-primary'
+                    ? 'border-primary-strong/50 bg-primary-strong/10 text-primary-strong'
                     : hasBadge
-                      ? 'border-primary/40 bg-primary/5 text-foreground hover:bg-primary/10'
+                      ? 'border-primary-strong/40 bg-primary-strong/5 text-foreground hover:bg-primary-strong/10'
                       : 'border-border bg-transparent text-muted-foreground hover:bg-muted hover:text-foreground',
                 )}
               >

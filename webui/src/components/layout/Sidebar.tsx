@@ -986,7 +986,7 @@ function TaskRow({
         style={style}
         className={cn(
           'group/menu-item relative group/item flex w-full min-w-0 items-center gap-1.5',
-          isDragging && 'rounded-md outline-2 outline-dashed outline-primary/40',
+          isDragging && 'rounded-md outline-2 outline-dashed outline-primary-strong/40',
         )}
       >
         <button
@@ -1034,7 +1034,7 @@ function TaskRow({
         aria-label={generating ? t('sidebar.statusRunning') : errored ? t('sidebar.statusError') : undefined}
       >
         {generating ? (
-          <Loader2 className="size-3.5 animate-spin text-primary" />
+          <Loader2 className="size-3.5 animate-spin text-primary-strong" />
         ) : errored ? (
           <CircleAlert className="size-3.5 text-destructive" />
         ) : null}
@@ -1078,7 +1078,7 @@ function GroupDropZone({ groupId, empty, children }: { groupId: string; empty: b
         'rounded-md -mx-1 px-1 transition-colors',
         // 空组给最小放置高度，保证拖拽可命中
         empty && 'min-h-8',
-        isOver && 'bg-primary/10',
+        isOver && 'bg-primary-strong/10',
       )}
     >
       {children}
@@ -1090,7 +1090,7 @@ function GroupDropZone({ groupId, empty, children }: { groupId: string; empty: b
 function GroupHeaderDrop({ groupId, children }: { groupId: string; children: ReactNode }) {
   const { setNodeRef, isOver } = useDroppable({ id: `group-header:${groupId}` });
   return (
-    <div ref={setNodeRef} className={cn('rounded-md transition-colors', isOver && 'bg-primary/10')}>
+    <div ref={setNodeRef} className={cn('rounded-md transition-colors', isOver && 'bg-primary-strong/10')}>
       {children}
     </div>
   );

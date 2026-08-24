@@ -560,7 +560,6 @@ export const en = {
     skillToggleFailed: 'Failed to toggle skill',
     destructive: 'Destructive',
     noMcpServers: 'No MCP servers',
-    mcpHint: 'Connect external MCP servers to give the agent more tools.',
     mcpAdd: 'Add Server',
     mcpAddDesc: 'Configure a stdio command or an http/sse URL to connect an MCP server.',
     mcpName: 'Name',

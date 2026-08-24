@@ -806,7 +806,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
                               className={cn('justify-start gap-1.5 font-normal', removed && 'opacity-60')}
                               title={removed ? t('task.fileRemovedFromContext') : undefined}
                             >
-                              <FileText className={cn('size-3.5', removed ? 'text-muted-foreground' : 'text-primary')} />
+                              <FileText className={cn('size-3.5', removed ? 'text-muted-foreground' : 'text-primary-strong')} />
                               <span className={cn('truncate', removed && 'text-muted-foreground line-through')}>
                                 {file.path}
                               </span>
@@ -1023,7 +1023,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
           <DialogContent size="md">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-1.5">
-                <Package className="size-4 text-primary" />
+                <Package className="size-4 text-primary-strong" />
                 {t('context.compactDialogTitle')}
               </DialogTitle>
               <DialogDescription>{t('context.compactDialogDesc')}</DialogDescription>
@@ -1099,8 +1099,8 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
             status={
               isGenerating ? (
                 <>
-                  <Loader2 className="size-3.5 animate-spin text-primary" />
-                  <span className="text-xs font-medium text-primary">{t('hub.statusRunning')}</span>
+                  <Loader2 className="size-3.5 animate-spin text-primary-strong" />
+                  <span className="text-xs font-medium text-primary-strong">{t('hub.statusRunning')}</span>
                 </>
               ) : (
                 <>
@@ -1627,7 +1627,7 @@ const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap,
             className="flex flex-col gap-2.5 rounded-lg border border-border bg-card p-3 shadow-sm"
           >
             <div className="flex items-center gap-1.5">
-              <HelpCircle className="size-3.5 text-primary" />
+              <HelpCircle className="size-3.5 text-primary-strong" />
               <span className="text-xs font-medium text-foreground">{t('task.askTitle')}</span>
             </div>
             <div>

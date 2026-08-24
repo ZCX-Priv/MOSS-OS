@@ -103,7 +103,7 @@ export function TodoRow({ item }: { item: TodoItem }) {
         <CircleCheck className="size-4 shrink-0 text-emerald-500" />
       )}
       {item.status === 'in_progress' && (
-        <Loader2 className="size-4 shrink-0 animate-spin text-primary" />
+        <Loader2 className="size-4 shrink-0 animate-spin text-primary-strong" />
       )}
       {item.status === 'pending' && (
         <Circle className="size-4 shrink-0 text-muted-foreground" />

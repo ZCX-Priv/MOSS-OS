@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Plus, Search } from 'lucide-react';
+import { Plus, RefreshCw, Search } from 'lucide-react';
 import type { OverlayType } from './types';
 import { Sidebar } from './components/layout/Sidebar';
 import { TaskPage } from './components/pages/TaskPage';
@@ -70,6 +70,7 @@ export default function App() {
   const isTaskRoute = pathname === '/' || pathname.startsWith('/task');
   // 移动端 header 标题与右侧 button（仅非 TaskPage 路由）
   const isPluginsRoute = pathname.startsWith('/plugins');
+  const isPluginsMcpRoute = pathname === '/plugins/mcp';
   const isAutomationRoute = pathname.startsWith('/automation');
   const isSettingsRoute = pathname.startsWith('/settings');
   const isProviderRoute = pathname.startsWith('/settings/provider');
@@ -116,6 +117,29 @@ export default function App() {
                   >
                     <Plus />
                   </Button>
+                )}
+                {/* 插件库 MCP tab：刷新 + 添加服务器（移动端收纳进 header，页面内按钮在桌面头部） */}
+                {isPluginsMcpRoute && (
+                  <>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      title={t('common.refresh')}
+                      aria-label={t('common.refresh')}
+                      onClick={() => useStore.getState().requestMcpRefresh()}
+                    >
+                      <RefreshCw />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      title={t('plugins.mcpAdd')}
+                      aria-label={t('plugins.mcpAdd')}
+                      onClick={() => useStore.getState().requestMcpDialog()}
+                    >
+                      <Plus />
+                    </Button>
+                  </>
                 )}
                 {/* 服务商设置页：搜索 + 添加（移动端收纳进 header；页面内工具行仅筛选占一行） */}
                 {isProviderRoute && (

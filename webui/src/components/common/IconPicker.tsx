@@ -112,7 +112,7 @@ export function IconPicker({ value, onChange, disabled }: IconPickerProps) {
                   title={name}
                   onClick={() => handleSelect(name)}
                   className={`flex size-9 items-center justify-center rounded-md border transition-colors hover:bg-accent ${
-                    selected ? 'border-primary bg-primary/10 text-primary' : 'border-transparent'
+                    selected ? 'border-primary-strong bg-primary-strong/10 text-primary-strong' : 'border-transparent'
                   }`}
                 >
                   <Icon className="size-4" />

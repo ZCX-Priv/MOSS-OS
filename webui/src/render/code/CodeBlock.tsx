@@ -79,7 +79,7 @@ export function CodeBlock({ code, lang, closed }: CodeBlockProps) {
         <pre className="overflow-x-auto p-3 font-mono text-[13px] leading-relaxed text-foreground">
           <code>{code}</code>
           {!closed && (
-            <span className="code-cursor ml-0.5 inline-block h-4 w-[2px] translate-y-[3px] animate-pulse bg-primary" />
+            <span className="code-cursor ml-0.5 inline-block h-4 w-[2px] translate-y-[3px] animate-pulse bg-primary-strong" />
           )}
         </pre>
       )}

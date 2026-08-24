@@ -87,10 +87,10 @@ export function FilePreviewCard({ path }: FilePreviewCardProps) {
         {thumbUrl !== null ? (
           <img src={thumbUrl} alt={name} className="h-8 w-8 rounded object-cover" loading="lazy" />
         ) : (
-          <Icon className="size-4 shrink-0 text-primary" />
+          <Icon className="size-4 shrink-0 text-primary-strong" />
         )}
         <span className="truncate font-mono text-xs text-foreground">{name}</span>
-        <span className="shrink-0 rounded bg-primary/10 px-1 py-0.5 font-mono text-[10px] text-primary">
+        <span className="shrink-0 rounded bg-primary-strong/10 px-1 py-0.5 font-mono text-[10px] text-primary-strong">
           {KIND_LABEL[kind]}
         </span>
       </button>

@@ -47,7 +47,7 @@ const variantConfig: Record<
   },
   info: {
     icon: InfoIcon,
-    iconClass: 'text-primary',
+    iconClass: 'text-primary-strong',
     actionClass: '',
   },
 };

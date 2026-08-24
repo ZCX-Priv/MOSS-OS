@@ -8,9 +8,10 @@
 :root {
   --radius: 0.625rem;
 
-  /* MOSS 品牌色 = 蓝色 #4B8BFF 系（紫色为旧 AI 误用，已弃用） */
-  --primary: oklch(0.546 0.245 263.4); /* #2563eb，亮色模式保证白字对比度 */
-  --primary-foreground: oklch(0.985 0 0);
+  /* MOSS 品牌色 = 蓝色系（参考用户消息气泡：白昼浅蓝底深色字 / 夜间深蓝底白字） */
+  --primary: oklch(0.926 0.028 275.5); /* indigo-100 浅蓝，白昼模式实心填充面 */
+  --primary-foreground: oklch(0.283 0.055 277); /* indigo-950 深蓝文字，浅蓝底上对比度充足 */
+  --primary-strong: oklch(0.546 0.245 263.4); /* blue-600 强蓝：文字/图标/指示器（浅蓝直接做文字会不可见） */
   --ring: oklch(0.546 0.245 263.4);
 
   /* shadcn neutral 中性底色 */
@@ -51,8 +52,9 @@
   --card-foreground: oklch(0.985 0 0);
   --popover: oklch(0.205 0 0);
   --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.62 0.2 250); /* #4B8BFF 品牌蓝，深色模式更亮 */
-  --primary-foreground: oklch(0.985 0 0); /* 白字，与亮色模式一致 */
+  --primary: oklch(0.546 0.245 263.4); /* blue-600 深蓝，夜间模式（与气泡 dark:bg-blue-600 一致） */
+  --primary-foreground: oklch(0.985 0 0); /* 白字，与亮色模式深蓝字相对 */
+  --primary-strong: oklch(0.62 0.2 250); /* #4B8BFF 夜间可读蓝：文字/图标/指示器 */
   --secondary: oklch(0.269 0 0);
   --secondary-foreground: oklch(0.985 0 0);
   --muted: oklch(0.269 0 0);
@@ -106,6 +108,7 @@
   --color-secondary: var(--secondary);
   --color-primary-foreground: var(--primary-foreground);
   --color-primary: var(--primary);
+  --color-primary-strong: var(--primary-strong);
   --color-popover-foreground: var(--popover-foreground);
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
@@ -257,7 +260,7 @@ pre,
   animation-play-state: paused;
 }
 .marquee-run {
-  stroke: var(--primary);
+  stroke: var(--primary-strong);
   stroke-opacity: 0.85;
   stroke-width: 1;
   stroke-linecap: round;

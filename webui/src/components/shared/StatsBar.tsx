@@ -40,7 +40,7 @@ function StatItem({ label, value, pulse, warning }: { label: string; value: stri
         className={cn(
           'text-foreground/80 transition-colors duration-150',
           warning && 'text-amber-500 dark:text-amber-400',
-          hot && 'text-primary',
+          hot && 'text-primary-strong',
         )}
       >
         {value}

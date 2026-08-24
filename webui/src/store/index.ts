@@ -318,6 +318,15 @@ interface UIActions {
   providerSearchSeq: number;
   toggleProviderSearch: () => void;
 
+  // 插件库 MCP tab：页面头部/移动端全局 header"添加服务器"按钮 → McpTab 打开弹窗的信号
+  mcpDialogRequest: boolean;
+  requestMcpDialog: () => void;
+  clearMcpDialogRequest: () => void;
+
+  // 插件库 MCP tab：移动端全局 header 刷新按钮（seq 计数，避免连续点击不触发）
+  mcpRefreshSeq: number;
+  requestMcpRefresh: () => void;
+
   // 右侧边栏标签页
   /** 新建标签页，返回新标签 id；自动设为活跃 */
   addSidebarTab: (type: SidebarTabType, title: string, toolCallId?: string) => string;
@@ -450,6 +459,10 @@ export const useStore = create<Store>((set) => ({
   // 模型菜单"添加服务商"跳转设置页并打开弹窗的信号
   providerDialogRequest: false,
   providerSearchSeq: 0,
+
+  // 插件库 MCP tab：header 按钮信号
+  mcpDialogRequest: false,
+  mcpRefreshSeq: 0,
 
   // --- 右侧边栏标签页（IndexedDB 持久化） ---
   sidebarTabs: [defaultSidebarTab()],
@@ -816,6 +829,11 @@ export const useStore = create<Store>((set) => ({
   clearProviderDialogRequest: () => set({ providerDialogRequest: false }),
   toggleProviderSearch: () =>
     set((state) => ({ providerSearchSeq: state.providerSearchSeq + 1 })),
+
+  // --- Actions: 插件库 MCP tab header 按钮信号 ---
+  requestMcpDialog: () => set({ mcpDialogRequest: true }),
+  clearMcpDialogRequest: () => set({ mcpDialogRequest: false }),
+  requestMcpRefresh: () => set((state) => ({ mcpRefreshSeq: state.mcpRefreshSeq + 1 })),
 
   // --- Actions: 右侧边栏标签页 ---
   addSidebarTab: (type, title, toolCallId) => {

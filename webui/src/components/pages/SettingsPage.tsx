@@ -1360,7 +1360,7 @@ export function AgentSettings() {
         key={agent.id}
         className={cn(
           'flex flex-row items-center gap-3 p-3',
-          isDefault && 'border-primary ring-2 ring-primary/20',
+          isDefault && 'border-primary-strong ring-2 ring-primary-strong/20',
         )}
       >
         <div
@@ -1379,7 +1379,7 @@ export function AgentSettings() {
         </div>
         {isDefault && (
           <>
-            <Check className="size-4 text-primary" />
+            <Check className="size-4 text-primary-strong" />
             <Badge>{t('settings.agent.defaultBadge')}</Badge>
           </>
         )}
@@ -1586,41 +1586,45 @@ export function ToolsSettings() {
         </div>
       </div>
 
-      <div className="flex flex-col gap-2">
-        {filteredTools.length === 0 && (
-          <div className="py-12 text-center text-sm text-muted-foreground">
-            {t('settings.tools.noTools')}
-          </div>
-        )}
-        {filteredTools.map((tool) => {
-          const Icon = TOOL_ICON_MAP[tool.icon ?? ''] ?? Wrench;
-          return (
-            <Card key={tool.name} className="flex flex-row items-center gap-3 p-3">
-              <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-                <Icon className="size-5" />
-              </div>
-              <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                <div className="flex items-center gap-2">
-                  <h3 className="text-sm font-medium text-foreground">{tool.name}</h3>
-                  <Badge variant="outline" className="font-normal">
-                    {tool.source === 'builtin' ? t('settings.tools.builtin') : t('settings.tools.custom')}
-                  </Badge>
-                  {tool.annotations?.destructiveHint && (
-                    <Badge variant="secondary" className="font-normal text-amber-600">
-                      {t('settings.tools.destructive')}
-                    </Badge>
-                  )}
+      {/* 工具列表：小标题 + 卡片列表 */}
+      <div className="flex flex-col gap-3">
+        <div className="text-sm font-medium text-foreground">{t('settings.tools.listTitle')}</div>
+        <div className="flex flex-col gap-2">
+          {filteredTools.length === 0 && (
+            <div className="py-12 text-center text-sm text-muted-foreground">
+              {t('settings.tools.noTools')}
+            </div>
+          )}
+          {filteredTools.map((tool) => {
+            const Icon = TOOL_ICON_MAP[tool.icon ?? ''] ?? Wrench;
+            return (
+              <Card key={tool.name} className="flex flex-row items-center gap-3 p-3">
+                <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                  <Icon className="size-5" />
                 </div>
-                <p className="truncate text-xs text-muted-foreground">{tool.description}</p>
-              </div>
-              <Switch
-                checked={tool.enabled}
-                onCheckedChange={(checked) => void toggleTool(tool.name, checked)}
-                aria-label={tool.enabled ? t('common.close') : t('common.open')}
-              />
-            </Card>
-          );
-        })}
+                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-medium text-foreground">{tool.name}</h3>
+                    <Badge variant="outline" className="font-normal">
+                      {tool.source === 'builtin' ? t('settings.tools.builtin') : t('settings.tools.custom')}
+                    </Badge>
+                    {tool.annotations?.destructiveHint && (
+                      <Badge variant="secondary" className="font-normal text-amber-600">
+                        {t('settings.tools.destructive')}
+                      </Badge>
+                    )}
+                  </div>
+                  <p className="truncate text-xs text-muted-foreground">{tool.description}</p>
+                </div>
+                <Switch
+                  checked={tool.enabled}
+                  onCheckedChange={(checked) => void toggleTool(tool.name, checked)}
+                  aria-label={tool.enabled ? t('common.close') : t('common.open')}
+                />
+              </Card>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
