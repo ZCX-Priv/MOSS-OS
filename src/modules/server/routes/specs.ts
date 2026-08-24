@@ -2,6 +2,7 @@
 // GET  /api/specs         —— 列出全部 specs
 // GET  /api/specs?id=xxx  —— 获取单个 spec 详情（query 形式规避路径参数含斜杠）
 // PUT  /api/specs?id=xxx  —— 保存 spec 内容（写回 ~/.moss/agent/prompts/main/spec/ 下文件；watch 热重载）
+// POST /api/specs         —— 新建 spec（在用户 spec 目录下创建 <id>.md）
 
 import type { HttpRequest, HttpResponse, RouteHandler } from '../types';
 import type { Environment, ServiceRegistry } from '../../../core/types';
@@ -110,6 +111,59 @@ export function createUpdateSpecHandler(
       }
       fs.writeFileSync(target, fm + body.content.trim() + '\n', 'utf8');
       return { status: 200, body: { saved: true, id } };
+    } catch (err) {
+      return {
+        status: 500,
+        body: { error: err instanceof Error ? err.message : String(err) },
+      };
+    }
+  };
+}
+
+/**
+ * POST /api/specs — 新建 spec。
+ * body: { id, description? }；在 ~/.moss/agent/prompts/main/spec/ 下创建 <id>.md
+ * （id 仅允许字母/数字/下划线/连字符，防路径穿越；重名返回 409）。
+ */
+export function createCreateSpecHandler(
+  services: ServiceRegistry,
+  env: Environment,
+): RouteHandler {
+  return async (req: HttpRequest): Promise<HttpResponse> => {
+    const registry = services.tryResolve<SpecRegistry>('spec.registry');
+    if (!registry) {
+      return { status: 404, body: { error: ErrorCode.SPEC_REGISTRY_UNAVAILABLE } };
+    }
+    const body = req.body as { id?: unknown; description?: unknown } | undefined;
+    const id = typeof body?.id === 'string' ? body.id.trim() : '';
+    if (!id) {
+      return { status: 400, body: { error: ErrorCode.SPEC_ID_REQUIRED } };
+    }
+    if (!/^[a-zA-Z0-9_-]+$/.test(id)) {
+      return { status: 400, body: { error: ErrorCode.SPEC_ID_INVALID } };
+    }
+    if (registry.get(id)) {
+      return { status: 409, body: { error: ErrorCode.SPEC_ALREADY_EXISTS } };
+    }
+    const description =
+      typeof body?.description === 'string' && body.description.trim()
+        ? body.description.trim().replace(/\r?\n/g, ' ')
+        : undefined;
+
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const path = require('node:path');
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const fs = require('node:fs');
+    const specRoot = path.resolve(env.dataDir, 'agent', 'prompts', 'main', 'spec');
+    const target = path.join(specRoot, `${id}.md`);
+    try {
+      fs.mkdirSync(specRoot, { recursive: true });
+      fs.writeFileSync(
+        target,
+        `---\n${description ? `description: ${description}\n` : ''}---\n\n`,
+        'utf8',
+      );
+      return { status: 200, body: { id } };
     } catch (err) {
       return {
         status: 500,

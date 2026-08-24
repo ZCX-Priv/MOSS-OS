@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, type ReactNode } from 'react';
-import { Outlet, useNavigate, useLocation } from 'react-router-dom';
+import { Outlet, useNavigate, useLocation, useOutletContext } from 'react-router-dom';
 import type { LucideIcon } from 'lucide-react';
 import {
   Settings,
@@ -69,6 +69,7 @@ import { useCommands } from '../../hooks/useCommands';
 import { useConfig } from '../../hooks/useConfig';
 import { useReducedMotion } from '../../hooks/useAnimationClass';
 import { useStore } from '../../store';
+import { eventToShortcut, formatShortcutLabel } from '../../utils/shortcut';
 import { api } from '../../api/http';
 import { TOOL_ICON_MAP } from '../../lib/tool-icons';
 import { SKILL_ICON_CHOICES, resolveSkillIcon } from '../../lib/skill-icons';
@@ -149,6 +150,14 @@ export const settingsSearchIndex: SearchableSetting[] = [
   { labelKey: 'settings.general.theme', descriptionKey: 'settings.general.selectTheme', section: 'general' },
   { labelKey: 'settings.general.language', descriptionKey: 'settings.general.languageDesc', section: 'general' },
   { labelKey: 'settings.general.sendShortcut', descriptionKey: 'settings.general.sendShortcutDesc', section: 'general' },
+  { labelKey: 'settings.general.followUpBehavior', descriptionKey: 'settings.general.followUpBehaviorDesc', section: 'general' },
+
+  // 外观设置详细项
+  { labelKey: 'settings.appearance.accentColor', descriptionKey: 'settings.appearance.accentColorDesc', section: 'appearance' },
+  { labelKey: 'settings.appearance.fontSize', descriptionKey: 'settings.appearance.fontSizeDesc', section: 'appearance' },
+  { labelKey: 'settings.appearance.uiDensity', descriptionKey: 'settings.appearance.uiDensityDesc', section: 'appearance' },
+  { labelKey: 'settings.appearance.cornerRadius', descriptionKey: 'settings.appearance.cornerRadiusDesc', section: 'appearance' },
+  { labelKey: 'settings.appearance.sidebarStyle', descriptionKey: 'settings.appearance.sidebarStyleDesc', section: 'appearance' },
 
   // 智能体设置详细项
   { labelKey: 'settings.agent.builtIn', section: 'agent' },
@@ -738,6 +747,13 @@ function ContextSettingRow({
   );
 }
 
+/** 上下文>规范 Tab 的 Outlet context（搜索框/新建按钮在标题区，列表在子路由） */
+interface SpecOutletContext {
+  query: string;
+  /** 创建规范成功后 +1，触发子路由重拉列表 */
+  refreshKey: number;
+}
+
 /** 上下文设置：Tab 容器（引擎/规范/索引/规则/记忆；路由驱动） */
 export function ContextSettings() {
   const { t } = useTranslation();
@@ -749,13 +765,70 @@ export function ContextSettings() {
   const tab = ['specs', 'index', 'rules', 'memory'].includes(suffix)
     ? suffix
     : 'engine';
+
+  // 规范 Tab：标题区搜索词 + 新建弹窗 + 列表刷新信号
+  const [specQuery, setSpecQuery] = useState('');
+  const [specCreateOpen, setSpecCreateOpen] = useState(false);
+  const [specsRefreshKey, setSpecsRefreshKey] = useState(0);
+  const [newSpecId, setNewSpecId] = useState('');
+  const [newSpecDesc, setNewSpecDesc] = useState('');
+  const [creating, setCreating] = useState(false);
+
+  const createSpec = useCallback(async () => {
+    const id = newSpecId.trim();
+    if (!/^[a-zA-Z0-9_-]+$/.test(id) || creating) return;
+    setCreating(true);
+    try {
+      await api.createSpec({ id, description: newSpecDesc.trim() || undefined });
+      toast.success(t('settings.specs.created', { id }));
+      setSpecCreateOpen(false);
+      setNewSpecId('');
+      setNewSpecDesc('');
+      setSpecsRefreshKey((k) => k + 1);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '';
+      if (msg.includes('SPEC_ALREADY_EXISTS')) {
+        toast.error(t('settings.specs.exists'));
+      } else if (msg.includes('SPEC_ID_INVALID')) {
+        toast.error(t('settings.specs.idInvalid'));
+      } else {
+        toast.error(msg || t('settings.specs.createFailed'));
+      }
+    } finally {
+      setCreating(false);
+    }
+  }, [newSpecId, newSpecDesc, creating, t]);
+
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <div className="px-6 py-4">
+      {/* 标题区：左标题右操作（规范 Tab 显示搜索+新建；移动端搜索独占一行、按钮 icon-only） */}
+      <div className="flex flex-col gap-4 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-col gap-1">
           <h1 className="text-xl font-semibold text-foreground">{t('settings.nav.context')}</h1>
           <p className="text-sm text-muted-foreground">{t('settings.context.subtitle')}</p>
         </div>
+        {tab === 'specs' && (
+          <div className="flex items-center gap-2">
+            <div className="relative w-full sm:w-64 sm:shrink-0">
+              <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                type="text"
+                placeholder={t('settings.specs.searchPlaceholder')}
+                className="pl-8"
+                value={specQuery}
+                onChange={(e) => setSpecQuery(e.target.value)}
+              />
+            </div>
+            <Button
+              className="shrink-0 gap-1.5"
+              onClick={() => setSpecCreateOpen(true)}
+              aria-label={t('settings.specs.create')}
+            >
+              <Plus className="size-3.5" />
+              <span className="hidden sm:inline">{t('settings.specs.create')}</span>
+            </Button>
+          </div>
+        )}
       </div>
       <Tabs
         value={tab}
@@ -793,8 +866,52 @@ export function ContextSettings() {
         key={pathname}
         className="anim-route animate-in fade-in slide-in-from-bottom-1 duration-200 flex-1 overflow-auto"
       >
-        <Outlet />
+        <Outlet context={{ query: specQuery, refreshKey: specsRefreshKey }} />
       </div>
+
+      {/* 新建规范弹窗（写 ~/.moss/agent/prompts/main/spec/<id>.md，watch 热重载生效） */}
+      <Dialog open={specCreateOpen} onOpenChange={(o) => !creating && setSpecCreateOpen(o)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('settings.specs.createTitle')}</DialogTitle>
+            <DialogDescription>{t('settings.specs.createDesc')}</DialogDescription>
+          </DialogHeader>
+          <DialogBody>
+            <div className="flex flex-col gap-4">
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="new-spec-id">{t('settings.specs.idLabel')}</Label>
+                <Input
+                  id="new-spec-id"
+                  value={newSpecId}
+                  onChange={(e) => setNewSpecId(e.target.value)}
+                  placeholder={t('settings.specs.idPlaceholder')}
+                  autoFocus
+                />
+              </div>
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="new-spec-desc">{t('settings.specs.descLabel')}</Label>
+                <Input
+                  id="new-spec-desc"
+                  value={newSpecDesc}
+                  onChange={(e) => setNewSpecDesc(e.target.value)}
+                  placeholder={t('settings.specs.descPlaceholder')}
+                />
+              </div>
+            </div>
+          </DialogBody>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setSpecCreateOpen(false)} disabled={creating}>
+              {t('common.cancel')}
+            </Button>
+            <Button
+              onClick={() => void createSpec()}
+              disabled={creating || !/^[a-zA-Z0-9_-]+$/.test(newSpecId.trim())}
+            >
+              {t('settings.specs.create')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -979,7 +1096,7 @@ const LOGS_FALLBACK: LogsConfig = { level: 'info', retentionDays: 14, maxFileMb:
 const LOG_LINE_RE = /^(\S+)\s+(DEBUG|INFO|WARN|ERROR|FATAL)\s*\[([^\]]*)\]\s?(.*)$/;
 const LEVEL_BADGE_CLASS: Record<string, string> = {
   DEBUG: 'bg-muted text-muted-foreground',
-  INFO: 'bg-sky-500/15 text-sky-600 dark:text-sky-400',
+  INFO: 'bg-blue-600/15 text-blue-600',
   WARN: 'bg-amber-500/15 text-amber-600 dark:text-amber-400',
   ERROR: 'bg-red-500/15 text-red-600 dark:text-red-400',
   FATAL: 'bg-purple-500/15 text-purple-600 dark:text-purple-400',
@@ -1182,12 +1299,15 @@ export function LogsSettings() {
               ))}
             </SelectContent>
           </Select>
-          <Input
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-            placeholder={t('settings.logs.searchPlaceholder')}
-            className="h-8 w-56"
-          />
+          <div className="relative w-full sm:w-64 sm:shrink-0">
+            <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              placeholder={t('settings.logs.searchPlaceholder')}
+              className="pl-8"
+            />
+          </div>
           <span className="text-xs text-muted-foreground">
             {t('settings.logs.totalLines', { total })} · {t('settings.logs.newestFirst')}
           </span>
@@ -1240,6 +1360,33 @@ export function GeneralSettings() {
   const { locale, setLocale } = useI18n();
   const sendShortcut = useStore((s) => s.sendShortcut);
   const setSendShortcut = useStore((s) => s.setSendShortcut);
+  const followUpBehavior = useStore((s) => s.followUpBehavior);
+  const setFollowUpBehavior = useStore((s) => s.setFollowUpBehavior);
+  // 自定义快捷键录制态：true 时捕获全局 keydown 录制组合键
+  const [recordingShortcut, setRecordingShortcut] = useState(false);
+  const isPresetShortcut = sendShortcut === 'enter' || sendShortcut === 'mod+enter';
+  const shortcutSelectValue =
+    sendShortcut === 'enter' ? 'enter' : sendShortcut === 'mod+enter' ? 'ctrl-enter' : 'custom';
+
+  // 录制模式：捕获任意按键组合（Esc 取消；纯修饰键忽略等待主键）
+  useEffect(() => {
+    if (!recordingShortcut) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === 'Escape') {
+        setRecordingShortcut(false);
+        return;
+      }
+      const shortcut = eventToShortcut(e);
+      if (shortcut) {
+        setSendShortcut(shortcut);
+        setRecordingShortcut(false);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown, { capture: true });
+    return () => window.removeEventListener('keydown', onKeyDown, { capture: true });
+  }, [recordingShortcut, setSendShortcut]);
   // 主题切换动画的扩散圆心：记录最后一次点击选项的坐标
   const themeOriginRef = useRef<{ x: number; y: number } | undefined>(undefined);
 
@@ -1321,22 +1468,75 @@ export function GeneralSettings() {
       <div className="flex flex-col gap-3">
         <div className="text-sm font-medium text-foreground">{t('settings.general.preferences')}</div>
         <div className="flex flex-col divide-y divide-border">
-          {/* 发送消息快捷键 */}
+          {/* 发送消息快捷键（预设 + 自定义录制） */}
           <div className="flex items-center justify-between gap-4 py-3">
             <div className="flex flex-col gap-0.5">
               <div className="text-sm text-foreground">{t('settings.general.sendShortcut')}</div>
               <div className="text-xs text-muted-foreground">{t('settings.general.sendShortcutDesc')}</div>
             </div>
+            <div className="flex items-center gap-2">
+              {/* 自定义快捷键：显示当前组合，点击进入录制；录制中显示提示 */}
+              {(!isPresetShortcut || recordingShortcut) && (
+                <button
+                  type="button"
+                  onClick={() => setRecordingShortcut(true)}
+                  disabled={recordingShortcut}
+                  className={cn(
+                    'inline-flex h-8 min-w-28 items-center justify-center rounded-md border border-border',
+                    'px-2.5 font-mono text-xs transition-colors',
+                    recordingShortcut
+                      ? 'border-ring bg-muted/60 text-muted-foreground'
+                      : 'bg-muted/40 text-foreground hover:border-ring',
+                  )}
+                >
+                  {recordingShortcut
+                    ? t('settings.general.sendShortcutRecording')
+                    : formatShortcutLabel(sendShortcut)}
+                </button>
+              )}
+              <Select
+                value={shortcutSelectValue}
+                onValueChange={(v) => {
+                  if (v === 'enter') {
+                    setSendShortcut('enter');
+                  } else if (v === 'ctrl-enter') {
+                    setSendShortcut('mod+enter');
+                  } else {
+                    // 自定义：进入录制模式，捕获到有效组合后保存
+                    setRecordingShortcut(true);
+                  }
+                }}
+              >
+                <SelectTrigger className="w-40">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="enter">{t('settings.general.sendWithEnter')}</SelectItem>
+                  <SelectItem value="ctrl-enter">{t('settings.general.sendWithCtrlEnter')}</SelectItem>
+                  <SelectItem value="custom">
+                    {t('settings.general.sendWithCustom')}
+                    {!isPresetShortcut && ` (${formatShortcutLabel(sendShortcut)})`}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          {/* 跟进行为（任务进行时发送消息的处理方式） */}
+          <div className="flex items-center justify-between gap-4 py-3">
+            <div className="flex flex-col gap-0.5">
+              <div className="text-sm text-foreground">{t('settings.general.followUpBehavior')}</div>
+              <div className="text-xs text-muted-foreground">{t('settings.general.followUpBehaviorDesc')}</div>
+            </div>
             <Select
-              value={sendShortcut}
-              onValueChange={(v) => setSendShortcut(v as 'enter' | 'ctrl-enter')}
+              value={followUpBehavior}
+              onValueChange={(v) => setFollowUpBehavior(v as 'queue' | 'guide')}
             >
               <SelectTrigger className="w-40">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="enter">{t('settings.general.sendWithEnter')}</SelectItem>
-                <SelectItem value="ctrl-enter">{t('settings.general.sendWithCtrlEnter')}</SelectItem>
+                <SelectItem value="queue">{t('settings.general.followUpQueue')}</SelectItem>
+                <SelectItem value="guide">{t('settings.general.followUpGuide')}</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -1630,16 +1830,21 @@ export function ToolsSettings() {
   );
 }
 
-/* ===== 规范设置（Spec 查看与编辑） ===== */
+/* ===== 规范设置（Spec 查看与编辑；搜索框/新建在 ContextSettings 标题区） ===== */
 export function SpecsSettings() {
   const { t } = useTranslation();
-  const [query, setQuery] = useState('');
-  const { specs } = useSpecs();
+  const { query, refreshKey } = useOutletContext<SpecOutletContext>();
+  const { specs, reload } = useSpecs();
 
   const [detail, setDetail] = useState<SpecDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [content, setContent] = useState('');
   const [saving, setSaving] = useState(false);
+
+  // 标题区「新建规范」成功后 refreshKey+1 → 重拉列表
+  useEffect(() => {
+    void reload();
+  }, [refreshKey, reload]);
 
   const q = query.trim().toLowerCase();
   const filteredSpecs = q
@@ -1677,18 +1882,7 @@ export function SpecsSettings() {
 
   return (
     <div className="flex flex-col gap-4 p-6">
-      {/* 规范设置（上下文页「规范」Tab 内容；标题由外层 Tab 示名） */}
-
-      <div className="relative w-64">
-        <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          type="text"
-          placeholder={t('settings.specs.searchPlaceholder')}
-          className="pl-8"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
-      </div>
+      {/* 规范设置（上下文页「规范」Tab 内容；搜索框/新建按钮在标题区） */}
 
       <div className="flex flex-col gap-2">
         {filteredSpecs.length === 0 && (
@@ -2064,10 +2258,160 @@ export function CommandsSettings() {
   );
 }
 
+/* ===== 外观设置（主题色 / 字号 / 密度 / 圆角 / 侧边栏） ===== */
+export function AppearanceSettingsSection() {
+  const { t } = useTranslation();
+  const accentColor = useStore((s) => s.accentColor);
+  const setAccentColor = useStore((s) => s.setAccentColor);
+  const fontSize = useStore((s) => s.fontSize);
+  const setFontSize = useStore((s) => s.setFontSize);
+  const uiDensity = useStore((s) => s.uiDensity);
+  const setUiDensity = useStore((s) => s.setUiDensity);
+  const cornerRadius = useStore((s) => s.cornerRadius);
+  const setCornerRadius = useStore((s) => s.setCornerRadius);
+  const sidebarStyle = useStore((s) => s.sidebarStyle);
+  const setSidebarStyle = useStore((s) => s.setSidebarStyle);
+
+  const ACCENT_PRESETS = [
+    { id: 'blue', color: 'oklch(0.546 0.245 263.4)' },
+    { id: 'green', color: 'oklch(0.627 0.194 149.2)' },
+    { id: 'purple', color: 'oklch(0.541 0.281 293.0)' },
+    { id: 'orange', color: 'oklch(0.646 0.222 41.0)' },
+    { id: 'rose', color: 'oklch(0.586 0.225 16.5)' },
+    { id: 'teal', color: 'oklch(0.6 0.118 184.5)' },
+  ];
+
+  const isCustom = accentColor.startsWith('#');
+
+  return (
+    <div className="flex flex-col gap-6 p-6">
+      {/* 主题色 */}
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-0.5">
+          <div className="text-sm font-medium text-foreground">{t('settings.appearance.accentColor')}</div>
+          <div className="text-xs text-muted-foreground">{t('settings.appearance.accentColorDesc')}</div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2.5">
+          {ACCENT_PRESETS.map((preset) => (
+            <button
+              key={preset.id}
+              type="button"
+              onClick={() => setAccentColor(preset.id)}
+              className={cn(
+                'flex size-8 items-center justify-center rounded-full border-2 transition-all',
+                accentColor === preset.id
+                  ? 'border-foreground scale-110'
+                  : 'border-transparent hover:scale-105',
+              )}
+              style={{ backgroundColor: preset.color }}
+            >
+              {accentColor === preset.id && <Check className="size-4 text-white" />}
+            </button>
+          ))}
+          {/* 自定义颜色：label 包裹隐藏 input[type=color]，点击弹出系统调色盘 */}
+          <label
+            className={cn(
+              'flex size-8 cursor-pointer items-center justify-center rounded-full border-2 transition-all',
+              isCustom
+                ? 'border-foreground scale-110'
+                : 'border-border hover:scale-105',
+            )}
+            title={t('settings.appearance.customColor')}
+            style={{ backgroundColor: isCustom ? accentColor : undefined }}
+          >
+            {!isCustom && <Palette className="size-4 text-muted-foreground" />}
+            {isCustom && <Check className="size-4 text-white" />}
+            <input
+              type="color"
+              value={isCustom ? accentColor : '#2563eb'}
+              onChange={(e) => setAccentColor(e.target.value)}
+              className="sr-only"
+            />
+          </label>
+        </div>
+      </div>
+
+      {/* 其他外观设置项 */}
+      <div className="flex flex-col divide-y divide-border">
+        {/* 字号 */}
+        <div className="flex items-center justify-between gap-4 py-3">
+          <div className="flex flex-col gap-0.5">
+            <div className="text-sm text-foreground">{t('settings.appearance.fontSize')}</div>
+            <div className="text-xs text-muted-foreground">{t('settings.appearance.fontSizeDesc')}</div>
+          </div>
+          <Select value={fontSize} onValueChange={(v) => setFontSize(v as 'small' | 'medium' | 'large')}>
+            <SelectTrigger className="w-32">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="small">{t('settings.appearance.fontSizeSmall')}</SelectItem>
+              <SelectItem value="medium">{t('settings.appearance.fontSizeMedium')}</SelectItem>
+              <SelectItem value="large">{t('settings.appearance.fontSizeLarge')}</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* 界面密度 */}
+        <div className="flex items-center justify-between gap-4 py-3">
+          <div className="flex flex-col gap-0.5">
+            <div className="text-sm text-foreground">{t('settings.appearance.uiDensity')}</div>
+            <div className="text-xs text-muted-foreground">{t('settings.appearance.uiDensityDesc')}</div>
+          </div>
+          <Select value={uiDensity} onValueChange={(v) => setUiDensity(v as 'compact' | 'standard' | 'comfortable')}>
+            <SelectTrigger className="w-32">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="compact">{t('settings.appearance.densityCompact')}</SelectItem>
+              <SelectItem value="standard">{t('settings.appearance.densityStandard')}</SelectItem>
+              <SelectItem value="comfortable">{t('settings.appearance.densityComfortable')}</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* 圆角 */}
+        <div className="flex items-center justify-between gap-4 py-3">
+          <div className="flex flex-col gap-0.5">
+            <div className="text-sm text-foreground">{t('settings.appearance.cornerRadius')}</div>
+            <div className="text-xs text-muted-foreground">{t('settings.appearance.cornerRadiusDesc')}</div>
+          </div>
+          <Select value={cornerRadius} onValueChange={(v) => setCornerRadius(v as 'small' | 'standard' | 'large')}>
+            <SelectTrigger className="w-32">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="small">{t('settings.appearance.radiusSmall')}</SelectItem>
+              <SelectItem value="standard">{t('settings.appearance.radiusStandard')}</SelectItem>
+              <SelectItem value="large">{t('settings.appearance.radiusLarge')}</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* 侧边栏 */}
+        <div className="flex items-center justify-between gap-4 py-3">
+          <div className="flex flex-col gap-0.5">
+            <div className="text-sm text-foreground">{t('settings.appearance.sidebarStyle')}</div>
+            <div className="text-xs text-muted-foreground">{t('settings.appearance.sidebarStyleDesc')}</div>
+          </div>
+          <Select value={sidebarStyle} onValueChange={(v) => setSidebarStyle(v as 'narrow' | 'standard' | 'wide')}>
+            <SelectTrigger className="w-32">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="narrow">{t('settings.appearance.sidebarNarrow')}</SelectItem>
+              <SelectItem value="standard">{t('settings.appearance.sidebarStandard')}</SelectItem>
+              <SelectItem value="wide">{t('settings.appearance.sidebarWide')}</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ===== 占位 section 路由组件（按 section 查表渲染 PlaceholderSettings） ===== */
 const PLACEHOLDER_SECTION_KEYS: Record<string, { titleKey: string; descKey: string }> = {
   index: { titleKey: 'settings.placeholder.indexTitle', descKey: 'settings.placeholder.indexDesc' },
-  appearance: { titleKey: 'settings.placeholder.appearanceTitle', descKey: 'settings.placeholder.appearanceDesc' },
   rules: { titleKey: 'settings.placeholder.rulesTitle', descKey: 'settings.placeholder.rulesDesc' },
   memory: { titleKey: 'settings.placeholder.memoryTitle', descKey: 'settings.placeholder.memoryDesc' },
   hooks: { titleKey: 'settings.placeholder.hooksTitle', descKey: 'settings.placeholder.hooksDesc' },

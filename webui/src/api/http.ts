@@ -415,6 +415,15 @@ export const api = {
   getSkill: (name: string) => request<{ skill: SkillDetail }>('GET', `/api/skills/${name}`),
   updateSkill: (name: string, patch: { enabled: boolean }) =>
     request<{ name: string; enabled: boolean }>('PATCH', `/api/skills/${encodeURIComponent(name)}`, patch),
+  /** 新建目录式技能（写 ~/.moss/skills/<name>/SKILL.md，watch 热重载生效） */
+  createSkill: (data: { name: string; description: string; prompt?: string; icon?: string; greet?: string }) =>
+    request<{ name: string }>('POST', '/api/skills', data),
+  /** 导入技能（前端 zip 解包：文本 content / 二进制 base64；批量写入技能目录） */
+  importSkill: (data: {
+    name: string;
+    files: Array<{ path: string; content?: string; base64?: string }>;
+  }) =>
+    request<{ name: string; files: number }>('POST', '/api/skills/import', data),
   /** 自定义斜杠命令列表（~/.moss/commands/<name>.md；含 prompt 供前端渲染注入） */
   listCommands: () => request<{ commands: CommandItem[] }>('GET', '/api/commands'),
   /** 创建自定义斜杠命令（写 <name>.md，热重载自动生效） */
@@ -440,6 +449,9 @@ export const api = {
       `/api/specs?id=${encodeURIComponent(id)}`,
       { content, description },
     ),
+  /** 新建 spec（用户 spec 目录下创建 <id>.md，watch 热重载生效） */
+  createSpec: (data: { id: string; description?: string }) =>
+    request<{ id: string }>('POST', '/api/specs', data),
 
   // ==========================================================================
   // 自动化任务（见文档 3.2.7）

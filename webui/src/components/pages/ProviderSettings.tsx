@@ -301,7 +301,8 @@ export function ProviderSettings() {
           </div>
         )}
 
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        {/* 筛选 + 搜索 + 添加同一组靠右（移动端筛选独占一行，搜索/添加收纳进全局 header 按钮） */}
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
           <Select
             value={formatFilter}
             onValueChange={(v) => setFormatFilter(v as 'all' | ProviderItem['format'])}
@@ -320,7 +321,7 @@ export function ProviderSettings() {
           </Select>
           {/* 桌面端搜索框 + 添加按钮（移动端由 header 按钮替代） */}
           <div className="hidden items-center gap-2 sm:flex">
-            <div className="relative w-full shrink sm:w-52">
+            <div className="relative w-full sm:w-64 sm:shrink-0">
               <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input
                 type="text"

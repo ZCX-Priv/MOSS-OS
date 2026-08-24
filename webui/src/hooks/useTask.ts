@@ -99,13 +99,36 @@ export function useTask() {
       // 活跃置顶：已有任务发送消息时乐观置顶（新建走 addTask 已置顶；后端 touchTask 持久化）
       if (taskId) touchTask(taskId);
 
-      // 3. 若该 session 正在生成，立即中断旧流并清理前端状态
-      //    不依赖后端异步 task.aborted 事件，避免旧流事件污染新流
+      // 3. 若该 session 正在生成，根据跟进行为决定处理方式
       if (state.generatingBySession[sessionId]) {
-        wsClient.send({ type: 'task.abort', sessionId });
-        setGenerating(sessionId, false);
-        pendingAssistant.delete(sessionId);
+        const behavior = state.followUpBehavior;
+
+        if (behavior === 'queue') {
+          // 排队模式：消息加入队列，不中断当前任务
+          const queuedMsg = { id: genId(), content, timestamp: new Date().toISOString() };
+          useStore.getState().addToMessageQueue(sessionId, queuedMsg);
+          return taskId;
+        }
+
+        // 引导模式：发送 task.guide，后端在工具调用完成后中止旧 run 并启动新 run
+        const guideRunId = genRunId();
+        pendingRunId.set(sessionId, guideRunId);
         finalizeStreamingMessages(sessionId);
+
+        const userMsg: TaskMessage = {
+          id: genId(),
+          role: 'user',
+          content,
+          timestamp: new Date().toISOString(),
+        };
+        addMessage(sessionId, userMsg);
+
+        wsClient.send({
+          type: 'task.guide',
+          sessionId,
+          payload: { message: content, runId: guideRunId },
+        });
+        return taskId;
       }
 
       // 4. 生成 runId（前端生成，后端原样注入事件，用于 run 级别隔离）

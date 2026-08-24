@@ -204,6 +204,8 @@ export interface AgentRunInput {
   signal?: AbortSignal;
   /** 运行实例 ID（前端生成，用于隔离不同 run 的事件） */
   runId?: string;
+  /** 引导消息队列（引导模式下，工具调用完成后检查并中止当前 run） */
+  guideMessages?: string[];
 }
 
 /**
@@ -253,6 +255,10 @@ export interface AgentRunResult {
   finalText: string;
   /** 完整的会话历史（含本轮） */
   history: AgentMessage[];
+  /** 引导中止标记：工具调用完成后检测到引导消息，需自动启动新 run */
+  guideInterrupt?: boolean;
+  /** 引导消息内容（引导中止时携带，供 WsHandler 启动新 run） */
+  guideMessage?: string;
 }
 
 export interface AgentMessage {

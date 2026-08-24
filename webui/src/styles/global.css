@@ -8,10 +8,10 @@
 :root {
   --radius: 0.625rem;
 
-  /* MOSS 品牌色 = 蓝色系（参考用户消息气泡：白昼浅蓝底深色字 / 夜间深蓝底白字） */
-  --primary: oklch(0.926 0.028 275.5); /* indigo-100 浅蓝，白昼模式实心填充面 */
-  --primary-foreground: oklch(0.283 0.055 277); /* indigo-950 深蓝文字，浅蓝底上对比度充足 */
-  --primary-strong: oklch(0.546 0.245 263.4); /* blue-600 强蓝：文字/图标/指示器（浅蓝直接做文字会不可见） */
+  /* MOSS 品牌色 = 蓝色系，全站统一为深蓝 blue-600（夜间配置；消息气泡除外，气泡保留白昼浅蓝/夜间深蓝双套） */
+  --primary: oklch(0.546 0.245 263.4); /* blue-600 深蓝，实心填充面 */
+  --primary-foreground: oklch(0.985 0 0); /* 白字，深蓝底上对比度充足 */
+  --primary-strong: oklch(0.546 0.245 263.4); /* blue-600 强蓝：文字/图标/指示器（与夜间统一） */
   --ring: oklch(0.546 0.245 263.4);
 
   /* shadcn neutral 中性底色 */
@@ -31,7 +31,7 @@
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --chart-1: oklch(0.546 0.245 263.4);
-  --chart-2: oklch(0.6 0.2 250);
+  --chart-2: oklch(0.546 0.245 263.4);
   --chart-3: oklch(0.398 0.07 227);
   --chart-4: oklch(0.828 0.189 84.429);
   --chart-5: oklch(0.769 0.188 70.08);
@@ -54,7 +54,7 @@
   --popover-foreground: oklch(0.985 0 0);
   --primary: oklch(0.546 0.245 263.4); /* blue-600 深蓝，夜间模式（与气泡 dark:bg-blue-600 一致） */
   --primary-foreground: oklch(0.985 0 0); /* 白字，与亮色模式深蓝字相对 */
-  --primary-strong: oklch(0.62 0.2 250); /* #4B8BFF 夜间可读蓝：文字/图标/指示器 */
+  --primary-strong: oklch(0.546 0.245 263.4); /* blue-600 深蓝，与白昼统一：文字/图标/指示器 */
   --secondary: oklch(0.269 0 0);
   --secondary-foreground: oklch(0.985 0 0);
   --muted: oklch(0.269 0 0);
@@ -64,20 +64,20 @@
   --destructive: oklch(0.704 0.191 22.216);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.62 0.2 250);
-  --chart-1: oklch(0.62 0.2 250);
+  --ring: oklch(0.546 0.245 263.4);
+  --chart-1: oklch(0.546 0.245 263.4);
   --chart-2: oklch(0.546 0.245 263.4);
   --chart-3: oklch(0.398 0.07 227);
   --chart-4: oklch(0.828 0.189 84.429);
   --chart-5: oklch(0.769 0.188 70.08);
   --sidebar: oklch(0.205 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.62 0.2 250);
+  --sidebar-primary: oklch(0.546 0.245 263.4);
   --sidebar-primary-foreground: oklch(0.985 0 0);
   --sidebar-accent: oklch(0.269 0 0);
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.62 0.2 250);
+  --sidebar-ring: oklch(0.546 0.245 263.4);
 }
 
 @theme inline {

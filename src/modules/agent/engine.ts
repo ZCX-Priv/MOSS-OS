@@ -524,6 +524,30 @@ export class AgentEngineImpl implements AgentEngine {
         }
       }
 
+      // 引导模式：所有工具调用完成后，检查是否有引导消息（准备进入思考前中止）
+      if (input.guideMessages && input.guideMessages.length > 0 && !signal?.aborted) {
+        const guideMsg = input.guideMessages[0];
+        try {
+          this.sessions.setLastRunStats(session, stats);
+          this.sessions.persistSession(session);
+        } catch (err) {
+          this.logger.warn(t('agent.persistRunStatsFailed'), {
+            sessionId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        contextEngine?.markIdle(sessionId);
+        this.cleanupPendingAsks();
+        return {
+          sessionId,
+          finishReason: 'aborted',
+          finalText: assistantText,
+          history: session.messages,
+          guideInterrupt: true,
+          guideMessage: guideMsg,
+        };
+      }
+
       if (finishReason === 'aborted') break;
 
       // 继续下一轮（让 LLM 看到工具结果后继续）

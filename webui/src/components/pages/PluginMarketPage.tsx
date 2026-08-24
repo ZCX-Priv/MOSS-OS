@@ -2,13 +2,14 @@
 // 插件库：两 tab 路由化
 //   /plugins/skills（技能，默认）| /plugins/mcp（MCP 服务器）
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, type ChangeEvent } from 'react';
 import { toast } from 'sonner';
+import JSZip from 'jszip';
 import {
   Search, WandSparkles, Wrench, Cable,
   Loader2, Plus, RefreshCw, Trash2, PlugZap, Unplug,
   BookOpen, ListChecks, Eye, Lightbulb, Sparkles, ShieldAlert, FlaskConical,
-  Server, Copy,
+  Server, Copy, FileUp,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useLocation, Outlet, useOutletContext } from 'react-router-dom';
@@ -59,20 +60,51 @@ export function PluginMarketPage() {
   // 当前 tab：路径后缀映射（技能为默认）
   const tab = pathname === '/plugins/mcp' ? 'mcp' : 'skills';
   // Badge 计数在布局层拉取
-  const { skills } = useSkills();
+  const { skills, reload: reloadSkills } = useSkills();
   const { servers, reload } = useMcp();
   const requestMcpDialog = useStore((s) => s.requestMcpDialog);
+
+  // 技能弹窗：本地开关 + 移动端全局 header 信号
+  const [skillsOpen, setSkillsOpen] = useState(false);
+  const skillsDialogRequest = useStore((s) => s.skillsDialogRequest);
+  const clearSkillsDialogRequest = useStore((s) => s.clearSkillsDialogRequest);
+  const skillsRefreshSeq = useStore((s) => s.skillsRefreshSeq);
+
+  // header"添加技能"信号 → 打开技能弹窗
+  useEffect(() => {
+    if (skillsDialogRequest) {
+      clearSkillsDialogRequest();
+      setSkillsOpen(true);
+    }
+  }, [skillsDialogRequest, clearSkillsDialogRequest]);
+
+  // 移动端全局 header 刷新按钮 → 重拉技能列表
+  useEffect(() => {
+    if (skillsRefreshSeq > 0) void reloadSkills();
+  }, [skillsRefreshSeq, reloadSkills]);
 
   const tabPath = (v: string) => `/plugins/${v}`;
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
-      {/* Header：左标题右操作（MCP tab 专属按钮；移动端收纳进全局顶栏，与自动化页一致） */}
+      {/* Header：左标题右操作（按 tab 显示技能/MCP专属按钮；移动端收纳进全局顶栏，与自动化页一致） */}
       <div className="hidden items-center justify-between gap-4 px-6 py-4 md:flex">
         <div className="flex flex-col gap-1">
           <h1 className="text-xl font-semibold text-foreground">{t('plugins.title')}</h1>
           <p className="text-sm text-muted-foreground">{t('plugins.subtitle')}</p>
         </div>
+        {tab === 'skills' && (
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" className="h-8 gap-1" onClick={() => void reloadSkills()}>
+              <RefreshCw className="size-3.5" />
+              {t('common.refresh')}
+            </Button>
+            <Button size="sm" className="h-8 gap-1" onClick={() => setSkillsOpen(true)}>
+              <Plus className="size-3.5" />
+              {t('plugins.skillsAdd')}
+            </Button>
+          </div>
+        )}
         {tab === 'mcp' && (
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" className="h-8 gap-1" onClick={() => void reload()}>
@@ -92,7 +124,7 @@ export function PluginMarketPage() {
         value={tab}
         onValueChange={(v) => navigate(tabPath(v))}
       >
-        <div className="flex items-center justify-between gap-4 px-6 py-3">
+        <div className="flex flex-col gap-3 px-6 py-3 sm:flex-row sm:items-center sm:justify-between">
           <TabsList>
             <TabsTrigger value="skills" className="gap-1.5">
               <WandSparkles className="size-3.5" />
@@ -105,7 +137,7 @@ export function PluginMarketPage() {
               <Badge variant="secondary">{servers.length}</Badge>
             </TabsTrigger>
           </TabsList>
-          <div className="relative w-64">
+          <div className="relative w-full sm:w-64 sm:shrink-0">
             <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
             <Input
               type="text"
@@ -122,6 +154,9 @@ export function PluginMarketPage() {
       <div className="flex-1 overflow-auto">
         <Outlet context={{ query, setQuery } satisfies PluginOutletContext} />
       </div>
+
+      {/* 添加技能弹窗（新建 / 导入 zip；桌面 header 与移动端全局 header 按钮共用） */}
+      <SkillsDialog open={skillsOpen} onOpenChange={setSkillsOpen} onDone={() => void reloadSkills()} />
     </div>
   );
 }
@@ -187,6 +222,305 @@ export function SkillsTab() {
         })}
       </div>
     </div>
+  );
+}
+
+/* ===== 添加技能弹窗（新建 / 从 zip 导入） ===== */
+
+/** 技能名合法字符（与后端 SKILL_NAME_RE 一致） */
+const SKILL_NAME_RE = /^[a-zA-Z0-9_-]+$/;
+
+/** 文本扩展名白名单：白名单内以 utf8 文本传输，其余走 base64 */
+const TEXT_EXT_RE = /\.(md|markdown|txt|json|js|mjs|cjs|ts|tsx|jsx|py|sh|bat|ps1|yml|yaml|toml|csv|html|css|xml|svg)$/i;
+
+/** Uint8Array → base64（分块避免 String.fromCharCode 栈溢出） */
+function u8ToBase64(u8: Uint8Array): string {
+  let s = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < u8.length; i += chunk) {
+    s += String.fromCharCode(...u8.subarray(i, i + chunk));
+  }
+  return btoa(s);
+}
+
+/** zip 待导入状态：JSZip 实例 + SKILL.md 所在前缀（根为 '' 或单一顶层目录） */
+interface ZipParsed {
+  zip: JSZip;
+  prefix: string;
+  entryCount: number;
+}
+
+/** 解析 zip：识别根 SKILL.md 或单一顶层 <dir>/SKILL.md，提取 frontmatter name/description */
+async function parseSkillZip(file: File): Promise<ZipParsed & { name: string; description: string }> {
+  const zip = await JSZip.loadAsync(file);
+  const entries = Object.keys(zip.files).filter((p) => !zip.files[p].dir);
+  let prefix = '';
+  if (!entries.includes('SKILL.md')) {
+    const tops = new Set(entries.map((p) => p.split('/')[0]));
+    if (tops.size !== 1 || !entries.includes(`${[...tops][0]}/SKILL.md`)) {
+      throw new Error('SKILL.md not found in zip root or single top-level directory');
+    }
+    prefix = `${[...tops][0]}/`;
+  }
+  const md = await zip.files[`${prefix}SKILL.md`].async('text');
+  const fm = md.match(/^---\s*\n([\s\S]*?)\n---/)?.[1] ?? '';
+  const name = fm.match(/^name\s*:\s*(.+)$/m)?.[1].trim() ?? '';
+  const description = fm.match(/^description:\s*"?([^"\n]*)"?/m)?.[1].trim() ?? '';
+  return { zip, prefix, entryCount: entries.filter((p) => p.startsWith(prefix)).length, name, description };
+}
+
+function SkillsDialog({
+  open,
+  onOpenChange,
+  onDone,
+}: {
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  onDone: () => void;
+}) {
+  const { t } = useTranslation();
+  const [mode, setMode] = useState<'create' | 'import'>('create');
+  const [busy, setBusy] = useState(false);
+
+  // 新建表单
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [icon, setIcon] = useState('');
+  const [greet, setGreet] = useState('');
+  const [prompt, setPrompt] = useState('');
+
+  // 导入状态
+  const [zipFile, setZipFile] = useState('');
+  const [importName, setImportName] = useState('');
+  const [importDesc, setImportDesc] = useState('');
+  const [parsed, setParsed] = useState<ZipParsed | null>(null);
+  const [zipError, setZipError] = useState<string | null>(null);
+
+  // 打开时重置
+  useEffect(() => {
+    if (open) {
+      setMode('create');
+      setName(''); setDescription(''); setIcon(''); setGreet(''); setPrompt('');
+      setZipFile(''); setImportName(''); setImportDesc(''); setParsed(null); setZipError(null);
+    }
+  }, [open]);
+
+  /** 后端错误 → 可读 toast */
+  const showSkillError = useCallback((err: unknown) => {
+    const msg = err instanceof Error ? err.message : '';
+    if (msg.includes('SKILL_ALREADY_EXISTS')) toast.error(t('plugins.skillNameExists'));
+    else if (msg.includes('SKILL_NAME_INVALID')) toast.error(t('plugins.skillNameInvalid'));
+    else if (msg.includes('SKILL_DESCRIPTION_REQUIRED')) toast.error(t('plugins.skillDescRequired'));
+    else toast.error(msg || t('plugins.skillCreateFailed'));
+  }, [t]);
+
+  const submitCreate = useCallback(async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await api.createSkill({
+        name: name.trim(),
+        description: description.trim(),
+        prompt: prompt || undefined,
+        icon: icon.trim() || undefined,
+        greet: greet.trim() || undefined,
+      });
+      toast.success(t('plugins.skillCreated', { name: name.trim() }));
+      onOpenChange(false);
+      onDone();
+    } catch (err) {
+      showSkillError(err);
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, name, description, prompt, icon, greet, onOpenChange, onDone, showSkillError, t]);
+
+  const onZipChange = useCallback(async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // 允许重复选择同一文件
+    if (!file) return;
+    setZipError(null);
+    setParsed(null);
+    setZipFile(file.name);
+    try {
+      const result = await parseSkillZip(file);
+      setParsed({ zip: result.zip, prefix: result.prefix, entryCount: result.entryCount });
+      // 名称默认取 frontmatter name，非法时回退 zip 文件名（去扩展名）
+      const fallback = file.name.replace(/\.zip$/i, '').replace(/[^a-zA-Z0-9_-]/g, '-');
+      setImportName(SKILL_NAME_RE.test(result.name) ? result.name : fallback);
+      setImportDesc(result.description);
+    } catch {
+      setZipError(t('plugins.skillZipInvalid'));
+    }
+  }, [t]);
+
+  const submitImport = useCallback(async () => {
+    if (busy || !parsed || !SKILL_NAME_RE.test(importName.trim())) return;
+    setBusy(true);
+    try {
+      // 逐文件转传输体：白名单扩展名 utf8 文本，其余 base64
+      const entries = Object.keys(parsed.zip.files).filter(
+        (p) => !parsed.zip.files[p].dir && p.startsWith(parsed.prefix),
+      );
+      const files: Array<{ path: string; content?: string; base64?: string }> = [];
+      for (const p of entries) {
+        const rel = p.slice(parsed.prefix.length);
+        if (!rel) continue;
+        if (TEXT_EXT_RE.test(rel)) {
+          files.push({ path: rel, content: await parsed.zip.files[p].async('text') });
+        } else {
+          const u8 = await parsed.zip.files[p].async('uint8array');
+          files.push({ path: rel, base64: u8ToBase64(u8) });
+        }
+      }
+      await api.importSkill({ name: importName.trim(), files });
+      toast.success(t('plugins.skillImported', { name: importName.trim() }));
+      onOpenChange(false);
+      onDone();
+    } catch (err) {
+      showSkillError(err);
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, parsed, importName, onOpenChange, onDone, showSkillError, t]);
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !busy && onOpenChange(o)}>
+      <DialogContent size="lg">
+        <DialogHeader>
+          <DialogTitle>{t('plugins.skillsAdd')}</DialogTitle>
+          <DialogDescription>{t('plugins.skillAddDesc')}</DialogDescription>
+        </DialogHeader>
+        <DialogBody>
+          <Tabs value={mode} onValueChange={(v) => setMode(v as 'create' | 'import')}>
+            <TabsList>
+              <TabsTrigger value="create">{t('plugins.skillCreateTab')}</TabsTrigger>
+              <TabsTrigger value="import">{t('plugins.skillImportTab')}</TabsTrigger>
+            </TabsList>
+          </Tabs>
+
+          {mode === 'create' ? (
+            <div className="flex flex-col gap-4">
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="skill-name">{t('plugins.skillName')}</Label>
+                <Input
+                  id="skill-name"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder={t('plugins.skillNamePlaceholder')}
+                />
+              </div>
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="skill-desc">{t('plugins.skillDesc')}</Label>
+                <Input
+                  id="skill-desc"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder={t('plugins.skillDescPlaceholder')}
+                />
+              </div>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="flex flex-col gap-2">
+                  <Label htmlFor="skill-icon">{t('plugins.skillIcon')}</Label>
+                  <Input
+                    id="skill-icon"
+                    value={icon}
+                    onChange={(e) => setIcon(e.target.value)}
+                    placeholder="sparkles"
+                  />
+                </div>
+                <div className="flex flex-col gap-2">
+                  <Label htmlFor="skill-greet">{t('plugins.skillGreetLabel')}</Label>
+                  <Input
+                    id="skill-greet"
+                    value={greet}
+                    onChange={(e) => setGreet(e.target.value)}
+                    placeholder={t('plugins.skillGreetPlaceholder')}
+                  />
+                </div>
+              </div>
+              <div className="flex flex-col gap-2">
+                <Label htmlFor="skill-prompt">{t('plugins.skillPrompt')}</Label>
+                <Textarea
+                  id="skill-prompt"
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  placeholder={t('plugins.skillPromptPlaceholder')}
+                  className="min-h-32"
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-4">
+              <label
+                htmlFor="skill-zip"
+                className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border p-6 text-sm text-muted-foreground transition-colors hover:bg-muted/40"
+              >
+                <FileUp className="size-5" />
+                {zipFile ? (
+                  <span className="text-foreground">{zipFile}</span>
+                ) : (
+                  <span>{t('plugins.skillZipPick')}</span>
+                )}
+              </label>
+              <input
+                id="skill-zip"
+                type="file"
+                accept=".zip"
+                className="hidden"
+                onChange={(e) => void onZipChange(e)}
+              />
+              {zipError && <p className="text-sm text-destructive">{zipError}</p>}
+              {parsed && (
+                <>
+                  <p className="text-xs text-muted-foreground">
+                    {t('plugins.skillZipDetected', { count: parsed.entryCount })}
+                  </p>
+                  <div className="flex flex-col gap-2">
+                    <Label htmlFor="import-skill-name">{t('plugins.skillName')}</Label>
+                    <Input
+                      id="import-skill-name"
+                      value={importName}
+                      onChange={(e) => setImportName(e.target.value)}
+                    />
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <Label htmlFor="import-skill-desc">{t('plugins.skillDesc')}</Label>
+                    <Input
+                      id="import-skill-desc"
+                      value={importDesc}
+                      onChange={(e) => setImportDesc(e.target.value)}
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </DialogBody>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>
+            {t('common.cancel')}
+          </Button>
+          {mode === 'create' ? (
+            <Button
+              onClick={() => void submitCreate()}
+              disabled={busy || !SKILL_NAME_RE.test(name.trim()) || !description.trim()}
+            >
+              {busy && <Loader2 className="size-3.5 animate-spin" />}
+              {t('common.create')}
+            </Button>
+          ) : (
+            <Button
+              onClick={() => void submitImport()}
+              disabled={busy || !parsed || !SKILL_NAME_RE.test(importName.trim())}
+            >
+              {busy && <Loader2 className="size-3.5 animate-spin" />}
+              {t('plugins.skillImportTab')}
+            </Button>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -331,11 +665,15 @@ function MossServerCard() {
 
   const copyJson = useCallback(async (): Promise<void> => {
     const token = appConfig?.security?.authToken ?? '';
+    // 标准格式：{ "mcpServers": { "moss": { type, url, headers? } } }
+    // （Claude Desktop / Cursor / Claude Code / VS Code 等 Agent 的通用 mcpServers 片段）
     const snippet = {
-      moss: {
-        type: 'http',
-        url: endpoint,
-        ...(token ? { headers: { Authorization: `Bearer ${token}` } } : {}),
+      mcpServers: {
+        moss: {
+          type: 'http',
+          url: endpoint,
+          ...(token ? { headers: { Authorization: `Bearer ${token}` } } : {}),
+        },
       },
     };
     try {

@@ -51,6 +51,7 @@ import {
 } from '@/lib/utils';
 import { resolveSkillIcon } from '@/lib/skill-icons';
 import { api } from '../../api/http';
+import { matchesShortcut } from '../../utils/shortcut';
 import { MentionMenu } from './MentionMenu';
 import {
   detectTrigger,
@@ -140,7 +141,7 @@ function skillToItem(s: SkillItem, group: 'recent' | 'skills'): MentionItem {
     name: s.name,
     desc: s.description,
     icon: resolveSkillIcon(s.icon),
-    iconClass: 'text-sky-400',
+    iconClass: 'text-blue-600',
     data: { source: 'skill', name: s.name, prompt: s.prompt ?? '' },
   };
 }
@@ -300,7 +301,7 @@ export function TaskInput({
               name: f.name,
               desc: f.dir,
               icon: fileIconForExt(f.ext),
-              iconClass: 'text-sky-400',
+              iconClass: 'text-blue-600',
             })),
           );
           setFileSearching(false);
@@ -466,19 +467,10 @@ export function TaskInput({
         // 无匹配项时 Enter 走原有发送/换行逻辑
       }
     }
-    if (e.key !== 'Enter') return;
-    if (sendShortcut === 'enter') {
-      // Enter 发送，Shift+Enter 换行
-      if (!e.shiftKey) {
-        e.preventDefault();
-        handleSend();
-      }
-    } else {
-      // Ctrl/Cmd+Enter 发送，Enter 换行
-      if (e.ctrlKey || e.metaKey) {
-        e.preventDefault();
-        handleSend();
-      }
+    // 发送快捷键匹配（支持自定义组合，如 mod+enter / f2 / ctrl+shift+enter）
+    if (matchesShortcut(e, sendShortcut)) {
+      e.preventDefault();
+      handleSend();
     }
   };
 
@@ -720,7 +712,7 @@ export function TaskInput({
           <Button variant="ghost" size="icon-sm" title={t('common.voiceInput')}>
             <Mic />
           </Button>
-          {isGenerating ? (
+          {isGenerating && !canSend ? (
             <Button
               size="icon-sm"
               variant="destructive"
@@ -735,7 +727,7 @@ export function TaskInput({
               size="icon-sm"
               variant={canSend ? 'default' : 'secondary'}
               onClick={handleSend}
-              title={t('common.send')}
+              title={isGenerating ? t('taskInput.sendWhileGenerating') : t('common.send')}
               disabled={!canSend}
             >
               <ArrowUp />

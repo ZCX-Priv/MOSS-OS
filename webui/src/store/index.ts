@@ -5,6 +5,7 @@
 
 import { create } from 'zustand';
 import { idbSet } from '../utils/idb';
+import { normalizeShortcut } from '../utils/shortcut';
 import type {
   AppConfig,
   ApiConfig,
@@ -131,8 +132,25 @@ interface UIState {
   // --- WS ---
   wsStatus: 'connecting' | 'open' | 'closed' | 'error';
 
-  // --- 发送快捷键 ---
-  sendShortcut: 'enter' | 'ctrl-enter';
+  // --- 发送快捷键（归一化格式：'enter' / 'mod+enter' / 任意自定义组合） ---
+  sendShortcut: string;
+
+  // --- 跟进行为（任务进行中发送消息时的处理方式） ---
+  followUpBehavior: 'queue' | 'guide';
+  /** 排队消息队列（sessionId → 待发送消息列表） */
+  messageQueueBySession: Record<string, Array<{ id: string; content: string; timestamp: string }>>;
+
+  // --- 外观设置（IndexedDB 持久化） ---
+  /** 主题色（预设 ID 或自定义 oklch/hex 字符串） */
+  accentColor: string;
+  /** 字号 */
+  fontSize: 'small' | 'medium' | 'large';
+  /** 界面密度 */
+  uiDensity: 'compact' | 'standard' | 'comfortable';
+  /** 圆角大小 */
+  cornerRadius: 'small' | 'standard' | 'large';
+  /** 侧边栏样式 */
+  sidebarStyle: 'narrow' | 'standard' | 'wide';
 
   // --- 执行权限模式（permissionMode=全局默认；permissionModeBySession=会话级覆盖） ---
   permissionMode: PermissionMode;
@@ -159,7 +177,13 @@ interface UIState {
 export interface PersistedState {
   workingDirectory?: string;
   recentDirectories?: string[];
-  sendShortcut?: 'enter' | 'ctrl-enter';
+  sendShortcut?: string;
+  followUpBehavior?: 'queue' | 'guide';
+  accentColor?: string;
+  fontSize?: 'small' | 'medium' | 'large';
+  uiDensity?: 'compact' | 'standard' | 'comfortable';
+  cornerRadius?: 'small' | 'standard' | 'large';
+  sidebarStyle?: 'narrow' | 'standard' | 'wide';
   permissionMode?: PermissionMode;
   sidebarTabs?: SidebarTab[];
   activeSidebarTabId?: string;
@@ -299,6 +323,19 @@ interface UIActions {
   // 发送快捷键
   setSendShortcut: (v: UIState['sendShortcut']) => void;
 
+  // 跟进行为
+  setFollowUpBehavior: (v: UIState['followUpBehavior']) => void;
+  addToMessageQueue: (sessionId: string, message: { id: string; content: string; timestamp: string }) => void;
+  removeFromMessageQueue: (sessionId: string, messageId: string) => void;
+  clearMessageQueue: (sessionId: string) => void;
+
+  // 外观设置
+  setAccentColor: (v: string) => void;
+  setFontSize: (v: UIState['fontSize']) => void;
+  setUiDensity: (v: UIState['uiDensity']) => void;
+  setCornerRadius: (v: UIState['cornerRadius']) => void;
+  setSidebarStyle: (v: UIState['sidebarStyle']) => void;
+
   // 执行权限模式
   setPermissionMode: (v: UIState['permissionMode'], sessionId?: string) => void;
 
@@ -326,6 +363,15 @@ interface UIActions {
   // 插件库 MCP tab：移动端全局 header 刷新按钮（seq 计数，避免连续点击不触发）
   mcpRefreshSeq: number;
   requestMcpRefresh: () => void;
+
+  // 插件库技能 tab：页面头部/移动端全局 header"添加技能"按钮 → 技能弹窗打开信号
+  skillsDialogRequest: boolean;
+  requestSkillsDialog: () => void;
+  clearSkillsDialogRequest: () => void;
+
+  // 插件库技能 tab：移动端全局 header 刷新按钮（seq 计数）
+  skillsRefreshSeq: number;
+  requestSkillsRefresh: () => void;
 
   // 右侧边栏标签页
   /** 新建标签页，返回新标签 id；自动设为活跃 */
@@ -445,7 +491,18 @@ export const useStore = create<Store>((set) => ({
   wsStatus: 'closed',
 
   // --- 发送快捷键 ---
-  sendShortcut: 'ctrl-enter',
+  sendShortcut: 'mod+enter',
+
+  // --- 跟进行为 ---
+  followUpBehavior: 'queue',
+  messageQueueBySession: {},
+
+  // --- 外观设置 ---
+  accentColor: 'blue',
+  fontSize: 'medium',
+  uiDensity: 'standard',
+  cornerRadius: 'standard',
+  sidebarStyle: 'standard',
 
   // --- 执行权限模式 ---
   permissionMode: 'ask',
@@ -463,6 +520,10 @@ export const useStore = create<Store>((set) => ({
   // 插件库 MCP tab：header 按钮信号
   mcpDialogRequest: false,
   mcpRefreshSeq: 0,
+
+  // 插件库技能 tab：header 按钮信号
+  skillsDialogRequest: false,
+  skillsRefreshSeq: 0,
 
   // --- 右侧边栏标签页（IndexedDB 持久化） ---
   sidebarTabs: [defaultSidebarTab()],
@@ -789,8 +850,59 @@ export const useStore = create<Store>((set) => ({
 
   // --- Actions: 发送快捷键 ---
   setSendShortcut: (sendShortcut) => {
-    void idbSet('moss-send-shortcut', sendShortcut);
-    set({ sendShortcut });
+    const normalized = normalizeShortcut(sendShortcut);
+    void idbSet('moss-send-shortcut', normalized);
+    set({ sendShortcut: normalized });
+  },
+
+  // --- Actions: 跟进行为 ---
+  setFollowUpBehavior: (followUpBehavior) => {
+    void idbSet('moss-follow-up-behavior', followUpBehavior);
+    set({ followUpBehavior });
+  },
+  addToMessageQueue: (sessionId, message) =>
+    set((state) => ({
+      messageQueueBySession: {
+        ...state.messageQueueBySession,
+        [sessionId]: [...(state.messageQueueBySession[sessionId] ?? []), message],
+      },
+    })),
+  removeFromMessageQueue: (sessionId, messageId) =>
+    set((state) => {
+      const queue = state.messageQueueBySession[sessionId] ?? [];
+      return {
+        messageQueueBySession: {
+          ...state.messageQueueBySession,
+          [sessionId]: queue.filter((m) => m.id !== messageId),
+        },
+      };
+    }),
+  clearMessageQueue: (sessionId) =>
+    set((state) => {
+      const { [sessionId]: _, ...rest } = state.messageQueueBySession;
+      return { messageQueueBySession: rest };
+    }),
+
+  // --- Actions: 外观设置 ---
+  setAccentColor: (accentColor) => {
+    void idbSet('moss-accent-color', accentColor);
+    set({ accentColor });
+  },
+  setFontSize: (fontSize) => {
+    void idbSet('moss-font-size', fontSize);
+    set({ fontSize });
+  },
+  setUiDensity: (uiDensity) => {
+    void idbSet('moss-ui-density', uiDensity);
+    set({ uiDensity });
+  },
+  setCornerRadius: (cornerRadius) => {
+    void idbSet('moss-corner-radius', cornerRadius);
+    set({ cornerRadius });
+  },
+  setSidebarStyle: (sidebarStyle) => {
+    void idbSet('moss-sidebar-style', sidebarStyle);
+    set({ sidebarStyle });
   },
 
   // --- Actions: 执行权限模式 ---
@@ -834,6 +946,9 @@ export const useStore = create<Store>((set) => ({
   requestMcpDialog: () => set({ mcpDialogRequest: true }),
   clearMcpDialogRequest: () => set({ mcpDialogRequest: false }),
   requestMcpRefresh: () => set((state) => ({ mcpRefreshSeq: state.mcpRefreshSeq + 1 })),
+  requestSkillsDialog: () => set({ skillsDialogRequest: true }),
+  clearSkillsDialogRequest: () => set({ skillsDialogRequest: false }),
+  requestSkillsRefresh: () => set((state) => ({ skillsRefreshSeq: state.skillsRefreshSeq + 1 })),
 
   // --- Actions: 右侧边栏标签页 ---
   addSidebarTab: (type, title, toolCallId) => {
@@ -921,8 +1036,26 @@ export const useStore = create<Store>((set) => ({
         );
         next.recentDirectories = dirs.slice(0, 5);
       }
-      if (patch.sendShortcut === 'enter' || patch.sendShortcut === 'ctrl-enter') {
+      if (typeof patch.sendShortcut === 'string' && patch.sendShortcut.length > 0) {
         next.sendShortcut = patch.sendShortcut;
+      }
+      if (patch.followUpBehavior === 'queue' || patch.followUpBehavior === 'guide') {
+        next.followUpBehavior = patch.followUpBehavior;
+      }
+      if (typeof patch.accentColor === 'string' && patch.accentColor.length > 0) {
+        next.accentColor = patch.accentColor;
+      }
+      if (patch.fontSize === 'small' || patch.fontSize === 'medium' || patch.fontSize === 'large') {
+        next.fontSize = patch.fontSize;
+      }
+      if (patch.uiDensity === 'compact' || patch.uiDensity === 'standard' || patch.uiDensity === 'comfortable') {
+        next.uiDensity = patch.uiDensity;
+      }
+      if (patch.cornerRadius === 'small' || patch.cornerRadius === 'standard' || patch.cornerRadius === 'large') {
+        next.cornerRadius = patch.cornerRadius;
+      }
+      if (patch.sidebarStyle === 'narrow' || patch.sidebarStyle === 'standard' || patch.sidebarStyle === 'wide') {
+        next.sidebarStyle = patch.sidebarStyle;
       }
       if (
         patch.permissionMode === 'ask' ||

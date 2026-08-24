@@ -140,6 +140,10 @@ export class WsHandler {
    * 长程任务「回复/思考/工具调用卡死」的根因）；仅 task.abort 显式中断。
    */
   private readonly activeRuns = new Map<string, AbortController>();
+  /** 引导消息数组（可变引用，传给 engine.run；handleTaskGuide 在运行期间向其 push 消息） */
+  private readonly guideMessageArrays = new Map<string, string[]>();
+  /** 引导消息对应的 runId 队列（前端为每条引导消息生成 runId，用于新 run 的事件隔离） */
+  private readonly guideRunIds = new Map<string, string[]>();
   private readonly batcher: EventBatcher;
 
   constructor(services: ServiceRegistry, logger: Logger) {
@@ -194,6 +198,8 @@ export class WsHandler {
     switch (msg.type) {
       case 'task.stream':
         return this.handleTaskStream(state, msg);
+      case 'task.guide':
+        return this.handleTaskGuide(state, msg);
       case 'task.abort':
         return this.handleTaskAbort(state, msg);
       case 'session.subscribe':
@@ -282,69 +288,150 @@ export class WsHandler {
     state.sessionId = sessionId;
     // 发起连接自动订阅该 session（事件按 session 路由；断连后任务继续，重连可恢复接收）
     state.subscribedSessions.add(sessionId);
-    const runId = payload.runId;
 
-    // 中断控制（handler 级，与连接解耦）。同 session 发起新 run 时中止旧 run：
-    // 「打断发送」语义——旧 run 的残余事件由前端 runId 过滤丢弃
-    const abortController = new AbortController();
-    const prevController = this.activeRuns.get(sessionId);
-    this.activeRuns.set(sessionId, abortController);
-    if (prevController) {
-      prevController.abort();
+    // 引导消息：可变数组引用，传给 engine.run()；handleTaskGuide 在运行期间向其 push 消息。
+    // engine 在工具调用完成后检查此数组，若有内容则返回 guideInterrupt。
+    let currentMessage = payload.message;
+    let currentRunId = payload.runId;
+    let currentGuideMessages: string[] = [];
+    this.guideMessageArrays.set(sessionId, currentGuideMessages);
+
+    while (true) {
+      // 中断控制（handler 级，与连接解耦）。同 session 发起新 run 时中止旧 run：
+      // 「打断发送」语义——旧 run 的残余事件由前端 runId 过滤丢弃
+      const abortController = new AbortController();
+      const prevController = this.activeRuns.get(sessionId);
+      this.activeRuns.set(sessionId, abortController);
+      if (prevController) {
+        prevController.abort();
+      }
+
+      const onEvent = (event: AgentEvent) => {
+        this.sendEvent(sessionId, {
+          type: event.type,
+          sessionId: event.sessionId,
+          payload: { ...event, runId: currentRunId },
+        });
+      };
+
+      try {
+        const result = await agent.run({
+          sessionId,
+          userMessage: currentMessage,
+          model: payload.model,
+          agentId: payload.agentId,
+          cwd: payload.cwd || process.cwd(),
+          onEvent,
+          signal: abortController.signal,
+          runId: currentRunId,
+          // 权限模式透传（会话级；缺省时 engine 回退会话记忆/全局默认）
+          permissionMode: payload.permissionMode,
+          // 引导消息数组（可变引用，运行期间 handleTaskGuide 可向其 push）
+          guideMessages: currentGuideMessages,
+        });
+
+        // 引导中断：engine 在工具调用完成后检测到引导消息，主动中止并返回
+        if (result.guideInterrupt && result.guideMessage) {
+          // 移除已被 engine 消费的消息（engine 取 guideMessages[0]）
+          if (currentGuideMessages.length > 0) {
+            currentGuideMessages.shift();
+          }
+          // 发送旧 run 的 task.done，前端据此结束旧 run 的流式状态
+          this.sendEvent(sessionId, {
+            type: 'task.done',
+            sessionId: result.sessionId,
+            payload: { finishReason: 'aborted', finalText: result.finalText, runId: currentRunId },
+          });
+          // 取前端为引导消息生成的 runId（若无则随机）
+          const runIdArr = this.guideRunIds.get(sessionId);
+          currentRunId = runIdArr?.shift() ?? `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+          if (runIdArr && runIdArr.length === 0) {
+            this.guideRunIds.delete(sessionId);
+          }
+          currentMessage = result.guideMessage;
+          // 复用同一 guideMessages 数组，剩余引导消息在新 run 中继续被检测
+          continue;
+        }
+
+        // 正常完成：检查是否有迟到的引导消息（engine 最后一轮未检测到）
+        if (!abortController.signal.aborted && currentGuideMessages.length > 0) {
+          const guideMsg = currentGuideMessages.shift()!;
+          this.sendEvent(sessionId, {
+            type: 'task.done',
+            sessionId: result.sessionId,
+            payload: { finishReason: result.finishReason, finalText: result.finalText, runId: currentRunId },
+          });
+          const runIdArr = this.guideRunIds.get(sessionId);
+          currentRunId = runIdArr?.shift() ?? `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+          if (runIdArr && runIdArr.length === 0) {
+            this.guideRunIds.delete(sessionId);
+          }
+          currentMessage = guideMsg;
+          continue;
+        }
+
+        if (abortController.signal.aborted) {
+          this.sendEvent(sessionId, { type: 'task.aborted', sessionId: result.sessionId, payload: { runId: currentRunId } });
+        } else {
+          this.sendEvent(sessionId, {
+            type: 'task.done',
+            sessionId: result.sessionId,
+            payload: {
+              finishReason: result.finishReason,
+              finalText: result.finalText,
+              runId: currentRunId,
+            },
+          });
+        }
+        break;
+      } catch (err) {
+        if (abortController.signal.aborted) {
+          this.sendEvent(sessionId, { type: 'task.aborted', sessionId, payload: { runId: currentRunId } });
+        } else {
+          this.sendEvent(sessionId, {
+            type: 'error',
+            sessionId,
+            payload: { message: err instanceof Error ? err.message : String(err), runId: currentRunId },
+          });
+        }
+        break;
+      } finally {
+        // 仅当当前记录的仍是自己时才清除，避免误清新流的 controller
+        if (this.activeRuns.get(sessionId) === abortController) {
+          this.activeRuns.delete(sessionId);
+        }
+        // 冲净残余缓冲（保序收尾）
+        this.batcher.flush();
+      }
     }
 
-    const onEvent = (event: AgentEvent) => {
-      this.sendEvent(sessionId, {
-        type: event.type,
-        sessionId: event.sessionId,
-        payload: { ...event, runId },
-      });
-    };
+    // 清理引导消息相关状态
+    this.guideMessageArrays.delete(sessionId);
+    this.guideRunIds.delete(sessionId);
+  }
 
-    try {
-      const result = await agent.run({
-        sessionId,
-        userMessage: payload.message,
-        model: payload.model,
-        agentId: payload.agentId,
-        cwd: payload.cwd || process.cwd(),
-        onEvent,
-        signal: abortController.signal,
-        runId,
-        // 权限模式透传（会话级；缺省时 engine 回退会话记忆/全局默认）
-        permissionMode: payload.permissionMode,
-      });
+  /**
+   * 处理引导模式消息：将消息推入当前 run 的 guideMessages 数组。
+   * engine 在工具调用完成后检查此数组，若有内容则中止当前 run 并返回 guideInterrupt，
+   * 随后 handleTaskStream 的 while 循环自动用引导消息启动新 run。
+   */
+  private handleTaskGuide(_state: ConnectionState, msg: WSMessage): void {
+    const sessionId = msg.sessionId;
+    if (!sessionId) return;
 
-      if (abortController.signal.aborted) {
-        this.sendEvent(sessionId, { type: 'task.aborted', sessionId: result.sessionId, payload: { runId } });
-      } else {
-        this.sendEvent(sessionId, {
-          type: 'task.done',
-          sessionId: result.sessionId,
-          payload: {
-            finishReason: result.finishReason,
-            finalText: result.finalText,
-            runId,
-          },
-        });
+    const payload = (msg.payload ?? {}) as { message?: string; runId?: string };
+    if (!payload.message) return;
+
+    const guideArr = this.guideMessageArrays.get(sessionId);
+    if (guideArr !== undefined) {
+      guideArr.push(payload.message);
+      if (payload.runId) {
+        const runIds = this.guideRunIds.get(sessionId) ?? [];
+        runIds.push(payload.runId);
+        this.guideRunIds.set(sessionId, runIds);
       }
-    } catch (err) {
-      if (abortController.signal.aborted) {
-        this.sendEvent(sessionId, { type: 'task.aborted', sessionId, payload: { runId } });
-      } else {
-        this.sendEvent(sessionId, {
-          type: 'error',
-          sessionId,
-          payload: { message: err instanceof Error ? err.message : String(err), runId },
-        });
-      }
-    } finally {
-      // 仅当当前记录的仍是自己时才清除，避免误清新流的 controller
-      if (this.activeRuns.get(sessionId) === abortController) {
-        this.activeRuns.delete(sessionId);
-      }
-      // 冲净残余缓冲（保序收尾）
-      this.batcher.flush();
+    } else {
+      this.logger.warn(`Guide message received but no active run for session ${sessionId}`);
     }
   }
 

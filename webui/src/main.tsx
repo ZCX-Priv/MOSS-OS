@@ -6,6 +6,7 @@ import { ErrorBoundary } from './components/shared/ErrorBoundary'
 import { ThemeProvider } from './contexts/ThemeContext'
 import { I18nProvider } from './contexts/I18nContext'
 import { idbGet, idbSet, migrateLegacyDatabase } from './utils/idb'
+import { normalizeShortcut } from './utils/shortcut'
 import { useStore, type PersistedState, LEGACY_DEFAULT_WORKING_DIRECTORY, DEFAULT_WORKING_DIRECTORY } from './store'
 import { isValidRenderSettings } from './render/core/types'
 import { isValidAnimationSettings } from './types/animation'
@@ -51,6 +52,7 @@ const PERSISTED_KEYS = [
   'moss-working-directory',
   'moss-recent-directories',
   'moss-send-shortcut',
+  'moss-follow-up-behavior',
   'moss-permission-mode',
   'moss-sidebar-tabs',
   'moss-active-sidebar-tab',
@@ -113,8 +115,32 @@ function buildPersistedState(data: Record<string, unknown>): PersistedState {
       ? (data['moss-recent-directories'] as string[])
       : undefined,
     sendShortcut:
-      data['moss-send-shortcut'] === 'enter' || data['moss-send-shortcut'] === 'ctrl-enter'
-        ? (data['moss-send-shortcut'] as 'enter' | 'ctrl-enter')
+      typeof data['moss-send-shortcut'] === 'string'
+        ? normalizeShortcut(data['moss-send-shortcut'] as string) || undefined
+        : undefined,
+    followUpBehavior:
+      data['moss-follow-up-behavior'] === 'queue' || data['moss-follow-up-behavior'] === 'guide'
+        ? (data['moss-follow-up-behavior'] as 'queue' | 'guide')
+        : undefined,
+    accentColor:
+      typeof data['moss-accent-color'] === 'string' && (data['moss-accent-color'] as string).length > 0
+        ? (data['moss-accent-color'] as string)
+        : undefined,
+    fontSize:
+      data['moss-font-size'] === 'small' || data['moss-font-size'] === 'medium' || data['moss-font-size'] === 'large'
+        ? (data['moss-font-size'] as 'small' | 'medium' | 'large')
+        : undefined,
+    uiDensity:
+      data['moss-ui-density'] === 'compact' || data['moss-ui-density'] === 'standard' || data['moss-ui-density'] === 'comfortable'
+        ? (data['moss-ui-density'] as 'compact' | 'standard' | 'comfortable')
+        : undefined,
+    cornerRadius:
+      data['moss-corner-radius'] === 'small' || data['moss-corner-radius'] === 'standard' || data['moss-corner-radius'] === 'large'
+        ? (data['moss-corner-radius'] as 'small' | 'standard' | 'large')
+        : undefined,
+    sidebarStyle:
+      data['moss-sidebar-style'] === 'narrow' || data['moss-sidebar-style'] === 'standard' || data['moss-sidebar-style'] === 'wide'
+        ? (data['moss-sidebar-style'] as 'narrow' | 'standard' | 'wide')
         : undefined,
     permissionMode:
       data['moss-permission-mode'] === 'ask' ||

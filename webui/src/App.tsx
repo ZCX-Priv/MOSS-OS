@@ -32,6 +32,7 @@ import {
   PlaceholderSection,
   RenderSettingsSection,
   AnimSettingsSection,
+  AppearanceSettingsSection,
 } from './components/pages/SettingsPage';
 import { SearchModal } from './components/overlays/SearchModal';
 import { SidebarProvider, SidebarInset, SidebarTrigger } from '@/components/ui/sidebar';
@@ -66,11 +67,18 @@ export default function App() {
   const { pathname } = useLocation();
   const { t } = useTranslation();
   const openAutomationForm = useStore((s) => s.openAutomationForm);
+  // 外观设置：从 store 读取，变化时同步到 DOM（CSS 变量 / data 属性）
+  const accentColor = useStore((s) => s.accentColor);
+  const fontSize = useStore((s) => s.fontSize);
+  const uiDensity = useStore((s) => s.uiDensity);
+  const cornerRadius = useStore((s) => s.cornerRadius);
+  const sidebarStyle = useStore((s) => s.sidebarStyle);
   // TaskPage 自带含左 trigger 的合并 header，全局移动端 header 仅在其他路由显示
   const isTaskRoute = pathname === '/' || pathname.startsWith('/task');
   // 移动端 header 标题与右侧 button（仅非 TaskPage 路由）
   const isPluginsRoute = pathname.startsWith('/plugins');
   const isPluginsMcpRoute = pathname === '/plugins/mcp';
+  const isPluginsSkillsRoute = pathname === '/plugins' || pathname === '/plugins/skills';
   const isAutomationRoute = pathname.startsWith('/automation');
   const isSettingsRoute = pathname.startsWith('/settings');
   const isProviderRoute = pathname.startsWith('/settings/provider');
@@ -95,6 +103,47 @@ export default function App() {
     setOverlay(null);
   }, [pathname]);
 
+  // 外观设置 → DOM 同步：主题色覆盖 CSS 变量、字号设 root font-size、密度/圆角/侧栏设 data 属性
+  useEffect(() => {
+    const root = document.documentElement;
+    const ACCENT_PRESETS: Record<string, string> = {
+      blue: 'oklch(0.546 0.245 263.4)',
+      green: 'oklch(0.627 0.194 149.2)',
+      purple: 'oklch(0.541 0.281 293.0)',
+      orange: 'oklch(0.646 0.222 41.0)',
+      rose: 'oklch(0.586 0.225 16.5)',
+      teal: 'oklch(0.6 0.118 184.5)',
+    };
+    const color = accentColor.startsWith('#')
+      ? accentColor
+      : (ACCENT_PRESETS[accentColor] ?? ACCENT_PRESETS.blue);
+    root.style.setProperty('--primary', color);
+    root.style.setProperty('--primary-strong', color);
+    root.style.setProperty('--ring', color);
+    root.style.setProperty('--sidebar-primary', color);
+    root.style.setProperty('--sidebar-ring', color);
+    root.style.setProperty('--chart-1', color);
+    root.style.setProperty('--chart-2', color);
+
+    const FONT_SIZE_MAP: Record<string, string> = {
+      small: '13px',
+      medium: '14px',
+      large: '16px',
+    };
+    root.style.fontSize = FONT_SIZE_MAP[fontSize] ?? FONT_SIZE_MAP.medium;
+
+    root.setAttribute('data-density', uiDensity);
+
+    const RADIUS_MAP: Record<string, string> = {
+      small: '0.375rem',
+      standard: '0.625rem',
+      large: '0.875rem',
+    };
+    root.style.setProperty('--radius', RADIUS_MAP[cornerRadius] ?? RADIUS_MAP.standard);
+
+    root.setAttribute('data-sidebar-style', sidebarStyle);
+  }, [accentColor, fontSize, uiDensity, cornerRadius, sidebarStyle]);
+
   return (
     <TooltipProvider>
       <SidebarProvider className="h-svh min-h-0 overflow-hidden">
@@ -117,6 +166,29 @@ export default function App() {
                   >
                     <Plus />
                   </Button>
+                )}
+                {/* 插件库技能 tab：刷新 + 添加技能（移动端收纳进 header，页面内按钮在桌面头部） */}
+                {isPluginsSkillsRoute && (
+                  <>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      title={t('common.refresh')}
+                      aria-label={t('common.refresh')}
+                      onClick={() => useStore.getState().requestSkillsRefresh()}
+                    >
+                      <RefreshCw />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      title={t('plugins.skillsAdd')}
+                      aria-label={t('plugins.skillsAdd')}
+                      onClick={() => useStore.getState().requestSkillsDialog()}
+                    >
+                      <Plus />
+                    </Button>
+                  </>
                 )}
                 {/* 插件库 MCP tab：刷新 + 添加服务器（移动端收纳进 header，页面内按钮在桌面头部） */}
                 {isPluginsMcpRoute && (
@@ -192,7 +264,7 @@ export default function App() {
               <Route path="general" element={<GeneralSettings />} />
               {/* 外观：Tab 容器（外观占位 / 渲染设置 / 动画设置） */}
               <Route path="appearance" element={<AppearanceSettings />}>
-                <Route index element={<PlaceholderSection section="appearance" embedded />} />
+                <Route index element={<AppearanceSettingsSection />} />
                 <Route path="render" element={<RenderSettingsSection />} />
                 <Route path="anim" element={<AnimSettingsSection />} />
               </Route>

@@ -25,6 +25,7 @@ import {
   Package,
   Zap,
   Paperclip,
+  Inbox,
 } from 'lucide-react';
 import {
   Dialog,
@@ -89,6 +90,7 @@ import type { TaskMessage, TodoItem, SidebarTab, CompactPreview, ContextStats } 
 // 稳定引用的空数组，避免 useStore 选择器每次返回新 [] 触发 useSyncExternalStore 无限循环
 const EMPTY_MESSAGES: TaskMessage[] = [];
 const EMPTY_TODOS: TodoItem[] = [];
+const EMPTY_QUEUE: Array<{ id: string; content: string; timestamp: string }> = [];
 
 // 单条消息正文渲染上限：超长内容（如 base64/大文件摘录）截断渲染，防止一次性布局卡死滚动
 const MAX_RENDER_CHARS = 6000;
@@ -161,6 +163,8 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
   const todos = useStore((s) => s.todosBySession[taskId] ?? EMPTY_TODOS);
   const pendingAsks = useStore((s) => s.pendingAsks);
   const pendingConfirms = useStore((s) => s.pendingConfirms);
+  const messageQueue = useStore((s) => s.messageQueueBySession[taskId] ?? EMPTY_QUEUE);
+  const removeFromMessageQueue = useStore((s) => s.removeFromMessageQueue);
   // 当前会话 run 统计（中控岛下方指标栏）与中控岛展开模块
   const runStats = useStore((s) => s.runStatsBySession[taskId]);
   const hubActiveModule = useStore((s) => s.hubActiveModuleBySession[taskId]);
@@ -1131,6 +1135,43 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
                     </div>
                   ),
               },
+              // 队列模块：排队等待发送的消息，仅当队列非空时出现
+              ...(messageQueue.length > 0
+                ? [
+                    {
+                      id: 'queue',
+                      icon: Inbox,
+                      title: t('hub.queueModule'),
+                      badge: messageQueue.length,
+                      render: () => (
+                        <div className="flex flex-col gap-2">
+                          {messageQueue.map((msg) => (
+                            <div
+                              key={msg.id}
+                              className="group flex items-start gap-2 rounded-lg border border-border bg-muted/30 p-2"
+                            >
+                              <Inbox className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+                              <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                                <span className="truncate text-xs text-foreground">{msg.content}</span>
+                                <span className="text-[10px] text-muted-foreground">
+                                  {new Date(msg.timestamp).toLocaleTimeString()}
+                                </span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => removeFromMessageQueue(taskId, msg.id)}
+                                className="shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100"
+                                title={t('hub.removeFromQueue')}
+                              >
+                                <X className="size-3.5" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      ),
+                    },
+                  ]
+                : []),
               // ask 模块：动态独立分类，仅当存在待回答提问时出现
               ...(pendingAsks.filter((a) => a.sessionId === taskId).length > 0
                 ? [
@@ -1346,10 +1387,10 @@ function ContextStackedBar({ stats }: { stats: ContextStats }) {
   // 分段按 breakdown 占比缩放到 total（真实占用与估算存在系统性偏差时保持构成比例）
   const scale = breakdown.total > 0 ? total / breakdown.total : 0;
   const segments = [
-    { key: 'system', value: breakdown.system, color: 'bg-indigo-500', label: t('context.segSystem') },
+    { key: 'system', value: breakdown.system, color: 'bg-blue-700', label: t('context.segSystem') },
     { key: 'env', value: breakdown.env, color: 'bg-teal-500', label: t('context.segEnv') },
     { key: 'summary', value: breakdown.summary, color: 'bg-amber-500', label: t('context.segSummary') },
-    { key: 'history', value: breakdown.history, color: 'bg-blue-400', label: t('context.segHistory') },
+    { key: 'history', value: breakdown.history, color: 'bg-blue-500', label: t('context.segHistory') },
   ];
   const percentText = formatPercent(total / window);
   const usedText = formatTokens(total);

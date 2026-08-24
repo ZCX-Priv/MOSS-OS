@@ -4,7 +4,7 @@
 
 import { memo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Archive, ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, Loader2, Package } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import type { CompactionRecord } from '../../types/api';
@@ -41,7 +41,7 @@ export const CompactionCard = memo(function CompactionCard({
           ) : (
             <ChevronRight className="size-3.5 shrink-0" />
           )}
-          <Archive className="size-3.5 shrink-0 text-primary-strong" />
+          <Package className="size-3.5 shrink-0 text-primary-strong" />
           <span className="font-medium text-foreground">
             {t('context.compactionCardTitle')}
           </span>

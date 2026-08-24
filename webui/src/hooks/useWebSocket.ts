@@ -144,6 +144,42 @@ export function useWebSocket(): void {
   }, []);
 
   // ------------------------------------------------------------------------
+  // 排队模式：任务完成后自动发送队列中的下一条消息
+  // ------------------------------------------------------------------------
+  function processQueueIfPending(sessionId: string): void {
+    const st = useStore.getState();
+    if (st.followUpBehavior !== 'queue') return;
+    const queue = st.messageQueueBySession[sessionId] ?? [];
+    if (queue.length === 0) return;
+    const next = queue[0];
+    st.removeFromMessageQueue(sessionId, next.id);
+
+    const runId = `run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    pendingRunId.set(sessionId, runId);
+
+    st.addMessage(sessionId, {
+      id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      role: 'user',
+      content: next.content,
+      timestamp: new Date().toISOString(),
+    });
+    st.setGenerating(sessionId, true);
+
+    wsClient.send({
+      type: 'task.stream',
+      sessionId,
+      payload: {
+        message: next.content,
+        model: st.currentModel || undefined,
+        agentId: st.currentAgent || undefined,
+        cwd: st.workingDirectory || undefined,
+        runId,
+        permissionMode: st.permissionModeBySession[sessionId] ?? st.permissionMode,
+      },
+    });
+  }
+
+  // ------------------------------------------------------------------------
   // 消息分发：读取最新 store（避免闭包陈旧）
   // ------------------------------------------------------------------------
   function handleMessage(msg: WSMessage): void {
@@ -413,6 +449,8 @@ export function useWebSocket(): void {
               st.setMessages(sessionId, [...existing, cardMessage]);
             }
           }
+          // 排队模式：任务完成后自动发送队列中的下一条消息
+          setTimeout(() => processQueueIfPending(sessionId), 300);
         }
         break;
       }
@@ -430,6 +468,8 @@ export function useWebSocket(): void {
             pendingAssistant.delete(sessionId);
           }
           s.setGenerating(sessionId, false);
+          // 排队模式：任务完成后自动发送队列中的下一条消息
+          setTimeout(() => processQueueIfPending(sessionId), 300);
         }
         break;
       }

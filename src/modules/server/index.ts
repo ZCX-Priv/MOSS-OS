@@ -34,6 +34,8 @@ import {
   createListSkillsHandler,
   createGetSkillHandler,
   createUpdateSkillHandler,
+  createCreateSkillHandler,
+  createImportSkillHandler,
 } from './routes/skills';
 import {
   createListCommandsHandler,
@@ -42,7 +44,7 @@ import {
   createDeleteCommandHandler,
   createToggleCommandHandler,
 } from './routes/commands';
-import { createSpecsHandler, createUpdateSpecHandler } from './routes/specs';
+import { createSpecsHandler, createUpdateSpecHandler, createCreateSpecHandler } from './routes/specs';
 import { createListToolsHandler, createUpdateToolHandler } from './routes/tools';
 import { createVersionHandler } from './routes/version';
 import {
@@ -251,6 +253,9 @@ class ServerModule implements Module {
     this.router.addRoute({ method: 'GET', pattern: '/api/skills', handler: createListSkillsHandler(services), auth: true });
     this.router.addRoute({ method: 'GET', pattern: '/api/skills/:name', handler: createGetSkillHandler(services), auth: true });
     this.router.addRoute({ method: 'PATCH', pattern: '/api/skills/:name', handler: createUpdateSkillHandler(services, config), auth: true });
+    // skills 新建 / zip 导入（前端解包后批量写文件；目录 watch 热重载自动生效）
+    this.router.addRoute({ method: 'POST', pattern: '/api/skills', handler: createCreateSkillHandler(services, env), auth: true });
+    this.router.addRoute({ method: 'POST', pattern: '/api/skills/import', handler: createImportSkillHandler(services, env), auth: true });
     // commands（自定义斜杠命令：~/.moss/commands/<name>.md）
     this.router.addRoute({ method: 'GET', pattern: '/api/commands', handler: createListCommandsHandler(services), auth: true });
     this.router.addRoute({ method: 'POST', pattern: '/api/commands', handler: createCreateCommandHandler(services, env), auth: true });
@@ -260,6 +265,8 @@ class ServerModule implements Module {
     this.router.addRoute({ method: 'GET', pattern: '/api/specs', handler: createSpecsHandler(services), auth: true });
     // specs 保存（写回 ~/.moss/agent/prompts/main/spec/ 下文件）
     this.router.addRoute({ method: 'PUT', pattern: '/api/specs', handler: createUpdateSpecHandler(services, env), auth: true });
+    // specs 新建（在用户 spec 目录下创建 <id>.md）
+    this.router.addRoute({ method: 'POST', pattern: '/api/specs', handler: createCreateSpecHandler(services, env), auth: true });
 
     // tools（工具元信息：name + icon，供前端渲染工具调用卡片图标）
     this.router.addRoute({ method: 'GET', pattern: '/api/tools', handler: createListToolsHandler(services), auth: true });
