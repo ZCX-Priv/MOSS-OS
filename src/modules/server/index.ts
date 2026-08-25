@@ -127,6 +127,31 @@ import {
   createFileIndexStatusHandler,
   createFileIndexRebuildHandler,
 } from './routes/context';
+import {
+  createListRulesHandler,
+  createCreateRuleHandler,
+  createGetRuleHandler,
+  createUpdateRuleHandler,
+  createDeleteRuleHandler,
+} from './routes/rules';
+import {
+  createListHooksHandler,
+  createCreateHookHandler,
+  createGetHookHandler,
+  createUpdateHookHandler,
+  createDeleteHookHandler,
+  createTestHookHandler,
+  createHookHistoryHandler,
+} from './routes/hooks';
+import {
+  createMemoryTreeHandler,
+  createListMemoryHandler,
+  createCreateMemoryHandler,
+  createGetMemoryHandler,
+  createUpdateMemoryHandler,
+  createDeleteMemoryHandler,
+  createDistillMemoryHandler,
+} from './routes/memory';
 import { McpExpose } from '../mcp/expose';
 
 interface BunServer {
@@ -371,6 +396,31 @@ class ServerModule implements Module {
     this.router.addRoute({ method: 'POST', pattern: '/api/context/:sessionId/compact', handler: createManualCompactHandler(services), auth: true });
     this.router.addRoute({ method: 'GET', pattern: '/api/context/file-index/status', handler: createFileIndexStatusHandler(services), auth: true });
     this.router.addRoute({ method: 'POST', pattern: '/api/context/file-index/rebuild', handler: createFileIndexRebuildHandler(services), auth: true });
+
+    // rules（规则引擎：双作用域 CRUD）
+    this.router.addRoute({ method: 'GET', pattern: '/api/rules', handler: createListRulesHandler(services), auth: true });
+    this.router.addRoute({ method: 'POST', pattern: '/api/rules', handler: createCreateRuleHandler(services), auth: true });
+    this.router.addRoute({ method: 'GET', pattern: '/api/rules/:id', handler: createGetRuleHandler(services), auth: true });
+    this.router.addRoute({ method: 'PATCH', pattern: '/api/rules/:id', handler: createUpdateRuleHandler(services), auth: true });
+    this.router.addRoute({ method: 'DELETE', pattern: '/api/rules/:id', handler: createDeleteRuleHandler(services), auth: true });
+
+    // hooks（钩子引擎：双作用域 CRUD + 测试触发 + 执行历史）
+    this.router.addRoute({ method: 'GET', pattern: '/api/hooks', handler: createListHooksHandler(services), auth: true });
+    this.router.addRoute({ method: 'POST', pattern: '/api/hooks', handler: createCreateHookHandler(services), auth: true });
+    this.router.addRoute({ method: 'GET', pattern: '/api/hooks/history', handler: createHookHistoryHandler(services), auth: true });
+    this.router.addRoute({ method: 'GET', pattern: '/api/hooks/:id', handler: createGetHookHandler(services), auth: true });
+    this.router.addRoute({ method: 'PATCH', pattern: '/api/hooks/:id', handler: createUpdateHookHandler(services), auth: true });
+    this.router.addRoute({ method: 'DELETE', pattern: '/api/hooks/:id', handler: createDeleteHookHandler(services), auth: true });
+    this.router.addRoute({ method: 'POST', pattern: '/api/hooks/:id/test', handler: createTestHookHandler(services), auth: true });
+
+    // memory（记忆引擎：宫殿树 / 列表搜索 / CRUD + 手动蒸馏）
+    this.router.addRoute({ method: 'GET', pattern: '/api/memory/tree', handler: createMemoryTreeHandler(services), auth: true });
+    this.router.addRoute({ method: 'POST', pattern: '/api/memory/distill', handler: createDistillMemoryHandler(services), auth: true });
+    this.router.addRoute({ method: 'GET', pattern: '/api/memory', handler: createListMemoryHandler(services), auth: true });
+    this.router.addRoute({ method: 'POST', pattern: '/api/memory', handler: createCreateMemoryHandler(services), auth: true });
+    this.router.addRoute({ method: 'GET', pattern: '/api/memory/:id', handler: createGetMemoryHandler(services), auth: true });
+    this.router.addRoute({ method: 'PATCH', pattern: '/api/memory/:id', handler: createUpdateMemoryHandler(services), auth: true });
+    this.router.addRoute({ method: 'DELETE', pattern: '/api/memory/:id', handler: createDeleteMemoryHandler(services), auth: true });
   }
 
   private async startServer(): Promise<void> {

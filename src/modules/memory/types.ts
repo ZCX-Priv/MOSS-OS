@@ -1,0 +1,104 @@
+// src/modules/memory/types.ts
+// 记忆引擎类型契约：记忆宫殿（Wing→Room→Hall→Drawer）层次结构 + verbatim/蒸馏混合存储。
+// 四层记忆栈：L0 身份（系统提示承担）/ L1 关键事实常驻 / L2 主题召回 / L3 深度检索（memory_search 工具）。
+
+/** 记忆厅类型（Hall：记忆的语义分类） */
+export type MemoryHall = 'decision' | 'event' | 'discovery' | 'preference' | 'suggestion';
+
+export const MEMORY_HALLS: readonly MemoryHall[] = [
+  'decision',
+  'event',
+  'discovery',
+  'preference',
+  'suggestion',
+];
+
+/** 单条记忆（一个 JSON 文件：{scope}/memory/{wing}/{room}/{hash}.json） */
+export interface MemoryRecord {
+  /** 内容哈希（sha256 前 16 位 hex） */
+  id: string;
+  /** 翼：全局个人记忆固定 'user'；项目记忆 = 项目目录名 */
+  wing: string;
+  /** 房间：主题（蒸馏时 LLM 归类；人工创建自由命名） */
+  room: string;
+  /** 厅：语义分类 */
+  hall: MemoryHall;
+  /** 原文片段（零丢失 verbatim 存储） */
+  verbatim: string;
+  /** 蒸馏后的洞察（注入上下文用） */
+  insight: string;
+  /** 来源追溯 */
+  source: {
+    sessionId?: string;
+    taskId?: string;
+    at: string;
+  };
+  /** 标签 */
+  tags: string[];
+  /** 重要性 0-1（>= l1ImportanceThreshold 进入 L1 关键事实） */
+  importance: number;
+  /** 置顶（L1 常驻候选） */
+  pinned: boolean;
+  accessCount: number;
+  lastAccessedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 记忆作用域 */
+export type MemoryScope = 'global' | 'project';
+
+/** 带作用域标注的记忆（列表接口返回） */
+export interface ScopedMemoryRecord extends MemoryRecord {
+  scope: MemoryScope;
+}
+
+/** 记忆写入输入 */
+export interface MemoryUpsertInput {
+  wing: string;
+  room: string;
+  hall: MemoryHall;
+  verbatim: string;
+  insight: string;
+  tags?: string[];
+  importance?: number;
+  pinned?: boolean;
+  source?: { sessionId?: string; taskId?: string; at?: string };
+}
+
+/** 宫殿树节点（WebUI 三栏浏览数据源） */
+export interface MemoryPalaceTree {
+  wings: Array<{
+    wing: string;
+    scope: MemoryScope;
+    rooms: Array<{
+      room: string;
+      count: number;
+      halls: Array<{ hall: MemoryHall; count: number }>;
+    }>;
+    total: number;
+  }>;
+}
+
+/** L2 召回注入文本（governor 消费） */
+export interface MemoryRecallSection {
+  /** 注入文本（null = 无相关记忆，不注入） */
+  text: string | null;
+  /** 召回的记忆条数 */
+  count: number;
+  /** 召回的记忆 id */
+  recalledIds: string[];
+  /** 消息发生切换（新用户输入；调用方据此持久化 session.memoryState） */
+  queryChanged?: boolean;
+}
+
+/** 蒸馏提取的单条记忆（LLM 输出解析结果） */
+export interface DistilledMemory {
+  wing?: string;
+  room: string;
+  hall: MemoryHall;
+  verbatim: string;
+  insight: string;
+  tags?: string[];
+  importance?: number;
+}

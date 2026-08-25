@@ -178,6 +178,33 @@ const contextSchema = z.object({
       ignore: z.array(z.string()).default([]),
     })
     .default({}),
+  // 用户规则引擎（always/paths 双加载模式）
+  rules: z
+    .object({
+      enabled: z.boolean().default(true),
+      maxAlwaysTokens: z.number().int().positive().default(4000),
+      maxInjectPerSession: z.number().int().positive().min(1).max(100).default(20),
+    })
+    .default({}),
+  // 生命周期钩子引擎（shell + TS 模块）
+  hooks: z
+    .object({
+      enabled: z.boolean().default(true),
+      defaultTimeout: z.number().int().positive().default(10000),
+    })
+    .default({}),
+  // 记忆引擎（记忆宫殿 + verbatim/蒸馏混合 + BM25 检索）
+  memory: z
+    .object({
+      enabled: z.boolean().default(true),
+      distillModel: z.string().default('inherit'),
+      distillMinMessages: z.number().int().min(1).max(100).default(6),
+      recallTopK: z.number().int().min(1).max(50).default(5),
+      recallTokenBudget: z.number().int().positive().default(2000),
+      l1ImportanceThreshold: z.number().min(0).max(1).default(0.75),
+      l1MaxEntries: z.number().int().min(1).max(100).default(20),
+    })
+    .default({}),
 });
 
 const appConfigSchema = z.object({
@@ -277,6 +304,9 @@ export function defaultAppConfig(): AppConfig {
       healer: { ...DEFAULT_CONTEXT_CONFIG.healer },
       telemetry: { ...DEFAULT_CONTEXT_CONFIG.telemetry },
       fileIndex: { ...DEFAULT_CONTEXT_CONFIG.fileIndex },
+      rules: { ...DEFAULT_CONTEXT_CONFIG.rules },
+      hooks: { ...DEFAULT_CONTEXT_CONFIG.hooks },
+      memory: { ...DEFAULT_CONTEXT_CONFIG.memory },
     },
     safety: {
       defaultMode: 'ask',

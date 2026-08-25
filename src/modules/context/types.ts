@@ -46,6 +46,39 @@ export interface ContextTelemetryConfig {
   enabled: boolean;
 }
 
+/** 规则引擎配置（rules 模块消费） */
+export interface RulesConfig {
+  enabled: boolean;
+  /** always 规则段 token 预算（超出告警遥测） */
+  maxAlwaysTokens: number;
+  /** 单会话 paths 规则注入上限 */
+  maxInjectPerSession: number;
+}
+
+/** 钩子引擎配置（hooks 模块消费） */
+export interface HooksConfig {
+  enabled: boolean;
+  /** 默认执行超时 ms */
+  defaultTimeout: number;
+}
+
+/** 记忆引擎配置（memory 模块消费） */
+export interface MemoryConfig {
+  enabled: boolean;
+  /** 蒸馏模型：'inherit' = 主模型；否则为 providers 旗下模型 id */
+  distillModel: string;
+  /** 触发蒸馏的最小新增消息数 */
+  distillMinMessages: number;
+  /** L2/L3 召回条数 */
+  recallTopK: number;
+  /** 记忆段 token 预算 */
+  recallTokenBudget: number;
+  /** L1 关键事实重要性阈值 */
+  l1ImportanceThreshold: number;
+  /** L1 常驻条数上限 */
+  l1MaxEntries: number;
+}
+
 export interface ContextEngineConfig {
   compaction: CompactionConfig;
   toolPruning: ToolPruningConfig;
@@ -53,6 +86,12 @@ export interface ContextEngineConfig {
   telemetry: ContextTelemetryConfig;
   /** 文件索引模块（三引擎，默认全关） */
   fileIndex: FileIndexConfig;
+  /** 用户规则引擎（默认开） */
+  rules: RulesConfig;
+  /** 生命周期钩子引擎（默认开） */
+  hooks: HooksConfig;
+  /** 记忆引擎（默认开） */
+  memory: MemoryConfig;
 }
 
 export const DEFAULT_COMPACTION_CONFIG: CompactionConfig = {
@@ -81,12 +120,36 @@ export const DEFAULT_CONTEXT_TELEMETRY_CONFIG: ContextTelemetryConfig = {
   enabled: true,
 };
 
+export const DEFAULT_RULES_CONFIG: RulesConfig = {
+  enabled: true,
+  maxAlwaysTokens: 4000,
+  maxInjectPerSession: 20,
+};
+
+export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
+  enabled: true,
+  defaultTimeout: 10000,
+};
+
+export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
+  enabled: true,
+  distillModel: 'inherit',
+  distillMinMessages: 6,
+  recallTopK: 5,
+  recallTokenBudget: 2000,
+  l1ImportanceThreshold: 0.75,
+  l1MaxEntries: 20,
+};
+
 export const DEFAULT_CONTEXT_CONFIG: ContextEngineConfig = {
   compaction: { ...DEFAULT_COMPACTION_CONFIG },
   toolPruning: { ...DEFAULT_TOOL_PRUNING_CONFIG },
   healer: { ...DEFAULT_HEALER_CONFIG },
   telemetry: { ...DEFAULT_CONTEXT_TELEMETRY_CONFIG },
   fileIndex: { ...DEFAULT_FILE_INDEX_CONFIG },
+  rules: { ...DEFAULT_RULES_CONFIG },
+  hooks: { ...DEFAULT_HOOKS_CONFIG },
+  memory: { ...DEFAULT_MEMORY_CONFIG },
 };
 
 // ============================================================================
@@ -159,7 +222,31 @@ export interface ContextSessionLike {
   contextTelemetry?: SessionContextTelemetry;
   /** 会话级活跃 skill（system 模式拼系统提示后；message 模式替换 skill-inject 占位） */
   activeSkill?: { name: string; mode: 'system' | 'message' };
+  /** 规则引擎注入状态（paths 规则去重水位；随 session 落盘） */
+  rulesState?: SessionRulesState;
+  /** 记忆引擎状态（L1 注入标记 / 召回去重 / 蒸馏水位；随 session 落盘） */
+  memoryState?: SessionMemoryState;
   updatedAt: string;
+}
+
+/** 规则引擎会话状态（agent Session 内嵌可选字段） */
+export interface SessionRulesState {
+  /** 已通过 paths 触发注入的规则 id 集合 */
+  injectedRuleIds: string[];
+}
+
+/** 记忆引擎会话状态（agent Session 内嵌可选字段） */
+export interface SessionMemoryState {
+  /** L1 关键事实锚定消息注入时间（每会话一次） */
+  l1InjectedAt?: string;
+  /** 当前召回 query 键（最近 user 消息前 200 字符；切换即重置召回状态） */
+  lastRecallQuery?: string;
+  /** 上一条消息召回的记忆 id（当前检索的排除集，防连续消息重复注入） */
+  excludeFromRecall: string[];
+  /** 本条消息已召回的记忆 id（消息切换时转为排除集；同消息多轮间保持稳定注入） */
+  currentRecalled: string[];
+  /** 上次蒸馏到的消息水位（数组长度；新增消息从此处开始） */
+  lastDistilledIndex: number;
 }
 
 /** 会话级持久化遥测（agent Session 内嵌字段；lastUsage/cacheHits 的单一真源） */
@@ -194,6 +281,10 @@ export interface ContextBreakdown {
   summary: number;
   /** 历史消息（未压缩 + 工具结果修剪后） */
   history: number;
+  /** paths 规则注入消息（active-rules 锚定） */
+  rules: number;
+  /** 记忆召回消息（memory-l1 锚定 + memory-recall 临时） */
+  memory: number;
   total: number;
 }
 

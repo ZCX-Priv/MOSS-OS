@@ -79,6 +79,10 @@ import type { SpecDetail, SafetyConfig, LogLevel, LogsConfig, LogFileInfo, Conte
 
 // 服务商设置页（App.tsx 从本模块导入）
 export { ProviderSettings } from './ProviderSettings';
+// 规则 / 钩子 / 记忆引擎设置分区（App.tsx 从本模块导入）
+export { RulesSettingsSection } from './settings/RulesSettingsSection';
+export { HooksSettingsSection } from './settings/HooksSettingsSection';
+export { MemorySettingsSection } from './settings/MemorySettingsSection';
 
 export interface NavItem {
   id: SettingsSection;

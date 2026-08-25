@@ -1,0 +1,49 @@
+{
+  "name": "memory_search",
+  "description": "深度检索记忆宫殿（L3 层：全量跨翼 BM25 语义检索）。当你需要回忆历史经验、过去的决策、用户偏好或项目踩坑记录时调用——例如「这个项目之前用什么方案解决了 X」「用户对测试的态度」。支持按 wing/room/hall 过滤。日常对话无需调用：引擎会在每轮自动召回相关记忆。",
+  "description_en": "Deep search the memory palace (L3: full cross-wing BM25 retrieval). Call when you need to recall historical experience, past decisions, user preferences, or project pitfalls — e.g. 'how did this project solve X before' or 'user's attitude toward testing'. Supports wing/room/hall filters. Daily conversation needs no call: the engine auto-recalls relevant memories each turn.",
+  "icon": "search",
+  "annotations": {
+    "readOnlyHint": true,
+    "idempotentHint": true
+  },
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string",
+        "description": "检索查询（自然语言关键词）",
+        "description_en": "Search query (natural language keywords)"
+      },
+      "wing": {
+        "type": "string",
+        "description": "限定翼（项目名或 'user'；缺省=全翼检索）",
+        "description_en": "Restrict to a wing (project name or 'user'; default = all wings)"
+      },
+      "room": {
+        "type": "string",
+        "description": "限定房间主题（缺省=全部）",
+        "description_en": "Restrict to a room topic (default = all)"
+      },
+      "hall": {
+        "type": "string",
+        "enum": ["decision", "event", "discovery", "preference", "suggestion"],
+        "description": "限定记忆分类（缺省=全部）",
+        "description_en": "Restrict to a memory category (default = all)"
+      },
+      "topK": {
+        "type": "integer",
+        "description": "返回条数上限（默认 10，最大 50）",
+        "description_en": "Max results (default 10, max 50)"
+      }
+    },
+    "required": ["query"],
+    "additionalProperties": false
+  },
+  "config": {
+    "defaults": {
+      "enabled": true
+    },
+    "schema": {}
+  }
+}

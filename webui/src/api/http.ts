@@ -45,6 +45,18 @@ import type {
   CompactPreview,
   ManualCompactResult,
   FileIndexStatus,
+  RulesListResult,
+  RuleItem,
+  RuleUpsertBody,
+  HooksListResult,
+  HookItem,
+  HookUpsertBody,
+  HookTestResult,
+  HookHistoryEntry,
+  MemoryItem,
+  MemoryPalaceTree,
+  MemoryUpsertBody,
+  MemoryDistillResult,
 } from '../types/api';
 import i18n from '../i18n';
 
@@ -110,7 +122,16 @@ function adaptAgentMessages(raw: unknown[]): TaskMessage[] {
     if (m.role === 'system') continue;
     // 压缩摘要消息（compaction-summary）与 day-rollover/env-context 不进消息流：
     // 压缩卡片由 getCompactions 历史恢复（TaskPage 合并），其余为引擎内部锚定消息
-    if (m.name === 'compaction-summary' || m.name === 'env-context' || m.name === 'day-rollover') continue;
+    // （active-rules = paths 规则注入锚定 / memory-l1 = 记忆关键事实锚定）
+    if (
+      m.name === 'compaction-summary' ||
+      m.name === 'env-context' ||
+      m.name === 'day-rollover' ||
+      m.name === 'active-rules' ||
+      m.name === 'memory-l1'
+    ) {
+      continue;
+    }
     // 轮数触顶提示消息：转为提示卡（maxTurnsNotice 驱动卡片渲染 + 继续按钮）
     if (m.name === 'max-turns-notice') {
       const noticeMeta = m.metadata as { maxTurns?: number } | undefined;
@@ -468,6 +489,65 @@ export const api = {
   /** 新建 spec（用户 spec 目录下创建 <id>.md，watch 热重载生效） */
   createSpec: (data: { id: string; description?: string }) =>
     request<{ id: string }>('POST', '/api/specs', data),
+
+  // ==========================================================================
+  // 规则引擎（/api/rules；cwd 走 query）
+  // ==========================================================================
+  listRules: (cwd?: string) =>
+    request<RulesListResult>('GET', `/api/rules${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ''}`),
+  getRule: (id: string, cwd?: string) =>
+    request<RuleItem>('GET', `/api/rules/${encodeURIComponent(id)}${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ''}`),
+  createRule: (data: RuleUpsertBody, cwd?: string) =>
+    request<RuleItem>('POST', `/api/rules${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ''}`, data),
+  updateRule: (id: string, data: RuleUpsertBody, cwd?: string) =>
+    request<RuleItem>('PATCH', `/api/rules/${encodeURIComponent(id)}${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ''}`, data),
+  deleteRule: (id: string, cwd?: string) =>
+    request<{ ok: boolean }>('DELETE', `/api/rules/${encodeURIComponent(id)}${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ''}`),
+
+  // ==========================================================================
+  // 钩子引擎（/api/hooks）
+  // ==========================================================================
+  listHooks: (cwd?: string) =>
+    request<HooksListResult>('GET', `/api/hooks${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ''}`),
+  getHook: (id: string, cwd?: string) =>
+    request<HookItem>('GET', `/api/hooks/${encodeURIComponent(id)}${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ''}`),
+  createHook: (data: HookUpsertBody, cwd?: string) =>
+    request<HookItem>('POST', `/api/hooks${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ''}`, data),
+  updateHook: (id: string, data: HookUpsertBody, cwd?: string) =>
+    request<HookItem>('PATCH', `/api/hooks/${encodeURIComponent(id)}${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ''}`, data),
+  deleteHook: (id: string, cwd?: string) =>
+    request<{ ok: boolean }>('DELETE', `/api/hooks/${encodeURIComponent(id)}${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ''}`),
+  testHook: (id: string, sampleInput: { cwd?: string; sessionId?: string; toolName?: string; toolInput?: Record<string, unknown>; prompt?: string }) =>
+    request<HookTestResult>('POST', `/api/hooks/${encodeURIComponent(id)}/test`, sampleInput),
+  getHookHistory: () =>
+    request<{ history: HookHistoryEntry[] }>('GET', '/api/hooks/history'),
+
+  // ==========================================================================
+  // 记忆引擎（/api/memory）
+  // ==========================================================================
+  getMemoryTree: (cwd?: string) =>
+    request<MemoryPalaceTree>('GET', `/api/memory/tree${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ''}`),
+  listMemory: (opts: { cwd?: string; wing?: string; room?: string; hall?: string; q?: string; limit?: number }) => {
+    const params = new URLSearchParams();
+    if (opts.cwd) params.set('cwd', opts.cwd);
+    if (opts.wing) params.set('wing', opts.wing);
+    if (opts.room) params.set('room', opts.room);
+    if (opts.hall) params.set('hall', opts.hall);
+    if (opts.q) params.set('q', opts.q);
+    if (opts.limit) params.set('limit', String(opts.limit));
+    const qs = params.toString();
+    return request<{ items: MemoryItem[]; count: number }>('GET', `/api/memory${qs ? `?${qs}` : ''}`);
+  },
+  createMemory: (data: MemoryUpsertBody, cwd?: string) =>
+    request<MemoryItem>('POST', `/api/memory${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ''}`, data),
+  getMemory: (id: string, cwd?: string) =>
+    request<MemoryItem>('GET', `/api/memory/${encodeURIComponent(id)}${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ''}`),
+  updateMemory: (id: string, patch: Partial<MemoryUpsertBody>, cwd?: string) =>
+    request<MemoryItem>('PATCH', `/api/memory/${encodeURIComponent(id)}${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ''}`, patch),
+  deleteMemory: (id: string, cwd?: string) =>
+    request<{ ok: boolean }>('DELETE', `/api/memory/${encodeURIComponent(id)}${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ''}`),
+  distillMemory: (data: { sessionId: string; cwd?: string }) =>
+    request<MemoryDistillResult>('POST', '/api/memory/distill', data),
 
   // ==========================================================================
   // 自动化任务（见文档 3.2.7）

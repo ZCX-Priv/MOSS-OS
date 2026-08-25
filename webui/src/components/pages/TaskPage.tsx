@@ -1423,6 +1423,9 @@ function ContextStackedBar({ stats }: { stats: ContextStats }) {
     { key: 'env', value: breakdown.env, color: 'bg-teal-500', label: t('context.segEnv') },
     { key: 'summary', value: breakdown.summary, color: 'bg-amber-500', label: t('context.segSummary') },
     { key: 'history', value: breakdown.history, color: 'bg-blue-500', label: t('context.segHistory') },
+    // 规则/记忆注入段（新后端字段；值为 0 时不渲染——旧数据无噪声）
+    ...(breakdown.rules ? [{ key: 'rules', value: breakdown.rules, color: 'bg-violet-500', label: t('context.segRules') }] : []),
+    ...(breakdown.memory ? [{ key: 'memory', value: breakdown.memory, color: 'bg-rose-500', label: t('context.segMemory') }] : []),
   ];
   const percentText = formatPercent(total / window);
   const usedText = formatTokens(total);

@@ -464,6 +464,12 @@ export const ServiceNames = {
   SAFETY: 'safety.service',
   /** 上下文引擎（由 context 模块注册：拼接/压缩/自愈/预算/治理/遥测） */
   CONTEXT_ENGINE: 'context.engine',
+  /** 规则引擎（由 rules 模块注册：用户规则存储/加载/条件注入） */
+  RULES_ENGINE: 'rules.engine',
+  /** 钩子引擎（由 hooks 模块注册：生命周期事件钩子执行） */
+  HOOKS_ENGINE: 'hooks.engine',
+  /** 记忆引擎（由 memory 模块注册：记忆宫殿存储/检索/蒸馏） */
+  MEMORY_ENGINE: 'memory.engine',
   /** 日志服务（由内核注册：日志文件枚举 / 查询 / 清理 / 级别调整） */
   LOGGER: 'kernel.logger',
 } as const;

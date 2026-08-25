@@ -32,6 +32,37 @@ import type { SkillRegistry } from '../tools/use_skill/registry';
 import { readSessionTodoStore, getSessionTodoPath } from '../tools/todo/shared/store';
 import { buildStaticSystemPrompt, buildRequestView, MAX_TURNS_NOTICE_MSG_NAME } from '../context/compiler';
 import { DEFAULT_TOOL_PRUNING_CONFIG } from '../context/types';
+import type { RulesEngineServiceImpl } from '../rules/service';
+import type { HooksEngineServiceImpl } from '../hooks/service';
+import type { MemoryEngineServiceImpl } from '../memory/service';
+
+/** 规则引擎关注的文件访问类工具（recordFileAccess 触发源） */
+const FILE_ACCESS_TOOLS = new Set(['read', 'write', 'edit', 'glob', 'grep']);
+
+/** 从工具参数提取文件路径（规则 paths 匹配输入） */
+function extractToolPaths(toolName: string, args: unknown): string[] {
+  if (!args || typeof args !== 'object') return [];
+  const a = args as Record<string, unknown>;
+  const out: string[] = [];
+  const push = (v: unknown): void => {
+    if (typeof v === 'string' && v !== '') out.push(v);
+  };
+  switch (toolName) {
+    case 'read':
+    case 'write':
+    case 'edit':
+      push(a.path);
+      push(a.filePath);
+      break;
+    case 'glob':
+    case 'grep':
+      push(a.path);
+      break;
+    default:
+      break;
+  }
+  return out;
+}
 
 /** ask 超时兜底上限（即使配置异常也不会让 Promise 永久悬挂） */
 const ASK_TIMEOUT_CEILING_MS = 24 * 60 * 60 * 1000; // 24h
@@ -204,6 +235,42 @@ export class AgentEngineImpl implements AgentEngine {
 
     const toolRegistry = this.services.tryResolve<ToolRegistry>(ServiceNames.TOOL_REGISTRY);
     const mcpManager = this.services.tryResolve<MCPManager>(ServiceNames.MCP_MANAGER);
+
+    // ===== 钩子事件：SessionStart + UserPromptSubmit（addUserMessage 前触发；UserPromptSubmit 可 deny） =====
+    const hooksEngine = this.services.tryResolve<HooksEngineServiceImpl>(ServiceNames.HOOKS_ENGINE);
+    if (hooksEngine) {
+      try {
+        await hooksEngine.dispatch('SessionStart', { sessionId, cwd });
+      } catch (err) {
+        this.logger.warn('agent: SessionStart hook failed (fail-open)', {
+          sessionId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+      try {
+        const promptDecision = await hooksEngine.dispatch('UserPromptSubmit', {
+          sessionId,
+          cwd,
+          prompt: userMessage,
+        });
+        if (promptDecision.decision === 'deny') {
+          const msg = `Blocked by hook: ${promptDecision.reason ?? 'prompt denied'}`;
+          this.logger.info('agent: prompt blocked by hook', { sessionId, reason: promptDecision.reason });
+          onEvent({ type: 'error', sessionId, message: msg });
+          return {
+            sessionId,
+            finishReason: 'error',
+            finalText: msg,
+            history: [],
+          };
+        }
+      } catch (err) {
+        this.logger.warn('agent: UserPromptSubmit hook failed (fail-open)', {
+          sessionId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
 
     // 构建会话（系统提示词由 context 引擎构建/缓存；fallback 见 buildFallbackMessages）
     const apiCfg = this.config.getApiConfig();
@@ -581,6 +648,31 @@ export class AgentEngineImpl implements AgentEngine {
 
     // run 结束：解除 busy（手动压缩恢复可用）
     contextEngine?.markIdle(sessionId);
+
+    // ===== 钩子事件：Stop（通知型）+ 记忆蒸馏调度（finishReason=stop 时） =====
+    if (finishReason === 'stop') {
+      if (hooksEngine) {
+        void hooksEngine
+          .dispatch('Stop', { sessionId, cwd })
+          .catch(err => {
+            this.logger.warn('agent: Stop hook failed (fail-open)', {
+              sessionId,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          });
+      }
+      const memoryEngine = this.services.tryResolve<MemoryEngineServiceImpl>(ServiceNames.MEMORY_ENGINE);
+      if (memoryEngine) {
+        try {
+          memoryEngine.scheduleDistill(session, cwd);
+        } catch (err) {
+          this.logger.warn('agent: schedule memory distillation failed', {
+            sessionId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+    }
 
     onEvent({ type: 'done', sessionId, finishReason });
 
@@ -994,6 +1086,51 @@ export class AgentEngineImpl implements AgentEngine {
       }
     }
 
+    // ===== 钩子事件：PreToolUse（自愈后、执行前；deny → 补错误 tool 消息并中止此工具） =====
+    const hooksEngine = this.services.tryResolve<HooksEngineServiceImpl>(ServiceNames.HOOKS_ENGINE);
+    if (hooksEngine) {
+      try {
+        const pre = await hooksEngine.dispatch('PreToolUse', {
+          sessionId,
+          cwd,
+          toolName: healedName,
+          toolInput:
+            args && typeof args === 'object'
+              ? (args as Record<string, unknown>)
+              : {},
+        });
+        if (pre.decision === 'deny') {
+          const blockText = `Blocked by hook: ${pre.reason ?? 'tool call denied'}`;
+          this.logger.info('agent: tool call blocked by hook', {
+            sessionId,
+            toolName: healedName,
+            reason: pre.reason,
+          });
+          this.sessions.addToolMessage(
+            this.sessions.get(sessionId)!,
+            toolCallId,
+            blockText,
+            healedName,
+            { isError: true },
+          );
+          onEvent({
+            type: 'tool-call-end',
+            sessionId,
+            toolName: healedName,
+            toolCallId,
+            result: { content: [{ type: 'text', text: blockText }], isError: true },
+          });
+          return;
+        }
+      } catch (err) {
+        this.logger.warn('agent: PreToolUse hook failed (fail-open)', {
+          sessionId,
+          toolName: healedName,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
     // 判断是否是 MCP 工具（mcp__server__tool 前缀；用自愈纠正后的名字）
     const mcpMatch = healedName.match(/^mcp__([^_]+)__(.+)$/);
     let result: ToolResult;
@@ -1042,6 +1179,47 @@ export class AgentEngineImpl implements AgentEngine {
 
     // 阶段5.1：工具执行副作用 WS 推送（todo-updated / context-updated / file-*）
     this.notifyToolSideEffects(healedName, args, sessionId, toolCallId);
+
+    // ===== 钩子事件：PostToolUse（通知型 fire-and-forget；失败仅日志） =====
+    if (hooksEngine) {
+      void hooksEngine
+        .dispatch('PostToolUse', {
+          sessionId,
+          cwd,
+          toolName: healedName,
+          toolInput:
+            args && typeof args === 'object'
+              ? (args as Record<string, unknown>)
+              : {},
+        })
+        .catch(err => {
+          this.logger.warn('agent: PostToolUse hook failed (fail-open)', {
+            sessionId,
+            toolName: healedName,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+    }
+
+    // ===== 规则引擎：文件访问登记（read/write/edit/glob/grep 成功后触发 paths 规则注入） =====
+    if (FILE_ACCESS_TOOLS.has(healedName)) {
+      try {
+        const rulesEngine = this.services.tryResolve<RulesEngineServiceImpl>(ServiceNames.RULES_ENGINE);
+        if (rulesEngine) {
+          const paths = extractToolPaths(healedName, args);
+          const session = this.sessions.get(sessionId);
+          if (paths.length > 0 && session && rulesEngine.recordFileAccess(session, paths, cwd)) {
+            this.sessions.persistSession(session);
+          }
+        }
+      } catch (err) {
+        this.logger.warn('agent: rules recordFileAccess failed', {
+          sessionId,
+          toolName: healedName,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
   }
 
   /** 工具调用自愈 WS 通知（context-healed：修复明细推前端） */

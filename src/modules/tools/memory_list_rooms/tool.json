@@ -1,0 +1,21 @@
+{
+  "name": "memory_list_rooms",
+  "description": "列出记忆宫殿结构（翼→房间→厅 的树形视图与记忆数量）。在想了解已有哪些记忆主题、决定新记忆归类到哪个房间时调用。",
+  "description_en": "List the memory palace structure (wing→room→hall tree view with counts). Call to see existing memory topics and decide where to categorize a new memory.",
+  "icon": "layout-grid",
+  "annotations": {
+    "readOnlyHint": true,
+    "idempotentHint": true
+  },
+  "inputSchema": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "config": {
+    "defaults": {
+      "enabled": true
+    },
+    "schema": {}
+  }
+}

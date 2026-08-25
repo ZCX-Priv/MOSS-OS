@@ -30,10 +30,12 @@ import {
   LogsSettings,
   AboutSettings,
   CommandsSettings,
-  PlaceholderSection,
   RenderSettingsSection,
   AnimSettingsSection,
   AppearanceSettingsSection,
+  RulesSettingsSection,
+  HooksSettingsSection,
+  MemorySettingsSection,
 } from './components/pages/SettingsPage';
 import { SearchModal } from './components/overlays/SearchModal';
 import { SidebarProvider, SidebarInset, SidebarTrigger } from '@/components/ui/sidebar';
@@ -278,15 +280,15 @@ export default function App() {
                 <Route index element={<ContextEngineSettings />} />
                 <Route path="specs" element={<SpecsSettings />} />
                 <Route path="index" element={<FileIndexSettings />} />
-                <Route path="rules" element={<PlaceholderSection section="rules" embedded />} />
-                <Route path="memory" element={<PlaceholderSection section="memory" embedded />} />
+                <Route path="rules" element={<RulesSettingsSection />} />
+                <Route path="memory" element={<MemorySettingsSection />} />
               </Route>
               <Route path="tools" element={<ToolsSettings />} />
               <Route path="safety" element={<SafetySettings />} />
               <Route path="logs" element={<LogsSettings />} />
               <Route path="about" element={<AboutSettings />} />
               <Route path="commands" element={<CommandsSettings />} />
-              <Route path="hooks" element={<PlaceholderSection section="hooks" />} />
+              <Route path="hooks" element={<HooksSettingsSection />} />
               {/* 旧路径重定向（并入 Tab 后保留兼容：搜索索引/书签仍指向旧地址） */}
               <Route path="render" element={<Navigate to="/settings/appearance/render" replace />} />
               <Route path="anim" element={<Navigate to="/settings/appearance/anim" replace />} />

@@ -1,9 +1,11 @@
 // src/modules/context/compiler/view-builder.ts
 // 消息视图构建（替代 agent/session.toUnifiedMessages）：
-//   [静态 system 前缀] + [env-context 锚定消息] + [压缩摘要消息] + [未压缩消息尾部]
+//   [静态 system 前缀] + [env-context 锚定消息] + [压缩摘要消息] + [未压缩消息尾部] + [ephemeral 尾部消息]
 // 工具结果按 tool-pruner 微压缩（仅发送视图，session 原文不动）；
 // skill message 模式的占位消息替换为注册表全文；发送前 pair-sanitize 最终配对修复。
-// 溢出兜底：预算超限时从尾部保留（env/summary 恒保留），alignWindowBoundaries 配对对齐。
+// 溢出兜底：预算超限时从尾部保留（env/summary/rules/memory 锚定恒保留），alignWindowBoundaries 配对对齐。
+// ephemeral 消息（L2 记忆召回）：仅本次请求视图、不持久化；插在消息流末尾——
+// 保住 system+env+history 的前缀缓存命中，且近因注意力聚焦召回内容（规避 lost-in-the-middle）。
 
 import type { UnifiedMessage } from '../../llm/types';
 import type {
@@ -23,6 +25,12 @@ export const COMPACTION_SUMMARY_MSG_NAME = 'compaction-summary';
 export const SKILL_INJECT_MSG_NAME = 'skill-inject';
 /** 轮数触顶提示消息 name（agent engine 写入 session；纯 UI 展示，永不发给 LLM） */
 export const MAX_TURNS_NOTICE_MSG_NAME = 'max-turns-notice';
+/** paths 规则注入锚定消息 name（与 rules 模块一致；恒保留锚定） */
+export const ACTIVE_RULES_MSG_NAME = 'active-rules';
+/** L1 关键事实锚定消息 name（与 memory 模块一致；恒保留锚定） */
+export const MEMORY_L1_MSG_NAME = 'memory-l1';
+/** L2 记忆召回临时消息 name（ephemeral；仅本次请求视图） */
+export const MEMORY_RECALL_MSG_NAME = 'memory-recall';
 
 export interface BuildViewOptions {
   toolPruning: ToolPruningConfig;
@@ -30,6 +38,8 @@ export interface BuildViewOptions {
   resolveSkillPrompt?: (name: string) => string | null;
   /** 溢出兜底预算（窗口 token；undefined = 不做兜底裁剪） */
   budgetTokens?: number;
+  /** ephemeral 尾部消息（L2 记忆召回等；不持久化，追加在消息流末尾） */
+  ephemeralMessages?: ContextMessage[];
 }
 
 export interface BuiltView {
@@ -39,12 +49,14 @@ export interface BuiltView {
   tailDropped: number;
 }
 
-/** 是否为恒保留的锚定消息（env-context / 压缩摘要 / skill 注入占位） */
+/** 是否为恒保留的锚定消息（env-context / 压缩摘要 / skill 注入占位 / 规则 / L1 记忆） */
 function isAnchorMessage(m: ContextMessage): boolean {
   return (
     m.name === ENV_CONTEXT_MSG_NAME ||
     m.name === COMPACTION_SUMMARY_MSG_NAME ||
-    m.name === SKILL_INJECT_MSG_NAME
+    m.name === SKILL_INJECT_MSG_NAME ||
+    m.name === ACTIVE_RULES_MSG_NAME ||
+    m.name === MEMORY_L1_MSG_NAME
   );
 }
 
@@ -87,12 +99,16 @@ export function buildRequestView(
     return m;
   });
 
-  // ===== 3. 溢出兜底裁剪（压缩失败/关闭时的最后防线） =====
+  // ===== 2.5 ephemeral 尾部消息（L2 记忆召回等；不参与持久化/压缩/兜底裁剪） =====
+  const ephemeral = opts.ephemeralMessages ?? [];
+
+  // ===== 3. 溢出兜底裁剪（压缩失败/关闭时的最后防线；ephemeral 不参与裁剪） =====
   let tailDropped = 0;
   let windowed = prepared;
   if (opts.budgetTokens !== undefined) {
     const systemTokens = estimateTextTokens(staticSystemPrompt);
-    const budget = opts.budgetTokens - systemTokens - 500; // 500 token 余量
+    const ephemeralTokens = ephemeral.reduce((s, m) => s + estimateMessageTokens(m), 0);
+    const budget = opts.budgetTokens - systemTokens - ephemeralTokens - 500; // 500 token 余量
     const anchors = prepared.filter(isAnchorMessage);
     const anchorTokens = anchors.reduce((s, m) => s + estimateMessageTokens(m), 0);
     const rest = prepared.filter(m => !isAnchorMessage(m));
@@ -119,9 +135,10 @@ export function buildRequestView(
 
   // ===== 4. 发送前自愈：tool_use/tool_result 配对完整性 =====
   const sanitized = sanitizeMessages(windowed);
+  const full = [...sanitized.messages, ...ephemeral];
 
   // ===== 5. 转 UnifiedMessage =====
-  const conversation: UnifiedMessage[] = sanitized.messages.map(m => ({
+  const conversation: UnifiedMessage[] = full.map(m => ({
     role: m.role,
     content: m.content,
     toolCallId: m.toolCallId,
@@ -138,10 +155,14 @@ export function buildRequestView(
   let envTokens = 0;
   let summaryTokens = 0;
   let historyTokens = 0;
-  for (const m of sanitized.messages) {
+  let rulesTokens = 0;
+  let memoryTokens = 0;
+  for (const m of full) {
     const t = estimateMessageTokens(m);
     if (m.name === ENV_CONTEXT_MSG_NAME) envTokens += t;
     else if (m.name === COMPACTION_SUMMARY_MSG_NAME) summaryTokens += t;
+    else if (m.name === ACTIVE_RULES_MSG_NAME) rulesTokens += t;
+    else if (m.name === MEMORY_L1_MSG_NAME || m.name === MEMORY_RECALL_MSG_NAME) memoryTokens += t;
     else historyTokens += t;
   }
 
@@ -152,7 +173,9 @@ export function buildRequestView(
       env: envTokens,
       summary: summaryTokens,
       history: historyTokens,
-      total: systemTokens + envTokens + summaryTokens + historyTokens,
+      rules: rulesTokens,
+      memory: memoryTokens,
+      total: systemTokens + envTokens + summaryTokens + historyTokens + rulesTokens + memoryTokens,
     },
     tailDropped,
   };

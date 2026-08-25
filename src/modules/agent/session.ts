@@ -11,7 +11,7 @@ import type { AgentMessage, RunStats } from '../contracts';
 import type { TodoItem } from '../tools/todo/shared/store';
 import type { PermissionMode } from '../safety/types';
 import type { Environment, Logger } from '../../core/types';
-import type { CompactionRecord, EnvContextInfo, SessionContextTelemetry } from '../context/types';
+import type { CompactionRecord, EnvContextInfo, SessionContextTelemetry, SessionMemoryState, SessionRulesState } from '../context/types';
 
 /** 上下文文件轨迹（与前端 ContextFile 对齐） */
 export interface ContextFile {
@@ -65,6 +65,10 @@ export interface Session {
   compactions?: CompactionRecord[];
   /** 持久化上下文遥测（context 引擎：真实 usage + 命中样本；重启恢复侧边栏/指标栏数据） */
   contextTelemetry?: SessionContextTelemetry;
+  /** 规则引擎注入状态（paths 规则去重水位；随 session 落盘） */
+  rulesState?: SessionRulesState;
+  /** 记忆引擎状态（L1 注入标记 / 召回去重 / 蒸馏水位；随 session 落盘） */
+  memoryState?: SessionMemoryState;
   /** 最近一次 run 的运行统计（run 级口径：每次发送消息重置；中控台指标栏刷新恢复用） */
   lastRunStats?: RunStats;
   /** 消息撤回（截断）恢复窗口栈（尾部为最近窗口；支持连续撤回后按栈序逐层恢复） */

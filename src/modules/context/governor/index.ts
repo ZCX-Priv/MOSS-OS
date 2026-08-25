@@ -1,7 +1,10 @@
 // src/modules/context/governor/index.ts
 // 治理器：每轮 LLM 请求前的统一流水线（engine 调用点）。
 //   1. ensureEnvContext（跨天环境追加 / 旧会话补建锚定）
-//   2. 构建静态系统提示（skill system 模式注入）
+//   1.5 ensureProjectContext（文件索引概要注入）
+//   1.7 记忆注入（memory 引擎）：L1 关键事实锚定（每会话一次）+ L2 召回（ephemeral 尾部）
+//   1.8 规则注入（rules 引擎）：always 段入系统提示（paths 规则由 agent 工具调用后直接追加锚定消息）
+//   2. 构建静态系统提示（skill system 模式注入 + always 用户规则段）
 //   3. 预览视图估算 → shouldCompact → 同步执行压缩（唯一防溢出时机）
 //   4. 溢出兜底：压缩后仍超窗 → view-builder 尾部裁剪（最后防线）
 //   5. 最终视图 + breakdown
@@ -17,10 +20,15 @@ import type {
   PreparedRequest,
 } from '../types';
 import { buildStaticSystemPrompt, buildRequestView, ensureEnvContext } from '../compiler';
+import type { RulesSectionInput } from '../compiler/system-prompt';
+import { MEMORY_L1_MSG_NAME, MEMORY_RECALL_MSG_NAME } from '../compiler/view-builder';
 import { ensureProjectContext } from '../file-index/project-context';
 import { compactSession, resolveSummaryModel } from '../compressor';
 import { estimateTextTokens, estimateMessagesTokens } from '../budgeter/estimator';
 import { shouldCompact, needsHardCeiling, compactionActive } from './triggers';
+import { buildRulesSection } from '../../rules/inject';
+import type { RulesEngineServiceImpl } from '../../rules/service';
+import type { MemoryEngineServiceImpl } from '../../memory/service';
 
 /** SkillRegistry 鸭子类型（避免直接依赖 tools 模块类型） */
 interface SkillRegistryLike {
@@ -73,6 +81,38 @@ function resolveSkillPromptFromRegistry(
   return skill.prompt;
 }
 
+/** 构建 always 用户规则段（rules 引擎可用且启用时；失败返回 null） */
+function buildRulesSectionForRequest(
+  deps: GovernorDeps,
+  config: ContextEngineConfig,
+  sessionId: string,
+  cwd: string,
+): RulesSectionInput | null {
+  const rulesEngine = deps.services.tryResolve<RulesEngineServiceImpl>(ServiceNames.RULES_ENGINE);
+  if (!rulesEngine || !config.rules.enabled) return null;
+  try {
+    const compiled = rulesEngine.getCompiledSet(cwd);
+    const text = buildRulesSection(compiled.alwaysRules);
+    if (!text) return null;
+    const alwaysTokens = estimateTextTokens(text);
+    if (alwaysTokens > config.rules.maxAlwaysTokens) {
+      deps.logger.warn('context: always rules exceed budget', {
+        sessionId,
+        alwaysTokens,
+        budget: config.rules.maxAlwaysTokens,
+      });
+      deps.onDegraded(sessionId, `always rules ${alwaysTokens} tokens exceed budget ${config.rules.maxAlwaysTokens}`);
+    }
+    return { fingerprint: compiled.fingerprint, text };
+  } catch (err) {
+    deps.logger.warn('context: rules section build failed', {
+      sessionId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+}
+
 /**
  * 请求准备流水线。失败降级（degradedReason 标注）而非抛错。
  */
@@ -109,7 +149,62 @@ export async function prepareRequest(
     }
   }
 
-  // ===== 2. 静态系统提示（skill system 模式注入）=====
+  // ===== 1.7 记忆注入（memory 引擎；模块未启用/未注册时跳过）=====
+  const memoryEngine = deps.services.tryResolve<MemoryEngineServiceImpl>(ServiceNames.MEMORY_ENGINE);
+  let ephemeralMessages: Array<import('../types').ContextMessage> | undefined;
+  if (memoryEngine && config.memory.enabled) {
+    try {
+      // L1 关键事实锚定（每会话一次；跨 run 持久）
+      const memoryState = session.memoryState;
+      if (!memoryState?.l1InjectedAt) {
+        const l1Text = memoryEngine.buildL1Section(cwd);
+        if (l1Text) {
+          session.messages.push({
+            role: 'user',
+            name: MEMORY_L1_MSG_NAME,
+            content: l1Text,
+            timestamp: new Date().toISOString(),
+          });
+        }
+        session.memoryState = {
+          ...(memoryState ?? { excludeFromRecall: [], currentRecalled: [], lastDistilledIndex: 0 }),
+          l1InjectedAt: new Date().toISOString(),
+        };
+        deps.persistSession(session);
+      }
+
+      // L2 主题召回（ephemeral 尾部消息；query = 最近一条 user 消息）。
+      // 去重语义（按消息切换）：同消息多轮间注入稳定；新消息排除上一条的召回。
+      const lastUser = [...session.messages].reverse().find(m => m.role === 'user' && !m.deletedAt && !m.compacted && !m.name);
+      if (lastUser) {
+        const recall = memoryEngine.buildRecallSection(session, lastUser.content, cwd);
+        // 消息切换（新用户输入）：持久化召回状态（每条消息仅一次，避免轮次级 IO）
+        if (recall.queryChanged) {
+          deps.persistSession(session);
+        }
+        if (recall.text && recall.count > 0) {
+          ephemeralMessages = [
+            {
+              role: 'user',
+              name: MEMORY_RECALL_MSG_NAME,
+              content: recall.text,
+              timestamp: new Date().toISOString(),
+            },
+          ];
+        }
+      }
+    } catch (err) {
+      deps.logger.warn('context: memory injection failed', {
+        sessionId: session.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  // ===== 1.8 always 用户规则段（rules 引擎；paths 规则由 agent 工具调用后追加锚定）=====
+  const rulesSection = buildRulesSectionForRequest(deps, config, session.id, cwd);
+
+  // ===== 2. 静态系统提示（skill system 模式注入 + always 用户规则段）=====
   const skillName = session.activeSkill?.mode === 'system' ? session.activeSkill.name : undefined;
   const skillPrompt = resolveSkillPromptFromRegistry(deps.services, skillName);
   const staticSystemPrompt = buildStaticSystemPrompt(
@@ -118,6 +213,7 @@ export async function prepareRequest(
     model,
     modelDisplayName,
     skillPrompt,
+    rulesSection,
   );
 
   const resolveSkill = (name: string): string | null =>
@@ -128,6 +224,7 @@ export async function prepareRequest(
       toolPruning: config.toolPruning,
       resolveSkillPrompt: resolveSkill,
       budgetTokens,
+      ...(ephemeralMessages ? { ephemeralMessages } : {}),
     });
 
   // ===== 3. 预览估算 → 压缩决策 =====
@@ -227,7 +324,7 @@ export async function manualCompact(
     deps.getApiModels(),
   );
 
-  // 静态系统提示（cache-aligned 摘要前缀）
+  // 静态系统提示（cache-aligned 摘要前缀；含 always 用户规则段）
   const skillName = input.session.activeSkill?.mode === 'system' ? input.session.activeSkill.name : undefined;
   const staticSystemPrompt = buildStaticSystemPrompt(
     deps.env,
@@ -235,6 +332,7 @@ export async function manualCompact(
     input.model,
     input.modelDisplayName,
     resolveSkillPromptFromRegistry(deps.services, skillName),
+    buildRulesSectionForRequest(deps, config, input.session.id, input.cwd),
   );
 
   deps.emitWs(input.session.id, {

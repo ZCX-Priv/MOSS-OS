@@ -1,6 +1,7 @@
 // src/modules/context/compiler/system-prompt.ts
 // 静态系统提示组装（缓存对齐布局核心）：
 // - 从 ~/.moss/agent/prompts/main/ 加载基本设定并按序拼接（soul → identity → rules → 其他 → 规范引导）
+// - always 用户规则段（rules 引擎注入）插在规范引导之前；规则集内容指纹纳入缓存键
 // - 只保留进程内静态变量（PLATFORM/CWD/model_id 等）；cur_time/cur_date 等动态变量
 //   一律移出（移至 env-context 消息），保证 system prompt 字节级稳定 → 前缀缓存命中
 // - mtime 缓存：文件未变不重复读盘；变更即进入新缓存周期
@@ -45,6 +46,14 @@ spec id 为相对路径去掉 \`.md\` 扩展名（如 "coding/typescript"）。
 先用 \`list_spec\` 发现可用规范，再用 \`get_spec\` 读取与当前任务相关的规范。
 不要读取不需要的规范。`;
 
+/** always 用户规则段（rules 引擎注入；规则集变更 = 新缓存周期，与 skill 切换同级） */
+export interface RulesSectionInput {
+  /** 规则集内容指纹（缓存键组成部分） */
+  fingerprint: string;
+  /** 段文本（无 always 规则时 null） */
+  text: string | null;
+}
+
 /** 基本设定候选文件名（不含 .md），按拼接优先级排序；每个位置取第一个存在的文件 */
 const BASE_PROMPT_CANDIDATES: ReadonlyArray<ReadonlyArray<string>> = [
   ['system', 'soul'],
@@ -59,14 +68,16 @@ const SEGMENT_TITLES: Record<string, string> = {
   soul: '工作哲学（soul）',
   identity: '身份认知（identity）',
   rules: '行为规则（rules）',
+  'user-rules': '用户规则（user rules）',
   'spec-guide': '规范引导（spec guide）',
   fallback: '基础设定（内置兜底）',
 };
 
-/** 段落缓存条目：mtime 未变时免读盘 */
+/** 段落缓存条目：mtime + 规则指纹未变时免读盘 */
 interface PromptCacheEntry {
   key: string;
   mtimeMs: number;
+  rulesFingerprint: string;
   segments: SystemSection[];
   joined: string;
 }
@@ -163,15 +174,22 @@ function promptDirMtime(userDir: string): number {
 }
 
 /**
- * 加载系统提示词分段（带 mtime 缓存）。
- * 顺序：system/soul → base/identity → rule/rules → 其他 *.md（字母序）→ 规范引导。
+ * 加载系统提示词分段（带 mtime + 规则指纹缓存）。
+ * 顺序：system/soul → base/identity → rule/rules → 其他 *.md（字母序）→ 用户规则 → 规范引导。
+ * @param rulesSection rules 引擎注入的 always 规则段（可选）
  */
-export function loadSystemPromptSegments(env: Environment): SystemSection[] {
+export function loadSystemPromptSegments(env: Environment, rulesSection?: RulesSectionInput | null): SystemSection[] {
   seedBuiltinAgentPrompts(env);
   const userDir = join(env.dataDir, 'agent', 'prompts', 'main');
   const cacheKey = userDir;
   const mtime = promptDirMtime(userDir);
-  if (promptCache && promptCache.key === cacheKey && promptCache.mtimeMs === mtime) {
+  const rulesFingerprint = rulesSection?.fingerprint ?? '';
+  if (
+    promptCache &&
+    promptCache.key === cacheKey &&
+    promptCache.mtimeMs === mtime &&
+    promptCache.rulesFingerprint === rulesFingerprint
+  ) {
     return promptCache.segments;
   }
 
@@ -226,7 +244,18 @@ export function loadSystemPromptSegments(env: Environment): SystemSection[] {
     });
   }
 
-  // 4. 规范引导（固定段落，恒在末尾）
+  // 4. always 用户规则段（rules 引擎注入；插在 spec-guide 之前）
+  if (rulesSection?.text) {
+    segments.push({
+      id: 'user-rules',
+      title: SEGMENT_TITLES['user-rules'],
+      tokens: 0,
+      content: rulesSection.text,
+      defaultOpen: false,
+    });
+  }
+
+  // 5. 规范引导（固定段落，恒在末尾）
   segments.push({
     id: 'spec-guide',
     title: SEGMENT_TITLES['spec-guide'],
@@ -235,7 +264,13 @@ export function loadSystemPromptSegments(env: Environment): SystemSection[] {
     defaultOpen: false,
   });
 
-  promptCache = { key: cacheKey, mtimeMs: mtime, segments, joined: segments.map(s => s.content).join('\n\n---\n\n') };
+  promptCache = {
+    key: cacheKey,
+    mtimeMs: mtime,
+    rulesFingerprint,
+    segments,
+    joined: segments.map(s => s.content).join('\n\n---\n\n'),
+  };
   return segments;
 }
 
@@ -243,6 +278,7 @@ export function loadSystemPromptSegments(env: Environment): SystemSection[] {
  * 构建静态系统提示词（变量替换后拼接全文）。
  * 只含进程内静态变量 → 同一进程内跨轮字节级一致（前缀缓存锚点）。
  * @param skillPrompt 可选的 skill system 模式注入内容（拼接在末尾；skill 切换=新缓存周期，低频可接受）
+ * @param rulesSection rules 引擎注入的 always 规则段（规则集变更=新缓存周期，低频可接受）
  */
 export function buildStaticSystemPrompt(
   env: Environment,
@@ -250,12 +286,19 @@ export function buildStaticSystemPrompt(
   model: string,
   modelDisplayName: string,
   skillPrompt?: string | null,
+  rulesSection?: RulesSectionInput | null,
 ): string {
   seedBuiltinAgentPrompts(env);
   const userDir = join(env.dataDir, 'agent', 'prompts', 'main');
   const mtime = promptDirMtime(userDir);
-  if (!(promptCache && promptCache.key === userDir && promptCache.mtimeMs === mtime)) {
-    loadSystemPromptSegments(env);
+  const rulesFingerprint = rulesSection?.fingerprint ?? '';
+  if (
+    !(promptCache &&
+      promptCache.key === userDir &&
+      promptCache.mtimeMs === mtime &&
+      promptCache.rulesFingerprint === rulesFingerprint)
+  ) {
+    loadSystemPromptSegments(env, rulesSection);
   }
   const joined = promptCache?.joined ?? FALLBACK_SYSTEM_PROMPT;
   const vars = collectStaticPromptVars(env, cwd, model, modelDisplayName);
@@ -270,6 +313,7 @@ export function buildStaticSystemPrompt(
  * 获取系统提示词分段（含 tokens 估算，WebUI 系统标签页数据源）。
  * @param skillName 当前活跃 skill 名（system 模式时追加该段）
  * @param resolveSkillPrompt skill 内容解析回调（从 SkillRegistry 实时解析）
+ * @param rulesSection rules 引擎注入的 always 规则段
  */
 export function getSystemSections(
   env: Environment,
@@ -278,9 +322,10 @@ export function getSystemSections(
   modelDisplayName: string,
   skillName?: string,
   resolveSkillPrompt?: (name: string) => string | null,
+  rulesSection?: RulesSectionInput | null,
 ): SystemSection[] {
   const vars = collectStaticPromptVars(env, cwd, model, modelDisplayName);
-  const segments = loadSystemPromptSegments(env).map(s => ({
+  const segments = loadSystemPromptSegments(env, rulesSection).map(s => ({
     ...s,
     content: applyVars(s.content, vars),
   }));

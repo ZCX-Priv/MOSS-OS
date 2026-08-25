@@ -30,6 +30,9 @@ import { DEFAULT_CONTEXT_CONFIG, TELEMETRY_BUFFER_SIZE as BUFFER_SIZE } from '..
 import { TokenCalibrator } from '../budgeter/calibration';
 import { estimateTextTokens, messagesChars, parseContextWindow } from '../budgeter/estimator';
 import { buildStaticSystemPrompt, buildRequestView, getSystemSections } from '../compiler';
+import type { RulesSectionInput } from '../compiler/system-prompt';
+import { buildRulesSection } from '../../rules/inject';
+import type { RulesEngineServiceImpl } from '../../rules/service';
 import { ENV_CONTEXT_MSG_NAME } from '../compiler/env-context';
 import { healToolCall, type HealRegistryLike } from '../healer';
 import {
@@ -142,6 +145,9 @@ export class ContextEngineServiceImpl {
       healer: { ...DEFAULT_CONTEXT_CONFIG.healer, ...ctx.healer },
       telemetry: { ...DEFAULT_CONTEXT_CONFIG.telemetry, ...ctx.telemetry },
       fileIndex: ctx.fileIndex ?? DEFAULT_CONTEXT_CONFIG.fileIndex,
+      rules: { ...DEFAULT_CONTEXT_CONFIG.rules, ...ctx.rules },
+      hooks: { ...DEFAULT_CONTEXT_CONFIG.hooks, ...ctx.hooks },
+      memory: { ...DEFAULT_CONTEXT_CONFIG.memory, ...ctx.memory },
     };
   }
 
@@ -177,6 +183,7 @@ export class ContextEngineServiceImpl {
       opts.modelDisplayName,
       skillName,
       name => this.resolveSkillPrompt(name),
+      this.buildRulesSectionForTelemetry(opts.cwd),
     );
     const sentChars = messagesChars(
       prepared.messages.map(m => ({
@@ -343,7 +350,7 @@ export class ContextEngineServiceImpl {
     }
     const breakdown =
       t.lastBreakdown ??
-      ({ system: 0, env: 0, summary: 0, history: 0, total: 0 } as ContextBreakdown);
+      ({ system: 0, env: 0, summary: 0, history: 0, rules: 0, memory: 0, total: 0 } as ContextBreakdown);
     const windowTokens = t.lastWindowTokens || this.resolveWindowTokens(this.resolveMainModel());
     const compactedMessages = session.messages.filter(m => m.compacted).length;
     const activeSummary = session.messages.find(
@@ -517,12 +524,14 @@ export class ContextEngineServiceImpl {
       const cwd = this.lastCwd ?? process.cwd();
       const skillName =
         session.activeSkill?.mode === 'system' ? session.activeSkill.name : undefined;
+      const rulesSection = this.buildRulesSectionForTelemetry(cwd);
       const staticSystemPrompt = buildStaticSystemPrompt(
         this.env,
         cwd,
         model,
         model,
         this.resolveSkillPrompt(skillName),
+        rulesSection,
       );
       const view = buildRequestView(session, staticSystemPrompt, {
         toolPruning: this.getConfig().toolPruning,
@@ -537,12 +546,27 @@ export class ContextEngineServiceImpl {
         model,
         skillName,
         name => this.resolveSkillPrompt(name),
+        rulesSection,
       );
     } catch (err) {
       this.logger.warn('context: recompute view failed', {
         sessionId: session.id,
         error: err instanceof Error ? err.message : String(err),
       });
+    }
+  }
+
+  /** 构建 always 用户规则段（遥测/系统标签页展示用；rules 引擎不可用返回 null） */
+  private buildRulesSectionForTelemetry(cwd: string): RulesSectionInput | null {
+    try {
+      const rulesEngine = this.services.tryResolve<RulesEngineServiceImpl>(ServiceNames.RULES_ENGINE);
+      if (!rulesEngine) return null;
+      const compiled = rulesEngine.getCompiledSet(cwd);
+      const text = buildRulesSection(compiled.alwaysRules);
+      if (!text) return null;
+      return { fingerprint: compiled.fingerprint, text };
+    } catch {
+      return null;
     }
   }
 

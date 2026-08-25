@@ -1,0 +1,55 @@
+{
+  "name": "memory_save",
+  "description": "保存一条长期记忆到记忆宫殿。当你发现值得跨会话记住的信息时调用：用户的稳定偏好、关键决策及理由、项目重要约束、踩过的坑、被验证有效的方案。hall 分类：decision=决策、event=事件、discovery=发现、preference=偏好、suggestion=建议。preference/suggestion 自动存入全局 user 翼；其余存入当前项目翼。",
+  "description_en": "Save a long-term memory to the memory palace. Call when you find information worth remembering across sessions: stable user preferences, key decisions with rationale, important project constraints, pitfalls encountered, validated solutions. hall categories: decision, event, discovery, preference, suggestion. preference/suggestion go to the global 'user' wing; others go to the current project wing.",
+  "icon": "brain",
+  "annotations": {
+    "readOnlyHint": false,
+    "idempotentHint": false
+  },
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "room": {
+        "type": "string",
+        "description": "主题房间名（英文小写连字符，如 context-engine、api-design、deployment；同类主题保持同名以形成关联）",
+        "description_en": "Topic room name (lowercase hyphenated, e.g. context-engine, api-design, deployment; keep same name for related topics to form tunnels)"
+      },
+      "hall": {
+        "type": "string",
+        "enum": ["decision", "event", "discovery", "preference", "suggestion"],
+        "description": "记忆分类",
+        "description_en": "Memory category"
+      },
+      "verbatim": {
+        "type": "string",
+        "description": "对话中的原文片段（保留关键原话，供追溯）",
+        "description_en": "Original text fragment from the conversation (keep key verbatim quotes for traceability)"
+      },
+      "insight": {
+        "type": "string",
+        "description": "一句话洞察（将来注入上下文的内容，要自包含、无歧义）",
+        "description_en": "One-sentence insight (this is what gets injected into future contexts; make it self-contained and unambiguous)"
+      },
+      "tags": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "标签（可选，便于过滤）",
+        "description_en": "Tags (optional, for filtering)"
+      },
+      "importance": {
+        "type": "number",
+        "description": "重要性 0-1（>=0.75 进入关键事实常驻层；默认 0.5）",
+        "description_en": "Importance 0-1 (>=0.75 enters the always-on key facts layer; default 0.5)"
+      }
+    },
+    "required": ["room", "hall", "insight"],
+    "additionalProperties": false
+  },
+  "config": {
+    "defaults": {
+      "enabled": true
+    },
+    "schema": {}
+  }
+}

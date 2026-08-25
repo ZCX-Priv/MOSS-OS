@@ -190,6 +190,208 @@ export interface ContextEngineConfig {
   telemetry: { enabled: boolean };
   /** 文件索引模块（三引擎；可选，旧 config 无此段时视为全关） */
   fileIndex?: FileIndexConfig;
+  /** 用户规则引擎（可选，旧 config 无此段时用默认值） */
+  rules?: RulesEngineConfig;
+  /** 生命周期钩子引擎（可选，旧 config 无此段时用默认值） */
+  hooks?: HooksEngineConfig;
+  /** 记忆引擎（可选，旧 config 无此段时用默认值） */
+  memory?: MemoryEngineConfig;
+}
+
+/** config.context.rules 段（规则引擎） */
+export interface RulesEngineConfig {
+  enabled: boolean;
+  maxAlwaysTokens: number;
+  maxInjectPerSession: number;
+}
+
+/** config.context.hooks 段（钩子引擎） */
+export interface HooksEngineConfig {
+  enabled: boolean;
+  defaultTimeout: number;
+}
+
+/** config.context.memory 段（记忆引擎） */
+export interface MemoryEngineConfig {
+  enabled: boolean;
+  distillModel: string;
+  distillMinMessages: number;
+  recallTopK: number;
+  recallTokenBudget: number;
+  l1ImportanceThreshold: number;
+  l1MaxEntries: number;
+}
+
+// ============================================================================
+// 规则引擎类型（与后端 src/modules/rules/types.ts 对齐）
+// ============================================================================
+
+export type RuleScope = 'global' | 'project';
+
+/** 单条规则（GET/POST /api/rules） */
+export interface RuleItem {
+  id: string;
+  name: string;
+  description: string;
+  content: string;
+  /** glob 模式列表；空 = always 规则 */
+  paths: string[];
+  enabled: boolean;
+  priority: number;
+  createdAt: string;
+  updatedAt: string;
+  scope: RuleScope;
+}
+
+/** 规则列表响应 */
+export interface RulesListResult {
+  project: RuleItem[];
+  global: RuleItem[];
+  dirs: { global: string; project: string };
+}
+
+/** 规则写入 body */
+export interface RuleUpsertBody {
+  name: string;
+  description?: string;
+  content: string;
+  paths?: string[];
+  scope?: RuleScope;
+  enabled?: boolean;
+  priority?: number;
+}
+
+// ============================================================================
+// 钩子引擎类型（与后端 src/modules/hooks/types.ts 对齐）
+// ============================================================================
+
+export type HookEvent =
+  | 'SessionStart'
+  | 'UserPromptSubmit'
+  | 'PreToolUse'
+  | 'PostToolUse'
+  | 'Stop'
+  | 'SessionEnd';
+
+export type HookType = 'shell' | 'module';
+
+/** 单个钩子定义 */
+export interface HookItem {
+  id: string;
+  name: string;
+  event: HookEvent;
+  matcher: string | null;
+  type: HookType;
+  command: string;
+  modulePath: string;
+  timeout: number;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+  scope: RuleScope;
+}
+
+/** 钩子列表响应 */
+export interface HooksListResult {
+  project: HookItem[];
+  global: HookItem[];
+  events: HookEvent[];
+  scripts: { project: string[]; global: string[] };
+}
+
+/** 钩子写入 body */
+export interface HookUpsertBody {
+  name: string;
+  event: HookEvent;
+  matcher?: string | null;
+  type: HookType;
+  command?: string;
+  modulePath?: string;
+  timeout?: number;
+  enabled?: boolean;
+  scope?: RuleScope;
+}
+
+/** 钩子测试触发结果 */
+export interface HookTestResult {
+  ok: boolean;
+  decision: 'allow' | 'deny' | null;
+  reason?: string;
+  durationMs: number;
+  error?: string;
+  stdout?: string;
+}
+
+/** 钩子执行历史条目 */
+export interface HookHistoryEntry {
+  hookId: string;
+  hookName: string;
+  event: HookEvent;
+  at: string;
+  durationMs: number;
+  ok: boolean;
+  decision: 'allow' | 'deny' | null;
+  error?: string;
+  stdout?: string;
+}
+
+// ============================================================================
+// 记忆引擎类型（与后端 src/modules/memory/types.ts 对齐）
+// ============================================================================
+
+export type MemoryHall = 'decision' | 'event' | 'discovery' | 'preference' | 'suggestion';
+
+/** 单条记忆 */
+export interface MemoryItem {
+  id: string;
+  wing: string;
+  room: string;
+  hall: MemoryHall;
+  verbatim: string;
+  insight: string;
+  source: { sessionId?: string; taskId?: string; at: string };
+  tags: string[];
+  importance: number;
+  pinned: boolean;
+  accessCount: number;
+  lastAccessedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+  scope: RuleScope;
+}
+
+/** 宫殿树 */
+export interface MemoryPalaceTree {
+  wings: Array<{
+    wing: string;
+    scope: RuleScope;
+    rooms: Array<{
+      room: string;
+      count: number;
+      halls: Array<{ hall: MemoryHall; count: number }>;
+    }>;
+    total: number;
+  }>;
+}
+
+/** 记忆写入 body */
+export interface MemoryUpsertBody {
+  wing?: string;
+  room: string;
+  hall: MemoryHall;
+  verbatim?: string;
+  insight: string;
+  tags?: string[];
+  importance?: number;
+  pinned?: boolean;
+}
+
+/** 手动蒸馏结果 */
+export interface MemoryDistillResult {
+  created: number;
+  merged: number;
+  skipped: boolean;
+  reason?: string;
 }
 
 /** 文件索引配置（config.context.fileIndex） */
@@ -248,6 +450,10 @@ export interface ContextBreakdown {
   env: number;
   summary: number;
   history: number;
+  /** paths 规则注入消息（active-rules 锚定）；旧后端无此字段时为 0 */
+  rules?: number;
+  /** 记忆召回消息（memory-l1 锚定 + memory-recall 临时）；旧后端无此字段时为 0 */
+  memory?: number;
   total: number;
 }
 

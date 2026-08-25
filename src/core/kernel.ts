@@ -37,6 +37,9 @@ import fileHistory from '../modules/file-history';
 import daemon from '../modules/daemon';
 import automation from '../modules/automation';
 import context from '../modules/context';
+import rules from '../modules/rules';
+import hooks from '../modules/hooks';
+import memory from '../modules/memory';
 
 const MODULE_INIT_TIMEOUT_MS = 30_000;
 const MODULE_DESTROY_TIMEOUT_MS = 10_000;
@@ -50,8 +53,9 @@ const MODULE_DESTROY_TIMEOUT_MS = 10_000;
  *   排在 server 之后不阻塞端口可用；MCP 连接本身已后台化。
  * - filesys → 无服务依赖（agent 构造时订阅其事件总线，须先于 agent 注册）
  * - safety → 无服务依赖（agent 执行工具前统一权限决策，须先于 agent 注册）
+ * - rules / hooks / memory → 无服务依赖（context/agent 经 tryResolve 消费，须先于二者注册）
  * - context → llm（压缩摘要调用 LLMRouter；agent 每轮请求经其流水线，须先于 agent 注册）
- * - agent → llm, tools, filesys, safety, context
+ * - agent → llm, tools, filesys, safety, context, rules, hooks, memory
  * - file-history → tools, filesys（shell 快照回填运行时 tryResolve）
  * - daemon → server
  * - automation → agent, server
@@ -65,6 +69,9 @@ const MODULE_FACTORIES: Array<{ name: string; create: () => Module }> = [
   { name: 'update', create: update },
   { name: 'filesys', create: filesys },
   { name: 'safety', create: safety },
+  { name: 'rules', create: rules },
+  { name: 'hooks', create: hooks },
+  { name: 'memory', create: memory },
   { name: 'context', create: context },
   { name: 'agent', create: agent },
   { name: 'file-history', create: fileHistory },
