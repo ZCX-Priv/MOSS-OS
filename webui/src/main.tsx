@@ -19,15 +19,22 @@ type ThemeMode = 'light' | 'dark' | 'system';
 async function initTheme() {
   try {
     const stored = await idbGet<ThemeMode>('moss-theme');
-    const mode = stored === 'light' || stored === 'dark' || stored === 'system' ? stored : 'dark';
+    const mode = stored === 'light' || stored === 'dark' || stored === 'system' ? stored : 'system';
     const resolved = mode === 'system'
       ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
       : mode;
     document.documentElement.classList.toggle('dark', resolved === 'dark');
+    // 补写 localStorage 快照：供 index.html boot 骨架首帧判定主题（消除白→黑突变）
+    try {
+      localStorage.setItem('moss-theme-fast', mode);
+    } catch {
+      // 快照写失败不影响本次启动
+    }
   } catch (err) {
-    // 启动兜底：主题读取失败按默认深色渲染，不阻塞应用启动
-    console.warn('initTheme failed, fallback to dark:', err);
-    document.documentElement.classList.add('dark');
+    // 启动兜底：主题读取失败跟随系统偏好渲染，不阻塞应用启动
+    console.warn('initTheme failed, fallback to system preference:', err);
+    const resolved = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.classList.toggle('dark', resolved === 'dark');
   }
 }
 

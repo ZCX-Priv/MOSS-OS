@@ -5,6 +5,14 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* 应用为 h-svh 固定视口布局（App 全树 overflow-hidden、内部容器自管理滚动），
+   文档级永不滚动：锁死 html/body 滚动条，根除任何阶段（boot/splash/App 渲染间隙）
+   滚动条闪现导致的视口宽度跳变（"加载完成后猛烈缩放"根因） */
+html,
+body {
+  overflow: hidden;
+}
+
 :root {
   --radius: 0.625rem;
 

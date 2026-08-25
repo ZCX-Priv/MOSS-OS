@@ -38,6 +38,7 @@ import {
   MemorySettingsSection,
 } from './components/pages/SettingsPage';
 import { SearchModal } from './components/overlays/SearchModal';
+import { SplashScreen } from './components/shared/SplashScreen';
 import { SidebarProvider, SidebarInset, SidebarTrigger } from '@/components/ui/sidebar';
 import { Button } from '@/components/ui/button';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -149,6 +150,8 @@ export default function App() {
 
   return (
     <TooltipProvider>
+      {/* 入场加载屏：接管 index.html boot 骨架，进度完成后淡出（每会话一次） */}
+      <SplashScreen />
       <SidebarProvider className="h-svh min-h-0 overflow-hidden">
         <Sidebar onOpenOverlay={openOverlay} />
         <SidebarInset className="min-h-0 overflow-hidden">

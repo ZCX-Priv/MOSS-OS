@@ -7,28 +7,156 @@
     <meta name="theme-color" content="#18181b" />
     <link rel="icon" type="image/png" href="/MOSS.png" />
     <title>MOSS</title>
+    <script>
+      /* 启动主题判定：localStorage 快照（moss-theme-fast）优先，无值/异常跟随系统偏好。
+         须在 body 渲染前同步执行，保证 boot 骨架首帧底色正确，消除白→黑突变。 */
+      (function () {
+        var theme = 'dark';
+        try {
+          var stored = localStorage.getItem('moss-theme-fast');
+          var dark =
+            stored === 'dark' ||
+            ((stored === 'system' || !stored) &&
+              window.matchMedia('(prefers-color-scheme: dark)').matches);
+          theme = dark ? 'dark' : 'light';
+        } catch (e) {
+          /* localStorage 不可用（隐私模式等）：默认暗色 */
+        }
+        document.documentElement.dataset.bootTheme = theme;
+      })();
+    </script>
   </head>
   <body>
     <div id="root">
       <!-- 启动加载骨架：主 bundle 加载期间可见（React createRoot().render() 后自动替换）。
-           内联样式，不依赖外部 CSS/CSS 变量——首字节即渲染，弱网下消除纯白屏。 -->
-      <div id="moss-boot" style="min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;background:#09090b;color:#e4e4e7;font-family:system-ui,sans-serif;">
-        <div style="display:flex;align-items:center;gap:10px;">
-          <span style="display:inline-block;width:22px;height:22px;border:2px solid #3f3f46;border-top-color:#e4e4e7;border-radius:50%;animation:moss-spin .8s linear infinite;"></span>
-          <span style="font-size:15px;font-weight:600;letter-spacing:0.5px;">MOSS</span>
+           仅 boot DOM 放在 #root 内（React 接管时替换它）；
+           样式在 #root 外（见下方 <style>），React 接管后持续生效，无样式真空期。 -->
+      <div id="moss-boot">
+        <img class="moss-boot-logo" src="/MOSS.png" alt="MOSS" width="80" height="80" />
+        <div class="moss-boot-wordmark">
+          <span class="moss-boot-word">MOSS</span>
+          <span class="moss-boot-dot" style="animation-delay: 0s"></span>
+          <span class="moss-boot-dot" style="animation-delay: 0.15s"></span>
+          <span class="moss-boot-dot" style="animation-delay: 0.3s"></span>
         </div>
-        <span style="font-size:12px;color:#a1a1aa;">正在加载 / Loading…</span>
+        <div class="moss-boot-status">正在加载 / Loading…</div>
       </div>
-      <style>
-        @keyframes moss-spin {
-          to { transform: rotate(360deg); }
-        }
-        @media (prefers-color-scheme: light) {
-          #moss-boot { background: #ffffff; color: #18181b; }
-          #moss-boot span:last-child { color: #52525b; }
-        }
-      </style>
     </div>
+    <style>
+      /* 全局重置与背景兜底：preflight 尚未加载的窗口期内消除 body 默认 margin 白边；
+         html 背景始终为主题色，任何瞬间都不露白底。
+         overflow:hidden：锁死文档级滚动条——100vh 在 Windows DPI 缩放下取整可溢出 1px，
+         滚动条占位 ~17px 视口宽，出现/消失时视口宽度骤变导致居中内容横跳（"猛烈缩放"根因）。 */
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+      }
+      html {
+        overflow: hidden;
+        background: oklch(0.145 0 0);
+      }
+      html[data-boot-theme='light'] {
+        background: oklch(1 0 0);
+      }
+      #moss-boot {
+        /* dvh：精确视口高度（DPI 缩放取整不溢出）；不支持 dvh 时 min-height:100vh 兜底 */
+        height: 100dvh;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background: oklch(0.145 0 0);
+        font-family: system-ui, sans-serif;
+      }
+      html[data-boot-theme='light'] #moss-boot {
+        background: oklch(1 0 0);
+      }
+      .moss-boot-logo {
+        width: 80px;
+        height: 80px;
+        animation: moss-boot-logo 0.4s ease-out both;
+      }
+      .moss-boot-wordmark {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 24px;
+        animation: moss-boot-up 0.4s ease-out 0.1s both;
+      }
+      .moss-boot-word {
+        font-size: 26px;
+        font-weight: 600;
+        letter-spacing: 0.3em;
+        /* 抵消字距尾随空隙，让右侧圆点视觉贴合 */
+        margin-right: -0.3em;
+        color: #fafafa;
+      }
+      html[data-boot-theme='light'] .moss-boot-word {
+        color: #18181b;
+      }
+      .moss-boot-dot {
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: #3b82f6;
+        animation: moss-boot-dot 1.2s ease-in-out infinite;
+      }
+      html[data-boot-theme='light'] .moss-boot-dot {
+        background: #2563eb;
+      }
+      .moss-boot-status {
+        margin-top: 20px;
+        font-size: 13px;
+        color: #71717a;
+        font-variant-numeric: tabular-nums;
+        animation: moss-boot-up 0.4s ease-out 0.2s both;
+      }
+      @keyframes moss-boot-logo {
+        from {
+          opacity: 0;
+          transform: scale(0.92);
+        }
+        to {
+          opacity: 1;
+          transform: scale(1);
+        }
+      }
+      @keyframes moss-boot-up {
+        from {
+          opacity: 0;
+          transform: translateY(6px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+      @keyframes moss-boot-dot {
+        0%,
+        60%,
+        100% {
+          transform: translateY(0);
+          opacity: 0.45;
+        }
+        30% {
+          transform: translateY(-6px);
+          opacity: 1;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .moss-boot-logo,
+        .moss-boot-wordmark,
+        .moss-boot-status {
+          animation: none;
+        }
+        .moss-boot-dot {
+          animation: none;
+          opacity: 0.7;
+        }
+      }
+    </style>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

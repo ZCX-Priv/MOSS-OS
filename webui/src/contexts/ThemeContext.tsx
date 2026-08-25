@@ -25,6 +25,8 @@ interface ThemeContextValue {
 const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
 
 const STORAGE_KEY = 'moss-theme';
+/** localStorage 快照 key：供 index.html boot 骨架首帧同步判定主题（IndexedDB 是异步的，boot 阶段读不到） */
+const THEME_SNAPSHOT_KEY = 'moss-theme-fast';
 
 function getSystemTheme(): ResolvedTheme {
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
@@ -91,6 +93,12 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       originRef.current = origin;
       setModeState(newMode);
       void idbSet(STORAGE_KEY, newMode);
+      // 同步写 localStorage 快照：供下次启动时 boot 骨架首帧判定主题
+      try {
+        localStorage.setItem(THEME_SNAPSHOT_KEY, newMode);
+      } catch {
+        // 快照写失败不影响主题切换
+      }
     },
     [],
   );

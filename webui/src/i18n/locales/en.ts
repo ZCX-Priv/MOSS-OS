@@ -22,6 +22,12 @@ export const en = {
     loading: 'Loading…',
     save: 'Save',
   },
+  splash: {
+    loading: 'Loading',
+    config: 'Loading config',
+    connect: 'Connecting',
+    ready: 'Almost ready',
+  },
   sidebar: {
     newTask: 'New Task',
     pluginLibrary: 'Plugins',

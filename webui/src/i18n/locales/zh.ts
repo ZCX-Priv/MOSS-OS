@@ -22,6 +22,12 @@ export const zh = {
     loading: '加载中…',
     save: '保存',
   },
+  splash: {
+    loading: '正在加载',
+    config: '正在加载配置',
+    connect: '正在连接服务',
+    ready: '即将就绪',
+  },
   sidebar: {
     newTask: '新建任务',
     pluginLibrary: '插件库',

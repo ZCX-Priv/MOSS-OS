@@ -100,7 +100,11 @@ export class StaticAssets {
       },
       body,
     };
-    this.cache.set(filePath, resp);
+    // 仅可变内容（hashed 文件名）进内存缓存；no-cache 文件（index.html/sw.js/manifest）
+    // 每次读盘——否则重新 build 前端后旧 index.html 会从内存"复活"（须重启后端才能更新）
+    if (!noCache) {
+      this.cache.set(filePath, resp);
+    }
     return resp;
   }
 }
