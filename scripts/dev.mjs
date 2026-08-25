@@ -4,7 +4,7 @@
 //
 // - 后端：bun run --watch src/main.ts start --foreground --log-level debug
 //   （文件改动自动重启）
-// - 前端：vite（5173 端口，代理 /api 与 /ws 到后端 7766）
+// - 前端：vite（3000 端口，代理 /api 与 /ws 到后端 7766）
 //
 // Ctrl+C 优雅退出，关闭所有子进程。
 

@@ -2,6 +2,8 @@
 
 > 本文档基于新前端 `webui/`（React 19 + shadcn/ui）与现有后端 `src/modules/server/` 的现状，梳理**需要迁移的接口**、**需要新增的接口**、**前端需新增的模块**与**后端需新增的模组**，作为后续实施的契约依据。
 >
+> **注**：本文档第一章为迁移启动时的历史快照，仅供追溯；文中标注"🆕 新增"的多数接口与模组（tasks/agenteam/automation/skills/specs/todos/version/search 等）现已实现，以 `src/modules/server/routes/` 实际代码为准。`/api/plugins`、`/api/extensions` 等扩展管理接口从未实施（系统无插件机制）。
+>
 > 配套文档：[architecture.md](./architecture.md)（系统总览）
 
 ---
@@ -48,11 +50,11 @@
 已注册但**未暴露 HTTP**的后端服务：
 - `SkillRegistry`（`skill.registry`）—— Skills 已加载但无查询接口
 - `SpecRegistry`（`spec.registry`）—— Specs 已加载但无查询接口
-- `kernel.extensions` —— 扩展状态查询（仅 /api/health 间接暴露）
+- `kernel.modules` —— 模块状态查询（仅 /api/health 间接暴露）
 
-**完全缺失的后端模组**（architecture.md 已规划但未实现）：
-- `agents` 模组（Agent CRUD）
-- `automation` 模组（定时任务调度）
+**当时完全缺失的后端模组**（迁移启动时的状态，现已实现）：
+- `agenteam` 模组（Agent CRUD）
+- `automation` 模组（cron/once 定时任务调度）
 
 ---
 
@@ -109,9 +111,7 @@ GET /api/health
   services: string[];
   uptime: number;
   modules: number;
-  plugins: number;
   moduleStates: Record<string, string>;
-  pluginStates: Record<string, string>;
 }
 ```
 
@@ -262,27 +262,11 @@ interface AgentDetail extends AgentItem {
 
 #### 3.2.4 插件管理（PluginMarketPage）
 
-> 复用 `kernel.extensions`，新增扩展启用/禁用持久化（`~/.moss/extensions.json`）。
+> 此规划**未实施**：系统不存在插件机制，无 `/api/plugins` 路由。PluginMarketPage 实际对接 Skills 管理（`/api/skills` 系列）与 MCP 服务器管理（`/api/mcp/*` + config 更新）。
 
-```
-GET    /api/plugins                    → { plugins: PluginItem[] }
-GET    /api/plugins/:id                → PluginDetail
-PATCH  /api/plugins/:id                ← { enabled?: boolean } → PluginItem
-```
-
-**类型定义**：
-```ts
-interface PluginItem {
-  id: string;
-  name: string;
-  description: string;
-  iconGradient?: string;    // 前端展示用渐变色（可由后端配置或前端硬编码）
-  enabled: boolean;
-  builtIn: boolean;
-  type: 'module' | 'plugin';
-  version?: string;
-}
-```
+~~GET    /api/plugins                    → { plugins: PluginItem[] }~~
+~~GET    /api/plugins/:id                → PluginDetail~~
+~~PATCH  /api/plugins/:id                ← { enabled?: boolean } → PluginItem~~
 
 #### 3.2.5 Skills 查询（PluginMarketPage-Skills 标签）
 
@@ -384,28 +368,16 @@ interface AutomationTemplate {
 }
 ```
 
-#### 3.2.8 扩展状态（SettingsPage-About + 插件管理）
+#### 3.2.8 扩展状态（SettingsPage-About）
 
-```
-GET    /api/extensions                 → { modules: ExtensionState[]; plugins: ExtensionState[]; activeCount: number }
-PATCH  /api/extensions/:name           ← { enabled?: boolean } → { name: string; enabled: boolean }
-```
+> 此规划**未实施**：无 `/api/extensions` 路由与启用/禁用持久化。模块状态实际经 `GET /api/health` 的 `moduleStates` 字段暴露（数据源为 `kernel.modules` 服务的 `getList()`，仅含 name/state，无启用/禁用控制）。
 
-**类型定义**：
-```ts
-interface ExtensionState {
-  name: string;
-  version: string;
-  description?: string;
-  type: 'module' | 'plugin';
-  state: 'loaded' | 'initializing' | 'active' | 'destroying' | 'shutdown' | 'error';
-  enabled: boolean;
-}
-```
+~~GET    /api/extensions                 → { modules: ExtensionState[]; plugins: ExtensionState[]; activeCount: number }~~
+~~PATCH  /api/extensions/:name           ← { enabled?: boolean } → { name: string; enabled: boolean }~~
 
 #### 3.2.9 Todo 管理（TaskRunningPage 右侧面板）
 
-> 后端 `tools/todo.ts` 已有工具实现，持久化到 `~/.moss/todos.json`。新增 HTTP 接口供前端直接读写。
+> 后端 `tools/todo/` 已有工具实现，会话级持久化到 `~/.moss/todo/<sessionId>.json`。新增 HTTP 接口供前端直接读写。
 
 ```
 GET    /api/todos/:sessionId           → { todos: TodoItem[] }
@@ -477,7 +449,6 @@ GET    /api/version                    → { version: string; commit?: string; b
 | `automation.started` | 自动化任务开始运行 | `{ automationId, runId }` |
 | `automation.finished` | 自动化任务运行结束 | `{ automationId, runId, status, finalText? }` |
 | `config.changed` | 配置文件热重载通知 | `{ which: 'app' \| 'api' }` |
-| `extension.changed` | 扩展启用状态变更 | `{ name, enabled }` |
 
 ---
 
@@ -530,8 +501,9 @@ export interface Session {
 
 export interface AppConfig {
   version: number;
-  server: { host: string; port: number; autoPort: boolean };
-  daemon: { enabled: boolean; logLevel: string };
+  server: { host: string; port: number; autoPort: boolean; locale?: string };
+  daemon: { enabled: boolean };
+  logs: { level: string; retentionDays: number; maxFileMb: number };
   update: { autoCheck: boolean; channel: 'stable' | 'beta'; checkIntervalHours: number };
   agent: { defaultModel: string; maxTokens: number; maxTurns: number; workingDirectory: string };
   tools: Record<string, { enabled: boolean; requireConfirmation?: boolean; timeout?: number }>;
@@ -541,18 +513,30 @@ export interface AppConfig {
 
 export type ThinkingEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 
+export interface ProviderModelConfig {
+  id: string;               // 内部唯一 id，如 "model_1734..."
+  name: string;             // 显示名，如 "GPT-4o"
+  model: string;            // 发送给 API 的模型名，如 "gpt-4o"
+  thinking: { enabled: boolean; effort?: string; label?: string; budgetTokens?: number };
+  inputTokens?: number;
+  outputTokens?: number;
+  temperature?: number;
+  topP?: number;
+  topK?: number;
+}
+
 export interface ProviderConfig {
+  id: string;               // 内部唯一 id，如 "provider_1734..."
+  name: string;             // 显示名，如 "OpenAI"
   format: 'openai-chat' | 'openai-responses' | 'anthropic' | 'gemini';
   endpoint: string;
   apiKey: string;
-  models: string[];
-  thinking: { enabled: boolean; effort?: ThinkingEffort; budgetTokens?: number };
+  models: ProviderModelConfig[];
 }
 
 export interface ApiConfig {
-  version: number;
-  defaultProvider: string;
-  providers: Record<string, ProviderConfig>;
+  version: number;          // 2 = providers 数组结构（旧版 1 扁平结构自动迁移）
+  providers: ProviderConfig[];
 }
 
 // ============================================================================
@@ -606,13 +590,12 @@ export interface ContextFile {
 }
 
 // ============================================================================
-// 模型 / Agent / 插件 / Skill / Spec / 自动化（新增，见 3.2.x）
+// 模型 / Agent / Skill / Spec / 自动化（新增，见 3.2.x）
 // ============================================================================
 
 export interface ModelItem { /* 见 3.2.2 */ }
 export interface AgentItem { /* 见 3.2.3 */ }
 export interface AgentDetail extends AgentItem { /* 见 3.2.3 */ }
-export interface PluginItem { /* 见 3.2.4 */ }
 export interface SkillItem { /* 见 3.2.5 */ }
 export interface SkillDetail extends SkillItem { /* 见 3.2.5 */ }
 export interface SpecItem { /* 见 3.2.6 */ }
@@ -620,7 +603,6 @@ export interface SpecDetail extends SpecItem { /* 见 3.2.6 */ }
 export interface AutomationItem { /* 见 3.2.7 */ }
 export interface AutomationRun { /* 见 3.2.7 */ }
 export interface AutomationTemplate { /* 见 3.2.7 */ }
-export interface ExtensionState { /* 见 3.2.8 */ }
 
 // ============================================================================
 // WebSocket 消息类型（迁移 + 新增）
@@ -671,7 +653,6 @@ webui/src/
 │   ├── useModels.ts         # 模型列表 + 当前选择
 │   ├── useAgents.ts         # Agent 列表 + 切换
 │   ├── useAutomations.ts    # 自动化 CRUD + 历史
-│   ├── usePlugins.ts        # 插件列表 + 启用状态
 │   ├── useSkills.ts         # Skills 查询
 │   ├── useSpecs.ts          # Specs 查询
 │   ├── useTodos.ts          # 任务 todo 实时更新（WS）
@@ -713,16 +694,7 @@ webui/src/
 
 **职责**：自定义 Agent 的 CRUD，持久化到 `~/.moss/agenteam.json`。
 
-**清单** `module.json`：
-```json
-{
-  "name": "agents",
-  "version": "1.0.0",
-  "description": "Agent 注册表（CRUD）",
-  "type": "module",
-  "dependencies": {}
-}
-```
+**注册方式**：模组无清单文件，由内核静态 import 编排（见 architecture.md 3.2 模组系统）。
 
 **注册服务**：`agenteam.registry`（`AgentRegistry` 接口：list/get/create/update/delete/setDefault）
 
@@ -731,18 +703,9 @@ webui/src/
 
 ### 7.2 `src/modules/automation/` 模组（新建）
 
-**职责**：cron 定时任务调度，到点触发 agent.run，持久化到 `~/.moss/automations.json` + `~/.moss/automations-history.json`。
+**职责**：cron/once 定时任务调度，到点触发 agent.run，持久化到 `~/.moss/automations.json` + `~/.moss/automations-history.json`。
 
-**清单** `module.json`：
-```json
-{
-  "name": "automation",
-  "version": "1.0.0",
-  "description": "自动化任务调度（cron）",
-  "type": "module",
-  "dependencies": { "agent": "1.0.0", "server": "1.0.0" }
-}
-```
+**注册方式**：同上，内核静态 import 编排。
 
 **注册服务**：`automation.service`（`AutomationService` 接口：list/get/create/update/delete/trigger/pause/resume/history）
 
@@ -756,12 +719,12 @@ webui/src/
 ### 7.3 现有模组扩展
 
 #### server 模组
-- `routes/` 新增：`tasks.ts`、`models.ts`、`plugins.ts`、`skills.ts`、`specs.ts`、`extensions.ts`、`todos.ts`、`version.ts`
+- `routes/` 新增：`tasks.ts`、`models.ts`、`skills.ts`、`specs.ts`、`todos.ts`、`version.ts`（注：`plugins.ts`、`extensions.ts` 未实施）
 - `ws-handler.ts` 新增：`task.create` / `task.switch` / `automation.run` 入站消息处理
-- 推送新增：`todo-updated` / `context-updated` / `file-created` / `file-edited` / `config.changed` / `extension.changed`
+- 推送新增：`todo-updated` / `context-updated` / `file-created` / `file-edited` / `config.changed`（注：`extension.changed` 未实施）
 
 #### agent 模组
-- `session.ts` 扩展：任务元信息持久化（`~/.moss/tasks.json`），支持分组
+- 任务元信息持久化实际由 `task-store.ts`（TaskStore）实现：`~/.moss/tasks/<groupId>/` 分组目录，支持分组
 - 工具执行时通过 `server.instance.sendToSession` 推送 `todo-updated` / `context-updated` / `file-created` / `file-edited`
 
 #### tools 模组
@@ -774,13 +737,14 @@ webui/src/
 
 | 路径 | 用途 | 格式 | 负责模组 |
 |---|---|---|---|
-| `~/.moss/tasks.json` | 任务元信息（分组、标题） | JSON | agent 模组扩展 |
-| `~/.moss/agenteam.json` | 自定义 Agent 列表 | JSON | agents 模组（新） |
-| `~/.moss/automations.json` | 自动化任务 | JSON | automation 模组（新） |
-| `~/.moss/automations-history.json` | 自动化运行历史 | JSON | automation 模组（新） |
-| `~/.moss/extensions.json` | 扩展启用/禁用配置 | JSON | kernel / server |
+| `~/.moss/tasks/<groupId>/` | 任务分组目录（task.json 为任务元信息） | JSON | agent 模组（TaskStore） |
+| `~/.moss/tasks/<groupId>/<sessionId>.json` | 会话历史（每会话一文件） | JSON | agent 模组（SessionStore） |
+| `~/.moss/agenteam.json` | 自定义 Agent 列表 | JSON | agenteam 模组 |
+| `~/.moss/automations.json` | 自动化任务 | JSON | automation 模组 |
+| `~/.moss/automations-history.json` | 自动化运行历史 | JSON | automation 模组 |
+| `~/.moss/todo/<sessionId>.json` | 会话级 Todo 列表（每会话一文件） | JSON | tools 模组（todo 工具） |
 
-> `~/.moss/todos.json` 已存在，复用。
+> 注：规划中的 `~/.moss/tasks.json`（单文件任务元信息）实际实现为 `~/.moss/tasks/<groupId>/` 分组目录结构；`~/.moss/extensions.json`（扩展启用/禁用）未实施。
 
 ---
 
@@ -813,8 +777,8 @@ webui/src/
 16. 前端 useTask 订阅新事件，TaskRunningPage 右侧面板实时更新
 17. automation 模组推送 `automation.started` / `automation.finished`
 
-### 阶段 6：插件管理 + 收尾
-18. 新增 `routes/plugins.ts`，对接 PluginMarketPage（启用/禁用 Switch）
+### 阶段 6：收尾
+18. ~~新增 `routes/plugins.ts`，对接 PluginMarketPage（启用/禁用 Switch）~~（未实施：系统无插件机制，PluginMarketPage 改为对接 Skills 与 MCP 管理）
 19. 配置热重载 WS 推送 `config.changed`，前端 useConfig 订阅自动刷新
 20. 移除 `webui/` 旧前端（确认新前端功能完备后）
 
@@ -834,12 +798,10 @@ webui/src/
 | 搜索 | GET | /api/search | 🆕 新增 |
 | 模型 | GET/PUT/POST/PATCH/DELETE | /api/models, /api/models/current, /api/models/:id | 🆕 新增 |
 | Agent | GET/POST/GET/PATCH/DELETE/PUT | /api/agenteam, /api/agenteam/:id, /api/agenteam/default | 🆕 新增 |
-| 插件 | GET/GET/PATCH | /api/plugins, /api/plugins/:id | 🆕 新增 |
 | Skills | GET/GET | /api/skills, /api/skills/:name | 🆕 新增 |
 | Specs | GET/GET | /api/specs, /api/specs/:id | 🆕 新增 |
 | 自动化 | GET/POST/GET/PATCH/DELETE/POST/GET | /api/automations, /api/automations/:id, .../:id/{trigger,pause,resume,history} | 🆕 新增 |
 | 自动化模板 | GET | /api/automation-templates | 🆕 新增 |
-| 扩展 | GET/PATCH | /api/extensions, /api/extensions/:name | 🆕 新增 |
 | Todo | GET/PUT | /api/todos/:sessionId | 🆕 新增 |
 | 上下文 | GET | /api/sessions/:id/context | 🆕 新增 |
 | 版本 | GET | /api/version | 🆕 新增 |
@@ -866,4 +828,3 @@ webui/src/
 | task.created / task.updated | 任务变更 | 🆕 新增 |
 | automation.started / finished | 自动化运行 | 🆕 新增 |
 | config.changed | 配置热重载 | 🆕 新增 |
-| extension.changed | 扩展状态变更 | 🆕 新增 |

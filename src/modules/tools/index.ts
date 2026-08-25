@@ -1,5 +1,5 @@
 // src/modules/tools/index.ts
-// Tools 模块入口：注册 ToolRegistry + 内置工具 + SkillRegistry。
+// Tools 模块入口：注册 ToolRegistry + 内置工具 + Skill/Command/Spec 三注册表。
 // 工具从 tools 目录的「tool.json + index.ts」结构加载，新增工具只需加目录。
 // 支持配置热重载（enabled 变更即时生效）和文件级增量热重载（tool.json/index.ts 变更即时生效）。
 
