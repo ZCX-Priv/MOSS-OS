@@ -6,7 +6,7 @@ import type { ProviderModelItem, ThinkingLevelItem } from '../types/api';
 export type EffortLevel = 'off' | 'low' | 'medium' | 'high' | 'custom';
 
 /**
- * 默认思考强度等级库（provider.thinkingLevels 未定义时生效；与后端 DEFAULT_THINKING_LEVELS 一致）。
+ * 默认思考强度等级库（model.thinkingLevels 未定义时生效；与后端 DEFAULT_THINKING_LEVELS 一致）。
  * 有序：位置越靠后档位越高；effort==='off' 选中时表示关闭思考。
  */
 export const DEFAULT_LEVELS: ThinkingLevelItem[] = [

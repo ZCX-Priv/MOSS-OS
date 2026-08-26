@@ -8,6 +8,7 @@ export const en = {
     voiceInput: 'Voice Input',
     search: 'Search',
     default: 'Default',
+    current: 'Current',
     enable: 'Enable',
     close: 'Off',
     open: 'On',

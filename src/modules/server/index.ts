@@ -449,6 +449,9 @@ class ServerModule implements Module {
       server = BunAny.serve({
       port,
       hostname: host,
+      // 顶层（HTTP 请求）：Bun 默认 10s 空闲即断连接，慢接口（文件索引 rebuild、
+      // provider 拉模型等）会被中途杀掉；60s 对本地 API 安全
+      idleTimeout: 60,
       async fetch(req: Request, srv: BunServer): Promise<Response> {
         // WebSocket 升级
         const url = new URL(req.url);
@@ -467,6 +470,14 @@ class ServerModule implements Module {
         return handleHttp(req, router, logger);
       },
       websocket: {
+        // 空闲超时（秒）：远大于前端 15s 应用层心跳 → 正常连接永不触发；
+        // 兼做僵尸连接兜底清理（静默消失的客户端 60s 后回收）。
+        // 注意：必须放在 websocket 块内，顶层放置会被 Bun 静默忽略
+        idleTimeout: 60,
+        // 禁用 Bun 自动协议层 ping：与 idleTimeout 协同存在 bug
+        // （oven-sh/bun#26554：ping 超时导致非优雅关闭 → 代理层 ECONNRESET）。
+        // 探活由前端应用层心跳（15s ping / 30s timeout）全权负责
+        sendPings: false,
         open(ws: BunWebSocket & { data: { connId: string } }) {
           const id = ws.data?.connId ?? crypto.randomUUID();
           const conn: WSConnection = {

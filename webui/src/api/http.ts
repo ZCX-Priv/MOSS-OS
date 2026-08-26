@@ -392,6 +392,7 @@ export const api = {
       temperature?: number;
       topP?: number;
       topK?: number;
+      thinkingLevels?: ThinkingLevelItem[];
     }>,
   ) =>
     request<{ provider: ProviderItem; added: number }>(

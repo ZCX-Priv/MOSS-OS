@@ -61,6 +61,25 @@ export default defineConfig({
       '/ws': {
         target: backendWs,
         ws: true,
+        // 后端重启（--watch）/ 连接被重置时的善后：http-proxy 默认只报错不作为，
+        // 浏览器侧 socket 挂死 → 前端要等 30s 心跳超时才发现死链。
+        // 主动 end() 客户端侧 → 前端立即 onclose → ~1s 后自动重连
+        configure(proxy) {
+          const closeClientSide = (resOrSocket: unknown) => {
+            const maybe = resOrSocket as { end?: unknown } | null;
+            if (maybe && typeof maybe.end === 'function') {
+              (maybe.end as () => void)();
+            }
+          };
+          // http-proxy 专用事件：ECONNRESET（后端重启/连接重置）
+          proxy.on('econnreset', (_err, _req, resOrSocket) => closeClientSide(resOrSocket));
+          // 兜底：其它代理错误（如后端未启动 ECONNREFUSED）同样关闭客户端侧；
+          // ECONNRESET 已由上方专用事件处理，跳过避免重复
+          proxy.on('error', (err, _req, resOrSocket) => {
+            if ((err as NodeJS.ErrnoException).code === 'ECONNRESET') return;
+            closeClientSide(resOrSocket);
+          });
+        },
       },
     },
   },

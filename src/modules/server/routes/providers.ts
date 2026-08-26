@@ -193,7 +193,6 @@ export function createUpdateProviderHandler(config: ConfigService): RouteHandler
       balanceUrl?: string;
       modelsUrl?: string;
       icon?: string;
-      thinkingLevels?: ThinkingLevelConfig[];
       services?: ProviderServiceConfig[];
     };
     try {
@@ -203,17 +202,6 @@ export function createUpdateProviderHandler(config: ConfigService): RouteHandler
         return { status: 404, body: { error: ErrorCode.PROVIDER_NOT_FOUND } };
       }
       const existing = apiConfig.providers[idx];
-
-      // thinkingLevels 专项校验：至少保留 1 个等级，每条 id/label/effort 非空
-      if (body.thinkingLevels !== undefined) {
-        const levels = body.thinkingLevels;
-        if (!Array.isArray(levels) || levels.length === 0) {
-          return { status: 400, body: { error: 'THINKING_LEVELS_KEEP_ONE' } };
-        }
-        if (levels.some((l) => !l.id?.trim() || !l.label?.trim() || !l.effort?.trim())) {
-          return { status: 400, body: { error: 'THINKING_LEVELS_INVALID' } };
-        }
-      }
 
       const newProvider: ProviderConfig = {
         id: existing.id,
@@ -245,63 +233,7 @@ export function createUpdateProviderHandler(config: ConfigService): RouteHandler
             ? { icon: existing.icon }
             : {}),
         ...(body.services !== undefined ? { services: body.services } : {}),
-        ...(body.thinkingLevels !== undefined ? { thinkingLevels: body.thinkingLevels } : {}),
       };
-
-      // thinkingLevels 变更：原子回退旗下使用被删等级的模型
-      let models = existing.models;
-      if (body.thinkingLevels !== undefined) {
-        const oldLevels = existing.thinkingLevels ?? DEFAULT_THINKING_LEVELS;
-        const oldEfforts = new Set(oldLevels.map((l) => l.effort));
-        const newEfforts = new Set(body.thinkingLevels.map((l) => l.effort));
-        const removed = oldLevels.filter((l) => !newEfforts.has(l.effort));
-        if (removed.length > 0) {
-          // 回退目标映射：被删等级 → 原列表前一个（更低档）；最低档则后一个
-          const fallbackMap = new Map<string, ThinkingLevelConfig>();
-          for (let i = 0; i < oldLevels.length; i++) {
-            const lvl = oldLevels[i];
-            if (newEfforts.has(lvl.effort)) continue;
-            const prev = i > 0 ? oldLevels[i - 1] : undefined;
-            const next = i + 1 < oldLevels.length ? oldLevels[i + 1] : undefined;
-            const target = prev ?? next;
-            if (target && newEfforts.has(target.effort)) {
-              fallbackMap.set(lvl.effort, target);
-            } else if (target) {
-              // 目标也被删（连环删）：沿原列表继续向前找
-              let j = i - 1;
-              let found: ThinkingLevelConfig | undefined;
-              while (j >= 0) {
-                if (newEfforts.has(oldLevels[j].effort)) { found = oldLevels[j]; break; }
-                j--;
-              }
-              if (!found) {
-                j = i + 1;
-                while (j < oldLevels.length) {
-                  if (newEfforts.has(oldLevels[j].effort)) { found = oldLevels[j]; break; }
-                  j++;
-                }
-              }
-              if (found) fallbackMap.set(lvl.effort, found);
-            }
-          }
-          if (fallbackMap.size > 0) {
-            models = existing.models.map((m) => {
-              const target = m.thinking.enabled && m.thinking.effort
-                ? fallbackMap.get(m.thinking.effort)
-                : undefined;
-              if (!target) return m;
-              return {
-                ...m,
-                thinking:
-                  target.effort === 'off'
-                    ? { enabled: false }
-                    : { enabled: true, effort: target.effort, label: target.label },
-              };
-            });
-          }
-        }
-      }
-      newProvider.models = models;
 
       const newProviders = [...apiConfig.providers];
       newProviders[idx] = newProvider;
@@ -391,6 +323,8 @@ type ProviderModelInput = {
   temperature?: number;
   topP?: number;
   topK?: number;
+  /** 模型级思考强度等级库（整组写回；undefined = 不修改） */
+  thinkingLevels?: ThinkingLevelConfig[];
 };
 
 /** 单个模型输入 → ProviderModelConfig（不含 id，由调用方决定生成或保留） */
@@ -410,6 +344,7 @@ function buildModelConfig(
     ...(input.temperature !== undefined ? { temperature: input.temperature } : {}),
     ...(input.topP !== undefined ? { topP: input.topP } : {}),
     ...(input.topK !== undefined ? { topK: input.topK } : {}),
+    ...(input.thinkingLevels !== undefined ? { thinkingLevels: input.thinkingLevels } : {}),
   };
 }
 
@@ -468,6 +403,16 @@ export function createUpdateProviderModelHandler(config: ConfigService): RouteHa
     }
     const body = (req.body ?? {}) as ProviderModelInput;
     try {
+      // thinkingLevels 专项校验：至少保留 1 个等级，每条 id/label/effort 非空
+      if (body.thinkingLevels !== undefined) {
+        const levels = body.thinkingLevels;
+        if (!Array.isArray(levels) || levels.length === 0) {
+          return { status: 400, body: { error: 'THINKING_LEVELS_KEEP_ONE' } };
+        }
+        if (levels.some((l) => !l.id?.trim() || !l.label?.trim() || !l.effort?.trim())) {
+          return { status: 400, body: { error: 'THINKING_LEVELS_INVALID' } };
+        }
+      }
       const apiConfig = config.getApiConfig();
       const pIdx = apiConfig.providers.findIndex((p) => p.id === providerId);
       if (pIdx < 0) {
@@ -479,11 +424,38 @@ export function createUpdateProviderModelHandler(config: ConfigService): RouteHa
         return { status: 404, body: { error: ErrorCode.MODEL_NOT_FOUND } };
       }
       const existing = provider.models[mIdx];
+      // thinking 合并；thinkingLevels 变更后若模型当前档被删 → 原子回退到相邻档位
+      let nextThinking = mergeThinking(existing.thinking, body.thinking);
+      if (body.thinkingLevels !== undefined) {
+        const newEfforts = new Set(body.thinkingLevels.map((l) => l.effort));
+        const curEffort = nextThinking.effort;
+        if (nextThinking.enabled && curEffort && !newEfforts.has(curEffort)) {
+          const oldLevels = existing.thinkingLevels ?? DEFAULT_THINKING_LEVELS;
+          const i = oldLevels.findIndex((l) => l.effort === curEffort);
+          if (i >= 0) {
+            // 回退目标：原列表前一个（更低档）；无则向后找；均需存在于新库
+            let target: ThinkingLevelConfig | undefined;
+            for (let j = i - 1; j >= 0; j--) {
+              if (newEfforts.has(oldLevels[j].effort)) { target = oldLevels[j]; break; }
+            }
+            if (!target) {
+              for (let j = i + 1; j < oldLevels.length; j++) {
+                if (newEfforts.has(oldLevels[j].effort)) { target = oldLevels[j]; break; }
+              }
+            }
+            if (target) {
+              nextThinking = target.effort === 'off'
+                ? { enabled: false }
+                : { enabled: true, effort: target.effort, label: target.label };
+            }
+          }
+        }
+      }
       const newModel: ProviderModelConfig = {
         id: existing.id,
         name: body.name ?? existing.name,
         model: body.model ?? existing.model,
-        thinking: mergeThinking(existing.thinking, body.thinking),
+        thinking: nextThinking,
         ...(body.contextWindow !== undefined
           ? { contextWindow: body.contextWindow }
           : existing.contextWindow !== undefined
@@ -513,6 +485,11 @@ export function createUpdateProviderModelHandler(config: ConfigService): RouteHa
           ? { topK: body.topK }
           : existing.topK !== undefined
             ? { topK: existing.topK }
+            : {}),
+        ...(body.thinkingLevels !== undefined
+          ? { thinkingLevels: body.thinkingLevels }
+          : existing.thinkingLevels !== undefined
+            ? { thinkingLevels: existing.thinkingLevels }
             : {}),
       };
       const newModels = [...provider.models];

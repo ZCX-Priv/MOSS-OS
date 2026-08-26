@@ -27,6 +27,12 @@ import { DEFAULT_CONTEXT_CONFIG } from '../modules/context/types';
 
 const logLevelSchema = z.enum(['debug', 'info', 'warn', 'error', 'fatal']);
 
+const thinkingLevelSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  effort: z.string().min(1),
+});
+
 const providerThinkingSchema = z.object({
   enabled: z.boolean(),
   effort: z.string().optional(),
@@ -45,12 +51,7 @@ const providerModelConfigSchema = z.object({
   temperature: z.number().min(0).max(2).optional(),
   topP: z.number().min(0).max(1).optional(),
   topK: z.number().int().min(0).max(100).optional(),
-});
-
-const thinkingLevelSchema = z.object({
-  id: z.string().min(1),
-  label: z.string().min(1),
-  effort: z.string().min(1),
+  thinkingLevels: z.array(thinkingLevelSchema).optional(),
 });
 
 const providerServiceSchema = z.object({
@@ -72,7 +73,6 @@ const providerConfigSchema = z.object({
   balanceUrl: z.string().optional(),
   modelsUrl: z.string().optional(),
   icon: z.string().optional(),
-  thinkingLevels: z.array(thinkingLevelSchema).optional(),
   services: z.array(providerServiceSchema).optional(),
   models: z.array(providerModelConfigSchema).default([]),
 });

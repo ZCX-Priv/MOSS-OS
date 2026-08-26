@@ -650,8 +650,6 @@ export interface ProviderItem {
   modelsUrl?: string;
   /** 品牌图标 key（@lobehub/icons 的 provider key；空 = 默认 Server 图标） */
   icon?: string;
-  /** 思考强度等级库（服务商级，有序；undefined = 默认库 [off,low,medium,high]） */
-  thinkingLevels?: ThinkingLevelItem[];
   /** 附加服务（文件存储等） */
   services?: ProviderServiceItem[];
   models: ProviderModelItem[];
@@ -678,6 +676,8 @@ export interface ProviderModelItem {
   /** Top K 0-100；0 表示不发送 */
   topK?: number;
   thinking: ModelThinking;
+  /** 思考强度等级库（模型级，有序：位置越靠后档位越高；undefined = 默认库 [off,low,medium,high]） */
+  thinkingLevels?: ThinkingLevelItem[];
 }
 
 /** 远程模型列表项（POST /api/providers/:id/models/fetch 归一化结果） */

@@ -8,6 +8,7 @@ export const zh = {
     voiceInput: '语音输入',
     search: '搜索',
     default: '默认',
+    current: '当前',
     enable: '启用',
     close: '关闭',
     open: '开启',

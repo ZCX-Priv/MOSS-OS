@@ -42,6 +42,7 @@ import {
   useSortable,
   arrayMove,
   verticalListSortingStrategy,
+  horizontalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { cn } from '@/lib/utils';
@@ -662,7 +663,7 @@ function SortableProviderCard({
                       <span className="truncate text-xs text-muted-foreground">{model.model}</span>
                       {isSelected && (
                         <Badge variant="secondary" className="font-normal">
-                          {t('common.default')}
+                          {t('common.current')}
                         </Badge>
                       )}
                     </div>
@@ -1044,7 +1045,7 @@ function IconPicker({ value, onChange }: { value: string; onChange: (icon: strin
   );
 }
 
-/* ===== 思考强度标签组（服务商级等级库：单选 + 可增删 + 删除回退 + 保底 1 个） ===== */
+/* ===== 思考强度标签组（模型级等级库：单选 + 可增删 + 拖拽排序 + 删除回退 + 保底 1 个） ===== */
 interface ThinkingLevelTagsProps {
   /** 有效等级库（调用方已 fallback DEFAULT_LEVELS） */
   levels: ThinkingLevelItem[];
@@ -1052,8 +1053,74 @@ interface ThinkingLevelTagsProps {
   value: ProviderModelItem['thinking'];
   /** 选中等级（单选生效） */
   onThinkingChange: (thinking: ProviderModelItem['thinking']) => void;
-  /** 等级库变更（增/删，整组写回 provider） */
+  /** 等级库变更（增/删/拖拽排序，整组写回模型） */
   onLevelsChange: (levels: ThinkingLevelItem[]) => void;
+}
+
+/** 可拖拽排序的思考等级标签（点击选档 + x 删除 + 拖拽重排） */
+function SortableTag({
+  level,
+  isCurrent,
+  canRemove,
+  onSelect,
+  onRemove,
+  deleteLabel,
+  currentLabel,
+}: {
+  level: ThinkingLevelItem;
+  isCurrent: boolean;
+  canRemove: boolean;
+  onSelect: () => void;
+  onRemove: () => void;
+  deleteLabel: string;
+  currentLabel: string;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: level.id,
+  });
+  return (
+    <span
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      {...attributes}
+      {...listeners}
+      className={cn(
+        'group/tag relative inline-flex cursor-grab touch-none select-none items-center gap-1 rounded-md border py-1 pl-2.5 pr-2 text-xs transition-colors',
+        isCurrent
+          ? 'border-primary bg-primary text-primary-foreground'
+          : 'border-border text-foreground hover:bg-muted',
+        canRemove && 'pr-6',
+        isDragging && 'z-10 opacity-60 shadow-md ring-1 ring-ring',
+      )}
+    >
+      <button
+        type="button"
+        className="transition-opacity"
+        onClick={onSelect}
+      >
+        {level.label}
+      </button>
+      {isCurrent && (
+        <span className="rounded-sm bg-primary-foreground/20 px-1.5 py-px text-[10px] leading-none">
+          {currentLabel}
+        </span>
+      )}
+      {canRemove && (
+        <button
+          type="button"
+          aria-label={deleteLabel}
+          title={deleteLabel}
+          onClick={onRemove}
+          className={cn(
+            'absolute right-1.5 top-1/2 -translate-y-1/2 rounded-full p-0.5 opacity-40 transition-opacity hover:opacity-100',
+            isCurrent && 'opacity-70',
+          )}
+        >
+          <X className="size-3" />
+        </button>
+      )}
+    </span>
+  );
 }
 
 export function ThinkingLevelTags({ levels, value, onThinkingChange, onLevelsChange }: ThinkingLevelTagsProps) {
@@ -1061,6 +1128,8 @@ export function ThinkingLevelTags({ levels, value, onThinkingChange, onLevelsCha
   const [adding, setAdding] = useState(false);
   const [newLabel, setNewLabel] = useState('');
   const [newEffort, setNewEffort] = useState('');
+  // 拖拽排序：移动 4px 激活（与点击选档区分）
+  const dragSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
 
   /** 当前生效的 effort 值（enabled=false 视为 off） */
   const currentEffort = value.enabled ? value.effort : 'off';
@@ -1101,6 +1170,16 @@ export function ThinkingLevelTags({ levels, value, onThinkingChange, onLevelsCha
     setAdding(false);
   };
 
+  /** 拖拽排序：整组按新顺序写回（顺序即档位高低） */
+  const handleTagDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = levels.findIndex((l) => l.id === active.id);
+    const newIndex = levels.findIndex((l) => l.id === over.id);
+    if (oldIndex < 0 || newIndex < 0) return;
+    onLevelsChange(arrayMove(levels, oldIndex, newIndex));
+  };
+
   /** 当前值不在等级库（历史数据/等级被删）：额外渲染一个"当前值"标签 */
   const orphanEffort =
     currentEffort !== 'off' && !levels.some((l) => l.effort === currentEffort)
@@ -1111,70 +1190,42 @@ export function ThinkingLevelTags({ levels, value, onThinkingChange, onLevelsCha
     <div className="flex flex-col gap-1.5">
       <Label>{t('settings.provider.thinkingLevel')}</Label>
       <div className="flex flex-wrap items-center gap-1.5">
-        {levels.map((level, index) => {
-          const isCurrent = currentEffort === level.effort;
-          // 当前选中的等级不可删（正在使用）；保底：至少保留 1 个（length<=1 时全不可删）
-          const canRemove = levels.length > 1 && !isCurrent;
-          return (
-            <span
-              key={level.id}
-              className={cn(
-                'group/tag relative inline-flex items-center gap-1 rounded-md border py-1 pl-2.5 pr-2 text-xs transition-colors',
-                isCurrent
-                  ? 'border-primary bg-primary text-primary-foreground'
-                  : 'border-border text-foreground hover:bg-muted',
-                canRemove && 'pr-6',
-              )}
-            >
-              <button
-                type="button"
-                className="transition-opacity"
-                onClick={() => selectLevel(level)}
-              >
-                {level.label}
-              </button>
-              {isCurrent && (
-                <span className="rounded-sm bg-primary-foreground/20 px-1.5 py-px text-[10px] leading-none">
-                  {t('settings.provider.current')}
-                </span>
-              )}
-              {canRemove && (
-                <button
-                  type="button"
-                  aria-label={t('settings.provider.delete')}
-                  title={t('settings.provider.delete')}
-                  onClick={() => removeLevel(index)}
-                  className={cn(
-                    'absolute right-1.5 top-1/2 -translate-y-1/2 rounded-full p-0.5 opacity-40 transition-opacity hover:opacity-100',
-                    isCurrent && 'opacity-70',
-                  )}
-                >
-                  <X className="size-3" />
-                </button>
-              )}
-            </span>
-          );
-        })}
+        <DndContext sensors={dragSensors} collisionDetection={closestCenter} onDragEnd={handleTagDragEnd}>
+          <SortableContext items={levels.map((l) => l.id)} strategy={horizontalListSortingStrategy}>
+            {levels.map((level, index) => (
+              <SortableTag
+                key={level.id}
+                level={level}
+                isCurrent={currentEffort === level.effort}
+                canRemove={levels.length > 1 && currentEffort !== level.effort}
+                onSelect={() => selectLevel(level)}
+                onRemove={() => removeLevel(index)}
+                deleteLabel={t('settings.provider.delete')}
+                currentLabel={t('settings.provider.current')}
+              />
+            ))}
+          </SortableContext>
 
-        {/* 孤儿值：当前 effort 不在等级库（历史数据），显示为只读标签 */}
-        {orphanEffort !== null && (
-          <span className="inline-flex items-center gap-1 rounded-md border border-primary bg-primary text-primary-foreground py-1 pl-2.5 pr-2 text-xs">
-            {orphanEffort}
-            <span className="rounded-sm bg-primary-foreground/20 px-1.5 py-px text-[10px] leading-none">
-              {t('settings.provider.current')}
+          {/* 孤儿值：当前 effort 不在等级库（历史数据），显示为只读标签（不参与排序） */}
+          {orphanEffort !== null && (
+            <span className="inline-flex items-center gap-1 rounded-md border border-primary bg-primary text-primary-foreground py-1 pl-2.5 pr-2 text-xs">
+              {orphanEffort}
+              <span className="rounded-sm bg-primary-foreground/20 px-1.5 py-px text-[10px] leading-none">
+                {t('settings.provider.current')}
+              </span>
             </span>
-          </span>
-        )}
+          )}
 
-        {/* 添加按钮 */}
-        <button
-          type="button"
-          onClick={() => setAdding((p) => !p)}
-          className="inline-flex items-center gap-0.5 rounded-md border border-dashed border-border py-1 pl-2.5 pr-2 text-xs text-muted-foreground transition-colors hover:border-ring hover:text-foreground"
-        >
-          <Plus className="size-3" />
-          {t('settings.provider.addLevel')}
-        </button>
+          {/* 添加按钮（不参与排序） */}
+          <button
+            type="button"
+            onClick={() => setAdding((p) => !p)}
+            className="inline-flex items-center gap-0.5 rounded-md border border-dashed border-border py-1 pl-2.5 pr-2 text-xs text-muted-foreground transition-colors hover:border-ring hover:text-foreground"
+          >
+            <Plus className="size-3" />
+            {t('settings.provider.addLevel')}
+          </button>
+        </DndContext>
       </div>
 
       {/* 添加输入区（内联展开） */}
@@ -1701,6 +1752,8 @@ interface ModelDraft {
   topP: number;
   topK: number;
   thinking: ProviderModelItem['thinking'];
+  /** 模型级思考强度等级库草稿（undefined = 默认库） */
+  thinkingLevels?: ThinkingLevelItem[];
 }
 
 interface ProviderModelDialogProps {
@@ -1722,20 +1775,20 @@ function ProviderModelDialog({
   const { t } = useTranslation();
   const isEdit = !!editingModel;
   const isBatch = !editingModel && !!batchModels && batchModels.length > 0;
-  const { addProviderModels, updateProviderModel, updateProvider } = useProviders();
+  const { addProviderModels, updateProviderModel } = useProviders();
 
   /** 统一草稿数组：单模型场景长度恒为 1；批量场景每页一项（切页暂存不丢失） */
   const [drafts, setDrafts] = useState<ModelDraft[]>([]);
   const [page, setPage] = useState(0);
   const [submitting, setSubmitting] = useState(false);
 
-  /** 有效等级库（未配置 = 默认库） */
-  const levels = provider.thinkingLevels ?? DEFAULT_LEVELS;
   const draft = drafts[page];
+  /** 有效等级库（草稿未配置 = 默认库；本地草稿更新保证增删/排序即时显示） */
+  const levels = draft?.thinkingLevels ?? DEFAULT_LEVELS;
 
   /** 新建默认草稿：输入 200000 / 输出 128000 / 思考等级 high（label 取等级库定义） */
   const makeDefaultDraft = (name: string, model: string): ModelDraft => {
-    const highLevel = levels.find((l) => l.effort === 'high');
+    const highLevel = DEFAULT_LEVELS.find((l) => l.effort === 'high');
     return {
       name,
       model,
@@ -1765,6 +1818,7 @@ function ProviderModelDialog({
           topP: editingModel.topP ?? 1.0,
           topK: editingModel.topK ?? 0,
           thinking: editingModel.thinking,
+          thinkingLevels: editingModel.thinkingLevels,
         },
       ]);
     } else if (batchModels && batchModels.length > 0) {
@@ -1781,11 +1835,14 @@ function ProviderModelDialog({
     setDrafts((prev) => prev.map((d, i) => (i === page ? { ...d, ...patch } : d)));
   };
 
-  /** 等级库变更（ThinkingLevelTags 增/删）→ 整组写回 provider */
+  /** 等级库变更（增/删/拖拽排序）→ 写入草稿即时显示；编辑模式同步落库（模型级独立存储） */
   const handleLevelsChange = (next: ThinkingLevelItem[]) => {
-    void updateProvider(provider.id, { thinkingLevels: next }).catch(() => {
-      // 错误已由 hook toast
-    });
+    updateDraft({ thinkingLevels: next });
+    if (editingModel) {
+      void updateProviderModel(provider.id, editingModel.id, { thinkingLevels: next }).catch(() => {
+        // 错误已由 hook toast
+      });
+    }
   };
 
   const handleSubmit = async () => {
@@ -1809,6 +1866,7 @@ function ProviderModelDialog({
         topP: d.topP,
         topK: d.topK,
         thinking: d.thinking,
+        thinkingLevels: d.thinkingLevels,
       });
       if (isEdit && editingModel) {
         const d = drafts[0];

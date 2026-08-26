@@ -271,20 +271,13 @@ export interface ProviderConfig {
   modelsUrl?: string;
   /** 品牌图标 key（@lobehub/icons 的 provider key，如 'openai'；空 = 默认 Server 图标） */
   icon?: string;
-  /**
-   * 思考强度等级库（服务商级，有序：位置越靠后档位越高）。
-   * 预设初始库为 [off, low, medium, high]，全部可增删（至少保留 1 个）。
-   * effort==='off' 的等级选中时表示关闭思考（thinking.enabled=false）。
-   * undefined = 使用默认库（前端 fallback 渲染，不写盘）；一旦增删过即整体持久化。
-   */
-  thinkingLevels?: ThinkingLevelConfig[];
   /** 附加服务（文件存储等） */
   services?: ProviderServiceConfig[];
   models: ProviderModelConfig[];
 }
 
 /**
- * 服务商思考强度等级（等级库条目）。
+ * 思考强度等级（等级库条目）。
  * 预设档 id 固定 'off'/'low'/'medium'/'high'；自定义档 level_{ts}_{rand}。
  */
 export interface ThinkingLevelConfig {
@@ -337,6 +330,13 @@ export interface ProviderModelConfig {
   topP?: number;
   /** Top K 0-100；0 表示不发送 */
   topK?: number;
+  /**
+   * 思考强度等级库（模型级，有序：位置越靠后档位越高）。
+   * 预设初始库为 [off, low, medium, high]，全部可增删（至少保留 1 个）。
+   * effort==='off' 的等级选中时表示关闭思考（thinking.enabled=false）。
+   * undefined = 使用默认库（前端 fallback 渲染，不写盘）；一旦增删过即整体持久化。
+   */
+  thinkingLevels?: ThinkingLevelConfig[];
 }
 
 /**

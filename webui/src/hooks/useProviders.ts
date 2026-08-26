@@ -104,9 +104,7 @@ export function useProviders() {
   );
 
   const updateProvider = useCallback(
-    async (id: string, patch: Partial<Omit<ProviderItem, 'id' | 'models'>> & {
-      thinkingLevels?: ThinkingLevelItem[];
-    }) => {
+    async (id: string, patch: Partial<Omit<ProviderItem, 'id' | 'models'>>) => {
       try {
         const provider = await api.updateProvider(id, patch);
         await load();
@@ -208,6 +206,7 @@ export function useProviders() {
         temperature?: number;
         topP?: number;
         topK?: number;
+        thinkingLevels?: ThinkingLevelItem[];
       }>,
     ) => {
       try {

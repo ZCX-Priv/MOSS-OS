@@ -5,6 +5,7 @@ import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Loader2 } from 'lucide-react';
 import { useStore } from '../../store';
+import { useTheme } from '../../contexts/ThemeContext';
 import type { TaskMessage, ToolCall, ToolResult } from '../../types/api';
 import { ansiToHtml, parseShellResult, parseShellCommand } from '@/lib/ansi';
 
@@ -44,7 +45,7 @@ export function TerminalView({ toolCallId }: TerminalViewProps) {
   }, [messages, toolCallId]);
 
   return (
-    <div className="flex h-full flex-col overflow-y-auto bg-zinc-950 p-3 font-mono text-xs leading-relaxed">
+    <div className="flex h-full flex-col overflow-y-auto bg-white dark:bg-zinc-950 p-3 font-mono text-xs leading-relaxed">
       {shellEntries.length === 0 ? (
         <div className="text-zinc-500">{t('terminal.empty')}</div>
       ) : (
@@ -61,6 +62,7 @@ export function TerminalView({ toolCallId }: TerminalViewProps) {
 /** 渲染单个 shell 命令调用 */
 function TerminalEntry({ tc, result }: { tc: ToolCall; result?: ToolResult }) {
   const { t } = useTranslation();
+  const { resolvedTheme } = useTheme();
   const command = parseShellCommand(tc.arguments);
   const cwd = result?.metadata?.cwd;
   const isRunning = tc.status === 'generating' || tc.status === 'executing';
@@ -78,7 +80,7 @@ function TerminalEntry({ tc, result }: { tc: ToolCall; result?: ToolResult }) {
     <div className="flex flex-col gap-1">
       {/* 命令行 */}
       <div className="flex items-start gap-1.5">
-        <span className="select-none text-green-400">$</span>
+        <span className="select-none text-green-600 dark:text-green-400">$</span>
         <div className="flex-1 break-all">
           {cwd && (
             <span className="select-none text-zinc-500">
@@ -86,13 +88,13 @@ function TerminalEntry({ tc, result }: { tc: ToolCall; result?: ToolResult }) {
               {'\n'}
             </span>
           )}
-          <span className="text-zinc-100">{command || t('terminal.generating')}</span>
+          <span className="text-zinc-900 dark:text-zinc-100">{command || t('terminal.generating')}</span>
         </div>
       </div>
 
       {/* 执行中状态 */}
       {isRunning && (
-        <div className="flex items-center gap-1.5 text-zinc-400">
+        <div className="flex items-center gap-1.5 text-zinc-500 dark:text-zinc-400">
           <Loader2 className="size-3 animate-spin" />
           <span>
             {tc.status === 'generating'
@@ -107,29 +109,29 @@ function TerminalEntry({ tc, result }: { tc: ToolCall; result?: ToolResult }) {
         <div className="flex flex-col gap-1">
           {parsed.stdout && (
             <pre
-              className="whitespace-pre-wrap break-all text-zinc-200"
-              dangerouslySetInnerHTML={{ __html: ansiToHtml(parsed.stdout) }}
+              className="whitespace-pre-wrap break-all text-zinc-800 dark:text-zinc-200"
+              dangerouslySetInnerHTML={{ __html: ansiToHtml(parsed.stdout, resolvedTheme) }}
             />
           )}
           {parsed.stderr && (
             <pre
-              className="whitespace-pre-wrap break-all text-red-400"
-              dangerouslySetInnerHTML={{ __html: ansiToHtml(parsed.stderr) }}
+              className="whitespace-pre-wrap break-all text-red-600 dark:text-red-400"
+              dangerouslySetInnerHTML={{ __html: ansiToHtml(parsed.stderr, resolvedTheme) }}
             />
           )}
           {parsed.stdout === '' && parsed.stderr === '' && (
-            <span className="text-zinc-600">{t('terminal.emptyOutput')}</span>
+            <span className="text-zinc-400 dark:text-zinc-600">{t('terminal.emptyOutput')}</span>
           )}
           {/* 退出码标记 */}
           <div className="flex items-center gap-1.5 text-[10px]">
-            <span className={isError ? 'text-red-400' : 'text-zinc-500'}>
+            <span className={isError ? 'text-red-600 dark:text-red-400' : 'text-zinc-500'}>
               [{t('terminal.exitCode')}: {exitCode ?? 0}]
             </span>
             {result?.metadata?.truncated && (
-              <span className="text-yellow-500/80">{t('terminal.truncated')}</span>
+              <span className="text-yellow-600/90 dark:text-yellow-500/80">{t('terminal.truncated')}</span>
             )}
             {result?.metadata?.timedOut && (
-              <span className="text-yellow-500/80">{t('terminal.timedOut')}</span>
+              <span className="text-yellow-600/90 dark:text-yellow-500/80">{t('terminal.timedOut')}</span>
             )}
           </div>
         </div>

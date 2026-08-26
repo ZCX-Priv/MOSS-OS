@@ -62,7 +62,7 @@ function GroupLabel({ provider, className }: { provider: ProviderItem; className
 export function ModelSelector() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const { providers, currentModel, setCurrent, updateProviderModel, updateProvider } = useProviders();
+  const { providers, currentModel, setCurrent, updateProviderModel } = useProviders();
   const isMobile = useIsMobile();
   const hasAnyModel = providers.some((p) => p.models.length > 0);
   const currentModelName = providers
@@ -154,13 +154,13 @@ export function ModelSelector() {
         {/* 思考强度（标签化：服务商级等级库） */}
         <div className="mt-4">
           <ThinkingLevelTags
-            levels={provider.thinkingLevels ?? DEFAULT_LEVELS}
+            levels={model.thinkingLevels ?? DEFAULT_LEVELS}
             value={model.thinking}
             onThinkingChange={(thinking) => {
               void updateProviderModel(model.providerId, model.id, { thinking });
             }}
             onLevelsChange={(levels) => {
-              void updateProvider(model.providerId, { thinkingLevels: levels });
+              void updateProviderModel(model.providerId, model.id, { thinkingLevels: levels });
             }}
           />
         </div>
