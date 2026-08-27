@@ -275,13 +275,37 @@ export class MCPManagerImpl implements MCPManager {
     await this.eventBus.broadcast('mcp:server:disconnected', { server: serverName });
   }
 
+  /** reloadAll 进行中标志（串行化：并发调用合并，避免全量重连风暴） */
+  private reloadInFlight = false;
+  /** 进行中收到新请求时置位，当前轮完成后追加执行一轮 */
+  private reloadQueued = false;
+
   async reloadAll(): Promise<void> {
-    this.logger.info(t('mcp.reloadingAll'));
-    // 断开所有
-    const names = Array.from(this.entries.keys());
-    await Promise.allSettled(names.map(n => this.disconnect(n).catch(() => {})));
-    // 重新加载定义并连接
-    await this.initialize();
+    // 串行化 + 合并：上一轮未完成时只记录"需要再跑一轮"，
+    // 避免 config:changed 双路径通知导致 stdio 子进程反复断开重连。
+    if (this.reloadInFlight) {
+      this.reloadQueued = true;
+      return;
+    }
+    this.reloadInFlight = true;
+    try {
+      this.logger.info(t('mcp.reloadingAll'));
+      // 断开所有
+      const names = Array.from(this.entries.keys());
+      await Promise.allSettled(names.map(n => this.disconnect(n).catch(() => {})));
+      // 重新加载定义并连接
+      await this.initialize();
+    } finally {
+      this.reloadInFlight = false;
+      if (this.reloadQueued) {
+        this.reloadQueued = false;
+        void this.reloadAll().catch(err => {
+          this.logger.error(t('mcp.reloadFailed'), {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+      }
+    }
   }
 
   /**

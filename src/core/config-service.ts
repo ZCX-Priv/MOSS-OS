@@ -433,6 +433,7 @@ class ConfigServiceImpl implements ConfigService {
     const merged = deepMerge(this.appConfig, clean) as AppConfig;
     const parsed = appConfigSchema.parse(merged);
     this.appConfig = parsed;
+    this.logger.info(t('config.appConfigUpdated'), { keys: Object.keys(patch) });
     this.fs.writeText(join(this.env.configDir, 'config.json'), JSON.stringify(parsed, null, 2));
     this.applyLocale();
     await this.eventBus.broadcast('config:changed', { which: 'app' });
@@ -459,14 +460,29 @@ class ConfigServiceImpl implements ConfigService {
   async reload(): Promise<void> {
     const appPath = join(this.env.configDir, 'config.json');
     const apiPath = join(this.env.configDir, 'api.json');
-    this.appConfig = this.readAndValidateApp(appPath);
-    this.apiConfig = this.readAndValidateApi(apiPath);
+    const newApp = this.readAndValidateApp(appPath);
+    const newApi = this.readAndValidateApi(apiPath);
+    // 内容对比守卫：与内存中配置逐字对比，未变化的文件跳过通知。
+    // 防止 updateAppConfig 写盘后 watcher 二次触发的重复通知，以及
+    // 外部程序反复写相同内容（touch 噪音）被放大为 MCP 全量重载循环。
+    const appChanged = this.appConfig === null || JSON.stringify(newApp) !== JSON.stringify(this.appConfig);
+    const apiChanged = this.apiConfig === null || JSON.stringify(newApi) !== JSON.stringify(this.apiConfig);
+    this.appConfig = newApp;
+    this.apiConfig = newApi;
     this.applyLocale();
-    await this.eventBus.broadcast('config:changed', { which: 'app' });
-    await this.eventBus.broadcast('config:changed', { which: 'api' });
-    this.notifyChange('app');
-    this.notifyChange('api');
-    this.logger.info(t('config.reloadedFromDisk'));
+    if (appChanged) {
+      await this.eventBus.broadcast('config:changed', { which: 'app' });
+      this.notifyChange('app');
+    }
+    if (apiChanged) {
+      await this.eventBus.broadcast('config:changed', { which: 'api' });
+      this.notifyChange('api');
+    }
+    if (appChanged || apiChanged) {
+      this.logger.info(t('config.reloadedFromDisk'), { appChanged, apiChanged });
+    } else {
+      this.logger.debug(t('config.reloadedFromDisk'));
+    }
   }
 
   onChange(handler: (which: 'app' | 'api') => void): EventBusSubscription {

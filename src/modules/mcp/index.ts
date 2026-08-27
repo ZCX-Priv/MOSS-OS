@@ -29,8 +29,11 @@ class McpModule implements Module {
       });
     });
 
-    // 监听配置变更，重载 MCP 服务器
-    ctx.config.onChange((_which) => {
+    // 监听配置变更，重载 MCP 服务器。
+    // 仅响应 app（config.json）：MCP 服务器定义只存在于 config.json 与 mcps/*.json；
+    // api.json 仅含 LLM providers，与 MCP 无关，避免无关变更触发全量重连。
+    ctx.config.onChange((which) => {
+      if (which !== 'app') return;
       this.manager?.reloadAll().catch(err => {
         ctx.logger.error(t('mcp.reloadFailed'), {
           error: err instanceof Error ? err.message : String(err),

@@ -23,6 +23,7 @@ export const zh = {
     createdDefaultApi: '已创建默认 api.json',
     fallbackToDefaults: '配置回退到默认值（仅内存，磁盘文件未变更）',
     reloadedFromDisk: '配置已从磁盘重新加载',
+    appConfigUpdated: '应用配置已更新（写入 config.json）: {{keys}}',
     changeHandlerFailed: '配置变更处理器执行失败',
     fileChangedReloading: '磁盘配置文件已变更，正在重新加载: {{which}}',
     reloadFailed: '配置重新加载失败',
