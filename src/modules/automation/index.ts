@@ -559,6 +559,10 @@ class AutomationServiceImpl implements AutomationService {
     const startedAt = new Date().toISOString();
     const controller = new AbortController();
     this.running.set(runId, { automationId: item.id, startedAt, controller });
+    /** 本次运行创建的真实任务 id（agent 不可用等失败于创建任务前时保持 undefined） */
+    let taskId: string | undefined;
+    /** 注册进 server 活跃 run 表的 session（注销时用；未注册时为 undefined） */
+    let registeredSessionId: string | undefined;
 
     // 更新 lastRunAt
     const idx = this.data.automations.findIndex(a => a.id === item.id);
@@ -575,15 +579,6 @@ class AutomationServiceImpl implements AutomationService {
       status: 'running',
     };
     this.addHistory(item.id, run);
-
-    // 推送 automation.started
-    server?.broadcastWS({
-      type: 'automation.started',
-      payload: { automationId: item.id, runId, startedAt },
-    });
-    this.eventBus.broadcast('automation:started', { automationId: item.id, runId }).catch(() => {});
-
-    this.logger.info(t('automation.runStarted', { id: item.id, runId }));
 
     // 事件转发到 WS（可选：只转发到 server.broadcastWS）
     const onEvent = (event: AgentEvent): void => {
@@ -613,12 +608,29 @@ class AutomationServiceImpl implements AutomationService {
       );
       if (!group) group = agent.createTaskGroup(groupName, 'folder');
 
-      // 创建真实任务（侧边栏可见，task.id 即 sessionId），并广播给前端（携带分组供即时渲染）
+      // 创建真实任务（侧边栏可见，task.id 即 sessionId）
       const task = agent.createTask(`[自动化] ${item.title} · ${formatRunStamp(new Date())}`, group.id);
-      server?.broadcastWS({ type: 'task.created', payload: { task, group } });
       this.updateHistoryRun(item.id, runId, { taskId: task.id });
 
       const sessionId = task.sessionId ?? task.id;
+      taskId = task.id;
+      // 注册外部活跃 run：task.switch/session.subscribe 的 running 判定包含该 session，
+      // 用户在该任务页点击停止（task.abort）可中断本次自动化运行
+      server?.registerExternalRun(sessionId, controller);
+      registeredSessionId = sessionId;
+
+      // 推送 automation.started（含 taskId：前端据此立即把侧边栏任务标记为运行中）
+      server?.broadcastWS({
+        type: 'automation.started',
+        payload: { automationId: item.id, runId, startedAt, taskId: task.id },
+      });
+      this.eventBus.broadcast('automation:started', { automationId: item.id, runId }).catch(() => {});
+
+      this.logger.info(t('automation.runStarted', { id: item.id, runId }));
+
+      // 广播任务创建（携带分组供侧边栏即时渲染新任务行）
+      server?.broadcastWS({ type: 'task.created', payload: { task, group } });
+
       const result = await agent.run({
         sessionId,
         userMessage: item.prompt,
@@ -651,6 +663,7 @@ class AutomationServiceImpl implements AutomationService {
           status,
           finishReason: result.finishReason,
           finalText: result.finalText,
+          taskId,
         },
       });
       this.eventBus.broadcast('automation:finished', {
@@ -680,11 +693,16 @@ class AutomationServiceImpl implements AutomationService {
           finishedAt,
           status: 'failed',
           error: errorMsg,
+          taskId,
         },
       });
       this.logger.error(t('automation.runFailedWithRun', { id: item.id, runId }), { error: errorMsg });
     } finally {
       this.running.delete(runId);
+      // 注销外部活跃 run（run 结束后 session.subscribe/task.switch 不再报告 running）
+      if (server && registeredSessionId) {
+        server.unregisterExternalRun(registeredSessionId, controller);
+      }
       // once 任务由调度器触发（markCompleted）：无论成败都标记完成并保留
       if (opts?.markCompleted && item.scheduleType === 'once') {
         this.markCompleted(item.id);

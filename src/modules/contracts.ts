@@ -450,6 +450,11 @@ export interface ServerInstanceLike {
   readonly baseUrl: string;
   broadcastWS(message: unknown): void;
   sendToSession(sessionId: string, message: unknown): void;
+  /** 注册外部发起的活跃 run（automation 等不经 task.stream 的运行）：
+   *  session.subscribe/task.switch 的 running 判定包含该 session；task.abort 可中断 */
+  registerExternalRun(sessionId: string, controller: AbortController): void;
+  /** 注销外部活跃 run（仅当注册的 controller 仍是当前活跃 run 时移除，防误删用户新 run） */
+  unregisterExternalRun(sessionId: string, controller: AbortController): void;
 }
 
 // ============================================================================

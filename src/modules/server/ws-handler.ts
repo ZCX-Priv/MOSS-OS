@@ -236,6 +236,24 @@ export class WsHandler {
     this.sendToSubscribers(sessionId, message);
   }
 
+  /** 注册外部发起的活跃 run（automation 等不经 task.stream 的运行）：
+   *  session.subscribe/task.switch 的 running 判定包含该 session；task.abort 可中断。
+   *  若该 session 已有活跃 run，语义与 task.stream 的「打断发送」一致：旧 run 被 abort 后自行收尾 */
+  registerExternalRun(sessionId: string, controller: AbortController): void {
+    const prevController = this.activeRuns.get(sessionId);
+    this.activeRuns.set(sessionId, controller);
+    if (prevController && prevController !== controller) {
+      prevController.abort();
+    }
+  }
+
+  /** 注销外部活跃 run（仅当注册的 controller 仍是当前活跃 run 时移除，防误删用户新 run） */
+  unregisterExternalRun(sessionId: string, controller: AbortController): void {
+    if (this.activeRuns.get(sessionId) === controller) {
+      this.activeRuns.delete(sessionId);
+    }
+  }
+
   /** 发送消息到订阅该 session 的所有活跃连接（无订阅者时静默丢弃） */
   private sendToSubscribers(sessionId: string, message: unknown): void {
     const text = JSON.stringify(message);

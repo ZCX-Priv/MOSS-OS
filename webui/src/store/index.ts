@@ -746,12 +746,17 @@ export const useStore = create<Store>((set) => ({
       automationHistory: { ...state.automationHistory, [id]: history },
     })),
   addAutomationRun: (id, run) =>
-    set((state) => ({
-      automationHistory: {
-        ...state.automationHistory,
-        [id]: [run, ...(state.automationHistory[id] ?? [])],
-      },
-    })),
+    set((state) => {
+      const list = state.automationHistory[id] ?? [];
+      // 幂等：WS 重放 / 多入口 / load 竞态下同 runId 只保留一条
+      if (list.some((r) => r.id === run.id)) return state;
+      return {
+        automationHistory: {
+          ...state.automationHistory,
+          [id]: [run, ...list],
+        },
+      };
+    }),
   updateAutomationRun: (id, runId, patch) =>
     set((state) => ({
       automationHistory: {

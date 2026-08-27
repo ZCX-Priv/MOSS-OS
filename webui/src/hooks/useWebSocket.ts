@@ -752,30 +752,53 @@ export function useWebSocket(): void {
         break;
       }
       case 'automation.started': {
-        const payload = (msg.payload ?? {}) as { run?: AutomationRun };
-        if (payload.run) {
-          useStore.getState().addAutomationRun(payload.run.automationId, payload.run);
-          useStore.getState().updateAutomation(payload.run.automationId, {
-            lastRunAt: payload.run.startedAt,
-          });
-        }
+        // 后端 executeRun 广播的扁平结构（automationId/runId/startedAt/taskId）；
+        // 缺 startedAt 的消息（如 ws automation.run 入口的单播响应）跳过，等广播补充完整数据
+        const payload = (msg.payload ?? {}) as {
+          automationId?: string;
+          runId?: string;
+          startedAt?: string;
+          taskId?: string;
+        };
+        if (!payload.automationId || !payload.runId || !payload.startedAt) break;
+        const st = useStore.getState();
+        st.addAutomationRun(payload.automationId, {
+          id: payload.runId,
+          automationId: payload.automationId,
+          taskId: payload.taskId,
+          startedAt: payload.startedAt,
+          status: 'running',
+        });
+        st.updateAutomation(payload.automationId, { lastRunAt: payload.startedAt });
+        // 侧边栏任务行立即进入"运行中"（与用户发消息的 setGenerating 同源同 UI）
+        if (payload.taskId) st.setGenerating(payload.taskId, true);
         break;
       }
       case 'automation.finished': {
-        const payload = (msg.payload ?? {}) as { run?: AutomationRun };
-        if (payload.run) {
-          useStore.getState().updateAutomationRun(
-            payload.run.automationId,
-            payload.run.id,
-            {
-              finishedAt: payload.run.finishedAt,
-              status: payload.run.status,
-              finishReason: payload.run.finishReason,
-              finalText: payload.run.finalText,
-              error: payload.run.error,
-            },
-          );
+        const payload = (msg.payload ?? {}) as {
+          automationId?: string;
+          runId?: string;
+          taskId?: string;
+          status?: AutomationRun['status'];
+          finishReason?: string;
+          finalText?: string;
+          error?: string;
+          finishedAt?: string;
+        };
+        if (!payload.automationId || !payload.runId) break;
+        const st = useStore.getState();
+        st.updateAutomationRun(payload.automationId, payload.runId, {
+          finishedAt: payload.finishedAt,
+          status: payload.status ?? 'success',
+          finishReason: payload.finishReason,
+          finalText: payload.finalText,
+          error: payload.error,
+        });
+        if (payload.finishedAt) {
+          st.updateAutomation(payload.automationId, { lastRunAt: payload.finishedAt });
         }
+        // 清除运行态（转圈消失）；断线丢失 finished 时由 session.subscribe 校正兜底
+        if (payload.taskId) st.setGenerating(payload.taskId, false);
         break;
       }
       case 'config.changed': {

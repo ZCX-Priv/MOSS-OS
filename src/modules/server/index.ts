@@ -201,6 +201,8 @@ class ServerModule implements Module {
       addRoute: (route: Route) => this.router.addRoute(route),
       broadcastWS: (msg: unknown) => this.wsHandler.broadcast(msg),
       sendToSession: (sid: string, msg: unknown) => this.wsHandler.sendToSession(sid, msg),
+      registerExternalRun: (sid: string, c: AbortController) => this.wsHandler.registerExternalRun(sid, c),
+      unregisterExternalRun: (sid: string, c: AbortController) => this.wsHandler.unregisterExternalRun(sid, c),
       onWSMessage: (h: WSMessageHandler) => this.wsHandler.onWSMessage(h),
       stop: async () => {
         if (this.server) await this.server.stop();

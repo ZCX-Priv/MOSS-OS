@@ -1,19 +1,17 @@
 // UI/src/hooks/useAutomations.ts
-// 自动化任务 hook：CRUD + trigger/pause/resume + history。
-// 订阅 WS automation.started/finished 自动更新 history。
+// 自动化任务 hook：CRUD + trigger/pause/resume + history 拉取。
+// WS automation.started/finished 事件由全局唯一的 useWebSocket 处理
+// （曾在此订阅：每个 hook 实例都注册 handler，同一条消息被重复处理导致历史计数偏多）。
 
 import { useEffect, useCallback } from 'react';
 import { useStore } from '../store';
 import { api } from '../api/http';
-import { wsClient } from '../api/ws';
-import type { AutomationDetail, AutomationRun } from '../types/api';
+import type { AutomationDetail } from '../types/api';
 import { toast } from 'sonner';
 
 export function useAutomations() {
   const setAutomations = useStore((s) => s.setAutomations);
   const setAutomationHistory = useStore((s) => s.setAutomationHistory);
-  const addAutomationRun = useStore((s) => s.addAutomationRun);
-  const updateAutomationRun = useStore((s) => s.updateAutomationRun);
   const updateAutomation = useStore((s) => s.updateAutomation);
 
   const load = useCallback(async () => {
@@ -38,46 +36,7 @@ export function useAutomations() {
 
   useEffect(() => {
     void load();
-    // 订阅 automation.started/finished
-    const unsub = wsClient.onMessage((msg) => {
-      if (msg.type === 'automation.started') {
-        const p = (msg.payload ?? {}) as { automationId?: string; runId?: string; startedAt?: string };
-        if (p.automationId && p.runId && p.startedAt) {
-          const run: AutomationRun = {
-            id: p.runId,
-            automationId: p.automationId,
-            startedAt: p.startedAt,
-            status: 'running',
-          };
-          addAutomationRun(p.automationId, run);
-        }
-      } else if (msg.type === 'automation.finished') {
-        const p = (msg.payload ?? {}) as {
-          automationId?: string;
-          runId?: string;
-          status?: AutomationRun['status'];
-          finishReason?: string;
-          finalText?: string;
-          error?: string;
-          finishedAt?: string;
-        };
-        if (p.automationId && p.runId) {
-          updateAutomationRun(p.automationId, p.runId, {
-            finishedAt: p.finishedAt,
-            status: p.status ?? 'success',
-            finishReason: p.finishReason,
-            finalText: p.finalText,
-            error: p.error,
-          });
-          // 更新 automation 的 lastRunAt
-          if (p.finishedAt) {
-            updateAutomation(p.automationId, { lastRunAt: p.finishedAt });
-          }
-        }
-      }
-    });
-    return unsub;
-  }, [load, addAutomationRun, updateAutomationRun, updateAutomation]);
+  }, [load]);
 
   const createAutomation = useCallback(
     async (data: {
