@@ -7,7 +7,7 @@ import { t } from '../../core/i18n';
 import type { Module, ModuleContext, } from '../../core/types';
 import { ServiceNames } from '../../core/types';
 import { join } from 'node:path';
-import { existsSync, statSync, watch, type FSWatcher } from 'node:fs';
+import { existsSync, statSync, watch, mkdirSync, type FSWatcher } from 'node:fs';
 import { ToolRegistryImpl } from './registry';
 import { createSkillRegistry } from './use_skill/registry';
 import { createCommandRegistry } from './use_command/registry';
@@ -90,7 +90,13 @@ class ToolsModule implements Module {
   /** 从 ~/.moss/tools/ 加载自定义工具（错误隔离，单个失败不影响其他） */
   private async loadCustomTools(ctx: ModuleContext): Promise<void> {
     const dir = join(ctx.env.dataDir, 'tools');
-    if (!existsSync(dir)) return;
+    // 预创建目录（对称 MCP ensureUserMcpsDir）：目录先于 watcher 存在，
+    // 保证用户之后创建首个自定义工具时热重载立即生效（无需重启）
+    try {
+      mkdirSync(dir, { recursive: true });
+    } catch {
+      // 创建失败（权限等）：仍尝试加载与监听，watch 启动失败会单独 warn
+    }
 
     ctx.logger.info(t('tools.loadingCustom'), { dir });
     await this.loadCustomToolsFromDir(dir, ctx);
@@ -113,19 +119,43 @@ class ToolsModule implements Module {
     }
   }
 
-  /** 启动内置工具目录热重载监听（增量，防抖 300ms） */
+  /** 启动内置工具目录热重载监听（批量收集，防抖 300ms） */
   private startBuiltinWatch(builtinDir: string, ctx: ModuleContext): void {
+    // 批量收集：300ms 窗口内的多个文件变更全部处理（原实现只保留最后一个 filename，会丢事件）
+    const pendingFiles = new Set<string>();
+    let pendingFullReload = false;
     let debounce: ReturnType<typeof setTimeout> | null = null;
+    const flush = (): void => {
+      const files = Array.from(pendingFiles);
+      pendingFiles.clear();
+      const needFull = pendingFullReload;
+      pendingFullReload = false;
+      if (needFull) {
+        // filename 不可得（Windows recursive watch 偶发 null/Buffer）：全量重载兜底
+        this.fullReload(builtinDir, ctx, 'builtin').catch(err => {
+          ctx.logger.error(t('tools.builtinReloadFailed'), {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+        return;
+      }
+      for (const filename of files) {
+        this.reloadToolByFilename(builtinDir, filename, ctx, 'builtin').catch(err => {
+          ctx.logger.error(t('tools.builtinReloadFailed'), {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+      }
+    };
     try {
       this.builtinWatcher = watch(builtinDir, { recursive: true }, (_eventType, filename) => {
+        if (filename === null || Buffer.isBuffer(filename)) {
+          pendingFullReload = true;
+        } else {
+          pendingFiles.add(filename.replace(/\\/g, '/'));
+        }
         if (debounce) clearTimeout(debounce);
-        debounce = setTimeout(() => {
-          this.reloadToolByFilename(builtinDir, filename, ctx, 'builtin').catch(err => {
-            ctx.logger.error(t('tools.builtinReloadFailed'), {
-              error: err instanceof Error ? err.message : String(err),
-            });
-          });
-        }, 300);
+        debounce = setTimeout(flush, 300);
       });
     } catch (err) {
       ctx.logger.warn(t('tools.watchBuiltinFailed'), {
@@ -134,19 +164,41 @@ class ToolsModule implements Module {
     }
   }
 
-  /** 启动自定义工具目录热重载监听（增量，防抖 300ms） */
+  /** 启动自定义工具目录热重载监听（批量收集，防抖 300ms） */
   private startCustomWatch(customDir: string, ctx: ModuleContext): void {
+    const pendingFiles = new Set<string>();
+    let pendingFullReload = false;
     let debounce: ReturnType<typeof setTimeout> | null = null;
+    const flush = (): void => {
+      const files = Array.from(pendingFiles);
+      pendingFiles.clear();
+      const needFull = pendingFullReload;
+      pendingFullReload = false;
+      if (needFull) {
+        this.fullReload(customDir, ctx, 'custom').catch(err => {
+          ctx.logger.error(t('tools.customReloadFailed'), {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+        return;
+      }
+      for (const filename of files) {
+        this.reloadToolByFilename(customDir, filename, ctx, 'custom').catch(err => {
+          ctx.logger.error(t('tools.customReloadFailed'), {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+      }
+    };
     try {
       this.customWatcher = watch(customDir, { recursive: true }, (_eventType, filename) => {
+        if (filename === null || Buffer.isBuffer(filename)) {
+          pendingFullReload = true;
+        } else {
+          pendingFiles.add(filename.replace(/\\/g, '/'));
+        }
         if (debounce) clearTimeout(debounce);
-        debounce = setTimeout(() => {
-          this.reloadToolByFilename(customDir, filename, ctx, 'custom').catch(err => {
-            ctx.logger.error(t('tools.customReloadFailed'), {
-              error: err instanceof Error ? err.message : String(err),
-            });
-          });
-        }, 300);
+        debounce = setTimeout(flush, 300);
       });
     } catch (err) {
       ctx.logger.warn(t('tools.watchCustomFailed'), {

@@ -321,7 +321,16 @@ export class MCPManagerImpl implements MCPManager {
       this.mcpsWatcher = watch(userDir, { recursive: true }, () => {
         if (debounce) clearTimeout(debounce);
         debounce = setTimeout(() => {
-          this.reloadAll().catch(err => {
+          (async () => {
+            // 内容对比守卫：磁盘定义与内存一致（外部程序写相同内容 / 本进程 CRUD 已同步）时
+            // 跳过全量重连，防止同步盘/杀毒等反复写盘演变为断开-重连循环
+            const diskDefs = await this.loadServerDefs();
+            if (this.defsEqual(diskDefs, this.serverDefs)) {
+              this.logger.debug(t('mcp.defsUnchangedSkipReload'));
+              return;
+            }
+            await this.reloadAll();
+          })().catch(err => {
             this.logger.error(t('mcp.reloadFailed'), {
               error: err instanceof Error ? err.message : String(err),
             });
@@ -334,6 +343,17 @@ export class MCPManagerImpl implements MCPManager {
         error: err instanceof Error ? err.message : String(err),
       });
     }
+  }
+
+  /** 比较两份服务器定义是否完全一致（key 集合 + 每项 JSON 序列化对比） */
+  private defsEqual(a: Map<string, ServerConfig>, b: Map<string, ServerConfig>): boolean {
+    if (a.size !== b.size) return false;
+    for (const [name, def] of a) {
+      const other = b.get(name);
+      if (!other) return false;
+      if (JSON.stringify(def) !== JSON.stringify(other)) return false;
+    }
+    return true;
   }
 
   listServers(): Array<{
@@ -509,7 +529,10 @@ export class MCPManagerImpl implements MCPManager {
     const { writeFile } = await import('node:fs/promises');
     const payload = { ...(def as ServerConfig), name };
     await writeFile(filePath, JSON.stringify(payload, null, 2), 'utf8');
-    // watch 会自动 reload 全量；此处主动断开旧连接（若禁用），启用则立即连接
+    // 写盘后立即同步内存定义（真相源）：修正已连接服务器 connect 用旧定义的 bug；
+    // 且 watcher 触发时内容对比将发现与内存一致 → 跳过 reloadAll（消除 CRUD 双重重载）
+    this.serverDefs.set(name, payload);
+    // 主动断开旧连接（若禁用），启用则立即连接
     if (this.entries.has(name)) {
       if (payload.enabled === false) {
         await this.disconnect(name);
@@ -517,7 +540,6 @@ export class MCPManagerImpl implements MCPManager {
         await this.connect(name).catch(() => {});
       }
     } else if (payload.enabled !== false) {
-      this.serverDefs.set(name, payload);
       await this.connect(name).catch(() => {});
     }
   }

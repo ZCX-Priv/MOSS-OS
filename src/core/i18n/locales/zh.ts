@@ -98,6 +98,7 @@ export const zh = {
     notConnected: 'MCP 服务器 "{{name}}" 未连接，无法断开',
     serverDisconnected: 'MCP 服务器 "{{name}}" 已断开',
     reloadingAll: '正在重新加载所有 MCP 服务器',
+    defsUnchangedSkipReload: 'MCP 服务器定义未变化，跳过重载',
     httpFallbackSse: 'MCP "{{name}}" http 传输失败，回退到 sse',
     httpConnectFailedRetrySse: 'MCP "{{name}}" http 连接失败，使用 sse 重试',
     clientConnected: 'MCP 客户端 "{{name}}" 已连接',

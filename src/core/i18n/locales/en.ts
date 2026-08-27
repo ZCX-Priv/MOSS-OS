@@ -98,6 +98,7 @@ export const en = {
     notConnected: 'MCP server "{{name}}" not connected, cannot disconnect',
     serverDisconnected: 'MCP server "{{name}}" disconnected',
     reloadingAll: 'Reloading all MCP servers',
+    defsUnchangedSkipReload: 'MCP server definitions unchanged, reload skipped',
     httpFallbackSse: 'MCP "{{name}}" http transport failed, falling back to sse',
     httpConnectFailedRetrySse: 'MCP "{{name}}" http connect failed, retrying with sse',
     clientConnected: 'MCP client "{{name}}" connected',
