@@ -41,7 +41,7 @@ export interface ToolResult {
 }
 
 /** 右侧边栏标签页类型 */
-export type SidebarTabType = 'summary' | 'terminal';
+export type SidebarTabType = 'summary' | 'terminal' | 'agenteam';
 
 /** 右侧边栏标签页 */
 export interface SidebarTab {
@@ -719,6 +719,174 @@ export interface AgentDetail extends AgentItem {
 }
 
 // ============================================================================
+// AgentTeam 编排（GET/POST /api/agent-teams）
+// ============================================================================
+
+/** 团队任务状态 */
+export type TeamTaskStatus =
+  | 'pending'
+  | 'claimed'
+  | 'in_progress'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
+
+/** 质量门禁任务类型 */
+export type TeamTaskKind =
+  | 'requirements'
+  | 'implementation'
+  | 'verification'
+  | 'review'
+  | 'repair'
+  | 'integration'
+  | 'work';
+
+export interface ReviewFinding {
+  id: string;
+  severity: 'low' | 'medium' | 'high' | 'blocker';
+  file?: string;
+  line?: number;
+  problem: string;
+  requiredFix: string;
+  resolved?: boolean;
+}
+
+export interface AcceptanceResult {
+  criterion: string;
+  status: 'passed' | 'failed';
+  evidence?: string;
+}
+
+/** 团队任务（DAG 节点） */
+export interface TeamTask {
+  id: string;
+  profileSeedId?: string;
+  subject: string;
+  description?: string;
+  status: TeamTaskStatus;
+  assignee?: string;
+  dependencies: string[];
+  output?: string;
+  attempt?: number;
+  kind?: TeamTaskKind;
+  round?: number;
+  verdict?: 'pass' | 'needs_revision' | 'reject';
+  findings?: ReviewFinding[];
+  objective?: string;
+  acceptance?: string[];
+  acceptanceResults?: AcceptanceResult[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** 团队成员 */
+export interface TeamMember {
+  id: string;
+  name: string;
+  role?: string;
+  agentId?: string;
+  inlinePrompt?: string;
+  /** 专属持久会话 id（=侧边栏任务 id；点击跳转任务页查看完整对话） */
+  sessionId: string;
+  taskId?: string;
+  executionPrompt?: string;
+  joinedAt: number;
+  status: 'idle' | 'working' | 'removed';
+}
+
+/** 团队消息 */
+export interface TeamMessage {
+  id: string;
+  from: string;
+  to: string;
+  content: string;
+  ts: number;
+}
+
+/** 团队阶段 */
+export type TeamPhase = 'staged' | 'running' | 'completed' | 'failed' | 'halted';
+
+/** 团队详情 */
+export interface AgentTeam {
+  id: string;
+  name: string;
+  description?: string;
+  profile?: {
+    name: string;
+    description?: string;
+    protocol?: string;
+    taskPlanning?: 'captain' | 'seed';
+  };
+  captainSessionId: string;
+  /** UI 建队时自动创建的队长会话标记（true 时队长 run 使用 agent_captain 模板） */
+  captainIsAuto?: boolean;
+  cwd: string;
+  permissionMode?: string;
+  createdAt: number;
+  members: TeamMember[];
+  tasks: TeamTask[];
+  taskSeq: number;
+  phase: TeamPhase;
+  planReviewState?: 'awaiting_review' | 'awaiting_feedback';
+  approvedAt?: number;
+  halted?: boolean;
+  haltedAt?: number;
+  escalated?: boolean;
+  summary?: string;
+}
+
+/** 团队列表摘要 */
+export interface AgentTeamSummary {
+  id: string;
+  name: string;
+  description?: string;
+  phase: TeamPhase;
+  planReviewState?: 'awaiting_review' | 'awaiting_feedback';
+  memberCount: number;
+  taskTotal: number;
+  taskCompleted: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** 团队模板 */
+export interface AgentTeamProfile {
+  name: string;
+  description?: string;
+  protocol?: string;
+  executionPrompt?: string;
+  members: Array<{ name: string; role?: string; agentId?: string; inlinePrompt?: string; executionPrompt?: string }>;
+  tasks: Array<{ seedId: string; subject: string; description?: string; kind?: TeamTaskKind; dependencies?: string[]; assignee?: string }>;
+  taskPlanning: 'captain' | 'seed';
+  reviewPolicy?: {
+    requirementsMinRounds?: number;
+    requirementsMaxRounds?: number;
+    codeMaxRounds?: number;
+    maxRepairAttempts?: number;
+  };
+  builtIn?: boolean;
+}
+
+/** 创建团队请求体 */
+export interface CreateAgentTeamInput {
+  name: string;
+  description?: string;
+  cwd: string;
+  permissionMode?: 'ask' | 'auto' | 'skip';
+  members: Array<{ name: string; role?: string; agentId?: string; inlinePrompt?: string }>;
+  tasks: Array<{ subject: string; description?: string; kind?: TeamTaskKind; dependencies?: string[]; assignee?: string }>;
+  approval?: boolean;
+}
+
+/** 临时 subagent 运行结果 */
+export interface SubagentRunOutput {
+  sessionId: string;
+  taskId: string;
+  finishReason: string;
+  result: string;
+}
+
+// ============================================================================
 // 工具（GET /api/tools，PATCH /api/tools/:name）
 // ============================================================================
 
@@ -738,6 +906,16 @@ export interface ToolItem {
   };
   /** 工具来源目录绝对路径（热重载定位用） */
   sourceDir?: string;
+  /** 可编辑参数字段定义（来自 tool.json config 段，排除 enabled/requireConfirmation） */
+  configFields?: Array<{
+    key: string;
+    type: 'boolean' | 'integer' | 'string';
+    default: unknown;
+    min?: number;
+    max?: number;
+  }>;
+  /** 当前生效配置值（defaults 与 config.json 覆盖值合并） */
+  configValues?: Record<string, unknown>;
 }
 
 // ============================================================================

@@ -75,7 +75,19 @@ import { eventToShortcut, formatShortcutLabel } from '../../utils/shortcut';
 import { api } from '../../api/http';
 import { TOOL_ICON_MAP } from '../../lib/tool-icons';
 import { SKILL_ICON_CHOICES, resolveSkillIcon } from '../../lib/skill-icons';
-import type { SpecDetail, SafetyConfig, LogLevel, LogsConfig, LogFileInfo, ContextEngineConfig, FileIndexConfig } from '../../types/api';
+import type { SpecDetail, SafetyConfig, LogLevel, LogsConfig, LogFileInfo, ContextEngineConfig, FileIndexConfig, ToolItem, AgentDetail } from '../../types/api';
+import { ToolEditDialog } from './settings/ToolEditDialog';
+import { CreateAgentDialog } from '../settings/CreateAgentDialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 
 // 服务商设置页（App.tsx 从本模块导入）
 export { ProviderSettings } from './ProviderSettings';
@@ -1840,12 +1852,50 @@ export function GeneralSettings() {
 /* ===== 智能体设置 ===== */
 export function AgentSettings() {
   const { t } = useTranslation();
-  const { agents, setDefaultAgent } = useAgents();
+  const { agents, setDefaultAgent, deleteAgent, reload } = useAgents();
+  const [createOpen, setCreateOpen] = useState(false);
+  const [editing, setEditing] = useState<AgentDetail | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
   const builtInAgents = agents.filter((a) => a.builtIn);
   const customAgents = agents.filter((a) => !a.builtIn);
 
+  const handleEdit = async (id: string) => {
+    try {
+      const detail = await api.getAgent(id);
+      setEditing(detail);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    setBusyId(deleteTarget);
+    try {
+      await deleteAgent(deleteTarget);
+      toast.success(t('settings.agent.deleted'));
+      setDeleteTarget(null);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleSetDefault = async (id: string) => {
+    setBusyId(id);
+    try {
+      await setDefaultAgent(id);
+      toast.success(t('settings.agent.defaultSet'));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const renderAgentCard = (agent: (typeof agents)[number]) => {
     const isDefault = !!agent.default;
+    const isBusy = busyId === agent.id;
     return (
       <Card
         key={agent.id}
@@ -1875,9 +1925,37 @@ export function AgentSettings() {
           </>
         )}
         {!isDefault && (
-          <Button variant="ghost" size="sm" onClick={() => void setDefaultAgent(agent.id)}>
-            {t('common.default')}
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={isBusy}
+            onClick={() => void handleSetDefault(agent.id)}
+          >
+            {isBusy ? <Loader2 className="size-4 animate-spin" /> : t('common.default')}
           </Button>
+        )}
+        {!agent.builtIn && (
+          <>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              title={t('common.edit')}
+              disabled={isBusy}
+              onClick={() => void handleEdit(agent.id)}
+            >
+              <Pencil className="size-3.5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="text-red-500 hover:text-red-600"
+              title={t('common.delete')}
+              disabled={isBusy}
+              onClick={() => setDeleteTarget(agent.id)}
+            >
+              <Trash2 className="size-3.5" />
+            </Button>
+          </>
         )}
       </Card>
     );
@@ -1912,10 +1990,46 @@ export function AgentSettings() {
         </div>
       </div>
 
-      <Button variant="outline" className="gap-1.5 self-start">
+      <Button
+        variant="outline"
+        className="gap-1.5 self-start"
+        onClick={() => {
+          setEditing(null);
+          setCreateOpen(true);
+        }}
+      >
         <Plus />
         <span>{t('settings.agent.createAgent')}</span>
       </Button>
+
+      {/* 创建/编辑对话框 */}
+      <CreateAgentDialog
+        open={createOpen || editing !== null}
+        onOpenChange={(open: boolean) => {
+          if (!open) {
+            setCreateOpen(false);
+            setEditing(null);
+          }
+        }}
+        editing={editing}
+        onSaved={() => void reload()}
+      />
+
+      {/* 删除确认 */}
+      <AlertDialog open={deleteTarget !== null} onOpenChange={(v) => !v && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('settings.agent.deleteTitle')}</AlertDialogTitle>
+            <AlertDialogDescription>{t('settings.agent.deleteBody')}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+            <AlertDialogAction className="bg-red-500 text-white hover:bg-red-600" onClick={() => void handleDelete()}>
+              {t('common.delete')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -1963,13 +2077,21 @@ export function AboutSettings() {
   );
 }
 
-/* ===== 工具设置（内置/自定义工具启停 + 执行策略） ===== */
+/* ===== 工具设置（内置/自定义工具启停 + 执行策略 + 参数自定义） ===== */
 export function ToolsSettings() {
   const { t } = useTranslation();
   const [query, setQuery] = useState('');
-  const { tools, toggleTool } = useTools();
+  const { tools, toggleTool, saveToolConfig } = useTools();
+  const [editingTool, setEditingTool] = useState<ToolItem | null>(null);
   const { appConfig, updateAppConfig } = useConfig();
   const [maxTurnsDraft, setMaxTurnsDraft] = useState('');
+
+  /** 编辑对话框保存：写配置成功后 toast 并关闭 */
+  const handleSaveToolConfig = async (name: string, config: Record<string, unknown>) => {
+    await saveToolConfig(name, config);
+    toast.success(t('settings.tools.saved'));
+    setEditingTool(null);
+  };
 
   const agentCfg = appConfig?.agent;
   const maxTurns = agentCfg?.maxTurns ?? 0;
@@ -2104,6 +2226,17 @@ export function ToolsSettings() {
                         {t('settings.tools.destructive')}
                       </Badge>
                     )}
+                    {/* 编辑：自定义工具参数与行为 */}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="ml-auto size-6 text-muted-foreground hover:text-foreground"
+                      onClick={() => setEditingTool(tool)}
+                      aria-label={t('settings.tools.editTool')}
+                      title={t('settings.tools.editTool')}
+                    >
+                      <Pencil className="size-3.5" />
+                    </Button>
                   </div>
                   <p className="truncate text-xs text-muted-foreground">{tool.description}</p>
                 </div>
@@ -2117,6 +2250,14 @@ export function ToolsSettings() {
           })}
         </div>
       </div>
+
+      {/* 工具编辑对话框：自定义参数与行为（保存写入 config.tools[name]，热生效） */}
+      <ToolEditDialog
+        tool={editingTool}
+        open={editingTool !== null}
+        onOpenChange={(open) => !open && setEditingTool(null)}
+        onSave={handleSaveToolConfig}
+      />
     </div>
   );
 }

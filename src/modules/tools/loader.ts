@@ -9,20 +9,10 @@ import { t, getBackendLocale } from '../../core/i18n';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Environment, Logger } from '../../core/types';
-import type { Tool, ToolAnnotations, JSONSchema } from './types';
+import type { Tool, ToolAnnotations, JSONSchema, ToolConfigManifest } from './types';
 
-/** tool.json 的 config.schema 简化字段类型描述 */
-export interface ConfigFieldSchema {
-  type: 'boolean' | 'integer' | 'string';
-  min?: number;
-  max?: number;
-}
-
-/** tool.json 的 config 段 */
-export interface ToolConfigManifest {
-  defaults: Record<string, unknown>;
-  schema?: Record<string, ConfigFieldSchema>;
-}
+// 类型定义已迁移至 types.ts，此处 re-export 保持兼容
+export type { ToolConfigManifest } from './types';
 
 /** tool.json 的完整结构 */
 export interface ToolManifest {
@@ -129,6 +119,7 @@ export async function loadToolFromDir(
     inputSchema: manifest.inputSchema,
     annotations: manifest.annotations,
     icon: manifest.icon,
+    configManifest: manifest.config,
     // bind(impl)：保留 this 绑定，防止工具实现采用对象方法模式时 this 丢失
     execute: impl.execute.bind(impl),
     sourceDir: dir,

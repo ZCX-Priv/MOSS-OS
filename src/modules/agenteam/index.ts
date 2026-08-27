@@ -1,12 +1,20 @@
 // src/modules/agenteam/index.ts
-// AgentTeam 模块入口：实现 AgentRegistry，注册 agenteam.registry 服务。
-// 持久化到 ~/.moss/agenteam.json，预置 1 个内置 Agent（name:"Agent", builtIn:true, default:true）。
+// AgentTeam 模块入口：实现 AgentRegistry + TeamOrchestrator 编排服务。
+// 注册 agenteam.registry 与 agenteam.orchestrator 服务。
+// 持久化：注册表 ~/.moss/agenteam.json（含 1 个默认 Agent + 4 个内置模板）；
+//        团队 ~/.moss/agent-teams/；团队模板 ~/.moss/agent-team-profiles.json。
 
 import { t } from '../../core/i18n';
 import { existsSync, readFileSync, renameSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import type { Module, ModuleContext, Environment, Logger } from '../../core/types';
 import { ServiceNames } from '../../core/types';
+import type { AgentEngine } from '../contracts';
+import { TeamStore } from './store';
+import { TeamProfileStore } from './profiles';
+import { TeamOrchestrator } from './orchestrator';
+import { buildTemplateAgents } from './templates';
+import { registerAgentTeamTools } from './tools';
 
 // ============================================================================
 // 类型定义（与前端 webui/src/types/api.ts 对齐）
@@ -104,6 +112,12 @@ class AgentRegistryImpl implements AgentRegistry {
       if (!parsed.agents.find(a => a.id === 'agent')) {
         parsed.agents.unshift(defaultData.agents[0]);
       }
+      // 合并内置模板 agent（幂等：已存在则不覆盖用户修改，缺失则补齐）
+      for (const template of buildTemplateAgents()) {
+        if (!parsed.agents.find(a => a.id === template.id)) {
+          parsed.agents.push(template);
+        }
+      }
       if (!parsed.defaultAgentId) parsed.defaultAgentId = 'agent';
       // 标记 default
       for (const a of parsed.agents) {
@@ -111,6 +125,8 @@ class AgentRegistryImpl implements AgentRegistry {
       }
       return parsed;
     } catch {
+      // 文件不存在/损坏：默认数据 + 内置模板
+      defaultData.agents.push(...buildTemplateAgents());
       return defaultData;
     }
   }
@@ -230,16 +246,46 @@ class AgentRegistryImpl implements AgentRegistry {
 // ============================================================================
 
 class AgentTeamModule implements Module {
+  private orchestrator: TeamOrchestrator | null = null;
 
   async initialize(ctx: ModuleContext): Promise<void> {
     const registry = new AgentRegistryImpl(ctx.env, ctx.logger);
     ctx.services.register(ServiceNames.AGENTTEAM_REGISTRY, registry, {
       scope: 'agenteam',
     });
+
+    // 编排服务（依赖 AgentEngine；引擎未就绪时降级——不阻断启动）
+    const engine = ctx.services.tryResolve<AgentEngine>(ServiceNames.AGENT_ENGINE);
+    if (engine) {
+      const store = new TeamStore(ctx.env.dataDir, ctx.logger);
+      const profiles = new TeamProfileStore(ctx.env.dataDir, ctx.logger);
+      this.orchestrator = new TeamOrchestrator({
+        engine,
+        store,
+        profiles,
+        eventBus: ctx.eventBus,
+        logger: ctx.logger,
+        env: ctx.env,
+        services: ctx.services,
+      });
+      ctx.services.register(ServiceNames.AGENTTEAM_ORCHESTRATOR, this.orchestrator, {
+        scope: 'agenteam',
+      });
+      // captain 工具集注册（agent_teams_* / subagent_run）
+      registerAgentTeamTools(ctx.services, this.orchestrator, ctx.logger);
+    } else {
+      ctx.logger.warn('agenteam: agent engine unavailable, orchestrator disabled');
+    }
+
     ctx.logger.info(t('agenteam.moduleInitialized'), {
       agentCount: registry.list().length,
       defaultAgent: registry.getDefault().id,
     });
+  }
+
+  async destroy(): Promise<void> {
+    this.orchestrator?.destroy();
+    this.orchestrator = null;
   }
 }
 

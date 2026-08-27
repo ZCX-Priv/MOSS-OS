@@ -26,6 +26,7 @@ import {
   Zap,
   Paperclip,
   Inbox,
+  Users,
 } from 'lucide-react';
 import {
   Dialog,
@@ -77,6 +78,7 @@ import { TodoProgressCard, TodoRow } from '../shared/TodoProgressCard';
 import { AskPromptCard } from '../shared/AskPromptCard';
 import { ConfirmPromptCard } from '../shared/ConfirmPromptCard';
 import { TerminalView } from '../shared/TerminalView';
+import { AgentTeamPanel } from '../agenteam/AgentTeamPanel';
 import { ControlHub } from '../shared/ControlHub';
 import { StatsBar } from '../shared/StatsBar';
 import { CompactionCard } from '../shared/CompactionCard';
@@ -375,7 +377,8 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
   // 下拉菜单只显示当前标签栏中未打开的标签页类型；两类都已打开时禁用加号按钮
   const hasSummaryTab = sidebarTabs.some((tab) => tab.type === 'summary');
   const hasTerminalTab = sidebarTabs.some((tab) => tab.type === 'terminal');
-  const allTabTypesOpen = hasSummaryTab && hasTerminalTab;
+  const hasAgentTeamTab = sidebarTabs.some((tab) => tab.type === 'agenteam');
+  const allTabTypesOpen = hasSummaryTab && hasTerminalTab && hasAgentTeamTab;
 
   // 挂载/切换会话时加载历史 + todos + context。
   // 历史总是拉取（切回旧会话时同步后台新产生的消息）；仅当非流式生成中才整体替换，
@@ -716,6 +719,14 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
                 {t('terminal.title')}
               </DropdownMenuItem>
             )}
+            {!hasAgentTeamTab && (
+              <DropdownMenuItem
+                onSelect={() => addSidebarTab('agenteam', 'agenteam.title')}
+              >
+                <Users className="size-4" />
+                {t('agenteam.title')}
+              </DropdownMenuItem>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
@@ -869,6 +880,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
         {activeTab?.type === 'terminal' && (
           <TerminalView toolCallId={activeTab.toolCallId} />
         )}
+        {activeTab?.type === 'agenteam' && <AgentTeamPanel />}
       </div>
     </>
   );
@@ -1366,6 +1378,8 @@ function SortableTab({ tab, isActive, canShowClose, onSelect, onRemove }: Sortab
     >
       {tab.type === 'terminal' ? (
         <Terminal className="size-3.5" />
+      ) : tab.type === 'agenteam' ? (
+        <Users className="size-3.5" />
       ) : (
         <List className="size-3.5" />
       )}

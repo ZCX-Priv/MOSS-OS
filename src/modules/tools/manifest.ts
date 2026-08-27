@@ -7,25 +7,13 @@
 import { z } from 'zod';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import type { ToolConfigManifest } from './types';
 
 export interface ToolConfigSpec {
   /** 该工具配置字段的 Zod schema（不含 .default()） */
   schema: z.ZodObject<z.ZodRawShape>;
   /** 默认值（与 schema 匹配） */
   defaults: Record<string, unknown>;
-}
-
-/** tool.json 的 config.schema 简化字段类型描述 */
-interface ConfigFieldSchema {
-  type: 'boolean' | 'integer' | 'string';
-  min?: number;
-  max?: number;
-}
-
-/** tool.json 的 config 段 */
-interface ToolConfigManifest {
-  defaults: Record<string, unknown>;
-  schema?: Record<string, ConfigFieldSchema>;
 }
 
 /**
@@ -80,13 +68,13 @@ function loadToolConfigsFromDir(dir: string): Map<string, ToolConfigSpec> {
 }
 
 /**
- * 从 tool.json 的 config 段构建 ToolConfigSpec。
- * - enabled 字段自动识别为 boolean（所有工具都有）
+ * 从 tool.json 的 config 段构建 zod shape。
+ * - enabled 字段自动注入 boolean（所有工具都有）
  * - 其他字段从 config.schema 获取约束，或从 defaults 值类型推断
- * - 所有内层字段带 .default(默认值)：旧 config.json 缺新增字段时自动补全，
+ * - 所有字段带 .default(默认值)：旧 config.json 缺新增字段时自动补全，
  *   避免整体校验失败回退默认配置（升级兼容）
  */
-function buildConfigSpec(config: ToolConfigManifest): ToolConfigSpec {
+export function buildConfigShape(config: ToolConfigManifest): z.ZodRawShape {
   const shape: z.ZodRawShape = {};
   // enabled 自动注入（所有工具都有；缺省视为启用）
   shape.enabled = z.boolean().default(true);
@@ -100,15 +88,56 @@ function buildConfigSpec(config: ToolConfigManifest): ToolConfigSpec {
       shape[key] = inferZodFromValue(val).default(val);
     }
   }
+  // 通用行为字段：未在工具 config 中声明时也注入 optional，
+  // 避免 appConfigSchema.parse（工具级 z.object 默认 strip）剥离
+  // PATCH 写入的 requireConfirmation 行为覆盖值
+  if (!('requireConfirmation' in shape)) {
+    shape.requireConfirmation = z.boolean().optional();
+  }
+  return shape;
+}
 
+/** 从 tool.json 的 config 段构建 ToolConfigSpec（schema + defaults） */
+function buildConfigSpec(config: ToolConfigManifest): ToolConfigSpec {
   return {
-    schema: z.object(shape),
+    schema: z.object(buildConfigShape(config)),
     defaults: { ...config.defaults },
   };
 }
 
+/**
+ * 校验工具 config 补丁（PATCH /api/tools/:name 的 config 字段用）。
+ * - 字段 key 必须在 shape 声明集合内，未知字段报错（防拼写错误被静默丢弃）
+ * - 值类型用 shape 中对应 zod 字段校验（ZodDefault 对有值输入执行内层类型 + min/max）
+ * - requireConfirmation 不在 shape 时也允许 boolean（通用行为覆盖，registry.execute 读取）
+ */
+export function validateToolConfigPatch(
+  shape: z.ZodRawShape,
+  patch: Record<string, unknown>,
+): { ok: true } | { ok: false; error: string } {
+  for (const [key, value] of Object.entries(patch)) {
+    // 通用行为字段：未在工具 config 中声明时也允许（boolean 覆盖）
+    if (key === 'requireConfirmation' && !(key in shape)) {
+      if (typeof value !== 'boolean') {
+        return { ok: false, error: 'Invalid value for field "requireConfirmation": expected boolean' };
+      }
+      continue;
+    }
+    const field = shape[key];
+    if (!field) {
+      return { ok: false, error: `Unknown config field "${key}"` };
+    }
+    const r = field.safeParse(value);
+    if (!r.success) {
+      const issue = r.error.issues[0];
+      return { ok: false, error: `Invalid value for field "${key}": ${issue.message}` };
+    }
+  }
+  return { ok: true };
+}
+
 /** 把简化 JSON 类型描述转为 Zod */
-function buildZodField(field: ConfigFieldSchema): z.ZodTypeAny {
+function buildZodField(field: { type: string; min?: number; max?: number }): z.ZodTypeAny {
   switch (field.type) {
     case 'boolean':
       return z.boolean();

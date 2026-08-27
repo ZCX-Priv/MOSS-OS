@@ -51,9 +51,29 @@ export function useTools() {
     [updateTool],
   );
 
+  /** 保存工具编辑对话框的整表配置（enabled + requireConfirmation + 专属参数） */
+  const saveToolConfig = useCallback(
+    async (name: string, config: Record<string, unknown>) => {
+      try {
+        const res = await api.updateTool(name, { config });
+        // 本地刷新（不依赖 WS 推送）：生效值用后端返回的合并结果，enabled 单独同步
+        updateTool(name, {
+          configValues: res.config,
+          ...(typeof config.enabled === 'boolean' ? { enabled: config.enabled } : {}),
+        });
+        return res;
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : String(err));
+        throw err;
+      }
+    },
+    [updateTool],
+  );
+
   return {
     tools: useStore((s) => s.tools),
     reload: load,
     toggleTool,
+    saveToolConfig,
   };
 }

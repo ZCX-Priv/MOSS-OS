@@ -454,6 +454,8 @@ export const ServiceNames = {
   SPEC_REGISTRY: 'spec.registry',
   /** Agent 注册表（由 agenteam 模块注册） */
   AGENTTEAM_REGISTRY: 'agenteam.registry',
+  /** AgentTeam 编排服务（由 agenteam 模块注册：团队生命周期/DAG调度/质量门禁/临时subagent） */
+  AGENTTEAM_ORCHESTRATOR: 'agenteam.orchestrator',
   /** 自动化任务服务（由 automation 模块注册） */
   AUTOMATION_SERVICE: 'automation.service',
   /** 文件历史服务（由 file-history 模块注册：Track Edit + Snapshot + undo） */

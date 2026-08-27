@@ -46,7 +46,7 @@ const MODULE_DESTROY_TIMEOUT_MS = 10_000;
 
 /**
  * 静态模块注册表：固定初始化顺序满足依赖关系（被依赖者在前）。
- * - llm / server / agenteam / update：无依赖。server 前移到第 2 位：其全部路由
+ * - llm / server / update：无依赖。server 前移到第 2 位：其全部路由
  *   handler 均为请求时 tryResolve（运行时解析），health/静态页可秒级就绪，
  *   不必等待 tools 动态加载与 MCP 连接（启动性能关键路径）。
  * - tools / mcp：加载与连接较慢（工具动态 import / MCP 子进程握手），
@@ -56,6 +56,8 @@ const MODULE_DESTROY_TIMEOUT_MS = 10_000;
  * - rules / hooks / memory → 无服务依赖（context/agent 经 tryResolve 消费，须先于二者注册）
  * - context → llm（压缩摘要调用 LLMRouter；agent 每轮请求经其流水线，须先于 agent 注册）
  * - agent → llm, tools, filesys, safety, context, rules, hooks, memory
+ * - agenteam → agent（编排服务复用 AgentEngine 派发成员任务；registry 部分无依赖，
+ *   但模块整体须后于 agent 注册；server 的 /api/agent-teams 路由为请求时 tryResolve，不受影响）
  * - file-history → tools, filesys（shell 快照回填运行时 tryResolve）
  * - daemon → server
  * - automation → agent, server
@@ -65,7 +67,6 @@ const MODULE_FACTORIES: Array<{ name: string; create: () => Module }> = [
   { name: 'server', create: server },
   { name: 'tools', create: tools },
   { name: 'mcp', create: mcp },
-  { name: 'agenteam', create: agenteam },
   { name: 'update', create: update },
   { name: 'filesys', create: filesys },
   { name: 'safety', create: safety },
@@ -74,6 +75,7 @@ const MODULE_FACTORIES: Array<{ name: string; create: () => Module }> = [
   { name: 'memory', create: memory },
   { name: 'context', create: context },
   { name: 'agent', create: agent },
+  { name: 'agenteam', create: agenteam },
   { name: 'file-history', create: fileHistory },
   { name: 'daemon', create: daemon },
   { name: 'automation', create: automation },

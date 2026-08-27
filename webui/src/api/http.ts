@@ -20,6 +20,12 @@ import type {
   ProviderBalanceResult,
   AgentItem,
   AgentDetail,
+  AgentTeam,
+  AgentTeamSummary,
+  AgentTeamProfile,
+  CreateAgentTeamInput,
+  TeamMessage,
+  SubagentRunOutput,
   SkillItem,
   SkillDetail,
   CommandItem,
@@ -320,8 +326,8 @@ export const api = {
   // 工具（完整信息 + 启停）
   // ==========================================================================
   listTools: () => request<{ tools: ToolItem[] }>('GET', '/api/tools'),
-  updateTool: (name: string, patch: { enabled?: boolean }) =>
-    request<{ name: string; enabled: boolean }>('PATCH', `/api/tools/${encodeURIComponent(name)}`, patch),
+  updateTool: (name: string, patch: { enabled?: boolean; config?: Record<string, unknown> }) =>
+    request<{ name: string; config?: Record<string, unknown> }>('PATCH', `/api/tools/${encodeURIComponent(name)}`, patch),
 
   // ==========================================================================
   // 任务 + 分组（见文档 3.2.1）
@@ -445,6 +451,30 @@ export const api = {
   deleteAgent: (id: string) => request<{ deleted: boolean }>('DELETE', `/api/agenteam/${id}`),
   setDefaultAgent: (id: string) =>
     request<{ default: string }>('PUT', '/api/agenteam/default', { id }),
+
+  // ==========================================================================
+  // AgentTeam 编排（见 routes/agent-teams.ts）
+  // ==========================================================================
+  listAgentTeams: () => request<{ teams: AgentTeamSummary[] }>('GET', '/api/agent-teams'),
+  getAgentTeam: (id: string) => request<AgentTeam>('GET', `/api/agent-teams/${id}`),
+  getAgentTeamMessages: (id: string, since?: number) =>
+    request<{ messages: TeamMessage[] }>(
+      'GET',
+      `/api/agent-teams/${id}/messages${since !== undefined ? `?since=${since}` : ''}`,
+    ),
+  createAgentTeam: (data: CreateAgentTeamInput) => request<AgentTeam>('POST', '/api/agent-teams', data),
+  approveAgentTeam: (id: string) => request<AgentTeam>('POST', `/api/agent-teams/${id}/approve`),
+  discardAgentTeam: (id: string) => request<AgentTeam>('POST', `/api/agent-teams/${id}/discard`),
+  haltAgentTeam: (id: string) => request<AgentTeam>('POST', `/api/agent-teams/${id}/halt`),
+  resumeAgentTeam: (id: string) => request<AgentTeam>('POST', `/api/agent-teams/${id}/resume`),
+  deleteAgentTeam: (id: string) => request<{ deleted: boolean }>('DELETE', `/api/agent-teams/${id}`),
+  listAgentTeamProfiles: () => request<{ profiles: AgentTeamProfile[] }>('GET', '/api/agent-team-profiles'),
+  saveAgentTeamProfile: (data: AgentTeamProfile) =>
+    request<{ saved: boolean }>('POST', '/api/agent-team-profiles', data),
+  deleteAgentTeamProfile: (name: string) =>
+    request<{ deleted: boolean }>('DELETE', `/api/agent-team-profiles/${encodeURIComponent(name)}`),
+  runSubagent: (data: { template: string; task: string; cwd: string; permissionMode?: 'ask' | 'auto' | 'skip' }) =>
+    request<SubagentRunOutput>('POST', '/api/subagents/run', data),
 
   // ==========================================================================
   // Skills / Specs（见文档 3.2.5 / 3.2.6）

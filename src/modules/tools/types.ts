@@ -23,6 +23,19 @@ export interface JSONSchema {
   [key: string]: unknown;
 }
 
+/** tool.json 的 config.schema 简化字段类型描述 */
+export interface ConfigFieldSchema {
+  type: 'boolean' | 'integer' | 'string';
+  min?: number;
+  max?: number;
+}
+
+/** tool.json 的 config 段（工具运行时可配置参数声明） */
+export interface ToolConfigManifest {
+  defaults: Record<string, unknown>;
+  schema?: Record<string, ConfigFieldSchema>;
+}
+
 export interface Tool {
   name: string;
   description: string;
@@ -37,6 +50,8 @@ export interface Tool {
   sourceDir?: string;
   /** 工具来源类型（builtin=内置，custom=用户自定义，由加载器注入） */
   source?: 'builtin' | 'custom';
+  /** tool.json 的 config 段（defaults + schema，由加载器注入；供 API 暴露可编辑参数定义） */
+  configManifest?: ToolConfigManifest;
 }
 
 /** ask 工具候选项 */
