@@ -79,6 +79,8 @@ import { AskPromptCard } from '../shared/AskPromptCard';
 import { ConfirmPromptCard } from '../shared/ConfirmPromptCard';
 import { TerminalView } from '../shared/TerminalView';
 import { AgentTeamPanel } from '../agenteam/AgentTeamPanel';
+import { AgentTeamInlineCard, type InlineTeamPlan } from '../agenteam/AgentTeamInlineCard';
+import { SubagentInlineCard } from '../agenteam/SubagentInlineCard';
 import { ControlHub } from '../shared/ControlHub';
 import { StatsBar } from '../shared/StatsBar';
 import { CompactionCard } from '../shared/CompactionCard';
@@ -1686,6 +1688,52 @@ const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap,
           {expanded ? t('task.todoCollapse') : t('task.messageExpand')}
         </button>
       )}
+      {/* subagent_run 工具调用 → Subagent 专属卡片（设计参考 Max/TeamUI/Subagent.png：
+          角色名 + 状态徽章 + 树形任务 + 运行中实时事件计数 + 完成后可展开报告） */}
+      {message.toolCalls?.filter((tc) => tc.name === 'subagent_run').map((tc) => {
+        const matched = message.toolResults?.find((tr) => tr.toolCallId === tc.id);
+        const resultText = matched?.result.content
+          .filter((c) => c.type === 'text')
+          .map((c) => (c.type === 'text' ? c.text : ''))
+          .join('\n');
+        let args: { template?: string; task?: string } = {};
+        try {
+          args = JSON.parse(tc.arguments || '{}') as { template?: string; task?: string };
+        } catch {
+          // 非 JSON 参数：留空由卡片内部渲染最小占位
+        }
+        return (
+          <SubagentInlineCard
+            key={tc.id}
+            template={args.template ?? ''}
+            task={args.task ?? ''}
+            status={tc.status}
+            resultText={resultText}
+            isError={matched?.result.isError}
+          />
+        );
+      })}
+      {/* agent_teams_create 工具调用 → 专家团专属卡片（设计参考 Max/TeamUI/专家团.png：
+          团队名 + 任务数 + 进度点阵 + 阶段徽章 + 成员头像任务行；teamId 绑定后实时刷新） */}
+      {message.toolCalls?.filter((tc) => tc.name === 'agent_teams_create').map((tc) => {
+        const matched = message.toolResults?.find((tr) => tr.toolCallId === tc.id);
+        const resultText = matched?.result.content
+          .filter((c) => c.type === 'text')
+          .map((c) => (c.type === 'text' ? c.text : ''))
+          .join('\n');
+        let args: { name?: string; members?: InlineTeamPlan['members']; tasks?: InlineTeamPlan['tasks'] } = {};
+        try {
+          args = JSON.parse(tc.arguments || '{}') as typeof args;
+        } catch {
+          // 非 JSON 参数：留空由卡片内部渲染最小占位
+        }
+        const plan: InlineTeamPlan | null = args.name
+          ? { name: args.name, members: args.members ?? [], tasks: args.tasks ?? [] }
+          : null;
+        // 从结果文本 "Team created: id=<teamId> phase=..." 提取团队 id 绑定实时数据
+        const teamId = resultText?.match(/id=([A-Za-z0-9_-]+)/)?.[1] ?? null;
+        return <AgentTeamInlineCard key={tc.id} plan={plan} teamId={teamId} />;
+      })}
       {/* todo 工具调用 → 在任务流中渲染 TodoProgressCard（像其他工具一样在调用位置显示）。
           渲染条件基于消息自身快照（?? 回落到 store）：store 被清空不牵连历史卡片。 */}
       {message.toolCalls?.some((tc) => tc.name === 'todo') && (message.todoSnapshot ?? todos).length > 0 && (
@@ -1733,10 +1781,11 @@ const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap,
           </div>
         );
       })}
-      {/* 非 todo/ask 工具调用（可折叠：展开显示参数与结果） */}
-      {message.toolCalls && message.toolCalls.filter((tc) => tc.name !== 'todo' && tc.name !== 'ask').length > 0 && (
+      {/* 非 todo/ask/专属卡片工具调用（可折叠：展开显示参数与结果）。
+          subagent_run / agent_teams_create 已由上方专属卡片渲染。 */}
+      {message.toolCalls && message.toolCalls.filter((tc) => tc.name !== 'todo' && tc.name !== 'ask' && tc.name !== 'subagent_run' && tc.name !== 'agent_teams_create').length > 0 && (
         <div className="flex flex-col gap-1">
-          {message.toolCalls.filter((tc) => tc.name !== 'todo' && tc.name !== 'ask').map((tc) => {
+          {message.toolCalls.filter((tc) => tc.name !== 'todo' && tc.name !== 'ask' && tc.name !== 'subagent_run' && tc.name !== 'agent_teams_create').map((tc) => {
             const matchedResult = message.toolResults?.find((tr) => tr.toolCallId === tc.id);
             const resultText = matchedResult?.result.content
               .filter((c) => c.type === 'text')

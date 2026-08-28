@@ -18,6 +18,7 @@
 //    - file-created / file-edited：toast 提示（预留）
 //    - task.created / task.updated：更新 tasks
 //    - automation.started / automation.finished：更新 history
+//    - agenteam.member.event：聚合成员/subagent 事件计数（对话流卡片数据源）
 //    - config.changed：标记需刷新配置（由 useConfig 订阅 store 触发重拉）
 
 import { useEffect } from 'react';
@@ -799,6 +800,23 @@ export function useWebSocket(): void {
         }
         // 清除运行态（转圈消失）；断线丢失 finished 时由 session.subscribe 校正兜底
         if (payload.taskId) st.setGenerating(payload.taskId, false);
+        break;
+      }
+      case 'agenteam.member.event': {
+        // 专家团成员 / 临时 subagent 的实时事件广播（全局，与 sessionId 无关，不做 runId 过滤）。
+        // 仅聚合为事件计数供对话流卡片显示（"已处理 N 条事件"）；明细不入消息流。
+        const payload = (msg.payload ?? {}) as {
+          teamId?: string | null;
+          memberName?: string;
+          taskId?: string;
+        };
+        if (payload.taskId && payload.memberName) {
+          useStore.getState().bumpAgenteamEvent(
+            payload.taskId,
+            payload.teamId ?? null,
+            payload.memberName,
+          );
+        }
         break;
       }
       case 'config.changed': {

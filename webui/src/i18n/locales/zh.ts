@@ -888,6 +888,15 @@ export const zh = {
     loadFailed: '加载失败',
     autoStart: '创建后立即执行（跳过审批）',
     subagentRun: '运行子代理',
+    card: {
+      taskCount: '{{count}} 项任务',
+      running: '运行中',
+      eventsProcessed: '已处理 {{count}} 条事件',
+      starting: '正在启动…',
+      report: '最终报告',
+      awaitingApprovalHint: '计划待审批 · 请在右侧「专家团」面板中处理',
+      unassigned: '未分配',
+    },
   },
   plugins: {
     title: '插件库',

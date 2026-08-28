@@ -40,6 +40,18 @@ import { DEFAULT_ANIMATION_SETTINGS, isValidAnimationSettings, type AnimationSet
 // State
 // ============================================================================
 
+/** 专家团/Subagent 成员事件计数条目（agenteam.member.event 广播聚合；key=taskId） */
+export interface AgenteamEventEntry {
+  /** 团队 id（临时 subagent 为 null） */
+  teamId: string | null;
+  /** 成员名（subagent 场景 = 模板 agentId） */
+  memberName: string;
+  /** 累计事件条数 */
+  count: number;
+  /** 最近一条事件到达时间（ms） */
+  lastAt: number;
+}
+
 interface UIState {
   // --- 会话 / 消息 ---
   activeSessionId: string | null;
@@ -122,6 +134,9 @@ interface UIState {
 
   // --- 运行统计（会话级；stats-updated 事件维护，run 级口径每次发送重置） ---
   runStatsBySession: Record<string, RunStats | undefined>;
+
+  // --- 专家团/Subagent 成员事件计数（agenteam.member.event 广播维护；key=taskId；内存态） ---
+  agenteamEvents: Record<string, AgenteamEventEntry>;
 
   // --- 中控岛展开状态（会话级；默认折叠，undefined 视为折叠） ---
   hubActiveModuleBySession: Record<string, string | null | undefined>;
@@ -295,6 +310,9 @@ interface UIActions {
 
   // 运行统计（stats-updated 事件；sendMessage 时清空旧 run 数据）
   setRunStats: (sessionId: string, stats: RunStats | undefined) => void;
+
+  // 专家团/Subagent 成员事件计数（agenteam.member.event 广播；上限 100 条按 lastAt 淘汰）
+  bumpAgenteamEvent: (taskId: string, teamId: string | null, memberName: string) => void;
 
   // 中控岛展开模块（null=折叠；moduleId=展开并激活）
   setHubActiveModule: (sessionId: string, moduleId: string | null) => void;
@@ -482,6 +500,7 @@ export const useStore = create<Store>((set) => ({
   mcpServers: [],
   mcpTools: [],
   runStatsBySession: {},
+  agenteamEvents: {},
   hubActiveModuleBySession: {},
 
   // --- 工具图标映射 ---
@@ -799,6 +818,30 @@ export const useStore = create<Store>((set) => ({
     set((state) => ({
       runStatsBySession: { ...state.runStatsBySession, [sessionId]: stats },
     })),
+
+  // --- Actions: 专家团/Subagent 成员事件计数 ---
+  bumpAgenteamEvent: (taskId, teamId, memberName) =>
+    set((state) => {
+      const prev = state.agenteamEvents[taskId];
+      const next: Record<string, AgenteamEventEntry> = {
+        ...state.agenteamEvents,
+        [taskId]: {
+          teamId,
+          memberName,
+          count: (prev?.count ?? 0) + 1,
+          lastAt: Date.now(),
+        },
+      };
+      // 上限 100 条：按 lastAt 淘汰最旧（防长会话运行内存无界增长）
+      const keys = Object.keys(next);
+      if (keys.length > 100) {
+        keys
+          .sort((a, b) => (next[a]?.lastAt ?? 0) - (next[b]?.lastAt ?? 0))
+          .slice(0, keys.length - 100)
+          .forEach((k) => delete next[k]);
+      }
+      return { agenteamEvents: next };
+    }),
 
   // --- Actions: 中控岛 ---
   setHubActiveModule: (sessionId, moduleId) =>

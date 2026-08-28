@@ -887,6 +887,15 @@ export const en = {
     loadFailed: 'Failed to load',
     autoStart: 'Start immediately (skip approval)',
     subagentRun: 'Run subagent',
+    card: {
+      taskCount: '{{count}} tasks',
+      running: 'Running',
+      eventsProcessed: '{{count}} events processed',
+      starting: 'Starting…',
+      report: 'Final report',
+      awaitingApprovalHint: 'Plan awaiting approval · review it in the Expert Team panel',
+      unassigned: 'Unassigned',
+    },
   },
   plugins: {
     title: 'Plugins',
