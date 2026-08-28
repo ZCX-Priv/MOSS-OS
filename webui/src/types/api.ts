@@ -428,6 +428,50 @@ interface FileIndexEngineStatusBase {
   error: string | null;
 }
 
+// ============================================================================
+// 远程控制（/api/remote/*）
+// ============================================================================
+
+/** cloudflared 隧道阶段 */
+export type RemoteTunnelPhase = 'idle' | 'downloading' | 'starting' | 'registering' | 'ready' | 'error';
+
+/** 隧道运行状态 */
+export interface RemoteTunnelState {
+  phase: RemoteTunnelPhase;
+  detail: string;
+  startedAt: number | null;
+}
+
+/** GET /api/remote/status 响应（不含密码明文） */
+export interface RemoteStatus {
+  enabled: boolean;
+  port: number;
+  lanEnabled: boolean;
+  lanPasswordEnabled: boolean;
+  lanIp: string | null;
+  lanUrl: string | null;
+  lanCandidates: string[];
+  lanIpOverride: string;
+  tunnel: RemoteTunnelState;
+  tunnelUrl: string | null;
+  publicPasswordCustomized: boolean;
+}
+
+/** GET /api/remote/passwords 响应（密码明文视图） */
+export interface RemotePasswords {
+  lan: string | null;
+  public: string | null;
+  lanPasswordEnabled: boolean;
+  publicCustomized: boolean;
+}
+
+/** POST /api/remote/enable|disable 响应 */
+export interface RemoteToggleResult {
+  rebound: boolean;
+  enabled: boolean;
+  hostname?: string;
+}
+
 /** 压缩历史记录（session.compactions 元素 / GET /api/context/:id/compactions） */
 export interface CompactionRecord {
   id: string;

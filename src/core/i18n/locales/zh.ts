@@ -498,6 +498,15 @@ export const zh = {
     automationTriggeredWs: '通过 WS 触发自动化: {{id}} (run {{runId}})',
     routeRegistered: '路由已注册: {{method}} {{pattern}}',
     routeHandlerError: '路由处理器错误: {{method}} {{path}}',
+    rebinding: '热重绑 HTTP 服务: {{from}} -> {{to}}',
+  },
+  remote: {
+    started: 'Remote 模块已初始化（远程控制）',
+    stopped: 'Remote 模块已停止',
+    enabled: '远程访问已开启（即将热重绑到 {{hostname}}）',
+    disabled: '远程访问已关闭（即将热重绑回 {{hostname}}）',
+    rebound: '热重绑完成: {{hostname}}',
+    rebindFailed: '热重绑失败（已回滚到原绑定）: {{error}}',
   },
   daemon: {
     disabledByConfig: '守护进程模块已被配置禁用',

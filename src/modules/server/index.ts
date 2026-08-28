@@ -7,7 +7,7 @@ import { ServiceNames } from '../../core/types';
 import { HttpRouter } from './http-router';
 import { WsHandler } from './ws-handler';
 import { StaticAssets } from './static-assets';
-import type { ServerInstance, Route, WSMessageHandler, WSConnection } from './types';
+import type { ServerInstance, Route, WSMessageHandler, WSConnection, RequestGuard, GuardRequestContext, GuardResponse } from './types';
 import { createHealthHandler } from './routes/health';
 import {
   createGetAppConfigHandler,
@@ -170,11 +170,13 @@ import {
 import { McpExpose } from '../mcp/expose';
 
 interface BunServer {
-  stop(): void | Promise<void>;
+  stop(closeActiveConnections?: boolean): void | Promise<void>;
   upgrade(
     req: Request,
     options?: { data?: unknown; headers?: Record<string, string> },
   ): boolean;
+  /** Bun.serve 实例方法：解析请求的客户端地址（实测 Bun 1.3 Windows 可用） */
+  requestIP(req: Request): { address: string; port: number; family: string };
 }
 
 interface BunWebSocket {
@@ -192,9 +194,13 @@ class ServerModule implements Module {
   private wsHandler!: WsHandler;
   private assets!: StaticAssets;
   private mcpExpose!: McpExpose;
+  /** 请求门卫（remote 模块注入；null 时零开销直通） */
+  private guard: RequestGuard | null = null;
   private server: BunServer | null = null;
   private actualPort = 0;
   private actualHost = '127.0.0.1';
+  /** 热重绑互斥（并发 rebind 串行化） */
+  private rebinding: Promise<void> | null = null;
 
   async initialize(ctx: ModuleContext): Promise<void> {
     this.ctx = ctx;
@@ -207,18 +213,21 @@ class ServerModule implements Module {
 
     await this.startServer();
 
-    // 注册 ServerInstance 服务
+    // 注册 ServerInstance 服务（host/baseUrl 用 getter：热重绑后动态反映最新绑定）
+    const self = this;
     const instance: ServerInstance = {
-      raw: this.server,
-      host: this.actualHost,
-      port: this.actualPort,
-      baseUrl: `http://${this.actualHost}:${this.actualPort}`,
+      get raw() { return self.server; },
+      get host() { return self.actualHost; },
+      get port() { return self.actualPort; },
+      get baseUrl() { return `http://${self.actualHost}:${self.actualPort}`; },
       addRoute: (route: Route) => this.router.addRoute(route),
       broadcastWS: (msg: unknown) => this.wsHandler.broadcast(msg),
       sendToSession: (sid: string, msg: unknown) => this.wsHandler.sendToSession(sid, msg),
       registerExternalRun: (sid: string, c: AbortController) => this.wsHandler.registerExternalRun(sid, c),
       unregisterExternalRun: (sid: string, c: AbortController) => this.wsHandler.unregisterExternalRun(sid, c),
       onWSMessage: (h: WSMessageHandler) => this.wsHandler.onWSMessage(h),
+      setRequestGuard: (guard: RequestGuard) => { this.guard = guard; },
+      rebind: (hostname: string) => this.rebind(hostname),
       stop: async () => {
         if (this.server) await this.server.stop();
       },
@@ -466,7 +475,7 @@ class ServerModule implements Module {
   private async startServer(): Promise<void> {
     const cfg = this.ctx.config.getAppConfig();
     let port = cfg.server.port;
-    const host = cfg.security.bindLocalhostOnly ? '127.0.0.1' : cfg.server.host;
+    const host = computeBindHost(cfg);
 
     if (cfg.server.autoPort) {
       port = await this.findFreePort(host, port);
@@ -477,6 +486,80 @@ class ServerModule implements Module {
       }
     }
 
+    try {
+      this.server = this.createServerInstance(port, host);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/EADDRINUSE|address already in use/i.test(msg)) {
+        this.ctx.logger.error(
+          t('server.bindInUse', { host, port }),
+          { error: msg, host, port },
+        );
+      } else {
+        this.ctx.logger.error(
+          t('server.startFailed', { host, port, msg }),
+          { error: msg, host, port },
+        );
+      }
+      throw err;
+    }
+
+    this.actualPort = port;
+    this.actualHost = host;
+  }
+
+  /**
+   * 热重绑：停止当前 HTTP/WS 服务并以相同端口按新 hostname 重新监听。
+   * router/wsHandler/assets/mcpExpose 实例全部复用（连接状态、订阅集合、activeRuns
+   * 天然保留）；运行中 agent 任务与连接解耦，不受影响。前端断连后自动重连。
+   * 端口锁定（禁止 autoPort 漂移——手机端正拿着 URL 访问）；失败时按原 hostname 回滚。
+   */
+  async rebind(hostname: string): Promise<void> {
+    // 并发 rebind 串行化（开关快速连点）
+    if (this.rebinding) await this.rebinding;
+    this.rebinding = (async (): Promise<void> => {
+      if (!this.server) throw new Error('server not started');
+      const port = this.actualPort;
+      const oldHost = this.actualHost;
+      if (oldHost === hostname) return;
+
+      this.ctx.logger.info(t('server.rebinding', { from: oldHost, to: hostname }));
+      // stop(true)：立即断开活跃连接（含 WS）；旧连接的资源由 Bun 回收
+      await this.server.stop(true);
+      this.server = null;
+
+      let lastErr: unknown = null;
+      for (let i = 0; i < 10; i++) {
+        try {
+          this.server = this.createServerInstance(port, hostname);
+          this.actualHost = hostname;
+          return;
+        } catch (err) {
+          lastErr = err;
+          const msg = err instanceof Error ? err.message : String(err);
+          if (!/EADDRINUSE|address already in use/i.test(msg)) break;
+          // 端口竞态：短暂等待后重试原端口
+          await new Promise(resolve => setTimeout(resolve, 200));
+        }
+      }
+      // 全部失败：按原 hostname 回滚（服务必须保持可用）
+      this.server = this.createServerInstance(port, oldHost);
+      this.actualHost = oldHost;
+      throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+    })();
+    try {
+      await this.rebinding;
+    } finally {
+      this.rebinding = null;
+    }
+  }
+
+  /**
+   * 创建 Bun.serve 实例（startServer 与 rebind 共用）。
+   * fetch 最前为请求门卫（remote 模块注入；null 时零开销直通）——覆盖 HTTP/WS/
+   * 静态资源//mcp 端点的一切非本机请求。
+   */
+  private createServerInstance(port: number, hostname: string): BunServer {
     const router = this.router;
     const wsHandler = this.wsHandler;
     const logger = this.ctx.logger;
@@ -484,24 +567,58 @@ class ServerModule implements Module {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const BunAny = Bun as any;
-    let server: BunServer;
-    try {
-      server = BunAny.serve({
+    return BunAny.serve({
       port,
-      hostname: host,
+      hostname,
       // 顶层（HTTP 请求）：Bun 默认 10s 空闲即断连接，慢接口（文件索引 rebuild、
       // provider 拉模型等）会被中途杀掉；60s 对本地 API 安全
       idleTimeout: 60,
-      async fetch(req: Request, srv: BunServer): Promise<Response> {
-        // WebSocket 升级
+      fetch: async (req: Request, srv: BunServer): Promise<Response> => {
         const url = new URL(req.url);
+        // WebSocket 升级
         if (req.headers.get('upgrade') === 'websocket' && (url.pathname === '/ws' || url.pathname === '/ws/')) {
+          // 请求门卫：远程访问开启时校验 cookie（未认证拒绝握手）
+          const guard = this.guard;
+          if (guard) {
+            const gctx = buildGuardContext(req, srv);
+            if (!guard.checkWS(gctx)) {
+              return new Response('{"error":"unauthorized"}', {
+                status: 401,
+                headers: { 'content-type': 'application/json' },
+              });
+            }
+          }
           const connId = crypto.randomUUID();
           const success = srv.upgrade(req, {
             data: { connId },
           });
           if (success) return new Response(null, { status: 101 });
           return new Response('Upgrade failed', { status: 400 });
+        }
+        // 请求门卫：远程访问开启时拦截非本机请求（HTTP + 静态资源 + /mcp 全覆盖）
+        const guard = this.guard;
+        if (guard) {
+          const gctx = buildGuardContext(req, srv);
+          const verdict = guard.precheck(gctx);
+          if (verdict.action === 'respond') {
+            return new Response(verdict.response.body, {
+              status: verdict.response.status,
+              headers: verdict.response.headers,
+            });
+          }
+          if (verdict.action === 'login') {
+            // 登录表单提交：读 body 后交由门卫处理（校验密码、种 cookie）
+            const body = await req.text();
+            const resp = guard.handleLogin(gctx, body);
+            return new Response(resp.body, { status: resp.status, headers: resp.headers });
+          }
+          if (verdict.action === 'pass-authenticated') {
+            // 远程会话已认证：注入 Authorization（API 鉴权层认可远程 cookie，"两者结合"）
+            const extra: Record<string, string> = { authorization: verdict.authorization };
+            const mcpResp = await mcpExpose.handleRequest(req);
+            if (mcpResp) return mcpResp;
+            return handleHttp(req, router, logger, extra);
+          }
         }
         // MCP 对外暴露端点（/mcp）：在 router 之前拦截，绕过 body 限制与 SPA fallback
         const mcpResp = await mcpExpose.handleRequest(req);
@@ -557,25 +674,6 @@ class ServerModule implements Module {
         },
       },
     });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (/EADDRINUSE|address already in use/i.test(msg)) {
-        this.ctx.logger.error(
-          t('server.bindInUse', { host, port }),
-          { error: msg, host, port },
-        );
-      } else {
-        this.ctx.logger.error(
-          t('server.startFailed', { host, port, msg }),
-          { error: msg, host, port },
-        );
-      }
-      throw err;
-    }
-
-    this.server = server;
-    this.actualPort = port;
-    this.actualHost = host;
   }
 
   private async findFreePort(host: string, startPort: number): Promise<number> {
@@ -586,6 +684,28 @@ class ServerModule implements Module {
     }
     return startPort;
   }
+}
+
+/** 计算绑定地址：remote.enabled 优先（0.0.0.0），其次 bindLocalhostOnly，最后 server.host。 */
+function computeBindHost(cfg: { remote?: { enabled?: boolean }; security: { bindLocalhostOnly: boolean }; server: { host: string } }): string {
+  if (cfg.remote?.enabled) return '0.0.0.0';
+  return cfg.security.bindLocalhostOnly ? '127.0.0.1' : cfg.server.host;
+}
+
+/** 构造门卫请求上下文（headers 小写键 + 客户端 IP）。 */
+function buildGuardContext(req: Request, srv: BunServer): GuardRequestContext {
+  const headers: Record<string, string> = {};
+  req.headers.forEach((v, k) => {
+    headers[k.toLowerCase()] = v;
+  });
+  let clientIp = '';
+  try {
+    const info = srv.requestIP(req);
+    clientIp = info?.address ?? '';
+  } catch {
+    clientIp = '';
+  }
+  return { method: req.method, url: req.url, headers, clientIp };
 }
 
 async function isPortFree(host: string, port: number): Promise<boolean> {
@@ -605,6 +725,7 @@ async function handleHttp(
   req: Request,
   router: HttpRouter,
   logger: { debug: (m: string, ctx?: Record<string, unknown>) => void },
+  extraHeaders?: Record<string, string>,
 ): Promise<Response> {
   const url = req.url;
   const method = req.method;
@@ -612,6 +733,12 @@ async function handleHttp(
   req.headers.forEach((v, k) => {
     headers[k.toLowerCase()] = v;
   });
+  // 门卫注入的额外头（远程会话已认证时的 Authorization；同键覆盖原值）
+  if (extraHeaders) {
+    for (const [k, v] of Object.entries(extraHeaders)) {
+      headers[k.toLowerCase()] = v;
+    }
+  }
   const body = req.body ? await req.text() : '';
 
   logger.debug(t('server.httpRequest', { method, url }));

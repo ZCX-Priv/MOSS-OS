@@ -63,6 +63,9 @@ import type {
   MemoryPalaceTree,
   MemoryUpsertBody,
   MemoryDistillResult,
+  RemoteStatus,
+  RemotePasswords,
+  RemoteToggleResult,
 } from '../types/api';
 import i18n from '../i18n';
 
@@ -579,6 +582,23 @@ export const api = {
     request<{ ok: boolean }>('DELETE', `/api/memory/${encodeURIComponent(id)}${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ''}`),
   distillMemory: (data: { sessionId: string; cwd?: string }) =>
     request<MemoryDistillResult>('POST', '/api/memory/distill', data),
+
+  // ==========================================================================
+  // 远程控制（/api/remote/*）
+  // ==========================================================================
+  getRemoteStatus: () => request<RemoteStatus>('GET', '/api/remote/status'),
+  getRemotePasswords: () => request<RemotePasswords>('GET', '/api/remote/passwords'),
+  enableRemote: () => request<RemoteToggleResult>('POST', '/api/remote/enable'),
+  disableRemote: () => request<RemoteToggleResult>('POST', '/api/remote/disable'),
+  setRemoteLan: (enabled: boolean) => request<{ lanEnabled: boolean }>('POST', '/api/remote/lan', { enabled }),
+  setRemoteLanPassword: (action: 'refresh' | 'custom' | 'disable' | 'enable', value?: string) =>
+    request<{ pin?: string; lanPasswordEnabled?: boolean }>('POST', '/api/remote/lan/password', { action, value }),
+  setRemoteLanIp: (ip: string) => request<{ lanIpOverride: string }>('POST', '/api/remote/lan-ip', { ip }),
+  startRemoteTunnel: (disclaimerAccepted: boolean) =>
+    request<{ url: string; phase: string }>('POST', '/api/remote/tunnel/start', { disclaimerAccepted }),
+  stopRemoteTunnel: () => request<{ stopped: boolean }>('POST', '/api/remote/tunnel/stop'),
+  setRemoteTunnelPassword: (action: 'refresh' | 'custom', value?: string) =>
+    request<{ pin?: string }>('POST', '/api/remote/tunnel/password', { action, value }),
 
   // ==========================================================================
   // 自动化任务（见文档 3.2.7）

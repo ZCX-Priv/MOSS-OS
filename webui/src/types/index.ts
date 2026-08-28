@@ -14,6 +14,7 @@ export type SettingsSection =
   | 'tools'
   | 'specs'
   | 'safety'
+  | 'remote'
   | 'logs'
   | 'index'
   | 'commands'

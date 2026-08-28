@@ -11,6 +11,7 @@
   "devDependencies": {
     "@types/markdown-it": "^14.2.0",
     "@types/node": "^26.1.2",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "@types/three": "^0.185.4",
@@ -49,6 +50,7 @@
     "mermaid": "^11.16.1",
     "next-themes": "^0.4.6",
     "pdfjs-dist": "^6.2.108",
+    "qrcode": "^1.5.4",
     "radix-ui": "^1.6.7",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",

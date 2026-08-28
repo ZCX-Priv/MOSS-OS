@@ -257,6 +257,15 @@ const appConfigSchema = z.object({
     authToken: z.string(),
     bindLocalhostOnly: z.boolean(),
   }),
+  // 远程访问（remote 模块：局域网/公网隧道控制 webui；内层全 .default() 自愈补全）
+  remote: z
+    .object({
+      enabled: z.boolean().default(false),
+      lanEnabled: z.boolean().default(true),
+      lanPasswordEnabled: z.boolean().default(true),
+      lanIpOverride: z.string().default(''),
+    })
+    .default({}),
   // fileHistory 可选，缺失时用默认值（向后兼容旧配置）
   fileHistory: fileHistorySchema.optional(),
   // filesys 可选，内层全 .default() 自愈补全（向后兼容旧配置）
@@ -296,6 +305,7 @@ export function defaultAppConfig(): AppConfig {
     mcpServer: { enabled: false, allowedTools: [] },
     skills: {},
     security: { authToken: '', bindLocalhostOnly: true },
+    remote: { enabled: false, lanEnabled: true, lanPasswordEnabled: true, lanIpOverride: '' },
     fileHistory: { ...DEFAULT_FILE_HISTORY_CONFIG },
     filesys: { ...DEFAULT_FILESYS_CONFIG },
     context: {

@@ -498,6 +498,15 @@ export const en = {
     automationTriggeredWs: 'Automation triggered via WS: {{id}} (run {{runId}})',
     routeRegistered: 'Route registered: {{method}} {{pattern}}',
     routeHandlerError: 'Route handler error: {{method}} {{path}}',
+    rebinding: 'Hot-rebinding HTTP server: {{from}} -> {{to}}',
+  },
+  remote: {
+    started: 'Remote module initialized (remote control)',
+    stopped: 'Remote module stopped',
+    enabled: 'Remote access enabled (rebinding to {{hostname}})',
+    disabled: 'Remote access disabled (rebinding back to {{hostname}})',
+    rebound: 'Hot-rebind complete: {{hostname}}',
+    rebindFailed: 'Hot-rebind failed (rolled back): {{error}}',
   },
   daemon: {
     disabledByConfig: 'Daemon module disabled by config',

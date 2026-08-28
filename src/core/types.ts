@@ -184,6 +184,7 @@ import type { FileHistoryConfig } from '../modules/file-history/types';
 import type { FilesysConfig } from '../modules/filesys/types';
 import type { SafetyConfig } from '../modules/safety/types';
 import type { ContextEngineConfig } from '../modules/context/types';
+import type { RemoteConfig } from '../modules/remote/types';
 
 /** 应用配置（config.json）的结构 —— 由 config-service 中 Zod schema 严格校验 */
 export interface AppConfig {
@@ -248,6 +249,8 @@ export interface AppConfig {
   safety?: SafetyConfig;
   /** 上下文引擎配置（由 context 模块消费：压缩/修剪/自愈/遥测） */
   context?: ContextEngineConfig;
+  /** 远程访问配置（由 remote 模块消费：局域网/公网隧道控制 webui；Zod schema 全 default 自愈） */
+  remote: RemoteConfig;
 }
 
 export type ApiConfig = {
@@ -474,4 +477,6 @@ export const ServiceNames = {
   MEMORY_ENGINE: 'memory.engine',
   /** 日志服务（由内核注册：日志文件枚举 / 查询 / 清理 / 级别调整） */
   LOGGER: 'kernel.logger',
+  /** 远程访问服务（由 remote 模块注册：隧道生命周期/状态快照） */
+  REMOTE_SERVICE: 'remote.service',
 } as const;

@@ -61,6 +61,14 @@ export interface ServerInstance {
   unregisterExternalRun(sessionId: string, controller: AbortController): void;
   /** 注册 WS 消息处理器 */
   onWSMessage(handler: WSMessageHandler): void;
+  /** 注入请求门卫（remote 模块用：远程访问开启时拦截非本机请求；server 在 fetch 最前调用） */
+  setRequestGuard(guard: RequestGuard): void;
+  /**
+   * 热重绑：停止当前 HTTP/WS 服务并以相同端口按新 hostname 重新监听。
+   * router/wsHandler 等实例全部复用；运行中 agent 任务不受影响（与连接解耦），
+   * 前端断连后自动重连。失败时按原 hostname 回滚并抛错。
+   */
+  rebind(hostname: string): Promise<void>;
   /** 停止服务器 */
   stop(): Promise<void>;
 }
@@ -73,6 +81,48 @@ export interface WSMessage {
   type: string;
   sessionId?: string;
   payload: unknown;
+}
+
+// ============================================================================
+// 请求门卫（remote 模块注入：远程访问开启时拦截非本机请求）
+// ============================================================================
+
+/** 门卫可见的请求上下文（fetch 回调构造，headers 键已小写） */
+export interface GuardRequestContext {
+  method: string;
+  /** 完整 URL（含 query） */
+  url: string;
+  headers: Record<string, string>;
+  /** 客户端 IP（server.requestIP 解析；IPv6-mapped 格式如 ::ffff:127.0.0.1） */
+  clientIp: string;
+}
+
+/** 门卫直接返回的响应 */
+export interface GuardResponse {
+  status: number;
+  headers: Record<string, string>;
+  body: string;
+}
+
+/** 门卫判定结果 */
+export type GuardVerdict =
+  /** 放行（本机信任 / 远程未启用 / 局域网免密） */
+  | { action: 'pass' }
+  /** 放行并注入 Authorization 头（远程会话已认证 → API 鉴权层认可，"两者结合"） */
+  | { action: 'pass-authenticated'; authorization: string }
+  /** 直接返回响应（登录页 / 401 / 403 / 429） */
+  | { action: 'respond'; response: GuardResponse }
+  /** 登录提交：server 读取 body 后回调 RequestGuard.handleLogin */
+  | { action: 'login' };
+
+/** 请求门卫接口（由 remote 模块实现，server 在 fetch 最前调用） */
+export interface RequestGuard {
+  /** 每个请求（含 WS upgrade）的预检。 */
+  precheck(ctx: GuardRequestContext): GuardVerdict;
+  /** 处理 POST /remote/login 表单提交（校验密码、种 cookie）。 */
+  handleLogin(ctx: GuardRequestContext, body: string): GuardResponse;
+  /** WS upgrade 额外校验（返回 false 时 server 拒绝握手）。 */
+  checkWS(ctx: GuardRequestContext): boolean;
 }
 
 /** WS 连接信息 */

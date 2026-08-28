@@ -35,6 +35,7 @@ import {
   Eye,
   Sparkles,
   X,
+  Smartphone,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
@@ -95,6 +96,8 @@ export { ProviderSettings } from './ProviderSettings';
 export { RulesSettingsSection } from './settings/RulesSettingsSection';
 export { HooksSettingsSection } from './settings/HooksSettingsSection';
 export { MemorySettingsSection } from './settings/MemorySettingsSection';
+// 远程控制设置分区（App.tsx 从本模块导入）
+export { RemoteSettingsSection } from './settings/RemoteSettingsSection';
 
 export interface NavItem {
   id: SettingsSection;
@@ -110,6 +113,7 @@ export const settingsNavItems: NavItem[] = [
   { id: 'context', labelKey: 'settings.nav.context', Icon: Layers },
   { id: 'tools', labelKey: 'settings.nav.tools', Icon: Wrench },
   { id: 'safety', labelKey: 'settings.nav.safety', Icon: ShieldCheck },
+  { id: 'remote', labelKey: 'settings.nav.remote', Icon: Smartphone },
   { id: 'logs', labelKey: 'settings.nav.logs', Icon: ScrollText },
   { id: 'commands', labelKey: 'settings.nav.commands', Icon: Terminal },
   { id: 'hooks', labelKey: 'settings.nav.hooks', Icon: Webhook },
@@ -151,6 +155,10 @@ export const settingsSearchIndex: SearchableSetting[] = [
   { labelKey: 'settings.tools.maxTurnsLabel', descriptionKey: 'settings.tools.maxTurnsDesc', section: 'tools' },
   { labelKey: 'settings.nav.specs', section: 'specs' },
   { labelKey: 'settings.nav.safety', section: 'safety' },
+  { labelKey: 'settings.nav.remote', section: 'remote' },
+  { labelKey: 'settings.remote.title', descriptionKey: 'settings.remote.desc', section: 'remote' },
+  { labelKey: 'settings.remote.lan.title', descriptionKey: 'settings.remote.lan.desc', section: 'remote' },
+  { labelKey: 'settings.remote.tunnel.title', descriptionKey: 'settings.remote.tunnel.desc', section: 'remote' },
   { labelKey: 'settings.nav.logs', section: 'logs' },
   { labelKey: 'settings.safety.defaultMode', descriptionKey: 'settings.safety.defaultModeDesc', section: 'safety' },
   { labelKey: 'settings.safety.confirmTimeout', descriptionKey: 'settings.safety.confirmTimeoutDesc', section: 'safety' },

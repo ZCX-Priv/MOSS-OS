@@ -36,6 +36,7 @@ import {
   RulesSettingsSection,
   HooksSettingsSection,
   MemorySettingsSection,
+  RemoteSettingsSection,
 } from './components/pages/SettingsPage';
 import { SearchModal } from './components/overlays/SearchModal';
 import { SplashScreen } from './components/shared/SplashScreen';
@@ -288,6 +289,7 @@ export default function App() {
               </Route>
               <Route path="tools" element={<ToolsSettings />} />
               <Route path="safety" element={<SafetySettings />} />
+              <Route path="remote" element={<RemoteSettingsSection />} />
               <Route path="logs" element={<LogsSettings />} />
               <Route path="about" element={<AboutSettings />} />
               <Route path="commands" element={<CommandsSettings />} />

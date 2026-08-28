@@ -28,6 +28,7 @@ import llm from '../modules/llm';
 import tools from '../modules/tools';
 import mcp from '../modules/mcp';
 import server from '../modules/server';
+import remote from '../modules/remote';
 import agenteam from '../modules/agenteam';
 import update from '../modules/update';
 import agent from '../modules/agent';
@@ -49,6 +50,8 @@ const MODULE_DESTROY_TIMEOUT_MS = 10_000;
  * - llm / server / update：无依赖。server 前移到第 2 位：其全部路由
  *   handler 均为请求时 tryResolve（运行时解析），health/静态页可秒级就绪，
  *   不必等待 tools 动态加载与 MCP 连接（启动性能关键路径）。
+ * - remote → server（注入请求门卫 + 注册 /api/remote/* 路由 + 热重绑句柄；
+ *   门卫未注入时 server 零开销直通，不阻塞端口可用）
  * - tools / mcp：加载与连接较慢（工具动态 import / MCP 子进程握手），
  *   排在 server 之后不阻塞端口可用；MCP 连接本身已后台化。
  * - filesys → 无服务依赖（agent 构造时订阅其事件总线，须先于 agent 注册）
@@ -65,6 +68,7 @@ const MODULE_DESTROY_TIMEOUT_MS = 10_000;
 const MODULE_FACTORIES: Array<{ name: string; create: () => Module }> = [
   { name: 'llm', create: llm },
   { name: 'server', create: server },
+  { name: 'remote', create: remote },
   { name: 'tools', create: tools },
   { name: 'mcp', create: mcp },
   { name: 'update', create: update },
