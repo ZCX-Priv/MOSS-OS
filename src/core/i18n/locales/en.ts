@@ -139,6 +139,7 @@ export const en = {
     reloadFailedRemoved: 'Tool reload failed (removed): {{name}}',
     customConflictsBuiltinRemoved: 'Custom tool "{{name}}" conflicts with builtin, removed',
     toolReloaded: 'Tool reloaded: {{name}}',
+    reloadSkippedUnchanged: 'Tool content unchanged, hot-reload skipped: {{name}}',
     builtinFullReloaded: 'Builtin tools full reloaded',
     customFullReloaded: 'Custom tools full reloaded',
     skipNoManifest: 'Tool dir skipped (no tool.json): {{dir}}',

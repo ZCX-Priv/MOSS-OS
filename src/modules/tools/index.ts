@@ -7,7 +7,7 @@ import { t } from '../../core/i18n';
 import type { Module, ModuleContext, } from '../../core/types';
 import { ServiceNames } from '../../core/types';
 import { join } from 'node:path';
-import { existsSync, statSync, watch, mkdirSync, type FSWatcher } from 'node:fs';
+import { existsSync, statSync, watch, mkdirSync, readdirSync, type FSWatcher } from 'node:fs';
 import { ToolRegistryImpl } from './registry';
 import { createSkillRegistry } from './use_skill/registry';
 import { createCommandRegistry } from './use_command/registry';
@@ -24,6 +24,8 @@ class ToolsModule implements Module {
   private loadedBuiltinTools: Tool[] = [];
   private builtinWatcher?: FSWatcher;
   private customWatcher?: FSWatcher;
+  /** 工具目录内容签名：toolDir → (relPath → `${mtimeMs}:${size}`)，热重载前校验内容是否真的变化 */
+  private toolSignatures = new Map<string, Map<string, string>>();
 
   async initialize(ctx: ModuleContext): Promise<void> {
     this.ctx = ctx;
@@ -81,6 +83,8 @@ class ToolsModule implements Module {
     // listSchemas() 据此过滤给 LLM。这样 config 变更无需增删注册，且前端可见全部工具。
     for (const tool of this.loadedBuiltinTools) {
       this.registry!.register(tool);
+      // 预置内容签名：启动批量读取产生的 atime 变化在懒落盘触发 watcher 事件时会被守卫拦截
+      this.toolSignatures.set(tool.sourceDir!, this.buildDirSignature(tool.sourceDir!));
     }
 
     // 启动内置工具目录热重载监听
@@ -115,6 +119,8 @@ class ToolsModule implements Module {
         continue;
       }
       this.registry!.register(tool);
+      // 预置内容签名（同内置工具：拦截 atime 幽灵事件）
+      this.toolSignatures.set(tool.sourceDir!, this.buildDirSignature(tool.sourceDir!));
       ctx.logger.info(t('tools.customLoaded', { name: tool.name }), { dir: tool.sourceDir });
     }
   }
@@ -208,6 +214,46 @@ class ToolsModule implements Module {
   }
 
   /**
+   * 构建工具目录内容签名：递归收集所有文件（不含目录）的 relPath → `${mtimeMs}:${size}`。
+   * atime 变化不影响 mtimeMs/size，因此可过滤 Windows/Bun 下 atime 懒更新触发的幽灵事件。
+   */
+  private buildDirSignature(toolDir: string): Map<string, string> {
+    const sig = new Map<string, string>();
+    const walk = (dir: string, prefix: string): void => {
+      let entries: string[];
+      try {
+        entries = readdirSync(dir);
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        const full = join(dir, entry);
+        const rel = prefix ? `${prefix}/${entry}` : entry;
+        try {
+          const st = statSync(full);
+          if (st.isDirectory()) {
+            walk(full, rel);
+          } else if (st.isFile()) {
+            sig.set(rel, `${st.mtimeMs}:${st.size}`);
+          }
+        } catch {
+          // 并发删除等竞态：跳过该条目
+        }
+      }
+    };
+    walk(toolDir, '');
+    return sig;
+  }
+
+  private signaturesEqual(a: Map<string, string>, b: Map<string, string>): boolean {
+    if (a.size !== b.size) return false;
+    for (const [k, v] of a) {
+      if (b.get(k) !== v) return false;
+    }
+    return true;
+  }
+
+  /**
    * 按 watch 的 filename 增量重载单个工具。
    * filename 形如 'read/tool.json' 或 'read/index.ts'，取首段为工具子目录名。
    * 若无法提取 filename，回退到全量重载该来源的所有工具。
@@ -258,10 +304,21 @@ class ToolsModule implements Module {
     if (!dirExists) {
       // 工具目录被删除，移除
       this.registry.removeBySourceDir(toolDir);
+      this.toolSignatures.delete(toolDir);
       ctx.logger.info(t('tools.toolRemovedDirDeleted', { name: toolName }), { dir: toolDir });
       this.notifyToolChanged(ctx, toolName);
       return;
     }
+
+    // 幽灵事件守卫：Windows/Bun 的 fs.watch 会因 atime 懒更新投递 change 事件（内容并未变化），
+    // 且重载自身读取文件会再次刷新 atime，形成自维持重载循环。以 mtime/size 签名校验：内容未变则跳过。
+    const currentSig = this.buildDirSignature(toolDir);
+    const storedSig = this.toolSignatures.get(toolDir);
+    if (storedSig && this.signaturesEqual(storedSig, currentSig)) {
+      ctx.logger.debug(t('tools.reloadSkippedUnchanged', { name: toolName }), { dir: toolDir });
+      return;
+    }
+    this.toolSignatures.set(toolDir, currentSig);
 
     // 重新加载该工具目录
     const tool = await loadToolFromDir(toolDir, ctx.env, ctx.logger, source);
@@ -305,6 +362,7 @@ class ToolsModule implements Module {
   /** 全量重载某个来源的所有工具（回退方案） */
   private async fullReload(rootDir: string, ctx: ModuleContext, source: 'builtin' | 'custom'): Promise<void> {
     if (!this.registry) return;
+    this.toolSignatures.clear();
 
     if (source === 'builtin') {
       // 移除所有内置工具
@@ -330,6 +388,14 @@ class ToolsModule implements Module {
       await this.loadCustomToolsFromDir(rootDir, ctx);
       ctx.logger.info(t('tools.customFullReloaded'));
       this.notifyToolChanged(ctx, '*');
+    }
+
+    // 重载完成后重建签名：全量重载自身读取了所有文件（刷新 atime），
+    // 若不重建，后续幽灵事件会逐一穿透守卫造成一轮多余重载
+    for (const tool of this.registry.list()) {
+      if (tool.sourceDir) {
+        this.toolSignatures.set(tool.sourceDir, this.buildDirSignature(tool.sourceDir));
+      }
     }
   }
 

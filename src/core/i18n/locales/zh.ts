@@ -139,6 +139,7 @@ export const zh = {
     reloadFailedRemoved: '工具重新加载失败（已移除）: {{name}}',
     customConflictsBuiltinRemoved: '自定义工具 "{{name}}" 与内置工具冲突，已移除',
     toolReloaded: '工具已重新加载: {{name}}',
+    reloadSkippedUnchanged: '工具内容未变化，跳过热重载: {{name}}',
     builtinFullReloaded: '内置工具已全量重新加载',
     customFullReloaded: '自定义工具已全量重新加载',
     skipNoManifest: '工具目录已跳过（无 tool.json）: {{dir}}',
