@@ -59,6 +59,7 @@
     "get_spec":  { "enabled": true },
     "glob":      { "enabled": true },
     "grep":      { "enabled": true },
+    "web":       { "enabled": true },
     "todo":      { "enabled": true },
     "ask":       { "enabled": true },
     "automation": { "enabled": true }

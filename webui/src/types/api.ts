@@ -685,7 +685,11 @@ export interface ProviderItem {
   id: string;
   /** 显示名，如 "OpenAI" */
   name: string;
-  format: 'openai-chat' | 'openai-responses' | 'anthropic' | 'gemini';
+  /** 服务商类型：model（缺省）= 模型服务商；search = 搜索服务商（web 工具消费） */
+  kind?: 'model' | 'search';
+  format: 'openai-chat' | 'openai-responses' | 'anthropic' | 'gemini' | 'search';
+  /** 搜索引擎类型（kind='search' 时存在）：zhipu / bocha / tavily */
+  searchEngine?: 'zhipu' | 'bocha' | 'tavily';
   endpoint: string;
   apiKey: string;
   /** 自定义余额查询地址（OpenAI 兼容 subscription 接口完整 URL；空 = 不提供余额查询） */

@@ -50,6 +50,7 @@ import { createVersionHandler } from './routes/version';
 import {
   createListProvidersHandler,
   createSetCurrentModelHandler,
+  createSetCurrentSearchProviderHandler,
   createCreateProviderHandler,
   createUpdateProviderHandler,
   createDeleteProviderHandler,
@@ -345,6 +346,7 @@ class ServerModule implements Module {
     // providers（服务商 + 旗下模型；静态路由先于 :id 参数路由注册）
     this.router.addRoute({ method: 'GET', pattern: '/api/providers', handler: createListProvidersHandler(config), auth: true });
     this.router.addRoute({ method: 'PUT', pattern: '/api/providers/current', handler: createSetCurrentModelHandler(config), auth: true });
+    this.router.addRoute({ method: 'PUT', pattern: '/api/providers/search-current', handler: createSetCurrentSearchProviderHandler(config), auth: true });
     this.router.addRoute({ method: 'PUT', pattern: '/api/providers/reorder', handler: createReorderProvidersHandler(config), auth: true });
     this.router.addRoute({ method: 'POST', pattern: '/api/providers', handler: createCreateProviderHandler(config), auth: true });
     this.router.addRoute({ method: 'PATCH', pattern: '/api/providers/:id', handler: createUpdateProviderHandler(config), auth: true });

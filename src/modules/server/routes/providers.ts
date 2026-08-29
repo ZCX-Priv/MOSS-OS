@@ -68,6 +68,10 @@ function mergeThinking(
 
 /** 按服务商用位 cfg（供 provider.resolveHeaders 构造鉴权头） */
 function pseudoModelConfig(p: ProviderConfig): ModelConfig {
+  // 搜索服务商没有 LLM 端点（调用方已拦截，此处防御性兜底）
+  if (p.format === 'search') {
+    throw new Error('search provider has no LLM endpoint');
+  }
   return {
     id: p.id,
     name: p.name,
@@ -111,8 +115,37 @@ export function createListProvidersHandler(config: ConfigService): RouteHandler 
       body: {
         providers: apiConfig.providers,
         current: appConfig.agent.defaultModel,
+        // 默认搜索引擎（web 工具消费）：空串 = 本地免费引擎链
+        currentSearchProvider: appConfig.web?.searchProviderId ?? '',
       },
     };
+  };
+}
+
+/** PUT /api/providers/search-current —— 设置默认搜索引擎（'' = 本地引擎） */
+export function createSetCurrentSearchProviderHandler(config: ConfigService): RouteHandler {
+  return async (req: HttpRequest): Promise<HttpResponse> => {
+    const body = (req.body ?? {}) as { providerId?: string };
+    const providerId = (body.providerId ?? '').trim();
+    if (providerId) {
+      // 非空必须指向存在的搜索服务商
+      const provider = config.getApiConfig().providers.find((p) => p.id === providerId);
+      if (!provider || provider.kind !== 'search') {
+        return { status: 404, body: { error: ErrorCode.PROVIDER_NOT_FOUND } };
+      }
+    }
+    try {
+      const appConfig = config.getAppConfig();
+      await config.updateAppConfig({
+        web: { ...(appConfig.web ?? { searchProviderId: '' }), searchProviderId: providerId },
+      });
+      return { status: 200, body: { currentSearchProvider: providerId } };
+    } catch (err) {
+      return {
+        status: 400,
+        body: { error: err instanceof Error ? err.message : String(err) },
+      };
+    }
   };
 }
 
@@ -144,13 +177,48 @@ export function createCreateProviderHandler(config: ConfigService): RouteHandler
   return async (req: HttpRequest): Promise<HttpResponse> => {
     const body = (req.body ?? {}) as {
       name?: string;
+      /** 服务商类型：model（默认）= 模型服务商；search = 搜索服务商 */
+      kind?: 'model' | 'search';
       format?: ProviderConfig['format'];
+      /** 搜索引擎（kind='search' 必填）：zhipu/bocha/tavily */
+      searchEngine?: ProviderConfig['searchEngine'];
       endpoint?: string;
       apiKey?: string;
       balanceUrl?: string;
       modelsUrl?: string;
       icon?: string;
     };
+    const kind = body.kind ?? 'model';
+
+    if (kind === 'search') {
+      // 搜索服务商：name + searchEngine 必填；endpoint 可选（自定义网关）
+      if (!body.name || !body.searchEngine) {
+        return { status: 400, body: { error: ErrorCode.PROVIDER_FIELDS_REQUIRED } };
+      }
+      try {
+        const apiConfig = config.getApiConfig();
+        const newProvider: ProviderConfig = {
+          id: generateProviderId(),
+          name: body.name,
+          kind: 'search',
+          format: 'search',
+          searchEngine: body.searchEngine,
+          endpoint: body.endpoint?.trim() ?? '',
+          apiKey: body.apiKey ?? '',
+          models: [],
+          ...(body.icon?.trim() ? { icon: body.icon.trim() } : {}),
+        };
+        await config.updateApiConfig({ providers: [...apiConfig.providers, newProvider] });
+        return { status: 201, body: newProvider };
+      } catch (err) {
+        return {
+          status: 400,
+          body: { error: err instanceof Error ? err.message : String(err) },
+        };
+      }
+    }
+
+    // 模型服务商（默认/向后兼容）：name + format + endpoint 必填
     if (!body.name || !body.format || !body.endpoint) {
       return { status: 400, body: { error: ErrorCode.PROVIDER_FIELDS_REQUIRED } };
     }
@@ -187,7 +255,9 @@ export function createUpdateProviderHandler(config: ConfigService): RouteHandler
     }
     const body = (req.body ?? {}) as {
       name?: string;
+      kind?: 'model' | 'search';
       format?: ProviderConfig['format'];
+      searchEngine?: ProviderConfig['searchEngine'];
       endpoint?: string;
       apiKey?: string;
       balanceUrl?: string;
@@ -202,6 +272,37 @@ export function createUpdateProviderHandler(config: ConfigService): RouteHandler
         return { status: 404, body: { error: ErrorCode.PROVIDER_NOT_FOUND } };
       }
       const existing = apiConfig.providers[idx];
+      const isSearch = body.kind === 'search' || existing.kind === 'search';
+
+      if (isSearch) {
+        // 搜索服务商：搜索引擎必填（body 缺省沿用原值）
+        const nextEngine = body.searchEngine ?? existing.searchEngine;
+        if (!nextEngine) {
+          return { status: 400, body: { error: 'SEARCH_ENGINE_REQUIRED' } };
+        }
+        const newProvider: ProviderConfig = {
+          id: existing.id,
+          name: body.name ?? existing.name,
+          kind: 'search',
+          format: 'search',
+          searchEngine: nextEngine,
+          endpoint: body.endpoint ?? existing.endpoint,
+          // 空 apiKey 视为不修改（config-service 回填原值）
+          apiKey: body.apiKey ?? existing.apiKey,
+          models: [],
+          ...(body.icon !== undefined
+            ? body.icon.trim()
+              ? { icon: body.icon.trim() }
+              : {}
+            : existing.icon !== undefined
+              ? { icon: existing.icon }
+              : {}),
+        };
+        const newProviders = [...apiConfig.providers];
+        newProviders[idx] = newProvider;
+        await config.updateApiConfig({ providers: newProviders });
+        return { status: 200, body: newProvider };
+      }
 
       const newProvider: ProviderConfig = {
         id: existing.id,
@@ -267,6 +368,12 @@ export function createDeleteProviderHandler(config: ConfigService): RouteHandler
       if (appConfig.agent.defaultModel && provider.models.some((m) => m.id === appConfig.agent.defaultModel)) {
         await config.updateAppConfig({
           agent: { ...appConfig.agent, defaultModel: '' },
+        });
+      }
+      // 被删服务商是默认搜索引擎时重置为本地引擎（''）
+      if (appConfig.web?.searchProviderId && appConfig.web.searchProviderId === id) {
+        await config.updateAppConfig({
+          web: { ...appConfig.web, searchProviderId: '' },
         });
       }
       return { status: 200, body: { deleted: true } };
@@ -812,6 +919,10 @@ export function createFetchProviderModelsHandler(
     if (!provider) {
       return { status: 404, body: { error: ErrorCode.PROVIDER_NOT_FOUND } };
     }
+    // 搜索服务商无模型列表概念
+    if (provider.kind === 'search' || provider.format === 'search') {
+      return { status: 200, body: { success: false, error: 'NOT_A_MODEL_PROVIDER' } };
+    }
     const url = resolveModelsUrl(provider);
     try {
       const provider0 = getProvider(provider.format);
@@ -859,6 +970,10 @@ export function createProviderBalanceHandler(
     const provider = config.getApiConfig().providers.find((p) => p.id === id);
     if (!provider) {
       return { status: 404, body: { error: ErrorCode.PROVIDER_NOT_FOUND } };
+    }
+    // 搜索服务商无余额查询概念
+    if (provider.kind === 'search' || provider.format === 'search') {
+      return { status: 200, body: { success: false, error: 'NOT_A_MODEL_PROVIDER' } };
     }
     if (!provider.balanceUrl || !provider.balanceUrl.trim()) {
       return {

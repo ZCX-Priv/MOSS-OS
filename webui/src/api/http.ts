@@ -370,12 +370,26 @@ export const api = {
   // 服务商管理（服务商持有 API 格式/地址/Key，模型挂其下）
   // ==========================================================================
   listProviders: () =>
-    request<{ providers: ProviderItem[]; current: string }>('GET', '/api/providers'),
+    request<{
+      providers: ProviderItem[];
+      current: string;
+      /** 默认搜索引擎（web 工具消费）：空串 = 本地免费引擎链 */
+      currentSearchProvider?: string;
+    }>('GET', '/api/providers'),
   setCurrentModel: (modelId: string) =>
     request<{ current: string }>('PUT', '/api/providers/current', { modelId }),
+  /** 设置默认搜索引擎（providerId 空串 = 本地免费引擎） */
+  setSearchCurrentProvider: (providerId: string) =>
+    request<{ currentSearchProvider: string }>('PUT', '/api/providers/search-current', {
+      providerId,
+    }),
   createProvider: (data: {
     name: string;
-    format: ProviderItem['format'];
+    /** 服务商类型：model（缺省）= 模型服务商；search = 搜索服务商 */
+    kind?: 'model' | 'search';
+    format?: ProviderItem['format'];
+    /** 搜索引擎（kind='search' 必填）：zhipu / bocha / tavily */
+    searchEngine?: 'zhipu' | 'bocha' | 'tavily';
     endpoint: string;
     apiKey: string;
     balanceUrl?: string;

@@ -168,6 +168,9 @@ export class Microkernel {
       env: this.env,
     };
 
+    // 注册配置服务（工具运行时读取 config.json/api.json，如 web 工具解析搜索服务商）
+    this.services.register(ServiceNames.CONFIG_SERVICE, this.config, { scope: 'kernel' });
+
     // 4. 静态实例化并按序初始化模块（失败记日志并继续，与原拓扑编排韧性一致）
     for (const factory of MODULE_FACTORIES) {
       this.modules.push({ name: factory.name, instance: factory.create(), state: 'loaded' });

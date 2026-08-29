@@ -137,7 +137,9 @@ export function ProviderSettings() {
   const {
     providers,
     currentModel,
+    currentSearchProvider,
     setCurrent,
+    setSearchCurrent,
     reorderProviders,
     deleteProvider,
     fetchProviderModels,
@@ -304,6 +306,29 @@ export function ProviderSettings() {
 
         {/* 筛选 + 搜索 + 添加同一组靠右（移动端筛选独占一行，搜索/添加收纳进全局 header 按钮） */}
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+          {/* 默认搜索引擎（web 工具消费：本地免费引擎 / 各搜索服务商） */}
+          <Select
+            value={currentSearchProvider || '__local__'}
+            onValueChange={(v) => {
+              void setSearchCurrent(v === '__local__' ? '' : v);
+            }}
+          >
+            <SelectTrigger className="w-full shrink-0 sm:w-44" title={t('settings.provider.defaultSearchEngineHint')}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__local__">
+                {t('settings.provider.localSearchEngine')}
+              </SelectItem>
+              {providers
+                .filter((p) => p.kind === 'search')
+                .map((p) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.name}
+                  </SelectItem>
+                ))}
+            </SelectContent>
+          </Select>
           <Select
             value={formatFilter}
             onValueChange={(v) => setFormatFilter(v as 'all' | ProviderItem['format'])}
@@ -501,6 +526,8 @@ function SortableProviderCard({
   });
   const [testingId, setTestingId] = useState<string | null>(null);
   const { testProviderModel, deleteProviderModel, deleteProviderService } = useProviders();
+  // 搜索服务商：无模型/余额/模型列表概念，卡片只显示引擎信息
+  const isSearch = provider.kind === 'search';
   // 删除模型/服务确认弹窗（替代原生 confirm）
   const [deleteModelTarget, setDeleteModelTarget] = useState<ProviderModelItem | null>(null);
   const [deletingModel, setDeletingModel] = useState(false);
@@ -578,45 +605,68 @@ function SortableProviderCard({
         <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted">
           <ProviderLogo icon={provider.icon} />
         </div>
-        {/* 名称 + endpoint 同行 */}
+        {/* 名称 + endpoint/引擎 同行 */}
         <div className="flex min-w-0 flex-1 items-baseline gap-2">
           <span className="shrink-0 text-sm font-semibold text-foreground">{provider.name}</span>
-          <span className="truncate text-xs text-muted-foreground">{provider.endpoint}</span>
+          {isSearch ? (
+            <span className="truncate text-xs text-muted-foreground">
+              {t('settings.provider.searchProviderDesc')}
+            </span>
+          ) : (
+            <span className="truncate text-xs text-muted-foreground">{provider.endpoint}</span>
+          )}
         </div>
-        <span className="shrink-0 text-xs text-muted-foreground">
-          {t('settings.provider.modelCount', { count: provider.models.length })}
-        </span>
-        {/* 操作按钮组（全部图标化） */}
+        {isSearch ? (
+          // 搜索服务商：显示引擎徽章（zhipu/bocha/tavily）
+          <Badge variant="secondary" className="shrink-0 font-normal">
+            {provider.searchEngine === 'zhipu'
+              ? '智谱'
+              : provider.searchEngine === 'bocha'
+                ? '博查'
+                : provider.searchEngine === 'tavily'
+                  ? 'Tavily'
+                  : 'search'}
+          </Badge>
+        ) : (
+          <span className="shrink-0 text-xs text-muted-foreground">
+            {t('settings.provider.modelCount', { count: provider.models.length })}
+          </span>
+        )}
+        {/* 操作按钮组（全部图标化；搜索服务商仅编辑/删除） */}
         <div className="flex shrink-0 items-center gap-0.5">
-          {/* + 菜单：添加模型 / 添加服务 */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                aria-label={t('settings.provider.addMenu')}
-                title={t('settings.provider.addMenu')}
-                className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-              >
-                <Plus className="size-4" />
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-auto min-w-40">
-              <DropdownMenuItem className="gap-1.5" onSelect={onAddModel}>
-                <Brain className="size-3.5" />
-                {t('settings.provider.addModel')}
-              </DropdownMenuItem>
-              <DropdownMenuItem className="gap-1.5" onSelect={onAddService}>
-                <ServerCrash className="size-3.5" />
-                {t('settings.provider.addService')}
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <IconActionButton title={t('settings.provider.fetchModels')} onClick={onFetchModels}>
-            <RefreshCw className="size-4" />
-          </IconActionButton>
-          <IconActionButton title={t('settings.provider.balanceTitle')} onClick={onBalance}>
-            <CircleDollarSign className="size-4" />
-          </IconActionButton>
+          {!isSearch && (
+            <>
+              {/* + 菜单：添加模型 / 添加服务 */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label={t('settings.provider.addMenu')}
+                    title={t('settings.provider.addMenu')}
+                    className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  >
+                    <Plus className="size-4" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="w-auto min-w-40">
+                  <DropdownMenuItem className="gap-1.5" onSelect={onAddModel}>
+                    <Brain className="size-3.5" />
+                    {t('settings.provider.addModel')}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem className="gap-1.5" onSelect={onAddService}>
+                    <ServerCrash className="size-3.5" />
+                    {t('settings.provider.addService')}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <IconActionButton title={t('settings.provider.fetchModels')} onClick={onFetchModels}>
+                <RefreshCw className="size-4" />
+              </IconActionButton>
+              <IconActionButton title={t('settings.provider.balanceTitle')} onClick={onBalance}>
+                <CircleDollarSign className="size-4" />
+              </IconActionButton>
+            </>
+          )}
           <IconActionButton title={t('settings.provider.edit')} onClick={onEdit}>
             <Pencil className="size-4" />
           </IconActionButton>
@@ -626,9 +676,9 @@ function SortableProviderCard({
         </div>
       </div>
 
-      {/* 模型行列表 */}
+      {/* 模型行列表（搜索服务商不渲染） */}
       <div className="flex flex-col">
-        {provider.models.length === 0 ? (
+        {isSearch ? null : provider.models.length === 0 ? (
           <div className="px-4 py-3 text-xs text-muted-foreground">
             {t('settings.provider.noModels')}
           </div>
@@ -709,8 +759,8 @@ function SortableProviderCard({
         )}
       </div>
 
-      {/* 服务区块（文件存储等附加服务） */}
-      {(provider.services?.length ?? 0) > 0 && (
+      {/* 服务区块（文件存储等附加服务；搜索服务商不渲染） */}
+      {!isSearch && (provider.services?.length ?? 0) > 0 && (
         <div className="border-t border-border/60">
           <div className="px-4 pb-0.5 pt-2.5 text-xs font-medium text-muted-foreground">
             {t('settings.provider.services')} · {provider.services!.length}
@@ -770,12 +820,19 @@ function SortableProviderCard({
   );
 }
 
-/* ===== 服务商弹窗（新建/编辑共用；图标选择） ===== */
+/* ===== 服务商弹窗（新建/编辑共用；图标选择 + 类型切换：模型/搜索） ===== */
 interface AddProviderDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   editingProvider: ProviderItem | null;
 }
+
+/** 搜索引擎选项（kind='search' 时的引擎下拉） */
+const SEARCH_ENGINE_OPTIONS = [
+  { value: 'zhipu', label: '智谱 search_pro', hint: '与 GLM API Key 通用 · open.bigmodel.cn' },
+  { value: 'bocha', label: '博查 Bocha', hint: '预付费 ¥0.036/次 · open.bochaai.com' },
+  { value: 'tavily', label: 'Tavily', hint: '免费 1000 次/月 · app.tavily.com' },
+] as const;
 
 function AddProviderDialog({
   open,
@@ -786,8 +843,10 @@ function AddProviderDialog({
   const isEdit = !!editingProvider;
   const { createProvider, updateProvider } = useProviders();
 
+  const [kind, setKind] = useState<'model' | 'search'>('model');
   const [name, setName] = useState('');
   const [format, setFormat] = useState<ProviderItem['format']>('openai-chat');
+  const [searchEngine, setSearchEngine] = useState<'zhipu' | 'bocha' | 'tavily'>('zhipu');
   const [endpoint, setEndpoint] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [balanceUrl, setBalanceUrl] = useState('');
@@ -800,7 +859,9 @@ function AddProviderDialog({
     if (!open) return;
     if (editingProvider) {
       setName(editingProvider.name);
+      setKind(editingProvider.kind === 'search' ? 'search' : 'model');
       setFormat(editingProvider.format);
+      setSearchEngine(editingProvider.searchEngine ?? 'zhipu');
       setEndpoint(editingProvider.endpoint);
       setApiKey(''); // 留空 = 不修改
       setBalanceUrl(editingProvider.balanceUrl ?? '');
@@ -808,7 +869,9 @@ function AddProviderDialog({
       setIcon(editingProvider.icon ?? '');
     } else {
       setName('');
+      setKind('model');
       setFormat('openai-chat');
+      setSearchEngine('zhipu');
       setEndpoint('');
       setApiKey('');
       setBalanceUrl('');
@@ -817,29 +880,51 @@ function AddProviderDialog({
     }
   }, [open, editingProvider]);
 
+  const isSearch = kind === 'search';
+
   const handleSubmit = async () => {
-    if (!name.trim() || !endpoint.trim()) {
+    // 搜索服务商：名称 + 引擎必填，endpoint 可选；模型服务商：名称 + endpoint 必填
+    if (!name.trim() || (!isSearch && !endpoint.trim())) {
       toast.error(t('settings.provider.fieldsRequired'));
       return;
     }
     setSubmitting(true);
     try {
-      const payload = {
-        name: name.trim(),
-        format,
-        endpoint: endpoint.trim(),
-        apiKey: apiKey.trim(),
-        ...(balanceUrl.trim() ? { balanceUrl: balanceUrl.trim() } : {}),
-        ...(modelsUrl.trim() ? { modelsUrl: modelsUrl.trim() } : {}),
-        ...(icon ? { icon } : {}),
-      };
-      if (isEdit && editingProvider) {
-        await updateProvider(editingProvider.id, payload);
-        toast.success(t('settings.provider.updateSuccess'));
+      if (isSearch) {
+        const payload = {
+          kind: 'search' as const,
+          name: name.trim(),
+          searchEngine,
+          endpoint: endpoint.trim(),
+          apiKey: apiKey.trim(),
+          ...(icon ? { icon } : {}),
+        };
+        if (isEdit && editingProvider) {
+          await updateProvider(editingProvider.id, payload);
+          toast.success(t('settings.provider.updateSuccess'));
+        } else {
+          await createProvider(payload);
+          toast.success(t('settings.provider.createSuccess'));
+        }
       } else {
-        await createProvider(payload);
-        toast.success(t('settings.provider.createSuccess'));
-        // 不再自动拉取模型列表（用户手动点"获取模型列表"）
+        const payload = {
+          kind: 'model' as const,
+          name: name.trim(),
+          format,
+          endpoint: endpoint.trim(),
+          apiKey: apiKey.trim(),
+          ...(balanceUrl.trim() ? { balanceUrl: balanceUrl.trim() } : {}),
+          ...(modelsUrl.trim() ? { modelsUrl: modelsUrl.trim() } : {}),
+          ...(icon ? { icon } : {}),
+        };
+        if (isEdit && editingProvider) {
+          await updateProvider(editingProvider.id, payload);
+          toast.success(t('settings.provider.updateSuccess'));
+        } else {
+          await createProvider(payload);
+          toast.success(t('settings.provider.createSuccess'));
+          // 不再自动拉取模型列表（用户手动点"获取模型列表"）
+        }
       }
       onOpenChange(false);
     } catch {
@@ -861,6 +946,28 @@ function AddProviderDialog({
         </DialogHeader>
 
         <DialogBody>
+          {/* 服务商类型（新建时可切换；编辑时锁定避免数据语义漂移） */}
+          <div className="flex flex-col gap-1.5">
+            <Label>{t('settings.provider.providerKind')}</Label>
+            <Select
+              value={kind}
+              onValueChange={(v) => setKind(v as 'model' | 'search')}
+              disabled={isEdit}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="model">{t('settings.provider.kindModel')}</SelectItem>
+                <SelectItem value="search">{t('settings.provider.kindSearch')}</SelectItem>
+              </SelectContent>
+            </Select>
+            {isEdit && (
+              <span className="text-xs text-muted-foreground">
+                {t('settings.provider.kindLocked')}
+              </span>
+            )}
+          </div>
           {/* 品牌图标 */}
           <div className="flex flex-col gap-1.5">
             <Label>{t('settings.provider.icon')}</Label>
@@ -876,72 +983,136 @@ function AddProviderDialog({
               placeholder={t('settings.provider.providerNamePlaceholder')}
             />
           </div>
-          {/* API 格式 */}
-          <div className="flex flex-col gap-1.5">
-            <Label>{t('settings.provider.apiFormat')}</Label>
-            <Select value={format} onValueChange={(v) => setFormat(v as ProviderItem['format'])}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {FORMAT_OPTIONS.map((opt) => (
-                  <SelectItem key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          {/* API 地址 */}
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="provider-endpoint">{t('settings.provider.endpoint')}</Label>
-            <Input
-              id="provider-endpoint"
-              value={endpoint}
-              onChange={(e) => setEndpoint(e.target.value)}
-              placeholder={t('settings.provider.endpointPlaceholder')}
-            />
-          </div>
-          {/* API Key */}
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="provider-apikey">{t('settings.provider.apiKey')}</Label>
-            <Input
-              id="provider-apikey"
-              type="password"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder={isEdit ? t('settings.provider.apiKeyKeep') : 'sk-...'}
-            />
-          </div>
-          {/* 高级设置（默认折叠）：自定义余额查询地址 / 模型列表获取地址 */}
-          <Collapsible defaultOpen={false}>
-            <CollapsibleTrigger className="group flex w-full items-center gap-1 rounded-md py-1 text-sm text-muted-foreground transition-colors hover:text-foreground data-[state=open]:text-foreground">
-              <ChevronRight className="size-3.5 transition-transform group-data-[state=open]:rotate-90" />
-              <span>{t('settings.provider.advancedConfig')}</span>
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <div className="flex flex-col gap-3 pt-1">
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="provider-balance-url">{t('settings.provider.balanceUrl')}</Label>
-                  <Input
-                    id="provider-balance-url"
-                    value={balanceUrl}
-                    onChange={(e) => setBalanceUrl(e.target.value)}
-                    placeholder={t('settings.provider.balanceUrlPlaceholder')}
-                  />
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <Label htmlFor="provider-models-url">{t('settings.provider.modelsUrl')}</Label>
-                  <Input
-                    id="provider-models-url"
-                    value={modelsUrl}
-                    onChange={(e) => setModelsUrl(e.target.value)}
-                    placeholder={t('settings.provider.modelsUrlPlaceholder')}
-                  />
-                </div>
+
+          {isSearch ? (
+            <>
+              {/* 搜索引擎 */}
+              <div className="flex flex-col gap-1.5">
+                <Label>{t('settings.provider.searchEngine')}</Label>
+                <Select
+                  value={searchEngine}
+                  onValueChange={(v) => setSearchEngine(v as 'zhipu' | 'bocha' | 'tavily')}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {SEARCH_ENGINE_OPTIONS.map((opt) => (
+                      <SelectItem key={opt.value} value={opt.value}>
+                        <div className="flex flex-col">
+                          <span>{opt.label}</span>
+                          <span className="text-xs text-muted-foreground">{opt.hint}</span>
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <span className="text-xs text-muted-foreground">
+                  {t('settings.provider.searchEngineHint')}
+                </span>
               </div>
-            </CollapsibleContent>
-          </Collapsible>
+              {/* API Key */}
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="provider-apikey">{t('settings.provider.apiKey')}</Label>
+                <Input
+                  id="provider-apikey"
+                  type="password"
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder={isEdit ? t('settings.provider.apiKeyKeep') : 'sk-...'}
+                />
+              </div>
+              {/* 高级设置：自定义 API 地址（兼容第三方网关，留空 = 官方端点） */}
+              <Collapsible defaultOpen={false}>
+                <CollapsibleTrigger className="group flex w-full items-center gap-1 rounded-md py-1 text-sm text-muted-foreground transition-colors hover:text-foreground data-[state=open]:text-foreground">
+                  <ChevronRight className="size-3.5 transition-transform group-data-[state=open]:rotate-90" />
+                  <span>{t('settings.provider.advancedConfig')}</span>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <div className="flex flex-col gap-1.5 pt-1">
+                    <Label htmlFor="provider-endpoint">
+                      {t('settings.provider.customEndpoint')}
+                    </Label>
+                    <Input
+                      id="provider-endpoint"
+                      value={endpoint}
+                      onChange={(e) => setEndpoint(e.target.value)}
+                      placeholder={t('settings.provider.customEndpointPlaceholder')}
+                    />
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
+            </>
+          ) : (
+            <>
+              {/* API 格式 */}
+              <div className="flex flex-col gap-1.5">
+                <Label>{t('settings.provider.apiFormat')}</Label>
+                <Select value={format} onValueChange={(v) => setFormat(v as ProviderItem['format'])}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {FORMAT_OPTIONS.map((opt) => (
+                      <SelectItem key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {/* API 地址 */}
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="provider-endpoint">{t('settings.provider.endpoint')}</Label>
+                <Input
+                  id="provider-endpoint"
+                  value={endpoint}
+                  onChange={(e) => setEndpoint(e.target.value)}
+                  placeholder={t('settings.provider.endpointPlaceholder')}
+                />
+              </div>
+              {/* API Key */}
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="provider-apikey">{t('settings.provider.apiKey')}</Label>
+                <Input
+                  id="provider-apikey"
+                  type="password"
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder={isEdit ? t('settings.provider.apiKeyKeep') : 'sk-...'}
+                />
+              </div>
+              {/* 高级设置（默认折叠）：自定义余额查询地址 / 模型列表获取地址 */}
+              <Collapsible defaultOpen={false}>
+                <CollapsibleTrigger className="group flex w-full items-center gap-1 rounded-md py-1 text-sm text-muted-foreground transition-colors hover:text-foreground data-[state=open]:text-foreground">
+                  <ChevronRight className="size-3.5 transition-transform group-data-[state=open]:rotate-90" />
+                  <span>{t('settings.provider.advancedConfig')}</span>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <div className="flex flex-col gap-3 pt-1">
+                    <div className="flex flex-col gap-1.5">
+                      <Label htmlFor="provider-balance-url">{t('settings.provider.balanceUrl')}</Label>
+                      <Input
+                        id="provider-balance-url"
+                        value={balanceUrl}
+                        onChange={(e) => setBalanceUrl(e.target.value)}
+                        placeholder={t('settings.provider.balanceUrlPlaceholder')}
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      <Label htmlFor="provider-models-url">{t('settings.provider.modelsUrl')}</Label>
+                      <Input
+                        id="provider-models-url"
+                        value={modelsUrl}
+                        onChange={(e) => setModelsUrl(e.target.value)}
+                        placeholder={t('settings.provider.modelsUrlPlaceholder')}
+                      />
+                    </div>
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
+            </>
+          )}
         </DialogBody>
 
         <DialogFooter>

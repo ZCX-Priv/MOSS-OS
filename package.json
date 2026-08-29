@@ -35,6 +35,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
+    "cheerio": "^1.2.0",
     "cron-parser": "^5.7.0",
     "iconv-lite": "^0.7.3",
     "mammoth": "^1.12.1",

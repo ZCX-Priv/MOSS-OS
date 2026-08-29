@@ -1,0 +1,84 @@
+{
+  "name": "web",
+  "description": "联网能力工具，一个工具两种模式。mode=search 联网搜索（query 必填）：默认使用本地免费引擎（bing→baidu→sogou 自动回退，无需任何配置），若在设置页配置了搜索服务商（智谱/博查/Tavily）并设为默认则优先使用，失败自动切回本地引擎；返回标题/URL/摘要/来源。mode=fetch 抓取网页正文（url 必填）：直连目标 URL，剥离 HTML 提取可见文本并附页内链接。回答时效性问题（新闻/版本/价格/最新文档）、查证不确定事实、读取搜索结果中的具体网页时使用。",
+  "description_en": "Web access tool with two modes. mode=search performs a web search (query required): defaults to the free local engine chain (bing→baidu→sogou auto-fallback, zero config); if a search provider (zhipu/bocha/Tavily) is configured and set as default in Settings, it is used first with automatic fallback to the local chain on failure; returns title/URL/snippet/source. mode=fetch retrieves a web page's readable text (url required): direct HTTP fetch, strips HTML to visible text with in-page links. Use it for time-sensitive questions, fact verification, and reading pages found via search.",
+  "icon": "globe",
+  "annotations": {
+    "readOnlyHint": true
+  },
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "mode": {
+        "type": "string",
+        "enum": ["search", "fetch"],
+        "description": "search=联网搜索（需 query）；fetch=抓取网页正文（需 url）",
+        "description_en": "search=web search (requires query); fetch=fetch page text (requires url)"
+      },
+      "query": {
+        "type": "string",
+        "description": "搜索关键词或自然语言问题（mode=search 必填，建议 ≤70 字；搜索引擎会做意图识别，无需堆砌关键词）",
+        "description_en": "Search keywords or natural-language question (required for mode=search, recommended ≤70 chars; the engine does intent recognition, no keyword stuffing needed)"
+      },
+      "url": {
+        "type": "string",
+        "description": "要抓取的网页 URL（mode=fetch 必填，http/https；无协议前缀时默认补 https://）",
+        "description_en": "Web page URL to fetch (required for mode=fetch, http/https; https:// is prepended when the scheme is missing)"
+      },
+      "engine": {
+        "type": "string",
+        "enum": ["auto", "local"],
+        "description": "搜索引擎选择（仅 search 模式）：auto=按设置页「默认搜索引擎」配置（本地引擎或搜索服务商，默认）；local=强制使用本地免费引擎（bing→baidu→sogou 回退），忽略默认搜索引擎设置",
+        "description_en": "Engine choice (search mode only): auto=follow the default search engine setting in Settings (local chain or search provider, default); local=force the free local engine chain (bing→baidu→sogou), ignoring the default setting"
+      },
+      "maxResults": {
+        "type": "integer",
+        "description": "搜索结果条数上限（默认 8，最大 20）",
+        "description_en": "Max search results (default 8, max 20)",
+        "minimum": 1,
+        "maximum": 20
+      },
+      "freshness": {
+        "type": "string",
+        "enum": ["noLimit", "oneDay", "oneWeek", "oneMonth", "oneYear"],
+        "description": "时效过滤（仅 search 模式且使用智谱/博查服务商时生效）：oneDay=一天内、oneWeek=一周内、oneMonth=一月内、oneYear=一年内、noLimit=不限（默认）。本地引擎忽略此参数",
+        "description_en": "Recency filter (search mode, effective only with zhipu/bocha providers): oneDay/oneWeek/oneMonth/oneYear/noLimit (default). Ignored by local engines"
+      },
+      "timeoutMs": {
+        "type": "integer",
+        "description": "单次请求超时毫秒数（默认 20000，范围 3000-60000）。目标站点慢时可调大",
+        "description_en": "Per-request timeout in ms (default 20000, range 3000-60000). Increase for slow sites"
+      }
+    },
+    "required": ["mode"],
+    "additionalProperties": false
+  },
+  "config": {
+    "defaults": {
+      "enabled": true,
+      "timeoutMs": 20000,
+      "maxResults": 8,
+      "maxFetchChars": 20000
+    },
+    "schema": {
+      "timeoutMs": {
+        "type": "integer",
+        "description": "单次请求默认超时（毫秒，3000-60000）",
+        "min": 3000,
+        "max": 60000
+      },
+      "maxResults": {
+        "type": "integer",
+        "description": "搜索结果默认条数上限（1-20）",
+        "min": 1,
+        "max": 20
+      },
+      "maxFetchChars": {
+        "type": "integer",
+        "description": "fetch 模式正文最大字符数（1000-100000）",
+        "min": 1000,
+        "max": 100000
+      }
+    }
+  }
+}

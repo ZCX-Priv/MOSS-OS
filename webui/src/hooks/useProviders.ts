@@ -2,7 +2,7 @@
 // 服务商管理 hook：挂载时拉取 providers + current 写入 store；
 // 提供服务商/模型两级 CRUD、远程模型列表拉取、余额查询、连通性测试。
 
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useState } from 'react';
 import { useStore } from '../store';
 import { api } from '../api/http';
 import i18n from '../i18n';
@@ -45,11 +45,14 @@ export type UseProvidersResult = ReturnType<typeof useProviders>;
 export function useProviders() {
   const setProviders = useStore((s) => s.setProviders);
   const setCurrentModel = useStore((s) => s.setCurrentModel);
+  // 默认搜索引擎（'' = 本地免费引擎；组件本地状态，load 时刷新）
+  const [currentSearchProvider, setCurrentSearchProviderState] = useState('');
 
   const load = useCallback(async () => {
     try {
-      const { providers, current } = await api.listProviders();
+      const { providers, current, currentSearchProvider: searchCurrent } = await api.listProviders();
       setProviders(providers);
+      setCurrentSearchProviderState(searchCurrent ?? '');
       if (current && !isModelExists(providers, current)) {
         // current 指向不存在的模型（配置残留/外部变更）：自动回退到第一个可用模型
         const fallback = findFirstAvailableModel(providers);
@@ -81,10 +84,26 @@ export function useProviders() {
     [setCurrentModel],
   );
 
+  /** 设置默认搜索引擎（providerId 空串 = 本地免费引擎） */
+  const setSearchCurrent = useCallback(
+    async (providerId: string) => {
+      try {
+        await api.setSearchCurrentProvider(providerId);
+        setCurrentSearchProviderState(providerId);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : String(err));
+        throw err;
+      }
+    },
+    [],
+  );
+
   const createProvider = useCallback(
     async (data: {
       name: string;
-      format: ProviderItem['format'];
+      kind?: 'model' | 'search';
+      format?: ProviderItem['format'];
+      searchEngine?: 'zhipu' | 'bocha' | 'tavily';
       endpoint: string;
       apiKey: string;
       balanceUrl?: string;
@@ -299,8 +318,10 @@ export function useProviders() {
   return {
     providers: useStore((s) => s.providers),
     currentModel: useStore((s) => s.currentModel),
+    currentSearchProvider,
     reload: load,
     setCurrent,
+    setSearchCurrent,
     createProvider,
     updateProvider,
     deleteProvider,

@@ -251,6 +251,11 @@ export interface AppConfig {
   context?: ContextEngineConfig;
   /** 远程访问配置（由 remote 模块消费：局域网/公网隧道控制 webui；Zod schema 全 default 自愈） */
   remote: RemoteConfig;
+  /** web 工具配置（联网搜索默认引擎；由 web 工具消费） */
+  web?: {
+    /** 默认搜索服务商 id；空串 = 本地免费引擎（bing/baidu/sogou 回退链） */
+    searchProviderId: string;
+  };
 }
 
 export type ApiConfig = {
@@ -265,7 +270,14 @@ export interface ProviderConfig {
   id: string;
   /** 显示名，如 "OpenAI" */
   name: string;
-  format: 'openai-chat' | 'openai-responses' | 'anthropic' | 'gemini';
+  /**
+   * 服务商类型：model=模型服务商（默认，缺省等同）、search=搜索服务商。
+   * search 服务商 format 固定为 'search'，由 searchEngine 决定引擎，models 恒为空。
+   */
+  kind?: 'model' | 'search';
+  format: 'openai-chat' | 'openai-responses' | 'anthropic' | 'gemini' | 'search';
+  /** 搜索引擎类型（kind='search' 时必填）：zhipu=智谱 search_pro、bocha=博查、tavily=Tavily */
+  searchEngine?: 'zhipu' | 'bocha' | 'tavily';
   endpoint: string;
   apiKey: string;
   /** 自定义余额查询地址（OpenAI 兼容 subscription 接口完整 URL；空 = 不提供余额查询） */
@@ -449,6 +461,8 @@ export const ServiceNames = {
   MCP_MANAGER: 'mcp.manager',
   AGENT_ENGINE: 'agent.engine',
   SERVER_INSTANCE: 'server.instance',
+  /** 配置服务（由内核注册：运行时读取 config.json / api.json，如 web 工具解析搜索服务商） */
+  CONFIG_SERVICE: 'kernel.config',
   /** Skill 注册表（由 tools 模块注册） */
   SKILL_REGISTRY: 'skill.registry',
   /** Command 注册表（由 tools 模块注册：~/.moss/commands/*.md 自定义斜杠命令） */

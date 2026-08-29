@@ -64,18 +64,54 @@ const providerServiceSchema = z.object({
   quotaUnit: z.enum(['MB', 'GB', 'TB']).optional(),
 });
 
-const providerConfigSchema = z.object({
-  id: z.string().min(1),
-  name: z.string(),
-  format: z.enum(['openai-chat', 'openai-responses', 'anthropic', 'gemini']),
-  endpoint: z.string(),
-  apiKey: z.string(),
-  balanceUrl: z.string().optional(),
-  modelsUrl: z.string().optional(),
-  icon: z.string().optional(),
-  services: z.array(providerServiceSchema).optional(),
-  models: z.array(providerModelConfigSchema).default([]),
-});
+const providerConfigSchema = z
+  .object({
+    id: z.string().min(1),
+    name: z.string(),
+    /** 服务商类型：model（默认/缺省）= 模型服务商；search = 搜索服务商（web 工具消费） */
+    kind: z.enum(['model', 'search']).optional(),
+    format: z.enum(['openai-chat', 'openai-responses', 'anthropic', 'gemini', 'search']),
+    /** 搜索引擎类型（kind='search' 时必填）：zhipu / bocha / tavily */
+    searchEngine: z.enum(['zhipu', 'bocha', 'tavily']).optional(),
+    endpoint: z.string(),
+    apiKey: z.string(),
+    balanceUrl: z.string().optional(),
+    modelsUrl: z.string().optional(),
+    icon: z.string().optional(),
+    services: z.array(providerServiceSchema).optional(),
+    models: z.array(providerModelConfigSchema).default([]),
+  })
+  .superRefine((p, ctx) => {
+    // kind='search'：必须带 searchEngine、format 固定 'search'、无模型
+    if (p.kind === 'search') {
+      if (!p.searchEngine) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "search provider requires 'searchEngine' (zhipu/bocha/tavily)",
+        });
+      }
+      if (p.format !== 'search') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "search provider format must be 'search'",
+        });
+      }
+      if (p.models.length > 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'search provider must not carry models',
+        });
+      }
+    } else {
+      // 模型服务商（kind='model' 或缺省）：不得携带 searchEngine
+      if (p.searchEngine !== undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "searchEngine is only allowed on kind='search' providers",
+        });
+      }
+    }
+  });
 
 const fileHistorySchema = z.object({
   enabled: z.boolean(),
@@ -274,6 +310,12 @@ const appConfigSchema = z.object({
   safety: safetySchema.optional(),
   // context 可选，内层全 .default() 自愈补全（向后兼容旧配置）
   context: contextSchema.optional(),
+  // web 可选（联网搜索默认引擎；内层 .default() 自愈补全，旧配置缺段自动补 {searchProviderId: ''}）
+  web: z
+    .object({
+      searchProviderId: z.string().default(''),
+    })
+    .default({}),
 });
 
 const apiConfigSchema = z.object({
@@ -326,6 +368,7 @@ export function defaultAppConfig(): AppConfig {
       rules: { allow: [], deny: [], ask: [] },
       protectedPaths: ['~/.ssh', '~/.gnupg', '~/.aws'],
     },
+    web: { searchProviderId: '' },
   };
 }
 
