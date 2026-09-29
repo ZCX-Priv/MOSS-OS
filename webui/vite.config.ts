@@ -21,7 +21,11 @@ export default defineConfig({
     // 图标：Chrome/Chromium 安装硬性要求 192x192 与 512x512 PNG（由 MOSS.png 真实缩放生成）
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['MOSS.png', 'icon-192.png', 'icon-512.png'],
+      // 显式 script 注入：默认 auto/null + autoUpdate 时 vite-plugin-pwa 会无条件
+      // 强制 workbox.skipWaiting/clientsClaim = true（覆盖下方 false），闪屏修复失效；
+      // 显式声明后跳过强制覆盖，注入形态与之前完全一致（index.html 引 registerSW.js）
+      injectRegister: 'script',
+      includeAssets: ['MOSS.png', 'icon-192.png', 'icon-512.png', 'icon-512-maskable.png'],
       manifest: {
         name: 'MOSS',
         short_name: 'MOSS',
@@ -34,7 +38,7 @@ export default defineConfig({
         icons: [
           { src: 'icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
           { src: 'icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
-          { src: 'icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+          { src: 'icon-512-maskable.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
         ],
       },
       workbox: {
@@ -42,6 +46,13 @@ export default defineConfig({
         navigateFallbackDenylist: [/^\/api\//, /^\/ws/],
         // 主 chunk 含 @lobehub/icons 品牌图标（约 +0.8MB raw），放宽预缓存上限
         maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
+        // 消除更新闪屏：默认 skipWaiting+clientsClaim 会让新 SW 在旧页面仍运行时
+        // 立即激活并 cleanupOutdatedCaches 清掉旧 precache——旧页面的懒加载 chunk
+        // 随之 404，表现为「先显示旧版完整界面 → 闪一下 → 重回 loading」（PWA 尤甚）。
+        // 改为 waiting 策略：新 SW 安装后等待，旧标签全部关闭后才激活接管，
+        // 下次冷启动自然用新版，全程无闪屏。
+        skipWaiting: false,
+        clientsClaim: false,
       },
       devOptions: { enabled: true },
     }),

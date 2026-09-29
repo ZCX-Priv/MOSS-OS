@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
   MessageCirclePlus,
-  Cable,
+  Blocks,
   AlarmClock,
   ListChecks,
   Search,
@@ -441,7 +441,7 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
     action?: 'new-task';
   }[] = [
     { icon: MessageCirclePlus, labelKey: 'sidebar.newTask', page: 'home', action: 'new-task' },
-    { icon: Cable, labelKey: 'sidebar.pluginLibrary', page: 'plugins' },
+    { icon: Blocks, labelKey: 'sidebar.pluginLibrary', page: 'plugins' },
     { icon: AlarmClock, labelKey: 'sidebar.automation', page: 'automation' },
   ];
 
@@ -518,7 +518,7 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
                     settingsSearchResults.map((result) => (
                       <SidebarMenuItem key={`${result.section}-${result.labelKey}`}>
                         <button
-                          className="flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm hover:bg-sidebar-accent hover:text-sidebar-accent-foreground h-8"
+                          className="flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm hover:bg-sidebar-accent-hover hover:text-sidebar-accent-foreground h-8"
                           onClick={() => {
                             closeMobile();
                             navigate(`/settings/${result.section}`);
@@ -1002,7 +1002,7 @@ function TaskRow({
         <button
           type="button"
           onClick={() => onToggleSelect(task.id)}
-          className="flex h-8 min-w-0 flex-1 items-center overflow-hidden rounded-md px-2 text-left text-sm hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+          className="flex h-8 min-w-0 flex-1 items-center overflow-hidden rounded-md px-2 text-left text-sm hover:bg-sidebar-accent-hover hover:text-sidebar-accent-foreground"
         >
           <span className="truncate">{task.title}</span>
         </button>
@@ -1044,7 +1044,12 @@ function TaskRow({
           <Button
             variant="ghost"
             size="icon-xs"
-            className="absolute right-0 top-1/2 z-10 -translate-y-1/2 opacity-0 transition-opacity group-hover/item:opacity-100 data-[state=open]:opacity-100"
+            className={cn(
+              'absolute top-1/2 z-10 -translate-y-1/2 opacity-0 transition-opacity group-hover/item:opacity-100 data-[state=open]:opacity-100',
+              // 运行中/出错：状态指示器常显占右侧 1~17px，三点左移至 right-5（20px）避免叠在圆圈上；
+              // 空闲：指示器不显示，三点贴边仅内收 2px（right-0.5，rem 自适应字号）
+              generating || errored ? 'right-5' : 'right-0.5',
+            )}
             onClick={(e) => e.stopPropagation()}
           >
             <MoreHorizontal className="size-3.5" />

@@ -506,6 +506,12 @@ export function useWebSocket(): void {
         // （done/task.done 事件发往已断连接被丢弃）。running=false 且本地仍
         // 在生成中 → 拉取会话历史恢复最终消息并收尾生成状态，杜绝 spinner 永转。
         const subPayload = (msg.payload ?? {}) as { running?: boolean };
+        // 刷新后恢复：generatingBySession 为内存态，页面刷新即丢失；后端以
+        // activeRuns 实况回复 running=true 时恢复生成中（发送按钮变停止按钮、
+        // 侧边栏行转圈）；任务结束由 done/task.done/error 事件置回 false
+        if (subPayload.running === true) {
+          useStore.getState().setGenerating(sessionId, true);
+        }
         if (subPayload.running === false && useStore.getState().generatingBySession[sessionId]) {
           void api
             .getSessionHistory(sessionId)

@@ -47,8 +47,11 @@ body {
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: oklch(0.546 0.245 263.4);
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
+  /* 浅色侧边栏选中/hover：背景 0.985，选中 0.93（差 5.5% 明显可见）、hover 0.955（差 3%），
+     介于背景与选中之间——选中项始终最突出；旧值 0.97/0.978 与背景仅差 1.5%/0.7% 几乎不可见 */
+  --sidebar-accent: oklch(0.93 0 0);
   --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-accent-hover: oklch(0.955 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.546 0.245 263.4);
 }
@@ -84,6 +87,8 @@ body {
   --sidebar-primary-foreground: oklch(0.985 0 0);
   --sidebar-accent: oklch(0.269 0 0);
   --sidebar-accent-foreground: oklch(0.985 0 0);
+  /* hover 专用：介于侧边栏背景(0.205)与选中色(0.269)之间，选中项始终最突出 */
+  --sidebar-accent-hover: oklch(0.237 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.546 0.245 263.4);
 }
@@ -95,6 +100,7 @@ body {
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-hover: var(--sidebar-accent-hover);
   --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
   --color-sidebar-primary: var(--sidebar-primary);
   --color-sidebar-foreground: var(--sidebar-foreground);

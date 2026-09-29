@@ -35,9 +35,6 @@
         <img class="moss-boot-logo" src="/MOSS.png" alt="MOSS" width="80" height="80" />
         <div class="moss-boot-wordmark">
           <span class="moss-boot-word">MOSS</span>
-          <span class="moss-boot-dot" style="animation-delay: 0s"></span>
-          <span class="moss-boot-dot" style="animation-delay: 0.15s"></span>
-          <span class="moss-boot-dot" style="animation-delay: 0.3s"></span>
         </div>
         <div class="moss-boot-status">正在加载 / Loading…</div>
       </div>
@@ -67,6 +64,8 @@
         flex-direction: column;
         align-items: center;
         justify-content: center;
+        /* 四行式版式：logo → MOSS 字样 → 三点弹跳 → 文字 */
+        gap: 24px;
         background: oklch(0.145 0 0);
         font-family: system-ui, sans-serif;
       }
@@ -76,84 +75,46 @@
       .moss-boot-logo {
         width: 80px;
         height: 80px;
-        animation: moss-boot-logo 0.4s ease-out both;
+        /* 星语 loadingPulse：呼吸闪烁（opacity 1 → 0.6） */
+        animation: moss-boot-pulse 2s ease-in-out infinite;
       }
       .moss-boot-wordmark {
         display: flex;
         align-items: center;
-        gap: 8px;
-        margin-top: 24px;
-        animation: moss-boot-up 0.4s ease-out 0.1s both;
+        justify-content: center;
       }
       .moss-boot-word {
         font-size: 26px;
         font-weight: 600;
         letter-spacing: 0.3em;
-        /* 抵消字距尾随空隙，让右侧圆点视觉贴合 */
+        /* 抵消字距尾随空隙，保持视觉居中 */
         margin-right: -0.3em;
+        /* 对齐 Tailwind preflight 行高：React 接管后 splash 同为 1.5，切换零高度差 */
+        line-height: 1.5;
         color: #fafafa;
       }
       html[data-boot-theme='light'] .moss-boot-word {
         color: #18181b;
       }
-      .moss-boot-dot {
-        width: 5px;
-        height: 5px;
-        border-radius: 50%;
-        background: #3b82f6;
-        animation: moss-boot-dot 1.2s ease-in-out infinite;
-      }
-      html[data-boot-theme='light'] .moss-boot-dot {
-        background: #2563eb;
-      }
       .moss-boot-status {
-        margin-top: 20px;
-        font-size: 13px;
+        font-size: 14px;
+        /* 对齐 Tailwind preflight 行高（同 .moss-boot-word） */
+        line-height: 1.5;
         color: #71717a;
         font-variant-numeric: tabular-nums;
-        animation: moss-boot-up 0.4s ease-out 0.2s both;
       }
-      @keyframes moss-boot-logo {
-        from {
-          opacity: 0;
-          transform: scale(0.92);
-        }
-        to {
-          opacity: 1;
-          transform: scale(1);
-        }
-      }
-      @keyframes moss-boot-up {
-        from {
-          opacity: 0;
-          transform: translateY(6px);
-        }
-        to {
-          opacity: 1;
-          transform: translateY(0);
-        }
-      }
-      @keyframes moss-boot-dot {
+      @keyframes moss-boot-pulse {
         0%,
-        60%,
         100% {
-          transform: translateY(0);
-          opacity: 0.45;
-        }
-        30% {
-          transform: translateY(-6px);
           opacity: 1;
+        }
+        50% {
+          opacity: 0.6;
         }
       }
       @media (prefers-reduced-motion: reduce) {
-        .moss-boot-logo,
-        .moss-boot-wordmark,
-        .moss-boot-status {
+        .moss-boot-logo {
           animation: none;
-        }
-        .moss-boot-dot {
-          animation: none;
-          opacity: 0.7;
         }
       }
     </style>

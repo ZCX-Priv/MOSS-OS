@@ -30,7 +30,7 @@ export const zh = {
     ready: '即将就绪',
   },
   sidebar: {
-    newTask: '新建任务',
+    newTask: '新任务',
     pluginLibrary: '插件库',
     automation: '自动化',
     taskList: '任务列表',

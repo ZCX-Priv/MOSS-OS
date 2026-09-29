@@ -1,6 +1,6 @@
 // webui/src/components/shared/SplashScreen.tsx
 // 入场加载屏（阶段 2）：React 挂载后接管 index.html 的 #moss-boot 骨架，视觉完全一致。
-//   - 纯 CSS 动画：字样右侧三颗圆点依次跳动（波浪式 stagger）
+//   - 版式参考星语 loading：logo 呼吸闪烁 → 下方三颗圆点依次弹跳 → 进度文字
 //   - 真实进度引擎：里程碑 target（只增不减）来自真实加载信号，
 //     display 经 rAF 平滑追赶——不虚报、不卡 99%、不突窜 100%
 //   - 每浏览器会话只完整展示一次（sessionStorage 哨兵）
@@ -10,7 +10,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useStore } from '../../store';
 import { wsClient } from '../../api/ws';
-import { cn } from '../../lib/utils';
 
 /** 会话哨兵 key：存在即本会话已展示过 */
 const SPLASH_SESSION_KEY = 'moss-splash-shown';
@@ -145,41 +144,76 @@ export function SplashScreen() {
 
   return (
     <div
-      className={cn(
-        'fixed inset-0 z-[100] flex flex-col items-center justify-center bg-background font-sans',
-        'transition-opacity duration-[600ms] ease-out',
-        exiting && 'opacity-0',
-      )}
+      className="moss-splash-wrap select-none"
+      data-exiting={exiting ? 'true' : 'false'}
       aria-label="MOSS"
     >
+      {/* 布局样式全部内嵌（随组件 DOM 立即生效，不依赖 Tailwind CSSOM 加载时序）：
+          PWA 下外部 CSS 晚到时 splash 布局/间距/字号依然正确，消除"裸布局→正常布局"跳变。
+          版式与 index.html boot 骨架逐项一致（三段式：logo 呼吸 → MOSS 字样 → 文字；
+          gap 24px / 26px·14px 字号 / line-height 1.5 / system-ui），切换零高度差。
+          主题判定用 .dark class：main.tsx 的 initTheme 在 createRoot().render() 之前完成。 */}
       <style>{`
-        @keyframes moss-splash-dot {
-          0%, 60%, 100% { transform: translateY(0); opacity: 0.45; }
-          30% { transform: translateY(-6px); opacity: 1; }
+        .moss-splash-wrap {
+          position: fixed;
+          inset: 0;
+          z-index: 100;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          gap: 24px;
+          background: oklch(0.145 0 0);
+          font-family: system-ui, sans-serif;
+          transition: opacity 600ms ease-out;
+        }
+        html:not(.dark) .moss-splash-wrap {
+          background: oklch(1 0 0);
+        }
+        .moss-splash-wrap[data-exiting='true'] {
+          opacity: 0;
+        }
+        .moss-splash-logo {
+          width: 80px;
+          height: 80px;
+          animation: moss-splash-pulse 2s ease-in-out infinite;
+        }
+        .moss-splash-word {
+          font-size: 26px;
+          font-weight: 600;
+          letter-spacing: 0.3em;
+          /* 抵消字距尾随空隙，保持视觉居中 */
+          margin-right: -0.3em;
+          line-height: 1.5;
+          color: #fafafa;
+        }
+        html:not(.dark) .moss-splash-word {
+          color: #18181b;
+        }
+        .moss-splash-status {
+          font-size: 14px;
+          line-height: 1.5;
+          color: #71717a;
+          font-variant-numeric: tabular-nums;
+        }
+        @keyframes moss-splash-pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.6; }
         }
         @media (prefers-reduced-motion: reduce) {
-          .moss-splash-dot { animation: none !important; opacity: 0.7; }
+          .moss-splash-logo { animation: none !important; }
         }
       `}</style>
-      {/* 全部使用 px 单位：root font-size 在 App 挂载后由 16px（浏览器默认）变为 14px，
-          rem 单位会导致 splash 内容中途集体缩小（“猛烈缩放”bug 根源） */}
-      <img src="/MOSS.png" alt="MOSS" width={80} height={80} className="select-none" draggable={false} />
-      <div className="mt-[24px] flex items-center gap-[8px]" aria-hidden>
-        <span
-          className="text-[26px] font-semibold tracking-[0.3em] text-foreground"
-          style={{ marginRight: '-0.3em' }}
-        >
-          MOSS
-        </span>
-        {[0, 0.15, 0.3].map((delay) => (
-          <span
-            key={delay}
-            className="moss-splash-dot inline-block h-[5px] w-[5px] rounded-full bg-primary"
-            style={{ animation: `moss-splash-dot 1.2s ease-in-out ${delay}s infinite` }}
-          />
-        ))}
-      </div>
-      <div className="mt-[20px] text-[13px] tabular-nums text-muted-foreground">
+      <img
+        src="/MOSS.png"
+        alt="MOSS"
+        width={80}
+        height={80}
+        className="moss-splash-logo"
+        draggable={false}
+      />
+      <div className="moss-splash-word">MOSS</div>
+      <div className="moss-splash-status">
         {t(phaseKey)} · {pct}%
       </div>
     </div>

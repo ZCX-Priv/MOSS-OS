@@ -10,6 +10,7 @@ import {
   PanelRight,
   Plus,
   Loader2,
+  MessageCirclePlus,
   HelpCircle,
   Atom,
   Terminal,
@@ -51,7 +52,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
-import { SidebarTrigger } from '@/components/ui/sidebar';
+import { SidebarTrigger, useSidebar } from '@/components/ui/sidebar';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -171,6 +172,8 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
   const rightPanelWidth = useStore((s) => s.rightPanelWidth);
   const setRightPanelWidth = useStore((s) => s.setRightPanelWidth);
   const isMobile = useIsMobile();
+  // 移动端侧边栏抽屉开合态：展开时顶栏「新建对话」快捷按钮自动隐藏（抽屉内已有同名按钮）
+  const { openMobile } = useSidebar();
 
   // 右侧面板拖拽调宽（仅桌面端内嵌 aside）
   const rightResize = useResizable({
@@ -891,9 +894,28 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
     <div className="flex flex-1 min-h-0 overflow-hidden">
       {/* Task Area */}
       <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
-        {/* Task Header — 移动端：三栏 grid（左 trigger + 居中标题 + 右按钮） */}
+        {/* Task Header — 移动端：三栏 grid（左 trigger + 新建快捷 + 居中标题 + 右按钮） */}
         <div className="grid h-12 grid-cols-3 items-center px-3 md:hidden">
-          <SidebarTrigger />
+          <div className="flex items-center gap-1">
+            <SidebarTrigger />
+            {/* 新建对话快捷入口：复用侧边栏「新任务」按钮逻辑；仅浏览任务时显示，
+                侧边栏抽屉展开时自动消失（抽屉内已有该按钮） */}
+            {taskId && !openMobile && (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                title={t('sidebar.newTask')}
+                aria-label={t('sidebar.newTask')}
+                onClick={() => {
+                  useStore.getState().setActiveTaskId(null);
+                  useStore.getState().setActiveSession(null);
+                  navigate('/');
+                }}
+              >
+                <MessageCirclePlus />
+              </Button>
+            )}
+          </div>
           <h2 className="truncate text-center text-sm font-medium text-foreground">
             {task?.title ?? t('task.newTask')}
           </h2>
@@ -932,9 +954,9 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
           <div ref={scrollRef} className="h-full overflow-y-auto task-scroll-area">
             <div className="flex min-h-full flex-col gap-4 p-4">
               {messages.length === 0 && !isGenerating && (
-                <div className="flex flex-1 flex-col items-center justify-center gap-6">
-                  <img src="/MOSS.png" alt="MOSS" className="size-16 rounded-2xl object-cover" />
-                  <p className="text-lg text-muted-foreground">
+                <div className="flex flex-1 flex-col items-center justify-center gap-3">
+                  <img src="/MOSS.png" alt="MOSS" className="size-18 object-cover" />
+                  <p className="text-xl font-semibold text-muted-foreground">
                     {t(getGreetingKey())}{t('task.greeting.prompt')}
                   </p>
                 </div>

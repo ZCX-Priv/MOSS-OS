@@ -1,0 +1,203 @@
+#!/usr/bin/env node
+/**
+ * rebrand-icons.mjs — 清除 MOSS.png 元数据/AIGC 标识、切 22% 圆角并重建 public 品牌图标套件
+ *
+ * 流程（全部在内存中处理并校验通过后才写盘，不会产生中间损坏状态）：
+ *   A. 清洗根目录 MOSS.png（2048×2048，原地覆盖）：
+ *      - 质数中间尺寸双轮重采样（2048→2017→2048，cubic）：全像素插值扰动，破坏像素级频域隐水印
+ *      - 微亮度扰动 ×1.002（不可感知）
+ *      - 22% 圆角裁剪（SVG 白色圆角矩形 dest-in 混合，半径 = 边长 × 0.22，四角透明）
+ *      - sharp 默认不写入任何元数据 chunk（不调用 withMetadata）
+ *   B. 从清洗后的源生成 webui/public/ 图标套件（缩放自动继承 22% 圆角比例）：
+ *      - MOSS.png            1024×1024（favicon / boot / sidebar / splash / settings 通用）
+ *      - icon-192.png         192×192（PWA any，透明圆角）
+ *      - icon-512.png         512×512（PWA any，透明圆角）
+ *      - icon-512-maskable.png 512×512（PWA maskable：#09090b 实底 + 内容 410px 居中，安全区 80%）
+ *   C. 读回校验：PNG chunk 白名单 {IHDR, PLTE, tRNS, IDAT, IEND}、尺寸精确、IEND 后无 trailing 字节、
+ *      四角像素 alpha（透明圆角图 = 0 / maskable 实底 = 255 且色值 #09090b）、中心像素 alpha = 255
+ */
+
+import sharp from 'sharp';
+import fs from 'node:fs';
+import path from 'node:path';
+
+const ROOT = path.resolve(import.meta.dirname, '..');
+const SRC = path.join(ROOT, 'MOSS.png');
+const PUB = path.join(ROOT, 'webui', 'public');
+
+const MASKABLE_BG = { r: 9, g: 9, b: 11, alpha: 1 }; // #09090b，与 PWA manifest background_color 一致
+const CHUNK_WHITELIST = new Set(['IHDR', 'PLTE', 'tRNS', 'IDAT', 'IEND']);
+const PNG_SIG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const RADIUS_RATIO = 0.22; // 圆角半径 = 边长 × 22%（iOS 图标风格）
+
+/** 解析 PNG chunk；返回 { chunks: string[], width, height, trailing } */
+function inspectPng(buf, file) {
+  if (!buf.subarray(0, 8).equals(PNG_SIG)) {
+    throw new Error(`${file}: 不是合法 PNG（签名错误）`);
+  }
+  const chunks = [];
+  let pos = 8;
+  let width = 0;
+  let height = 0;
+  while (pos + 12 <= buf.length) {
+    const len = buf.readUInt32BE(pos);
+    const type = buf.toString('ascii', pos + 4, pos + 8);
+    if (type === 'IHDR') {
+      width = buf.readUInt32BE(pos + 8);
+      height = buf.readUInt32BE(pos + 12);
+    }
+    chunks.push(type);
+    pos += 12 + len;
+    if (type === 'IEND') break;
+  }
+  return { chunks, width, height, trailing: buf.length - pos };
+}
+
+/** 字节级剥除白名单之外的 chunk（重组原始字节段，CRC 原样保留，无损） */
+function stripChunks(buf) {
+  const parts = [PNG_SIG];
+  let pos = 8;
+  while (pos + 12 <= buf.length) {
+    const len = buf.readUInt32BE(pos);
+    const type = buf.toString('ascii', pos + 4, pos + 8);
+    const end = pos + 12 + len;
+    if (CHUNK_WHITELIST.has(type)) {
+      parts.push(buf.subarray(pos, end));
+    }
+    pos = end;
+    if (type === 'IEND') break;
+  }
+  return Buffer.concat(parts);
+}
+
+/** 校验：chunk 白名单 + 期望尺寸 + 无 trailing；返回检查摘要行 */
+function validatePng(buf, file, expectW, expectH) {
+  const { chunks, width, height, trailing } = inspectPng(buf, file);
+  const illegal = [...new Set(chunks)].filter((t) => !CHUNK_WHITELIST.has(t));
+  const problems = [];
+  if (illegal.length) problems.push(`非法 chunk: ${illegal.join(',')}`);
+  if (width !== expectW || height !== expectH) problems.push(`尺寸 ${width}x${height} ≠ 期望 ${expectW}x${expectH}`);
+  if (trailing !== 0) problems.push(`IEND 后有 ${trailing} 字节 trailing 数据`);
+  if (problems.length) {
+    throw new Error(`${file}: ${problems.join('；')}`);
+  }
+  return `${file}: ${width}x${height}, ${(buf.length / 1024).toFixed(0)}KB, chunks=[${[...new Set(chunks)].join(',')}] ✓`;
+}
+
+/** 读回磁盘文件再校验一次（不信写盘结果） */
+function validateOnDisk(file, expectW, expectH) {
+  return validatePng(fs.readFileSync(file), file, expectW, expectH);
+}
+
+/** 22% 圆角遮罩：白色圆角矩形 SVG（fill 必须显式 white，SVG 默认黑色会让 dest-in 全图透明） */
+function roundedMask(size) {
+  const r = size * RADIUS_RATIO;
+  return Buffer.from(
+    `<svg width="${size}" height="${size}"><rect x="0" y="0" width="${size}" height="${size}" rx="${r}" ry="${r}" fill="white"/></svg>`,
+  );
+}
+
+/** 读取单个像素的 RGBA（ensureAlpha 保证 4 通道）；pos 为 [left, top] */
+async function readPixel(input, left, top) {
+  const buf = await sharp(input)
+    .extract({ left, top, width: 1, height: 1 })
+    .ensureAlpha()
+    .raw()
+    .toBuffer();
+  return { r: buf[0], g: buf[1], b: buf[2], a: buf[3] };
+}
+
+/**
+ * 圆角/实底像素断言（不信管线声明，读像素实证）：
+ * - transparentCorners=true：四角 alpha 必须 0（22% 圆角已生效），中心 alpha 必须 255
+ * - transparentCorners=false（maskable 实底）：四角必须为 #09090b 且 alpha 255
+ */
+async function validateCorners(input, file, expectSize, transparentCorners) {
+  const corners = [
+    [0, 0],
+    [expectSize - 1, 0],
+    [0, expectSize - 1],
+    [expectSize - 1, expectSize - 1],
+  ];
+  const problems = [];
+  for (const [x, y] of corners) {
+    const px = await readPixel(input, x, y);
+    if (transparentCorners) {
+      if (px.a !== 0) problems.push(`角(${x},${y}) alpha=${px.a} ≠ 0（圆角未生效）`);
+    } else if (px.a !== 255 || px.r !== MASKABLE_BG.r || px.g !== MASKABLE_BG.g || px.b !== MASKABLE_BG.b) {
+      problems.push(`角(${x},${y}) rgba(${px.r},${px.g},${px.b},${px.a}) ≠ 实底 #09090b`);
+    }
+  }
+  const center = await readPixel(input, Math.floor(expectSize / 2), Math.floor(expectSize / 2));
+  if (center.a !== 255) problems.push(`中心 alpha=${center.a} ≠ 255`);
+  if (problems.length) {
+    throw new Error(`${file}: ${problems.join('；')}`);
+  }
+  return `${file}: 四角${transparentCorners ? '透明（22% 圆角生效）' : '实底 #09090b'} + 中心不透明 ✓`;
+}
+
+async function main() {
+  console.log('== A. 清洗根目录 MOSS.png（重采样扰动 + 元数据清零 + 22% 圆角） ==');
+  const cleaned = stripChunks(
+    await sharp(SRC)
+      .resize(2017, 2017, { kernel: 'cubic' }) // 质数中间尺寸：破坏频域水印对齐
+      .resize(2048, 2048, { kernel: 'cubic' }) // 回到原尺寸：全像素二次插值
+      .modulate({ brightness: 1.002 }) // 微亮度扰动（不可感知）
+      .composite([{ input: roundedMask(2048), blend: 'dest-in' }]) // 22% 圆角，四角透明
+      .png({ compressionLevel: 9 })
+      .toBuffer(),
+  );
+  console.log(validatePng(cleaned, 'MOSS.png (内存)', 2048, 2048));
+  console.log(await validateCorners(cleaned, 'MOSS.png (内存)', 2048, true));
+  fs.writeFileSync(SRC, cleaned);
+  console.log(validateOnDisk(SRC, 2048, 2048));
+  console.log(await validateCorners(SRC, 'MOSS.png (磁盘读回)', 2048, true));
+
+  console.log('\n== B. 生成 webui/public 图标套件（以清洗后的圆角源为基准，缩放继承 22% 圆角） ==');
+  const outputs = [];
+
+  // 通用：从清洗 buffer 缩放（透明圆角随几何缩放，比例严格保持 22%）
+  async function derive(size, name) {
+    const buf = stripChunks(
+      await sharp(cleaned).resize(size, size, { kernel: 'cubic' }).png({ compressionLevel: 9 }).toBuffer(),
+    );
+    const file = path.join(PUB, name);
+    console.log(validatePng(buf, `${name} (内存)`, size, size));
+    console.log(await validateCorners(buf, `${name} (内存)`, size, true));
+    fs.writeFileSync(file, buf);
+    outputs.push(validateOnDisk(file, size, size));
+    outputs.push(await validateCorners(file, `${name} (磁盘读回)`, size, true));
+  }
+
+  await derive(1024, 'MOSS.png');
+  await derive(192, 'icon-192.png');
+  await derive(512, 'icon-512.png');
+
+  // maskable：#09090b 实底画布 + 内容缩至 410px（512×80% 安全区）居中
+  const content410 = await sharp(cleaned).resize(410, 410, { kernel: 'cubic' }).png().toBuffer();
+  const maskable = stripChunks(
+    await sharp({
+      create: { width: 512, height: 512, channels: 4, background: MASKABLE_BG },
+    })
+      .composite([{ input: content410, gravity: 'centre' }])
+      .png({ compressionLevel: 9 })
+      .toBuffer(),
+  );
+  {
+    const file = path.join(PUB, 'icon-512-maskable.png');
+    console.log(validatePng(maskable, 'icon-512-maskable.png (内存)', 512, 512));
+    console.log(await validateCorners(maskable, 'icon-512-maskable.png (内存)', 512, false));
+    fs.writeFileSync(file, maskable);
+    outputs.push(validateOnDisk(file, 512, 512));
+    outputs.push(await validateCorners(file, 'icon-512-maskable.png (磁盘读回)', 512, false));
+  }
+
+  console.log('\n== C. 写盘后读回校验汇总 ==');
+  outputs.forEach((line) => console.log(line));
+  console.log('\n全部通过：零元数据 chunk、尺寸精确、无 trailing 数据、22% 圆角与 maskable 实底经像素级实证。');
+}
+
+main().catch((err) => {
+  console.error('FAILED:', err.message);
+  process.exit(1);
+});
