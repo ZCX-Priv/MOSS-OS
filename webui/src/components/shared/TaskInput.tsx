@@ -53,6 +53,7 @@ import { api } from '../../api/http';
 import { matchesShortcut } from '../../utils/shortcut';
 import { MentionMenu } from './MentionMenu';
 import { SendAttachmentCard } from './AttachmentCard';
+import { buildAttachmentBlock } from '@/lib/attachment-block';
 import {
   detectTrigger,
   filterMentionItems,
@@ -130,7 +131,8 @@ interface TaskInputProps {
   placeholder?: string;
   onOpenOverlay?: (overlay: OverlayType) => void;
   variant?: 'home' | 'task';
-  onSend?: (text: string) => void;
+  /** 发送回调：text = 最终消息文本（含附件块），attachments = 附件绝对路径（结构化字段） */
+  onSend?: (text: string, attachments: string[]) => void;
   isGenerating?: boolean;
   /** 仅首屏空白（会话无消息且未生成）时显示工作目录 Badge */
   showDirectoryBadge?: boolean;
@@ -433,9 +435,9 @@ export function TaskInput({
     const uniquePaths = [...new Set(paths)];
     const message =
       uniquePaths.length > 0
-        ? `${head}\n\n${t('taskInput.attachmentListLabel')}\n${uniquePaths.map((p) => `- ${p}`).join('\n')}`
+        ? `${head}\n\n${buildAttachmentBlock(uniquePaths, t('taskInput.attachmentListLabel'))}`
         : head;
-    onSend?.(message);
+    onSend?.(message, uniquePaths);
     setInput('');
     setAttachments([]);
     setChips([]);

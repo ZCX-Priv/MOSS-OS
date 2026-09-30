@@ -488,9 +488,14 @@ export class SessionStore {
     );
   }
 
-  /** 添加用户消息 */
-  addUserMessage(session: Session, content: string): void {
-    session.messages.push({ role: 'user', content, timestamp: new Date().toISOString() });
+  /** 添加用户消息（attachments：附件绝对路径；为空/缺省时不写该字段，保持旧数据紧凑） */
+  addUserMessage(session: Session, content: string, attachments?: string[]): void {
+    session.messages.push({
+      role: 'user',
+      content,
+      ...(attachments && attachments.length > 0 ? { attachments } : {}),
+      timestamp: new Date().toISOString(),
+    });
     session.updatedAt = new Date().toISOString();
     this.markDirty(session);
   }

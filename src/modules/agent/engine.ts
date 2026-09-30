@@ -276,7 +276,7 @@ export class AgentEngineImpl implements AgentEngine {
     const apiCfg = this.config.getApiConfig();
     const modelDisplayName = resolveModelDisplayName(apiCfg, model);
     const session = this.sessions.getOrCreate(sessionId);
-    this.sessions.addUserMessage(session, userMessage);
+    this.sessions.addUserMessage(session, userMessage, input.attachments);
     // 记录本次 run 的工作目录（上下文文件相对路径的存在性校验/归一化匹配基准）
     this.sessions.setLastCwd(session, cwd);
     // 活跃置顶：task.id 即 sessionId；无对应任务时静默返回 null
@@ -593,7 +593,7 @@ export class AgentEngineImpl implements AgentEngine {
 
       // 引导模式：所有工具调用完成后，检查是否有引导消息（准备进入思考前中止）
       if (input.guideMessages && input.guideMessages.length > 0 && !signal?.aborted) {
-        const guideMsg = input.guideMessages[0];
+        const guide = input.guideMessages[0];
         try {
           this.sessions.setLastRunStats(session, stats);
           this.sessions.persistSession(session);
@@ -611,7 +611,8 @@ export class AgentEngineImpl implements AgentEngine {
           finalText: assistantText,
           history: session.messages,
           guideInterrupt: true,
-          guideMessage: guideMsg,
+          guideMessage: guide.message,
+          guideAttachments: guide.attachments,
         };
       }
 

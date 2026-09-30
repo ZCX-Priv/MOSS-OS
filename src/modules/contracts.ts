@@ -228,6 +228,8 @@ export interface AgentRunInput {
   sessionId: string;
   /** 用户最新输入文本 */
   userMessage: string;
+  /** 本轮用户消息的附件绝对路径（纯路径引用；随用户消息持久化并由前端渲染卡片） */
+  attachments?: string[];
   /** 模型名（可选，默认从配置） */
   model?: string;
   /** Agent 配置 ID（可选；指定后按该 Agent 的 systemPrompt/model/tools/maxTurns/maxTokens/maxTokens 执行） */
@@ -246,7 +248,7 @@ export interface AgentRunInput {
   /** 运行实例 ID（前端生成，用于隔离不同 run 的事件） */
   runId?: string;
   /** 引导消息队列（引导模式下，工具调用完成后检查并中止当前 run） */
-  guideMessages?: string[];
+  guideMessages?: GuidanceMessage[];
 }
 
 /**
@@ -300,11 +302,23 @@ export interface AgentRunResult {
   guideInterrupt?: boolean;
   /** 引导消息内容（引导中止时携带，供 WsHandler 启动新 run） */
   guideMessage?: string;
+  /** 引导消息附带的附件绝对路径（与 guideMessage 配对，供新 run 记录到用户消息） */
+  guideAttachments?: string[];
+}
+
+/** 引导消息（引导模式下运行期间插入的用户消息） */
+export interface GuidanceMessage {
+  /** 用户输入文本 */
+  message: string;
+  /** 附件绝对路径（纯路径引用；透传到新 run 的用户消息上） */
+  attachments?: string[];
 }
 
 export interface AgentMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
+  /** 用户消息附带的附件绝对路径（role=user；纯路径引用，供前端渲染附件卡片） */
+  attachments?: string[];
   toolCalls?: Array<{
     id: string;
     name: string;

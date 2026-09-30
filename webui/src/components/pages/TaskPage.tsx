@@ -38,9 +38,10 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { resolveToolIcon } from '@/lib/tool-icons';
-import { FilePreviewPane, MarkdownRenderer } from '../../render';
+import { FilePreviewPane, fileNameOf, MarkdownRenderer } from '../../render';
 import type { OverlayType } from '../../types';
 import { cn } from '@/lib/utils';
+import { parseAttachmentBlock, stripAttachmentBlock } from '@/lib/attachment-block';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import {
@@ -125,26 +126,18 @@ function FileIndexProgressBar() {
     </div>
   );
 }
-const EMPTY_QUEUE: Array<{ id: string; content: string; timestamp: string }> = [];
+const EMPTY_QUEUE: Array<{
+  id: string;
+  content: string;
+  timestamp: string;
+  attachments?: string[];
+}> = [];
 
 // 单条消息正文渲染上限：超长内容（如 base64/大文件摘录）截断渲染，防止一次性布局卡死滚动
 const MAX_RENDER_CHARS = 6000;
 
-// 用户消息尾部附件块（TaskInput 发送时生成）：空行 + 标签行（以：/: 结尾）+ 连续"- 绝对路径"行。
-// 标签行文本随 i18n 变化故按结构匹配；路径特征校验（Windows 盘符 / Unix 根）避免误伤普通列表。
-const ATTACHMENT_BLOCK_RE =
-  /\n\n[^\n]+[:：]\n((?:- (?:[A-Za-z]:[\\/][^\n]+|\/[^\n]+)\n?)+)$/;
-
-function parseAttachmentBlock(content: string): { body: string; paths: string[] } | null {
-  const m = ATTACHMENT_BLOCK_RE.exec(content);
-  if (!m) return null;
-  const paths = m[1]
-    .split('\n')
-    .map((l) => l.replace(/^- /, '').trim())
-    .filter(Boolean);
-  if (paths.length === 0) return null;
-  return { body: content.slice(0, m.index), paths };
-}
+// 用户消息附件：优先用后端结构化字段 message.attachments；老会话无该字段时回退
+// lib/attachment-block 的 parseAttachmentBlock（同时覆盖「只发附件不打字 → 块在消息开头」）。
 
 // 根据当前小时返回问候语 i18n key
 function getGreetingKey(): string {
@@ -537,14 +530,14 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
 
   // 空状态：发送消息后创建任务并跳转；任务态：直接发送到当前 session
   const handleSend = useCallback(
-    async (text: string) => {
+    async (text: string, attachments?: string[]) => {
       // 仅跟随态才自动滚底：用户上滑看历史时发送消息，视图停留在原位不被拉回底部；
       // 已脱离跟随时 scrollDeps effect 同样不滚底（pinnedRef=false），后续消息追加自然不打扰
       if (isPinned()) scrollToBottom('auto');
       if (taskId) {
-        sendMessage(text, { taskId });
+        sendMessage(text, { taskId, attachments });
       } else {
-        const newTaskId = await sendMessage(text);
+        const newTaskId = await sendMessage(text, { attachments });
         if (newTaskId) {
           // 空白页创建新会话：面板开合状态随对话转移到新会话，避免 navigate 重挂载后收起
           useStore.getState().migrateRightPanelState('', newTaskId);
@@ -1237,7 +1230,10 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
                             >
                               <Inbox className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
                               <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                                <span className="truncate text-xs text-foreground">{msg.content}</span>
+                                <span className="truncate text-xs text-foreground">
+                                  {stripAttachmentBlock(msg.content) ||
+                                    (msg.attachments?.[0] ? fileNameOf(msg.attachments[0]) : msg.content)}
+                                </span>
                                 <span className="text-[10px] text-muted-foreground">
                                   {new Date(msg.timestamp).toLocaleTimeString()}
                                 </span>
@@ -1601,16 +1597,21 @@ const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap,
       ? '…' + message.content.slice(-MAX_RENDER_CHARS)
       : message.content.slice(0, MAX_RENDER_CHARS) + '…'
     : message.content;
-  // 用户消息尾部附件块解析（TaskInput 发送时生成：空行 + 标签行 + "- 绝对路径"行）。
-  // 标签行文本随 i18n 变化，故按结构匹配；路径特征校验（盘符 / Unix 根）避免误伤普通列表。
-  const userAttachments = message.role === 'user' ? parseAttachmentBlock(message.content) : null;
-  const userBody = userAttachments ? userAttachments.body : message.content;
+  // 用户消息附件：结构化字段优先（新消息，后端持久化），缺失时回退解析正文附件块（老会话）。
+  // 正文一律剥离附件块，避免把 "附件：- 路径" 原文渲染进气泡。
+  const parsed = message.role === 'user' ? parseAttachmentBlock(message.content) : null;
+  const structuredPaths = message.attachments?.length ? message.attachments : null;
+  const userPaths = structuredPaths ?? parsed?.paths ?? [];
+  const userBody = structuredPaths
+    ? (parsed?.body ?? stripAttachmentBlock(message.content))
+    : (parsed?.body ?? message.content);
   const userBodyOverLimit = userBody.length > MAX_RENDER_CHARS;
   const userBodyDisplay = userBodyOverLimit && !expanded
     ? message.streaming
       ? '…' + userBody.slice(-MAX_RENDER_CHARS)
       : userBody.slice(0, MAX_RENDER_CHARS) + '…'
     : userBody;
+  const hasUserBody = userBody.trim().length > 0;
 
   // 系统提示消息：居中气泡（防御性保留；skill 持久模式已废弃，正常流程不再产生）
   if (message.role === 'system') {
@@ -1642,13 +1643,16 @@ const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap,
   if (message.role === 'user') {
     return (
       <div className="group flex flex-col items-end gap-1">
-        {userAttachments && userAttachments.paths.length > 0 && (
-          <MessageAttachmentCards paths={userAttachments.paths} onOpen={onOpenAttachment ?? (() => {})} />
+        {userPaths.length > 0 && (
+          <MessageAttachmentCards paths={userPaths} onOpen={onOpenAttachment ?? (() => {})} />
         )}
+        {/* 只发附件不打字时正文为空：不渲染空气泡，只显示上方附件卡片行 */}
+        {hasUserBody && (
         <div className="max-w-[80%] rounded-2xl border border-border bg-indigo-100 px-3 py-2 text-sm text-foreground shadow-sm break-words whitespace-pre-wrap dark:bg-blue-600 dark:text-white dark:shadow-[0_2px_14px_rgba(37,99,235,0.35)]">
         {userBodyDisplay}
       </div>
-      {overLimit && (
+        )}
+      {userBodyOverLimit && (
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}

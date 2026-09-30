@@ -118,6 +118,8 @@ function adaptAgentMessages(raw: unknown[]): TaskMessage[] {
     const m = list[i] as {
       role?: string;
       content?: string;
+      /** 用户消息附带的附件绝对路径（后端结构化字段） */
+      attachments?: string[];
       toolCalls?: Array<{ id: string; name: string; arguments: string }>;
       toolCallId?: string;
       name?: string;
@@ -174,6 +176,10 @@ function adaptAgentMessages(raw: unknown[]): TaskMessage[] {
       id: `${i}-${m.role ?? 'msg'}`,
       role: m.role as MessageRole,
       content: m.content ?? '',
+      // 附件结构化字段：仅 user 消息且为有效数组时透传（老会话无此字段 → 渲染端回退解析正文）
+      ...(m.role === 'user' && Array.isArray(m.attachments) && m.attachments.length > 0
+        ? { attachments: m.attachments }
+        : {}),
       thinking: m.thinking,
       toolCalls: m.toolCalls,
       todoSnapshot: m.todoSnapshot,

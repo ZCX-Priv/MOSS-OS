@@ -162,6 +162,8 @@ export function useWebSocket(): void {
       id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
       role: 'user',
       content: next.content,
+      // 队列消息可能带附件（排队模式下发送带附件消息）：透传结构化字段
+      ...(next.attachments ? { attachments: next.attachments } : {}),
       timestamp: new Date().toISOString(),
     });
     st.setGenerating(sessionId, true);
@@ -171,6 +173,7 @@ export function useWebSocket(): void {
       sessionId,
       payload: {
         message: next.content,
+        attachments: next.attachments,
         model: st.currentModel || undefined,
         agentId: st.currentAgent || undefined,
         cwd: st.workingDirectory || undefined,

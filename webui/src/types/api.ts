@@ -60,6 +60,8 @@ export interface TaskMessage {
   id: string;
   role: MessageRole;
   content: string;
+  /** 用户消息附带的附件绝对路径（后端结构化字段；老会话缺失时回退解析正文附件块） */
+  attachments?: string[];
   thinking?: string;
   toolCalls?: ToolCall[];
   toolResults?: Array<{ toolCallId: string; result: ToolResult }>;

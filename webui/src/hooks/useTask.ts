@@ -19,6 +19,8 @@ import { wsClient } from '../api/ws';
 import { api } from '../api/http';
 import { pendingAssistant, pendingRunId } from '../lib/pending-assistant';
 import { resolveWorkingDirectoryName } from '../lib/utils';
+import { stripAttachmentBlock } from '../lib/attachment-block';
+import { fileNameOf } from '../render/file/detector';
 import i18n from '../i18n';
 import type { AskOutcome, TaskMessage } from '../types/api';
 
@@ -61,10 +63,12 @@ export function useTask() {
   const removePendingConfirm = useStore((s) => s.removePendingConfirm);
 
   const sendMessage = useCallback(
-    async (text: string, opts?: { taskId?: string; sessionId?: string }): Promise<string | undefined> => {
+    async (text: string, opts?: { taskId?: string; sessionId?: string; attachments?: string[] }): Promise<string | undefined> => {
       if (!text.trim()) return undefined;
       // command/skill 的一次性注入渲染在 TaskInput 已完成，此处收到的即为最终文本
       const content = text.trim();
+      // 附件绝对路径（纯路径引用）：随消息透传到后端结构化字段，供前端渲染附件卡片
+      const attachments = opts?.attachments;
 
       const state = useStore.getState();
 
@@ -85,7 +89,10 @@ export function useTask() {
             resolveWorkingDirectoryName(state.workingDirectory) ?? i18n.t('directoryPicker.system');
           const groupId = await ensureTaskGroup(groupName);
           try {
-            const task = await api.createTask(content.slice(0, 50), groupId);
+            // 标题取「剥离附件块后的正文」（只发附件时不显示 "附件：- D:\…"），空则回退首个附件文件名
+            const title =
+              stripAttachmentBlock(content) || (attachments?.[0] ? fileNameOf(attachments[0]) : content);
+            const task = await api.createTask(title.slice(0, 50), groupId);
             addTask(task);
             taskId = task.id;
             sessionId = task.sessionId ?? task.id;
@@ -105,7 +112,12 @@ export function useTask() {
 
         if (behavior === 'queue') {
           // 排队模式：消息加入队列，不中断当前任务
-          const queuedMsg = { id: genId(), content, timestamp: new Date().toISOString() };
+          const queuedMsg = {
+            id: genId(),
+            content,
+            timestamp: new Date().toISOString(),
+            ...(attachments ? { attachments } : {}),
+          };
           useStore.getState().addToMessageQueue(sessionId, queuedMsg);
           return taskId;
         }
@@ -119,6 +131,7 @@ export function useTask() {
           id: genId(),
           role: 'user',
           content,
+          ...(attachments ? { attachments } : {}),
           timestamp: new Date().toISOString(),
         };
         addMessage(sessionId, userMsg);
@@ -126,7 +139,7 @@ export function useTask() {
         wsClient.send({
           type: 'task.guide',
           sessionId,
-          payload: { message: content, runId: guideRunId },
+          payload: { message: content, runId: guideRunId, attachments },
         });
         return taskId;
       }
@@ -143,6 +156,7 @@ export function useTask() {
         id: genId(),
         role: 'user',
         content,
+        ...(attachments ? { attachments } : {}),
         timestamp: new Date().toISOString(),
       };
       addMessage(sessionId, userMsg);
@@ -154,6 +168,8 @@ export function useTask() {
         sessionId,
         payload: {
           message: content,
+          // 附件绝对路径（后端结构化字段持久化 + 前端渲染卡片）
+          attachments,
           model: state.currentModel || undefined,
           agentId: state.currentAgent || undefined,
           cwd: state.workingDirectory || undefined,

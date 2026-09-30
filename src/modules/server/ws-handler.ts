@@ -5,7 +5,7 @@ import { t } from '../../core/i18n';
 import type { Logger, ServiceRegistry } from '../../core/types';
 import { ServiceNames } from '../../core/types';
 import type { WSMessage, WSMessageHandler, WSConnection } from './types';
-import type { AgentEngine, AgentEvent } from '../contracts';
+import type { AgentEngine, AgentEvent, GuidanceMessage } from '../contracts';
 import type { AutomationService } from '../automation';
 import { ErrorCode } from '../../core/error-codes';
 
@@ -141,7 +141,7 @@ export class WsHandler {
    */
   private readonly activeRuns = new Map<string, AbortController>();
   /** 引导消息数组（可变引用，传给 engine.run；handleTaskGuide 在运行期间向其 push 消息） */
-  private readonly guideMessageArrays = new Map<string, string[]>();
+  private readonly guideMessageArrays = new Map<string, GuidanceMessage[]>();
   /** 引导消息对应的 runId 队列（前端为每条引导消息生成 runId，用于新 run 的事件隔离） */
   private readonly guideRunIds = new Map<string, string[]>();
   private readonly batcher: EventBatcher;
@@ -289,6 +289,8 @@ export class WsHandler {
 
     const payload = (msg.payload ?? {}) as {
       message?: string;
+      /** 本轮附件绝对路径（纯路径引用；随用户消息持久化，供前端渲染卡片） */
+      attachments?: string[];
       model?: string;
       cwd?: string;
       runId?: string;
@@ -310,8 +312,9 @@ export class WsHandler {
     // 引导消息：可变数组引用，传给 engine.run()；handleTaskGuide 在运行期间向其 push 消息。
     // engine 在工具调用完成后检查此数组，若有内容则返回 guideInterrupt。
     let currentMessage = payload.message;
+    let currentAttachments = payload.attachments;
     let currentRunId = payload.runId;
-    let currentGuideMessages: string[] = [];
+    let currentGuideMessages: GuidanceMessage[] = [];
     this.guideMessageArrays.set(sessionId, currentGuideMessages);
 
     while (true) {
@@ -336,6 +339,7 @@ export class WsHandler {
         const result = await agent.run({
           sessionId,
           userMessage: currentMessage,
+          attachments: currentAttachments,
           model: payload.model,
           agentId: payload.agentId,
           cwd: payload.cwd || process.cwd(),
@@ -367,6 +371,7 @@ export class WsHandler {
             this.guideRunIds.delete(sessionId);
           }
           currentMessage = result.guideMessage;
+          currentAttachments = result.guideAttachments;
           // 复用同一 guideMessages 数组，剩余引导消息在新 run 中继续被检测
           continue;
         }
@@ -384,7 +389,8 @@ export class WsHandler {
           if (runIdArr && runIdArr.length === 0) {
             this.guideRunIds.delete(sessionId);
           }
-          currentMessage = guideMsg;
+          currentMessage = guideMsg.message;
+          currentAttachments = guideMsg.attachments;
           continue;
         }
 
@@ -437,12 +443,12 @@ export class WsHandler {
     const sessionId = msg.sessionId;
     if (!sessionId) return;
 
-    const payload = (msg.payload ?? {}) as { message?: string; runId?: string };
+    const payload = (msg.payload ?? {}) as { message?: string; runId?: string; attachments?: string[] };
     if (!payload.message) return;
 
     const guideArr = this.guideMessageArrays.get(sessionId);
     if (guideArr !== undefined) {
-      guideArr.push(payload.message);
+      guideArr.push({ message: payload.message, attachments: payload.attachments });
       if (payload.runId) {
         const runIds = this.guideRunIds.get(sessionId) ?? [];
         runIds.push(payload.runId);

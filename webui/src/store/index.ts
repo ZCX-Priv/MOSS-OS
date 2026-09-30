@@ -153,8 +153,11 @@ interface UIState {
 
   // --- 跟进行为（任务进行中发送消息时的处理方式） ---
   followUpBehavior: 'queue' | 'guide';
-  /** 排队消息队列（sessionId → 待发送消息列表） */
-  messageQueueBySession: Record<string, Array<{ id: string; content: string; timestamp: string }>>;
+  /** 排队消息队列（sessionId → 待发送消息列表；attachments 为附件绝对路径，出队发送时透传） */
+  messageQueueBySession: Record<
+    string,
+    Array<{ id: string; content: string; timestamp: string; attachments?: string[] }>
+  >;
 
   // --- 外观设置（IndexedDB 持久化） ---
   /** 主题色（预设 ID 或自定义 oklch/hex 字符串） */
@@ -344,7 +347,10 @@ interface UIActions {
 
   // 跟进行为
   setFollowUpBehavior: (v: UIState['followUpBehavior']) => void;
-  addToMessageQueue: (sessionId: string, message: { id: string; content: string; timestamp: string }) => void;
+  addToMessageQueue: (
+    sessionId: string,
+    message: { id: string; content: string; timestamp: string; attachments?: string[] },
+  ) => void;
   removeFromMessageQueue: (sessionId: string, messageId: string) => void;
   clearMessageQueue: (sessionId: string) => void;
 
