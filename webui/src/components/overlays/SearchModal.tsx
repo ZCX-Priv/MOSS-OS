@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/command';
 import { Badge } from '@/components/ui/badge';
 import { api } from '@/api/http';
+import { stripInjectBlock } from '@/lib/inject-block';
 import type { TaskItem } from '@/types/api';
 
 interface SearchModalProps {
@@ -165,19 +166,23 @@ export function SearchModal({ open, onClose }: SearchModalProps) {
             )}
             {!loading && messages.length > 0 && (
               <CommandGroup heading={t('search.messages')}>
-                {messages.map((msg) => (
-                  <CommandItem
-                    key={msg.messageId}
-                    value={msg.text}
-                    onSelect={() => {
-                      navigate(`/task/${msg.sessionId}`);
-                      onClose();
-                    }}
-                  >
-                    <MessageSquare />
-                    <span className="flex-1 truncate">{msg.text}</span>
-                  </CommandItem>
-                ))}
+                {messages.map((msg) => {
+                  // 命令注入块只对 LLM 可见：搜索结果同样只展示「可见文本」
+                  const visibleText = stripInjectBlock(msg.text);
+                  return (
+                    <CommandItem
+                      key={msg.messageId}
+                      value={visibleText}
+                      onSelect={() => {
+                        navigate(`/task/${msg.sessionId}`);
+                        onClose();
+                      }}
+                    >
+                      <MessageSquare />
+                      <span className="flex-1 truncate">{visibleText}</span>
+                    </CommandItem>
+                  );
+                })}
               </CommandGroup>
             )}
           </CommandList>

@@ -27,7 +27,7 @@ interface SubagentInlineCardProps {
 }
 
 /** agent(mode=subagent) 结果文本固定前缀（tools.ts 拼装），剥离后为最终报告正文 */
-const SUBAGENT_PREFIX = /^Subagent finished \(finishReason=[^,]+, session=[^)]+\):\n*/;
+const SUBAGENT_PREFIX = /^子代理已完成 \(finishReason=[^,]+, session=[^)]+\):\n*/;
 
 export const SubagentInlineCard = memo(function SubagentInlineCard({
   template,

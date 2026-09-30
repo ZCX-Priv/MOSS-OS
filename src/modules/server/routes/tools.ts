@@ -68,7 +68,7 @@ export function createListToolsHandler(services: ServiceRegistry, config: Config
     if (!registry) {
       return { status: 200, body: { tools: [] } };
     }
-    // 顺序：字符序 A-Z → a-z → 0-9，短在前长在后（与发给模型的工具列表一致）
+    // 顺序：首字母分组（A→Z→a→z→0→9），组内长度升序，同长度按字符序（与发给模型的工具列表一致）
     const tools = registry.list().sort((a, b) => compareToolNames(a.name, b.name)).map((t) => {
       const stored = readStoredToolConfig(config, t.name);
       // 当前生效值 = defaults 深合并 config.json 覆盖值（config 优先）

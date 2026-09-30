@@ -224,6 +224,174 @@ pre,
 }
 
 /* ============================================================
+   内联 token 编辑器（/ 命令、@ 智能体、# 文件引用）
+   ============================================================
+   两套 chip 视觉：
+     .mchip            编辑器内（contenteditable=false 原子元素）
+     .mchip-inline     消息气泡内（只读 React 渲染，可点击）
+   宽度可以自由设计：contenteditable 里浏览器按真实 DOM 计算光标/选区，
+   不存在「覆盖层必须逐字符等宽」的约束。
+   亮暗模式全部走主题变量，不写死颜色。 */
+.mention-editor {
+  /* 行高不在此覆盖：交给 text-base/md:text-sm（与旧 Textarea 完全同源，避免整体变高） */
+  position: relative;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  cursor: text;
+}
+/* 空内容占位符（data-empty 由 MentionEditor 命令式同步；仅含 <br> 也算空）
+   必须绝对定位：内联伪元素会占据文本流第一个位置，导致空态光标落在占位文本之后 */
+.mention-editor[data-empty='true']::before {
+  content: attr(data-placeholder);
+  position: absolute;
+  inset: 0;
+  padding: inherit;
+  color: var(--muted-foreground);
+  pointer-events: none;
+}
+
+.mchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 100%;
+  height: 1.4em;
+  padding: 0 4px;
+  border-radius: 5px;
+  border: 1px solid transparent;
+  font-size: 0.92em;
+  line-height: 1;
+  vertical-align: text-bottom;
+  white-space: nowrap;
+  user-select: none;
+  cursor: default;
+}
+/* chip 图标宿主：svg（lucide / MaterialIcon）与 img（图片缩略图）通吃 */
+.mchip-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.15em;
+  height: 1.15em;
+  flex: none;
+  overflow: hidden;
+  border-radius: 2px;
+}
+.mchip-icon > * {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+.mchip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mchip--command {
+  color: oklch(0.55 0.2 300);
+  background: oklch(0.55 0.2 300 / 12%);
+  border-color: oklch(0.55 0.2 300 / 22%);
+}
+/* skill（/ 菜单里的技能项）：蓝 = blue-600，与菜单 text-blue-600 同语义 */
+.mchip--skill {
+  color: oklch(0.546 0.245 262.9);
+  background: oklch(0.546 0.245 262.9 / 12%);
+  border-color: oklch(0.546 0.245 262.9 / 22%);
+}
+.mchip--agent {
+  color: oklch(0.55 0.14 165);
+  background: oklch(0.55 0.14 165 / 12%);
+  border-color: oklch(0.55 0.14 165 / 22%);
+}
+.mchip--file {
+  color: var(--foreground);
+  background: var(--muted);
+  border-color: var(--border);
+}
+.dark .mchip--command {
+  color: oklch(0.78 0.15 300);
+  background: oklch(0.78 0.15 300 / 16%);
+  border-color: oklch(0.78 0.15 300 / 28%);
+}
+.dark .mchip--skill {
+  color: oklch(0.78 0.16 262.9);
+  background: oklch(0.78 0.16 262.9 / 16%);
+  border-color: oklch(0.78 0.16 262.9 / 28%);
+}
+.dark .mchip--agent {
+  color: oklch(0.8 0.12 165);
+  background: oklch(0.8 0.12 165 / 16%);
+  border-color: oklch(0.8 0.12 165 / 28%);
+}
+
+/* 气泡内联 token：可点击（文件引用 → 右侧预览） */
+.mchip-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 100%;
+  margin: 0 1px;
+  padding: 0 4px;
+  border-radius: 5px;
+  border: 1px solid transparent;
+  font-size: 0.92em;
+  line-height: 1.5;
+  vertical-align: baseline;
+  white-space: nowrap;
+}
+.mchip-inline--command {
+  color: oklch(0.45 0.2 300);
+  background: oklch(0.55 0.2 300 / 14%);
+  border-color: oklch(0.55 0.2 300 / 24%);
+  font-weight: 500;
+}
+.mchip-inline--skill {
+  color: oklch(0.45 0.2 262.9);
+  background: oklch(0.546 0.245 262.9 / 14%);
+  border-color: oklch(0.546 0.245 262.9 / 24%);
+  font-weight: 500;
+}
+.mchip-inline--agent {
+  color: oklch(0.45 0.14 165);
+  background: oklch(0.55 0.14 165 / 14%);
+  border-color: oklch(0.55 0.14 165 / 24%);
+  font-weight: 500;
+}
+.mchip-inline--file {
+  color: inherit;
+  background: rgb(0 0 0 / 6%);
+  border-color: rgb(0 0 0 / 8%);
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+.mchip-inline--file:hover {
+  background: rgb(0 0 0 / 12%);
+}
+.dark .mchip-inline--command {
+  color: oklch(0.85 0.13 300);
+  background: oklch(0.85 0.13 300 / 20%);
+  border-color: oklch(0.85 0.13 300 / 30%);
+}
+.dark .mchip-inline--skill {
+  color: oklch(0.85 0.14 262.9);
+  background: oklch(0.85 0.14 262.9 / 20%);
+  border-color: oklch(0.85 0.14 262.9 / 30%);
+}
+.dark .mchip-inline--agent {
+  color: oklch(0.87 0.11 165);
+  background: oklch(0.87 0.11 165 / 20%);
+  border-color: oklch(0.87 0.11 165 / 30%);
+}
+.dark .mchip-inline--file {
+  background: rgb(255 255 255 / 12%);
+  border-color: rgb(255 255 255 / 16%);
+}
+.dark .mchip-inline--file:hover {
+  background: rgb(255 255 255 / 20%);
+}
+
+/* ============================================================
    主题切换过渡（View Transitions API 圆形扩散揭示）
    ============================================================
    分工：扩散动画由 JS（lib/themeTransition.ts）用 WAAPI 对

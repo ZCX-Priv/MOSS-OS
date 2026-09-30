@@ -14,15 +14,10 @@ import {
   Square,
   Monitor,
   Paperclip,
-  X,
   Zap,
   Bot,
-  FileCode,
-  FileJson,
-  FileText,
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
-import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -50,22 +45,27 @@ import {
 } from '@/lib/utils';
 import { resolveSkillIcon } from '@/lib/skill-icons';
 import { api } from '../../api/http';
-import { matchesShortcut } from '../../utils/shortcut';
 import { MentionMenu } from './MentionMenu';
+import { MentionEditor, type MentionEditorHandle } from './MentionEditor';
 import { SendAttachmentCard } from './AttachmentCard';
+import { fileTypeIconComponent } from './FileTypeIcon';
 import { buildAttachmentBlock } from '@/lib/attachment-block';
+import { buildInjectBlock } from '@/lib/inject-block';
+import { fileNameOf } from '../../render/file/detector';
 import {
-  detectTrigger,
+  buildMentionLookups,
   filterMentionItems,
+  parseMentionText,
   readRecentCommands,
   renderPromptTemplate,
+  tokenWireText,
   touchRecentCommand,
+  type ComposerToken,
   type MentionItem,
-  type MentionChipData,
-  type MentionKind,
+  type MentionLookups,
+  type MentionSegment,
   type TriggerMatch,
 } from './mention-data';
-import type { LucideIcon } from 'lucide-react';
 import type { CommandItem, SkillItem } from '../../types/api';
 
 interface AttachmentItem {
@@ -75,28 +75,6 @@ interface AttachmentItem {
   name: string;
   size: number;
   kind: AttachmentKind;
-}
-
-/** 行内 chip（/ @ # 选中产物） */
-interface MentionChip {
-  id: string;
-  kind: MentionKind;
-  label: string;
-  icon: LucideIcon;
-  /** command/skill chip：一次性注入载荷（选中时刻快照） */
-  inject?: MentionChipData;
-  /** agent chip：切换当前智能体（发送 payload.agentId 自动生效） */
-  agentId?: string;
-  /** file chip：文件绝对路径（发送时并入附件路径行） */
-  filePath?: string;
-}
-
-/** 按扩展名选择 # 文件菜单图标 */
-function fileIconForExt(ext: string): LucideIcon {
-  if (['ts', 'tsx', 'js', 'jsx', 'py', 'rs', 'go', 'java', 'c', 'cpp', 'sh'].includes(ext)) return FileCode;
-  if (['json', 'jsonc', 'yaml', 'yml', 'toml', 'ini'].includes(ext)) return FileJson;
-  if (['md', 'txt', 'log'].includes(ext)) return FileText;
-  return Paperclip;
 }
 
 /** command → / 菜单项 */
@@ -130,8 +108,7 @@ function skillToItem(s: SkillItem, group: 'recent' | 'skills'): MentionItem {
 interface TaskInputProps {
   placeholder?: string;
   onOpenOverlay?: (overlay: OverlayType) => void;
-  variant?: 'home' | 'task';
-  /** 发送回调：text = 最终消息文本（含附件块），attachments = 附件绝对路径（结构化字段） */
+  /** 发送回调：text = 最终消息文本（含附件块 / 命令注入块），attachments = 附件绝对路径（结构化字段） */
   onSend?: (text: string, attachments: string[]) => void;
   isGenerating?: boolean;
   /** 仅首屏空白（会话无消息且未生成）时显示工作目录 Badge */
@@ -142,14 +119,12 @@ interface TaskInputProps {
 export function TaskInput({
   placeholder,
   onOpenOverlay,
-  variant = 'home',
   onSend,
   isGenerating = false,
   showDirectoryBadge = true,
   onAbort,
 }: TaskInputProps) {
   const { t } = useTranslation();
-  const [input, setInput] = useState('');
   const workingDirectory = useStore((s) => s.workingDirectory);
   const setWorkingDirectory = useStore((s) => s.setWorkingDirectory);
   const recentDirectories = useStore((s) => s.recentDirectories);
@@ -223,14 +198,14 @@ export function TaskInput({
   }, [attachments.length]);
 
   // ==========================================================================
-  // / @ # 触发菜单 + 行内 chip
+  // / @ # 触发菜单（菜单状态在本层；token 与文本都在 MentionEditor 的 contenteditable 内）
   // ==========================================================================
-  const [chips, setChips] = useState<MentionChip[]>([]);
+  const [input, setInput] = useState('');
   const [trigger, setTrigger] = useState<TriggerMatch | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  /** Esc 关闭后抑制同一 token 再次弹出（token 变化或消失后解除） */
-  const suppressedTokenRef = useRef<number | null>(null);
+  const editorRef = useRef<MentionEditorHandle>(null);
+  /** 触发状态镜像（避免在 setState 更新器里做副作用） */
+  const triggerRef = useRef<TriggerMatch | null>(null);
 
   // ---- / 菜单数据源：commands + skills + 最近使用（localStorage） ----
   const recentRef = useRef(readRecentCommands());
@@ -309,8 +284,9 @@ export function TaskInput({
               group: 'files' as const,
               name: f.name,
               desc: f.dir,
-              icon: fileIconForExt(f.ext),
-              iconClass: 'text-blue-600',
+              // 与附件卡片同源的文件类型图标（VS Code Material 图标主题），不再自建 lucide 映射
+              icon: fileTypeIconComponent(f.name),
+              iconClass: '',
             })),
           );
           setFileSearching(false);
@@ -333,155 +309,99 @@ export function TaskInput({
         : fileItems // 文件菜单：后端已按 query 过滤，前端直接展示
     : [];
 
-  const recomputeTrigger = (value: string, cursor: number) => {
-    const match = detectTrigger(value, cursor);
-    if (!match) {
-      suppressedTokenRef.current = null;
-      setTrigger(null);
-      return;
-    }
-    if (suppressedTokenRef.current === match.tokenStart) {
-      setTrigger(null);
-      return;
-    }
+  /** 线格式反解析名单（编辑器粘贴还原 / 发送时命令模板现查 共用口径） */
+  const lookups = useMemo<MentionLookups>(
+    () => buildMentionLookups(commands, skills, agents),
+    [commands, skills, agents],
+  );
+
+  /** 触发状态由编辑器上报：仅在 token 段变化时重置高亮项；等价状态不触发重渲染 */
+  const handleTriggerChange = (match: TriggerMatch | null) => {
+    const prev = triggerRef.current;
+    if (!match && !prev) return;
     if (
-      !trigger ||
-      trigger.kind !== match.kind ||
-      trigger.query !== match.query ||
-      trigger.tokenStart !== match.tokenStart
+      match &&
+      prev &&
+      prev.kind === match.kind &&
+      prev.query === match.query &&
+      prev.tokenStart === match.tokenStart
     ) {
-      setActiveIndex(0);
+      return; // 等价（selectionchange 会高频触发）→ 不改状态
     }
+    if (match) setActiveIndex(0);
+    triggerRef.current = match;
     setTrigger(match);
   };
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setInput(e.target.value);
-    recomputeTrigger(e.target.value, e.target.selectionStart ?? e.target.value.length);
-  };
-
-  // 鼠标点击/方向键移动光标不改 value，也要重算触发状态
-  const handleInputSelect = (e: React.SyntheticEvent<HTMLTextAreaElement>) => {
-    const el = e.currentTarget;
-    recomputeTrigger(el.value, el.selectionStart ?? el.value.length);
-  };
-
-  /** 选中 command/skill（/ 菜单与 Plus 菜单共用）：一次性注入 → 替换已有注入 chip */
-  const addInjectChip = (item: MentionItem) => {
-    if (!item.data) return;
-    touchRecentCommand(item.data.source, item.data.name);
-    recentRef.current = readRecentCommands();
-    setRecentVersion((v) => v + 1);
-    setChips((prev) => [
-      ...prev.filter((c) => c.kind !== 'command'),
-      { id: `${item.id}-${Date.now()}`, kind: 'command', label: item.name, icon: item.icon, inject: item.data },
-    ]);
-  };
-
-  const selectMention = (item: MentionItem) => {
-    if (!trigger) return;
-    const cursor = textareaRef.current?.selectionStart ?? input.length;
-    const next = input.slice(0, trigger.tokenStart) + input.slice(cursor);
-    const caret = trigger.tokenStart;
-    setInput(next);
-    if (item.kind === 'command') {
-      addInjectChip(item);
-    } else if (item.kind === 'agent') {
+  /** 菜单项选中的副作用：切智能体 / 记录最近命令（token 插入本身由编辑器完成） */
+  const handleItemSelected = (item: MentionItem) => {
+    if (item.kind === 'agent') {
       // 切换当前智能体（发送 payload.agentId 自动生效）
       useStore.getState().setCurrentAgent(item.id);
-      setChips((prev) => [
-        ...prev,
-        { id: `${item.id}-${Date.now()}`, kind: 'agent', label: item.name, icon: item.icon, agentId: item.id },
-      ]);
-    } else {
-      setChips((prev) => [
-        ...prev,
-        { id: `${item.id}-${Date.now()}`, kind: 'file', label: item.name, icon: item.icon, filePath: item.id },
-      ]);
+      return;
     }
-    setTrigger(null);
-    requestAnimationFrame(() => {
-      const ta = textareaRef.current;
-      if (ta) {
-        ta.focus();
-        ta.setSelectionRange(caret, caret);
-      }
-    });
+    if (item.kind === 'command' && item.data) {
+      touchRecentCommand(item.data.source, item.data.name);
+      recentRef.current = readRecentCommands();
+      setRecentVersion((v) => v + 1);
+    }
   };
 
-  const removeChip = (id: string) => {
-    setChips((prev) => prev.filter((c) => c.id !== id));
+  /** 菜单点击：token 替换触发词（编辑器内部完成删除 + 插入 + 光标落位） */
+  const selectMention = (item: MentionItem) => {
+    editorRef.current?.commitMention(item);
+  };
+
+  /** 按名单现查命令/技能模板（查不到 → 该 token 原样保留为普通文本） */
+  const findCommandPrompt = (token: ComposerToken & { kind: 'command' }): string | null => {
+    if (token.source === 'skill') {
+      return skills.find((s) => s.name === token.name)?.prompt ?? null;
+    }
+    return commands.find((c) => c.name === token.name)?.prompt ?? null;
   };
 
   const handleSend = () => {
-    const text = input.trim();
-    if (!text && attachments.length === 0 && chips.length === 0) return;
-    // command/skill chip → 一次性注入：模板渲染（$ARGUMENTS = 用户正文）后作为消息主体
-    const injectChip = chips.find((c) => c.kind === 'command' && c.inject);
-    const body = injectChip?.inject
-      ? renderPromptTemplate(injectChip.inject.prompt, text)
-      : text;
-    // agent chip → @<name> 前缀行（LLM 可见；agentId 已在选中时切换生效）
-    const agentLine = chips
-      .filter((c) => c.kind === 'agent')
-      .map((c) => `@${c.label}`)
-      .join(' ');
-    const head = [agentLine, body].filter(Boolean).join('\n');
-    // 附件路径行：附件 + file chip 的绝对路径（去重；agent 经 filesys 工具读取）
-    const paths = [
-      ...attachments.map((a) => a.path),
-      ...chips.filter((c) => c.kind === 'file' && c.filePath).map((c) => c.filePath!),
-    ];
-    const uniquePaths = [...new Set(paths)];
-    const message =
+    const raw = (editorRef.current?.getValue() ?? input).trim();
+    if (!raw && attachments.length === 0) return;
+
+    // 命令：一次性注入语义不变（模板 + $ARGUMENTS = 去掉命令 token 的正文），
+    // 但不再替换正文 —— 可见正文保留用户原文（含 /命令、@智能体、#路径），
+    // 模板作为「注入块」追加在消息末尾：LLM 可见、UI 不可见（stripInjectBlock）。
+    const segments = parseMentionText(raw, lookups);
+    const commandSeg = segments.find(
+      (s): s is MentionSegment & { type: 'token' } => s.type === 'token' && s.token.kind === 'command',
+    );
+    let injectBlock = '';
+    if (commandSeg) {
+      const prompt = findCommandPrompt(commandSeg.token as ComposerToken & { kind: 'command' });
+      if (prompt !== null) {
+        const args = segments
+          .filter((s) => s !== commandSeg)
+          .map((s) => (s.type === 'text' ? s.text : tokenWireText(s.token)))
+          .join('')
+          .trim();
+        injectBlock = buildInjectBlock(renderPromptTemplate(prompt, args));
+      }
+    }
+
+    // 附件仅限「+ 添加附件」：`#` 引用已在正文内联（绝对路径），不再并入附件
+    const uniquePaths = [...new Set(attachments.map((a) => a.path))];
+    // 顺序约定（inject-block 尾部锚定）：正文 → 附件块 → 注入块
+    const message = [
+      raw,
       uniquePaths.length > 0
-        ? `${head}\n\n${buildAttachmentBlock(uniquePaths, t('taskInput.attachmentListLabel'))}`
-        : head;
+        ? buildAttachmentBlock(uniquePaths, t('taskInput.attachmentListLabel'))
+        : '',
+      injectBlock,
+    ]
+      .filter(Boolean)
+      .join('\n\n');
     onSend?.(message, uniquePaths);
-    setInput('');
     setAttachments([]);
-    setChips([]);
+    editorRef.current?.clear();
   };
 
-  const canSend = Boolean(input.trim()) || attachments.length > 0 || chips.length > 0;
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // 菜单打开时优先接管键盘：↑↓ 移动、Enter 选中、Esc 关闭（均不触发发送）
-    if (trigger) {
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        setActiveIndex((i) => (mentionItems.length ? (i + 1) % mentionItems.length : 0));
-        return;
-      }
-      if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        setActiveIndex((i) =>
-          mentionItems.length ? (i - 1 + mentionItems.length) % mentionItems.length : 0,
-        );
-        return;
-      }
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        suppressedTokenRef.current = trigger.tokenStart;
-        setTrigger(null);
-        return;
-      }
-      if (e.key === 'Enter') {
-        const item = mentionItems[Math.min(activeIndex, mentionItems.length - 1)];
-        if (item) {
-          e.preventDefault();
-          selectMention(item);
-          return;
-        }
-        // 无匹配项时 Enter 走原有发送/换行逻辑
-      }
-    }
-    // 发送快捷键匹配（支持自定义组合，如 mod+enter / f2 / ctrl+shift+enter）
-    if (matchesShortcut(e, sendShortcut)) {
-      e.preventDefault();
-      handleSend();
-    }
-  };
+  const canSend = Boolean(input.trim()) || attachments.length > 0;
 
   const folderLabel =
     resolveWorkingDirectoryName(workingDirectory) ?? t('directoryPicker.system');
@@ -569,35 +489,27 @@ export function TaskInput({
         </div>
       )}
       <div className="flex flex-wrap items-start gap-1">
-        {chips.map((chip) => {
-          const ChipIcon = chip.icon;
-          return (
-            <span
-              key={chip.id}
-              className="mt-1.5 inline-flex h-6 items-center gap-1 rounded-md border border-border bg-muted/50 px-1.5 text-xs"
-            >
-              <ChipIcon className="size-3 shrink-0 text-muted-foreground" />
-              <span className="max-w-36 truncate">{chip.label}</span>
-              <button
-                type="button"
-                onClick={() => removeChip(chip.id)}
-                className="flex cursor-pointer items-center justify-center text-muted-foreground transition-colors duration-150 hover:text-foreground"
-                title={t('taskInput.removeMention')}
-              >
-                <X className="size-3" />
-              </button>
-            </span>
-          );
-        })}
-        <Textarea
-          ref={textareaRef}
+        <MentionEditor
+          ref={editorRef}
           placeholder={placeholder ?? t('taskInput.placeholder')}
-          value={input}
-          onChange={handleInputChange}
-          onSelect={handleInputSelect}
-          onKeyDown={handleKeyDown}
-          rows={variant === 'home' ? 3 : 4}
-          className="w-auto min-w-40 max-h-[40vh] flex-1 basis-40 resize-none border-0 bg-transparent px-1 shadow-none focus-visible:ring-0 dark:bg-transparent"
+          trigger={trigger}
+          items={mentionItems}
+          activeIndex={activeIndex}
+          onChange={setInput}
+          onTriggerChange={handleTriggerChange}
+          onActiveIndexChange={setActiveIndex}
+          onMenuClose={() => {
+            triggerRef.current = null;
+            setTrigger(null);
+          }}
+          onItemSelected={handleItemSelected}
+          onDuplicateFile={(path) =>
+            toast.info(t('taskInput.fileAlreadyReferenced', { name: fileNameOf(path) }))
+          }
+          lookups={lookups}
+          sendShortcut={sendShortcut}
+          onSend={handleSend}
+          className="max-h-[40vh]"
         />
       </div>
       <div className="flex min-w-0 items-center justify-between gap-2 px-1 pt-1.5">
@@ -644,7 +556,15 @@ export function TaskInput({
                       return (
                         <DropdownMenuItem
                           key={item.id}
-                          onSelect={() => addInjectChip(item)}
+                          onSelect={() => {
+                            if (!item.data) return;
+                            editorRef.current?.insertToken({
+                              kind: 'command',
+                              source: item.data.source,
+                              name: item.data.name,
+                            });
+                            handleItemSelected(item);
+                          }}
                           className="gap-2 rounded-lg px-2.5 py-1.5"
                         >
                           <Icon className="size-4 shrink-0 text-muted-foreground" />

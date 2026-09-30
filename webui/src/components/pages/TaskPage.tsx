@@ -42,6 +42,7 @@ import { FilePreviewPane, fileNameOf, MarkdownRenderer } from '../../render';
 import type { OverlayType } from '../../types';
 import { cn } from '@/lib/utils';
 import { parseAttachmentBlock, stripAttachmentBlock } from '@/lib/attachment-block';
+import { stripInjectBlock } from '@/lib/inject-block';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import {
@@ -73,6 +74,8 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { TaskInput } from '../shared/TaskInput';
+import { MentionTokenText, useMentionLookups } from '../shared/MentionTokens';
+import { stripMentionTokens } from '../shared/mention-data';
 import { MessageAttachmentCards } from '../shared/AttachmentCards';
 import { FileTypeIcon } from '../shared/FileTypeIcon';
 import { ScrollToBottomButton } from '../shared/ScrollToBottomButton';
@@ -188,6 +191,8 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
   };
 
   const messages = useStore((s) => s.messagesBySession[taskId] ?? EMPTY_MESSAGES);
+  /** token 名单：队列预览 / 标题剥离用（与气泡渲染同口径） */
+  const lookups = useMentionLookups();
   const isGenerating = useStore((s) => s.generatingBySession[taskId] ?? false);
   const task = useStore((s) => s.tasks.find((tk) => tk.id === taskId));
   // 隐藏会话（subagent / agenteam 衍生任务）不在侧边栏列表，store.tasks 查不到 → 直连接口兜底标题
@@ -1254,7 +1259,10 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
                               <Inbox className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
                               <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                                 <span className="truncate text-xs text-foreground">
-                                  {stripAttachmentBlock(msg.content) ||
+                                  {stripMentionTokens(
+                                    stripAttachmentBlock(stripInjectBlock(msg.content)),
+                                    lookups,
+                                  ) ||
                                     (msg.attachments?.[0] ? fileNameOf(msg.attachments[0]) : msg.content)}
                                 </span>
                                 <span className="text-[10px] text-muted-foreground">
@@ -1335,7 +1343,6 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
         {/* Task Input */}
         <div className="shrink-0 p-3 pt-1.5">
           <TaskInput
-            variant="task"
             isGenerating={isGenerating}
             showDirectoryBadge={messages.length === 0 && !isGenerating}
             onAbort={() => abort(taskId)}
@@ -1614,20 +1621,23 @@ const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap,
   // 超长正文截断渲染（防止单条巨型文本布局卡死）；展开后完整渲染。
   // 流式生成中超限时显示尾部（正在生成的内容在末尾），结束后恢复头部截断。
   const [expanded, setExpanded] = useState(false);
-  const overLimit = message.content.length > MAX_RENDER_CHARS;
+  // 命令注入块（LLM 可见、UI 不可见）先剥离：气泡/附件解析/正文/复制都在「可见文本」上进行，
+  // 刷新后从会话 JSON 重新加载同样走这里 → 不会突然显现模板正文
+  const visibleContent = stripInjectBlock(message.content);
+  const overLimit = visibleContent.length > MAX_RENDER_CHARS;
   const displayContent = overLimit && !expanded
     ? message.streaming
-      ? '…' + message.content.slice(-MAX_RENDER_CHARS)
-      : message.content.slice(0, MAX_RENDER_CHARS) + '…'
-    : message.content;
+      ? '…' + visibleContent.slice(-MAX_RENDER_CHARS)
+      : visibleContent.slice(0, MAX_RENDER_CHARS) + '…'
+    : visibleContent;
   // 用户消息附件：结构化字段优先（新消息，后端持久化），缺失时回退解析正文附件块（老会话）。
   // 正文一律剥离附件块，避免把 "附件：- 路径" 原文渲染进气泡。
-  const parsed = message.role === 'user' ? parseAttachmentBlock(message.content) : null;
+  const parsed = message.role === 'user' ? parseAttachmentBlock(visibleContent) : null;
   const structuredPaths = message.attachments?.length ? message.attachments : null;
   const userPaths = structuredPaths ?? parsed?.paths ?? [];
   const userBody = structuredPaths
-    ? (parsed?.body ?? stripAttachmentBlock(message.content))
-    : (parsed?.body ?? message.content);
+    ? (parsed?.body ?? stripAttachmentBlock(visibleContent))
+    : (parsed?.body ?? visibleContent);
   const userBodyOverLimit = userBody.length > MAX_RENDER_CHARS;
   const userBodyDisplay = userBodyOverLimit && !expanded
     ? message.streaming
@@ -1672,7 +1682,7 @@ const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap,
         {/* 只发附件不打字时正文为空：不渲染空气泡，只显示上方附件卡片行 */}
         {hasUserBody && (
         <div className="max-w-[80%] rounded-2xl border border-border bg-indigo-100 px-3 py-2 text-sm text-foreground shadow-sm break-words whitespace-pre-wrap dark:bg-blue-600 dark:text-white dark:shadow-[0_2px_14px_rgba(37,99,235,0.35)]">
-        {userBodyDisplay}
+        <MentionTokenText text={userBodyDisplay} onOpenFile={onOpenAttachment ?? (() => {})} />
       </div>
         )}
       {userBodyOverLimit && (
@@ -1691,7 +1701,7 @@ const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap,
             type="button"
             title={t('task.messageCopy')}
             aria-label={t('task.messageCopy')}
-            onClick={() => onCopy?.(message.content)}
+            onClick={() => onCopy?.(visibleContent)}
             className="flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
           >
             <Copy className="size-3.5" />
@@ -1778,7 +1788,7 @@ const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap,
           const plan: InlineTeamPlan | null = args.name
             ? { name: args.name, members: args.members ?? [], tasks: args.tasks ?? [] }
             : null;
-          // 从结果文本 "Team created: id=<teamId> phase=..." 提取团队 id 绑定实时数据
+          // 从结果文本 "团队已创建：id=<teamId> phase=..." 提取团队 id 绑定实时数据
           const teamId = resultText?.match(/id=([A-Za-z0-9_-]+)/)?.[1] ?? null;
           return <AgenteamInlineCard key={tc.id} plan={plan} teamId={teamId} />;
         }

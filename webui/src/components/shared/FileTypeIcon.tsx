@@ -4,7 +4,7 @@
 // 库无法识别时回退 lucide 附件（回形针）图标。
 // 仅依赖 render/file 下的纯函数模块，避免把 markdown/katex 等重依赖带入首页包。
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ComponentType } from 'react';
 import { getFileIcon, getIconSvg, MaterialIcon } from 'react-material-icon-theme';
 import { Paperclip } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -54,6 +54,22 @@ export function FileTypeIcon({ fileName, size = 22, className }: FileTypeIconPro
 
   // 用已解析（且已选定明暗变体）的图标名直接渲染，避免 FileIcon 二次解析落到 📄 错误态
   return <MaterialIcon name={iconName} size={size} className={className} alt={fileName} />;
+}
+
+/**
+ * 固定尺寸的文件类型图标组件（菜单项等需要「组件形式」图标的场景）。
+ * 与 FileTypeIcon 同源同检测，避免再出现第二套文件图标。
+ * 注意：MaterialIcon 用内联 style 写死宽高，className 里的 size-* 会被覆盖，
+ * 因此尺寸由本工厂的 size 参数决定。
+ */
+export function fileTypeIconComponent(
+  fileName: string,
+  size = 16,
+): ComponentType<{ className?: string; size?: number }> {
+  const Icon = ({ className }: { className?: string; size?: number }) => (
+    <FileTypeIcon fileName={fileName} size={size} className={className} />
+  );
+  return Icon;
 }
 
 /**

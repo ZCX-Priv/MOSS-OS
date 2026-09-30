@@ -95,7 +95,7 @@ export class ToolRegistryImpl implements ToolRegistry {
   }> {
     // 仅暴露启用的工具给 LLM（enabled 从 config 实时读取）；
     // description/schema 按当前后端 locale live 解析（en 时用 description_en）；
-    // 顺序：字符序 A-Z → a-z → 0-9，短在前长在后（compareToolNames）
+    // 顺序：首字母分组（A→Z→a→z→0→9），组内长度升序，同长度按字符序（compareToolNames）
     return this.list()
       .filter(t => this.isEnabled(t.name))
       .sort((a, b) => compareToolNames(a.name, b.name))

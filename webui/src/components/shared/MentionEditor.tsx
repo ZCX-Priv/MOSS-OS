@@ -1,0 +1,883 @@
+// webui/src/components/shared/MentionEditor.tsx
+// contenteditable 内联 token 编辑器（/ 命令、@ 智能体、# 文件引用）。
+//
+// 架构要点（为什么是「命令式 DOM」而不是 React 渲染子树）：
+//   把 chip 交给 React 协调，会在输入过程中重置光标、破坏 IME 组合——这是自研
+//   contenteditable 最大的坑。因此 React 只渲染一个空容器，内部节点（文本节点 +
+//   chip 元素）全部用 DOM API 命令式创建/修改；chip 通过 data-* 自描述，
+//   不依赖 JS 注册表，撤销/重做后依然自洽。
+//
+// 权威口径：
+//   线格式（wire）  = 序列化文本 = 剪贴板文本 = 发送正文 = LLM 可见文本
+//   占位符口径      = 触发判定专用（token 序列化为 U+FFFC，非空白，避免 token
+//                     内部含 # / @ / 干扰 detectTrigger）
+//
+// 不作为：富文本（不加粗/列表）、拖拽、HTML 粘贴；粘贴一律降级为纯文本 + token。
+
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ClipboardEvent,
+  type FormEvent,
+  type KeyboardEvent,
+} from 'react';
+import { createPortal } from 'react-dom';
+import {
+  chipVariant,
+  computeFileLabels,
+  detectTrigger,
+  parseMentionText,
+  tokenWireText,
+  type ComposerToken,
+  type MentionItem,
+  type MentionLookups,
+  type TriggerMatch,
+} from './mention-data';
+import { matchesShortcut } from '../../utils/shortcut';
+import { fileNameOf } from '../../render/file/detector';
+import { MentionTokenIcon } from './MentionTokenIcon';
+import { cn } from '@/lib/utils';
+
+/** token 在触发判定口径下的占位符（对象替换符，非空白字符） */
+const PLACEHOLDER_CHAR = '\uFFFC';
+
+/**
+ * 文本序列化口径（**混用会直接导致删错位置**，所有 offset 必须两端同口径）：
+ *   wire        线格式：file token = `#<绝对路径>` 全长（剪贴板/发送/气泡用）
+ *   placeholder 触发判定：每个 token 记 1 个字符（非空白，避免 token 内部含 / @ # 干扰）
+ */
+type OffsetMode = 'wire' | 'placeholder';
+
+/** chip 图标 portal 目标 */
+interface IconHost {
+  /** 稳定 key（随宿主元素首次出现分配，避免用下标导致 portal 重挂载） */
+  id: number;
+  host: HTMLElement;
+  token: ComposerToken;
+}
+
+// ============================================================================
+// DOM ↔ 文本 工具（模块级纯函数，便于单测与复用）
+// ============================================================================
+
+/** chip 元素判定：带 data-kind 的原子元素（返回 boolean，避免类型谓词把 else 分支窄化成 never） */
+function isChipNode(node: Node | null | undefined): boolean {
+  return (
+    !!node &&
+    node.nodeType === Node.ELEMENT_NODE &&
+    (node as HTMLElement).hasAttribute('data-kind')
+  );
+}
+
+/** chip DOM → token（data-* 自描述，撤销/重做后不失效） */
+export function chipToToken(el: HTMLElement): ComposerToken | null {
+  const kind = el.getAttribute('data-kind');
+  if (kind === 'command') {
+    const name = el.getAttribute('data-name') ?? '';
+    if (!name) return null;
+    return {
+      kind: 'command',
+      source: el.getAttribute('data-source') === 'skill' ? 'skill' : 'command',
+      name,
+    };
+  }
+  if (kind === 'agent') {
+    const name = el.getAttribute('data-name') ?? '';
+    if (!name) return null;
+    return { kind: 'agent', id: el.getAttribute('data-id') ?? '', name };
+  }
+  if (kind === 'file') {
+    const path = el.getAttribute('data-path') ?? '';
+    if (!path) return null;
+    return { kind: 'file', path };
+  }
+  return null;
+}
+
+/** 单节点的序列化长度（与 serializeChild 严格同口径） */
+function childLength(node: Node, mode: OffsetMode): number {
+  if (node.nodeType === Node.TEXT_NODE) return (node.nodeValue ?? '').length;
+  if (node.nodeType === Node.ELEMENT_NODE) {
+    const el = node as HTMLElement;
+    if (isChipNode(el)) {
+      if (mode === 'placeholder') return 1;
+      const token = chipToToken(el);
+      return token ? tokenWireText(token).length : (el.textContent ?? '').length;
+    }
+    if (el.tagName === 'BR') return 1;
+    let len = 0;
+    el.childNodes.forEach((c) => {
+      len += childLength(c, mode);
+    });
+    // 块级子元素（防御：正常流程已拦截 Enter，浏览器不会插入 div/p）
+    if ((el.tagName === 'DIV' || el.tagName === 'P') && el.parentNode) {
+      const idx = Array.prototype.indexOf.call(el.parentNode.childNodes, el);
+      if (idx > 0) len += 1;
+    }
+    return len;
+  }
+  return 0;
+}
+
+function serializeChild(node: Node, mode: OffsetMode): string {
+  if (node.nodeType === Node.TEXT_NODE) {
+    return (node.nodeValue ?? '').replace(/\u00A0/g, ' ');
+  }
+  if (node.nodeType === Node.ELEMENT_NODE) {
+    const el = node as HTMLElement;
+    if (isChipNode(el)) {
+      if (mode === 'placeholder') return PLACEHOLDER_CHAR;
+      const token = chipToToken(el);
+      return token ? tokenWireText(token) : (el.textContent ?? '');
+    }
+    if (el.tagName === 'BR') return '\n';
+    let out = '';
+    el.childNodes.forEach((child, i) => {
+      const isBlock = el.tagName === 'DIV' || el.tagName === 'P';
+      if (isBlock && i > 0) out += '\n';
+      out += serializeChild(child, mode);
+    });
+    return out;
+  }
+  return '';
+}
+
+/** 容器 → 文本（wire = 线格式；placeholder = 触发判定口径） */
+export function serializeRoot(root: HTMLElement, mode: OffsetMode): string {
+  let out = '';
+  root.childNodes.forEach((node) => {
+    out += serializeChild(node, mode);
+  });
+  return out;
+}
+
+/** 序列化偏移 → DOM 位置（文本节点内偏移，或容器 + 子节点下标） */
+interface DomPos {
+  node: Node;
+  offset: number;
+}
+
+function locate(root: HTMLElement, index: number, mode: OffsetMode): DomPos {
+  let acc = 0;
+  const children = Array.from(root.childNodes);
+  for (let i = 0; i < children.length; i++) {
+    const child = children[i];
+    const len = childLength(child, mode);
+    if (index <= acc + len) {
+      if (child.nodeType === Node.TEXT_NODE) {
+        return { node: child, offset: Math.max(0, index - acc) };
+      }
+      // chip / BR / 元素边界：落在起点之前或之后
+      return { node: root, offset: index === acc ? i : i + 1 };
+    }
+    acc += len;
+  }
+  return { node: root, offset: children.length };
+}
+
+/** 序列化偏移区间 → DOM Range */
+function offsetToRange(
+  root: HTMLElement,
+  start: number,
+  end: number,
+  mode: OffsetMode,
+): Range {
+  const s = locate(root, start, mode);
+  const e = locate(root, end, mode);
+  const range = document.createRange();
+  range.setStart(s.node, s.offset);
+  range.setEnd(e.node, e.offset);
+  return range;
+}
+
+/** DOM 边界 → 序列化偏移 */
+function boundaryToOffset(
+  root: HTMLElement,
+  node: Node,
+  offset: number,
+  mode: OffsetMode,
+): number {
+  let total = 0;
+  if (node.nodeType === Node.TEXT_NODE) {
+    total += offset;
+  } else if (node.nodeType === Node.ELEMENT_NODE) {
+    const kids = node.childNodes;
+    for (let i = 0; i < Math.min(offset, kids.length); i++) {
+      total += childLength(kids[i], mode);
+    }
+  }
+  let cur: Node | null = node;
+  while (cur && cur !== root) {
+    let sib: Node | null = cur.previousSibling;
+    while (sib) {
+      total += childLength(sib, mode);
+      sib = sib.previousSibling;
+    }
+    cur = cur.parentNode;
+  }
+  return total;
+}
+
+/** 当前光标（折叠选区）在指定口径下的偏移；选区不在容器内时返回 null */
+function caretOffset(root: HTMLElement, mode: OffsetMode): number | null {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return null;
+  const range = sel.getRangeAt(0);
+  if (!root.contains(range.startContainer)) return null;
+  return boundaryToOffset(root, range.startContainer, range.startOffset, mode);
+}
+
+/**
+ * 创建 chip 元素（自描述 + 图标宿主）。
+ * 结构：`[.mchip-icon 图标宿主（React portal 目标）] + [.mchip-label 文本]`
+ * 文本只有名称/标签，不带触发符（触发符由图标承担，与 / @ 菜单一致）。
+ */
+function createChipElement(token: ComposerToken, label: string): HTMLElement {
+  const span = document.createElement('span');
+  // 视觉变体走 chipVariant：skill（蓝）与 command（紫）在 class 上就分开
+  span.className = `mchip mchip--${chipVariant(token)}`;
+  span.setAttribute('contenteditable', 'false');
+  span.setAttribute('data-kind', token.kind);
+  span.setAttribute('spellcheck', 'false');
+
+  if (token.kind === 'command') {
+    span.setAttribute('data-source', token.source);
+    span.setAttribute('data-name', token.name);
+  } else if (token.kind === 'agent') {
+    span.setAttribute('data-id', token.id);
+    span.setAttribute('data-name', token.name);
+  } else {
+    span.setAttribute('data-path', token.path);
+    span.setAttribute('data-label', label);
+    span.setAttribute('title', token.path);
+  }
+
+  const icon = document.createElement('span');
+  icon.className = 'mchip-icon';
+  span.appendChild(icon);
+
+  const text = document.createElement('span');
+  text.className = 'mchip-label';
+  text.textContent = token.kind === 'file' ? label : token.name;
+  span.appendChild(text);
+  return span;
+}
+
+/** 把 &nbsp; 归一化为普通空格（浏览器双击空格会插入 nbsp，会污染序列化口径） */
+function normalizeNbsp(root: HTMLElement): void {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const targets: Text[] = [];
+  while (walker.nextNode()) {
+    const t = walker.currentNode as Text;
+    if ((t.nodeValue ?? '').includes('\u00A0')) targets.push(t);
+  }
+  targets.forEach((t) => {
+    t.nodeValue = (t.nodeValue ?? '').replace(/\u00A0/g, ' ');
+  });
+}
+
+/** 在光标处插入节点序列，并把光标落到插入内容之后 */
+function insertNodesAtCaret(root: HTMLElement, nodes: Node[]): void {
+  const sel = window.getSelection();
+  let range: Range;
+  if (sel && sel.rangeCount > 0 && root.contains(sel.getRangeAt(0).startContainer)) {
+    range = sel.getRangeAt(0);
+    range.deleteContents();
+  } else {
+    range = document.createRange();
+    range.selectNodeContents(root);
+    range.collapse(false);
+  }
+  const frag = document.createDocumentFragment();
+  nodes.forEach((n) => frag.appendChild(n));
+  const last = frag.lastChild;
+  range.insertNode(frag);
+  if (last) {
+    const after = document.createRange();
+    after.setStartAfter(last);
+    after.collapse(true);
+    sel?.removeAllRanges();
+    sel?.addRange(after);
+  }
+}
+
+// ============================================================================
+// 组件
+// ============================================================================
+
+export interface MentionEditorHandle {
+  /** 线格式序列化文本 */
+  getValue(): string;
+  isEmpty(): boolean;
+  clear(): void;
+  focus(): void;
+  /** 在光标处插入 token（Plus 命令菜单等入口；自动补必要的分隔空格） */
+  insertToken(token: ComposerToken): void;
+  /** 选中菜单项：删除触发词并以 token 替换（菜单点击 / 键盘 Enter 共用） */
+  commitMention(item: MentionItem): void;
+}
+
+interface MentionEditorProps {
+  placeholder: string;
+  /** 当前触发状态（父层持有，用于渲染 MentionMenu） */
+  trigger: TriggerMatch | null;
+  /** 已过滤的菜单项 */
+  items: MentionItem[];
+  activeIndex: number;
+  /** 线格式文本变化 */
+  onChange: (value: string) => void;
+  onTriggerChange: (match: TriggerMatch | null) => void;
+  onActiveIndexChange: (index: number) => void;
+  onMenuClose: () => void;
+  /** 菜单项选中后的副作用（切智能体 / 记录最近命令） */
+  onItemSelected: (item: MentionItem) => void;
+  /** 同一文件被重复引用（父层 toast 提示） */
+  onDuplicateFile: (path: string) => void;
+  /** 线格式反解析名单（粘贴还原用） */
+  lookups: MentionLookups;
+  sendShortcut: string;
+  onSend: () => void;
+  className?: string;
+}
+
+export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>(function MentionEditor(
+  {
+    placeholder,
+    trigger,
+    items,
+    activeIndex,
+    onChange,
+    onTriggerChange,
+    onActiveIndexChange,
+    onMenuClose,
+    onItemSelected,
+    onDuplicateFile,
+    lookups,
+    sendShortcut,
+    onSend,
+    className,
+  },
+  ref,
+) {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const isComposingRef = useRef(false);
+  /** Esc 关闭后抑制同一 token 再次弹出（token 变化或消失后解除） */
+  const suppressedTokenRef = useRef<number | null>(null);
+  const onChangeRef = useRef(onChange);
+  const onTriggerChangeRef = useRef(onTriggerChange);
+  const onMenuCloseRef = useRef(onMenuClose);
+  const onDuplicateRef = useRef(onDuplicateFile);
+  const lookupsRef = useRef(lookups);
+  const menuOpenRef = useRef(false);
+  const itemsRef = useRef(items);
+  const activeIndexRef = useRef(activeIndex);
+  const onSelectRef = useRef(onItemSelected);
+  const onSendRef = useRef(onSend);
+  const sendShortcutRef = useRef(sendShortcut);
+
+  onChangeRef.current = onChange;
+  onTriggerChangeRef.current = onTriggerChange;
+  onMenuCloseRef.current = onMenuClose;
+  onDuplicateRef.current = onDuplicateFile;
+  lookupsRef.current = lookups;
+  menuOpenRef.current = Boolean(trigger);
+  itemsRef.current = items;
+  activeIndexRef.current = activeIndex;
+  onSelectRef.current = onItemSelected;
+  onSendRef.current = onSend;
+  sendShortcutRef.current = sendShortcut;
+
+  /** chip 图标 portal 目标（宿主元素 + 对应 token） */
+  const [iconHosts, setIconHosts] = useState<IconHost[]>([]);
+  /** 宿主元素 → 稳定 portal key */
+  const iconHostIdsRef = useRef(new Map<HTMLElement, number>());
+  const nextIconHostIdRef = useRef(0);
+
+  const autosize = useCallback(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    root.style.height = 'auto';
+    root.style.height = `${root.scrollHeight}px`;
+  }, []);
+
+  /** 重算全部 file chip 的「最小区分标签」 */
+  const relabelFileChips = useCallback(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    const chips = Array.from(root.querySelectorAll<HTMLElement>('[data-kind="file"]'));
+    if (chips.length === 0) return;
+    const paths = chips.map((c) => c.getAttribute('data-path') ?? '').filter(Boolean);
+    const labels = computeFileLabels(paths);
+    chips.forEach((chip) => {
+      const path = chip.getAttribute('data-path') ?? '';
+      if (!path) return;
+      const label = labels.get(path) ?? fileNameOf(path);
+      chip.setAttribute('data-label', label);
+      const labelEl = chip.querySelector('.mchip-label');
+      if (labelEl && labelEl.textContent !== label) labelEl.textContent = label;
+    });
+  }, []);
+
+  /** 空内容 ⇔ 占位符可见 */
+  const refreshEmptyFlag = useCallback(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    const empty = serializeRoot(root, 'wire').trim().length === 0;
+    root.setAttribute('data-empty', empty ? 'true' : 'false');
+  }, []);
+
+  /**
+   * 同步 chip 图标宿主（React portal 目标）。
+   * chip 是命令式 DOM，图标却要复用 React 资产（FileTypeIcon/缩略图/lucide），
+   * 因此由本组件把图标 portal 进各 chip 的 .mchip-icon 宿主；
+   * 删除/清空/剪切/撤销导致 chip 消失时，下一次同步自动回收对应 portal。
+   */
+  const syncIconHosts = useCallback(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    const idMap = iconHostIdsRef.current;
+    const next: IconHost[] = [];
+    root.querySelectorAll<HTMLElement>('[data-kind] .mchip-icon').forEach((host) => {
+      const chip = host.parentElement;
+      const token = chip ? chipToToken(chip) : null;
+      if (!token) return;
+      let id = idMap.get(host);
+      if (id === undefined) {
+        id = ++nextIconHostIdRef.current;
+        idMap.set(host, id);
+      }
+      next.push({ id, host, token });
+    });
+    // 回收已脱离文档的宿主 key（删除/清空/剪切/撤销）
+    Array.from(idMap.keys()).forEach((host) => {
+      if (!root.contains(host)) idMap.delete(host);
+    });
+    setIconHosts((prev) => {
+      if (prev.length === next.length && prev.every((item, i) => item.host === next[i].host)) {
+        return prev; // 宿主集合未变 → 不触发重渲染（避免 selectionchange 回环）
+      }
+      return next;
+    });
+  }, []);
+
+  const recomputeTrigger = useCallback(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    const caret = caretOffset(root, 'placeholder');
+    if (caret === null) {
+      onTriggerChangeRef.current(null);
+      return;
+    }
+    const match = detectTrigger(serializeRoot(root, 'placeholder'), caret);
+    if (!match) {
+      suppressedTokenRef.current = null;
+      onTriggerChangeRef.current(null);
+      return;
+    }
+    if (suppressedTokenRef.current === match.tokenStart) {
+      onTriggerChangeRef.current(null);
+      return;
+    }
+    onTriggerChangeRef.current(match);
+  }, []);
+
+  /** DOM → 父层 单向同步（输入 / 粘贴 / 删除 / 撤销 后统一走这里） */
+  const syncFromDom = useCallback(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    normalizeNbsp(root);
+    relabelFileChips();
+    refreshEmptyFlag();
+    autosize();
+    syncIconHosts();
+    onChangeRef.current(serializeRoot(root, 'wire'));
+    recomputeTrigger();
+  }, [autosize, refreshEmptyFlag, relabelFileChips, syncIconHosts, recomputeTrigger]);
+
+  /** 当前容器内全部 file token 的绝对路径 */
+  const filePaths = useCallback((): string[] => {
+    const root = rootRef.current;
+    if (!root) return [];
+    return Array.from(root.querySelectorAll<HTMLElement>('[data-kind="file"]'))
+      .map((c) => c.getAttribute('data-path') ?? '')
+      .filter(Boolean);
+  }, []);
+
+  /**
+   * 在指定区间插入 token（删除 [start,end) 后插入；必要时补前导空格保证线格式可反解析）。
+   * @param mode start/end 的文本口径，**必须与调用方计算 offset 的口径一致**
+   *             （触发词替换 = placeholder；Plus 菜单光标插入 = wire）
+   * @returns 实际是否插入了 chip（file 重复引用时为 false）
+   */
+  const replaceRangeWithToken = useCallback(
+    (start: number, end: number, token: ComposerToken, mode: OffsetMode = 'wire'): boolean => {
+      const root = rootRef.current;
+      if (!root) return false;
+      if (token.kind === 'file' && filePaths().includes(token.path)) {
+        // 重复引用：toast 提示 + 仅删除触发词，不插入第二个 chip
+        offsetToRange(root, start, end, mode).deleteContents();
+        syncFromDom();
+        onDuplicateRef.current(token.path);
+        return false;
+      }
+      const range = offsetToRange(root, start, end, mode);
+      // 「前导是否需要空格」必须按**线格式**判断（与插入位置无关地换算一次 wire 偏移）
+      const wireStart = boundaryToOffset(root, range.startContainer, range.startOffset, 'wire');
+      const before = serializeRoot(root, 'wire').slice(0, wireStart);
+      range.deleteContents();
+      const nodes: Node[] = [];
+      if (before.length > 0 && !/\s$/.test(before)) nodes.push(document.createTextNode(' '));
+      const allPaths =
+        token.kind === 'file' ? [...filePaths(), token.path] : filePaths();
+      const label =
+        token.kind === 'file'
+          ? (computeFileLabels(allPaths).get(token.path) ?? fileNameOf(token.path))
+          : '';
+      nodes.push(createChipElement(token, label));
+      insertNodesAtCaret(root, nodes);
+      syncFromDom();
+      return true;
+    },
+    [filePaths, syncFromDom],
+  );
+
+  /** 菜单项 → token */
+  const itemToToken = useCallback((item: MentionItem): ComposerToken | null => {
+    if (item.kind === 'command') {
+      if (!item.data) return null;
+      return { kind: 'command', source: item.data.source, name: item.data.name };
+    }
+    if (item.kind === 'agent') {
+      return { kind: 'agent', id: item.id, name: item.name };
+    }
+    return { kind: 'file', path: item.id };
+  }, []);
+
+  const commitMention = useCallback(
+    (item: MentionItem) => {
+      const root = rootRef.current;
+      if (!root || !trigger) return;
+      const token = itemToToken(item);
+      if (!token) return;
+      root.focus();
+      // ⚠️ 口径必须与 detectTrigger 一致（都是 placeholder）：tokenStart 由
+      // serializeRoot(root,'placeholder') 得出，若按 wire 口径删除，光标前存在 chip 时
+      // 区间会整体左移（chip 在两种口径下长度不同）→ 触发词残留 + 多补空格。
+      const caret = caretOffset(root, 'placeholder') ?? trigger.tokenStart + trigger.query.length + 1;
+      replaceRangeWithToken(trigger.tokenStart, Math.max(trigger.tokenStart, caret), token, 'placeholder');
+      suppressedTokenRef.current = null;
+      onSelectRef.current(item);
+      onMenuCloseRef.current();
+    },
+    [trigger, itemToToken, replaceRangeWithToken],
+  );
+
+  /** 在光标处插入 token（Plus 命令菜单入口） */
+  const insertTokenAtCaret = useCallback(
+    (token: ComposerToken) => {
+      const root = rootRef.current;
+      if (!root) return;
+      root.focus();
+      const caret = caretOffset(root, 'wire') ?? serializeRoot(root, 'wire').length;
+      replaceRangeWithToken(caret, caret, token);
+    },
+    [replaceRangeWithToken],
+  );
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      getValue: () => {
+        const root = rootRef.current;
+        return root ? serializeRoot(root, 'wire') : '';
+      },
+      isEmpty: () => {
+        const root = rootRef.current;
+        return !root || serializeRoot(root, 'wire').trim().length === 0;
+      },
+      clear: () => {
+        const root = rootRef.current;
+        if (!root) return;
+        root.innerHTML = '';
+        syncFromDom();
+        root.focus();
+      },
+      focus: () => rootRef.current?.focus(),
+      insertToken: insertTokenAtCaret,
+      commitMention,
+    }),
+    [syncFromDom, insertTokenAtCaret, commitMention],
+  );
+
+  // 初始占位符状态 + 初始高度
+  useLayoutEffect(() => {
+    refreshEmptyFlag();
+    autosize();
+  }, [refreshEmptyFlag, autosize]);
+
+  // 光标移动（点击 / 方向键）也要重算触发状态；文档级 selectionchange 覆盖 contenteditable 的选区变化
+  useEffect(() => {
+    const onSelectionChange = () => {
+      const root = rootRef.current;
+      if (!root || document.activeElement !== root) return;
+      if (isComposingRef.current) return;
+      recomputeTrigger();
+    };
+    document.addEventListener('selectionchange', onSelectionChange);
+    return () => document.removeEventListener('selectionchange', onSelectionChange);
+  }, [recomputeTrigger]);
+
+  const handleInput = () => {
+    if (isComposingRef.current) return;
+    syncFromDom();
+  };
+
+  /**
+   * 原子删除：光标紧邻 chip 时整体删除（确定性兜底，不依赖浏览器差异）。
+   * 只看折叠选区的 (node, offset)：
+   *   - 文本节点：前删要求 offset=0（后删要求 offset=len），再看相邻兄弟
+   *   - 元素节点：offset 即子节点下标，直接看前后兄弟
+   */
+  const deleteAdjacentChip = (dir: -1 | 1): boolean => {
+    const root = rootRef.current;
+    if (!root) return false;
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0 || !sel.isCollapsed) return false;
+    const range = sel.getRangeAt(0);
+    const node = range.startContainer;
+    const offset = range.startOffset;
+    if (!root.contains(node)) return false;
+
+    let parent: Node;
+    let siblingIndex: number;
+    if (node.nodeType === Node.TEXT_NODE) {
+      const len = (node.nodeValue ?? '').length;
+      if (dir < 0 && offset !== 0) return false;
+      if (dir > 0 && offset !== len) return false;
+      parent = node.parentNode ?? root;
+      const self = Array.prototype.indexOf.call(parent.childNodes, node);
+      siblingIndex = self + dir;
+    } else if (node.nodeType === Node.ELEMENT_NODE) {
+      parent = node;
+      siblingIndex = offset + (dir < 0 ? -1 : 0);
+    } else {
+      return false;
+    }
+    const sibling = childAt(parent, siblingIndex);
+    if (!isChipNode(sibling)) return false;
+    sibling?.parentNode?.removeChild(sibling);
+    return true;
+  };
+
+  const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    const native = e.nativeEvent;
+    if (isComposingRef.current || native.isComposing) return; // IME 组合期间全部放行
+
+    // 菜单打开时优先接管键盘：↑↓ 移动、Enter 选中、Esc 关闭（均不触发发送/换行）
+    if (menuOpenRef.current) {
+      const list = itemsRef.current;
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        onActiveIndexChange(list.length ? (activeIndexRef.current + 1) % list.length : 0);
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        onActiveIndexChange(
+          list.length ? (activeIndexRef.current - 1 + list.length) % list.length : 0,
+        );
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        const root = rootRef.current;
+        const caret = root ? caretOffset(root, 'placeholder') : null;
+        if (caret !== null) {
+          const match = root ? detectTrigger(serializeRoot(root, 'placeholder'), caret) : null;
+          suppressedTokenRef.current = match ? match.tokenStart : null;
+        }
+        onMenuCloseRef.current();
+        return;
+      }
+      if (e.key === 'Enter') {
+        const item = list[Math.min(activeIndexRef.current, list.length - 1)];
+        if (item) {
+          e.preventDefault();
+          commitMention(item);
+          return;
+        }
+      }
+    }
+
+    if (e.key === 'Backspace' && deleteAdjacentChip(-1)) {
+      e.preventDefault();
+      syncFromDom();
+      return;
+    }
+    if (e.key === 'Delete' && deleteAdjacentChip(1)) {
+      e.preventDefault();
+      syncFromDom();
+      return;
+    }
+
+    // 发送快捷键（默认 mod+enter；自定义可为 enter/f2/ctrl+shift+enter）
+    if (matchesShortcut(e, sendShortcutRef.current)) {
+      e.preventDefault();
+      onSendRef.current();
+      return;
+    }
+
+    // Enter：非快捷键命中 → 手插换行（杜绝浏览器插入 div/br 破坏纯文本模型）
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const root = rootRef.current;
+      if (root) insertNodesAtCaret(root, [document.createTextNode('\n')]);
+      syncFromDom();
+    }
+  };
+
+  const handleBeforeInput = (e: FormEvent<HTMLDivElement>) => {
+    const native = e.nativeEvent as InputEvent;
+    if (isComposingRef.current || native.isComposing) return;
+    const type = native.inputType;
+    if (
+      type === 'insertParagraph' ||
+      type === 'insertLineBreak' ||
+      type === 'insertHorizontalRule' ||
+      type === 'insertFromDrop'
+    ) {
+      e.preventDefault();
+      if (type !== 'insertFromDrop') {
+        const root = rootRef.current;
+        if (root) insertNodesAtCaret(root, [document.createTextNode('\n')]);
+        syncFromDom();
+      }
+    }
+  };
+
+  const handlePaste = (e: ClipboardEvent<HTMLDivElement>) => {
+    const text = e.clipboardData.getData('text/plain');
+    if (!text) return;
+    e.preventDefault();
+    const root = rootRef.current;
+    if (!root) return;
+    const segments = parseMentionText(text.replace(/\uFFFC/g, ''), lookupsRef.current);
+    const existing = filePaths();
+    const dupes: string[] = [];
+    const nodes: Node[] = [];
+    segments.forEach((seg) => {
+      if (seg.type === 'text') {
+        const plain = seg.text.replace(/\r\n?/g, '\n');
+        if (plain) nodes.push(document.createTextNode(plain));
+        return;
+      }
+      const token = seg.token;
+      if (token.kind === 'file') {
+        if (existing.includes(token.path)) {
+          dupes.push(token.path);
+          return;
+        }
+        existing.push(token.path);
+      }
+      const label =
+        token.kind === 'file'
+          ? (computeFileLabels(existing).get(token.path) ?? fileNameOf(token.path))
+          : '';
+      nodes.push(createChipElement(token, label));
+    });
+    if (nodes.length === 0) return;
+    insertNodesAtCaret(root, nodes);
+    syncFromDom();
+    dupes.forEach((p) => onDuplicateRef.current(p));
+  };
+
+  const handleCopy = (e: ClipboardEvent<HTMLDivElement>) => {
+    const root = rootRef.current;
+    const sel = window.getSelection();
+    if (!root || !sel || sel.rangeCount === 0) return;
+    const range = sel.getRangeAt(0);
+    if (range.collapsed || !root.contains(range.commonAncestorContainer)) return;
+    // 选区 → 线格式文本（chip 输出 `#<绝对路径>` / `/名称` / `@名称`，保证粘贴可还原）
+    const full = serializeRoot(root, 'wire');
+    const start = boundaryToOffset(root, range.startContainer, range.startOffset, 'wire');
+    const end = boundaryToOffset(root, range.endContainer, range.endOffset, 'wire');
+    const plain = full.slice(start, end);
+    e.clipboardData.setData('text/plain', plain);
+    e.preventDefault();
+  };
+
+  /** 剪切：与复制同口径写入剪贴板，再真正删除选区内容（否则 preventDefault 会吞掉删除） */
+  const handleCut = (e: ClipboardEvent<HTMLDivElement>) => {
+    const root = rootRef.current;
+    const sel = window.getSelection();
+    if (!root || !sel || sel.rangeCount === 0) return;
+    const range = sel.getRangeAt(0);
+    if (range.collapsed || !root.contains(range.commonAncestorContainer)) return;
+    const full = serializeRoot(root, 'wire');
+    const start = boundaryToOffset(root, range.startContainer, range.startOffset, 'wire');
+    const end = boundaryToOffset(root, range.endContainer, range.endOffset, 'wire');
+    e.clipboardData.setData('text/plain', full.slice(start, end));
+    e.preventDefault();
+    range.deleteContents();
+    const collapsed = document.createRange();
+    collapsed.setStart(range.startContainer, range.startOffset);
+    collapsed.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(collapsed);
+    syncFromDom();
+  };
+
+  const handleCompositionStart = () => {
+    isComposingRef.current = true;
+  };
+
+  const handleCompositionEnd = () => {
+    isComposingRef.current = false;
+    syncFromDom();
+  };
+
+  return (
+    <div
+      ref={rootRef}
+      role="textbox"
+      aria-multiline="true"
+      aria-label={placeholder}
+      contentEditable
+      suppressContentEditableWarning
+      spellCheck={false}
+      data-placeholder={placeholder}
+      data-empty="true"
+      onInput={handleInput}
+      onKeyDown={handleKeyDown}
+      onBeforeInput={handleBeforeInput}
+      onPaste={handlePaste}
+      onCopy={handleCopy}
+      onCut={handleCut}
+      onCompositionStart={handleCompositionStart}
+      onCompositionEnd={handleCompositionEnd}
+      className={cn(
+        // 尺寸与旧 Textarea 逐属性对齐：min-h-16 + px-1 py-2 + text-base/md:text-sm
+        // （旧实现 field-sizing-content 使 rows 失效，空态高度即 min-h-16）
+        'mention-editor min-h-16 min-w-40 basis-40 flex-1 overflow-y-auto px-1 py-2 text-base outline-none md:text-sm',
+        className,
+      )}
+    >
+      {/* chip 图标：命令式 chip 的图标由 portal 挂载（复用 FileTypeIcon / lucide / 缩略图） */}
+      {iconHosts.map(({ id, host, token }) =>
+        createPortal(<MentionTokenIcon token={token} lookups={lookups} />, host, id),
+      )}
+    </div>
+  );
+});
+
+/** 取 parent 的第 index 个子节点（越界返回 null） */
+function childAt(parent: Node, index: number): Node | null {
+  const kids = parent.childNodes;
+  if (index < 0 || index >= kids.length) return null;
+  return kids[index];
+}

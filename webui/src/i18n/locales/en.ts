@@ -1268,7 +1268,7 @@ export const en = {
     attachmentTag: '[Attachments]',
     pickFileFailed: 'Attachment selection failed (native dialog unavailable)',
     noWorkingDir: 'Select a working directory first',
-    removeMention: 'Remove',
+    fileAlreadyReferenced: 'Already referenced: {{name}}',
     scrollAttachmentsLeft: 'Scroll attachments left',
     scrollAttachmentsRight: 'Scroll attachments right',
     noResults: 'No results',

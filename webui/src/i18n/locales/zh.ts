@@ -1278,7 +1278,7 @@ export const zh = {
     attachmentTag: '[附件]',
     pickFileFailed: '附件选择失败（后端原生对话框不可用）',
     noWorkingDir: '请先选择工作目录',
-    removeMention: '移除',
+    fileAlreadyReferenced: '已引用过该文件：{{name}}',
     scrollAttachmentsLeft: '向左滚动附件',
     scrollAttachmentsRight: '向右滚动附件',
     noResults: '无匹配结果',

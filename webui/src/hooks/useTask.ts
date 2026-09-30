@@ -20,6 +20,8 @@ import { api } from '../api/http';
 import { pendingAssistant, pendingRunId } from '../lib/pending-assistant';
 import { resolveWorkingDirectoryName } from '../lib/utils';
 import { stripAttachmentBlock } from '../lib/attachment-block';
+import { stripInjectBlock } from '../lib/inject-block';
+import { buildMentionLookups, stripMentionTokens } from '../components/shared/mention-data';
 import { fileNameOf } from '../render/file/detector';
 import i18n from '../i18n';
 import type { AskOutcome, TaskMessage } from '../types/api';
@@ -89,9 +91,15 @@ export function useTask() {
             resolveWorkingDirectoryName(state.workingDirectory) ?? i18n.t('directoryPicker.system');
           const groupId = await ensureTaskGroup(groupName);
           try {
-            // 标题取「剥离附件块后的正文」（只发附件时不显示 "附件：- D:\…"），空则回退首个附件文件名
+            // 标题取「剥离附件块 + 命令注入块 + 内联 token 后的正文」（只发附件/只引文件时不显示路径）；
+            // 用户正文为空（如只发 /命令）时回退：附件文件名 → 模板正文 → 可见文本（永不回退到含哨兵的原文）
+            const lookups = buildMentionLookups(state.commands, state.skills, state.agents);
+            const visible = stripInjectBlock(stripAttachmentBlock(content));
             const title =
-              stripAttachmentBlock(content) || (attachments?.[0] ? fileNameOf(attachments[0]) : content);
+              stripMentionTokens(visible, lookups) ||
+              (attachments?.[0] ? fileNameOf(attachments[0]) : '') ||
+              stripMentionTokens(stripInjectBlock(content), lookups) ||
+              visible;
             const task = await api.createTask(title.slice(0, 50), groupId);
             addTask(task);
             taskId = task.id;
