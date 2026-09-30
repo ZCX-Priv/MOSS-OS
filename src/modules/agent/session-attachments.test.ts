@@ -37,13 +37,12 @@ afterEach(() => {
 });
 
 function makeStore(): SessionStore {
-  return new SessionStore({ dataDir } as Environment, logger, { resolveGroupId: () => 'test' });
+  return new SessionStore({ dataDir } as Environment, logger, { resolveSessionDir: () => 'test' });
 }
 
 /**
- * 定位落盘文件：tasks/<group>/<sid>.json。
- * 注意 SessionStore.sessionFilePath 的顺序——索引组仅在该文件「已存在」时命中，
- * 首次写入会落到 default 组，故这里按磁盘实际位置扫描（不假设分组名）。
+ * 定位落盘文件：tasks/<dir>/<sid>.json。
+ * 按磁盘实际位置扫描（不假设目录名），与 SessionStore.sessionFilePath 的解析顺序解耦。
  */
 function findSessionFile(sid: string): string {
   const tasksDir = join(dataDir, 'tasks');

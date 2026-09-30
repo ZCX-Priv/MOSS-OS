@@ -81,8 +81,8 @@ import { TodoProgressCard, TodoRow } from '../shared/TodoProgressCard';
 import { AskPromptCard } from '../shared/AskPromptCard';
 import { ConfirmPromptCard } from '../shared/ConfirmPromptCard';
 import { TerminalView } from '../shared/TerminalView';
-import { AgentTeamPanel } from '../agenteam/AgentTeamPanel';
-import { AgentTeamInlineCard, type InlineTeamPlan } from '../agenteam/AgentTeamInlineCard';
+import { AgenteamPanel } from '../agenteam/AgenteamPanel';
+import { AgenteamInlineCard, type InlineTeamPlan } from '../agenteam/AgenteamInlineCard';
 import { SubagentInlineCard } from '../agenteam/SubagentInlineCard';
 import { ControlHub } from '../shared/ControlHub';
 import { StatsBar } from '../shared/StatsBar';
@@ -190,6 +190,8 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
   const messages = useStore((s) => s.messagesBySession[taskId] ?? EMPTY_MESSAGES);
   const isGenerating = useStore((s) => s.generatingBySession[taskId] ?? false);
   const task = useStore((s) => s.tasks.find((tk) => tk.id === taskId));
+  // 隐藏会话（subagent / agenteam 衍生任务）不在侧边栏列表，store.tasks 查不到 → 直连接口兜底标题
+  const [fallbackTitle, setFallbackTitle] = useState<string | null>(null);
   const todos = useStore((s) => s.todosBySession[taskId] ?? EMPTY_TODOS);
   const pendingAsks = useStore((s) => s.pendingAsks);
   const pendingConfirms = useStore((s) => s.pendingConfirms);
@@ -386,8 +388,29 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
   // 下拉菜单只显示当前标签栏中未打开的标签页类型；两类都已打开时禁用加号按钮
   const hasSummaryTab = sidebarTabs.some((tab) => tab.type === 'summary');
   const hasTerminalTab = sidebarTabs.some((tab) => tab.type === 'terminal');
-  const hasAgentTeamTab = sidebarTabs.some((tab) => tab.type === 'agenteam');
-  const allTabTypesOpen = hasSummaryTab && hasTerminalTab && hasAgentTeamTab;
+  const hasAgenteamTab = sidebarTabs.some((tab) => tab.type === 'agenteam');
+  const allTabTypesOpen = hasSummaryTab && hasTerminalTab && hasAgenteamTab;
+
+  // 隐藏会话标题兜底：store.tasks 无该任务（subagent / agenteam 衍生会话已被侧边栏过滤）时，
+  // 直连 /api/tasks/:id 取标题；任务进入 store 后自动让位（task 存在则清空兜底）
+  useEffect(() => {
+    if (!taskId || task) {
+      setFallbackTitle(null);
+      return;
+    }
+    let alive = true;
+    void api
+      .getTask(taskId)
+      .then((resp) => {
+        if (alive) setFallbackTitle(resp.task.title);
+      })
+      .catch(() => {
+        if (alive) setFallbackTitle(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [taskId, task]);
 
   // 挂载/切换会话时加载历史 + todos + context。
   // 历史总是拉取（切回旧会话时同步后台新产生的消息）；仅当非流式生成中才整体替换，
@@ -728,7 +751,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
                 {t('terminal.title')}
               </DropdownMenuItem>
             )}
-            {!hasAgentTeamTab && (
+            {!hasAgenteamTab && (
               <DropdownMenuItem
                 onSelect={() => addSidebarTab('agenteam', 'agenteam.title')}
               >
@@ -889,7 +912,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
         {activeTab?.type === 'terminal' && (
           <TerminalView toolCallId={activeTab.toolCallId} />
         )}
-        {activeTab?.type === 'agenteam' && <AgentTeamPanel />}
+        {activeTab?.type === 'agenteam' && <AgenteamPanel />}
         {activeTab?.type === 'file' && activeTab.filePath && (
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <FilePreviewPane path={activeTab.filePath} active />
@@ -926,7 +949,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
             )}
           </div>
           <h2 className="truncate text-center text-sm font-medium text-foreground">
-            {task?.title ?? t('task.newTask')}
+            {task?.title ?? fallbackTitle ?? t('task.newTask')}
           </h2>
           <Button
             variant="ghost"
@@ -942,7 +965,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
         <div className="hidden h-12 items-center justify-between px-4 md:flex">
           <div className="flex items-center gap-2">
             <h2 className="text-sm font-medium text-foreground">
-              {task?.title ?? t('task.newTask')}
+              {task?.title ?? fallbackTitle ?? t('task.newTask')}
             </h2>
           </div>
           <Button
@@ -1729,20 +1752,37 @@ const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap,
           {expanded ? t('task.todoCollapse') : t('task.messageExpand')}
         </button>
       )}
-      {/* subagent_run 工具调用 → Subagent 专属卡片（设计参考 Max/TeamUI/Subagent.png：
-          角色名 + 状态徽章 + 树形任务 + 运行中实时事件计数 + 完成后可展开报告） */}
-      {message.toolCalls?.filter((tc) => tc.name === 'subagent_run').map((tc) => {
+      {/* agent 工具调用 → 按 mode 分派专属卡片（统一机器人图标 Bot）：
+          mode=subagent → Subagent 卡片（角色名 + 状态徽章 + 树形任务 + 运行中事件计数 + 完成后报告）
+          mode=agenteam → 专家团卡片（团队名 + 任务数 + 进度点阵 + 阶段徽章 + 成员头像任务行） */}
+      {message.toolCalls?.filter((tc) => tc.name === 'agent').map((tc) => {
         const matched = message.toolResults?.find((tr) => tr.toolCallId === tc.id);
         const resultText = matched?.result.content
           .filter((c) => c.type === 'text')
           .map((c) => (c.type === 'text' ? c.text : ''))
           .join('\n');
-        let args: { template?: string; task?: string } = {};
+        let args: {
+          mode?: string;
+          template?: string;
+          task?: string;
+          name?: string;
+          members?: InlineTeamPlan['members'];
+          tasks?: InlineTeamPlan['tasks'];
+        } = {};
         try {
-          args = JSON.parse(tc.arguments || '{}') as { template?: string; task?: string };
+          args = JSON.parse(tc.arguments || '{}') as typeof args;
         } catch {
           // 非 JSON 参数：留空由卡片内部渲染最小占位
         }
+        if (args.mode === 'agenteam') {
+          const plan: InlineTeamPlan | null = args.name
+            ? { name: args.name, members: args.members ?? [], tasks: args.tasks ?? [] }
+            : null;
+          // 从结果文本 "Team created: id=<teamId> phase=..." 提取团队 id 绑定实时数据
+          const teamId = resultText?.match(/id=([A-Za-z0-9_-]+)/)?.[1] ?? null;
+          return <AgenteamInlineCard key={tc.id} plan={plan} teamId={teamId} />;
+        }
+        // 默认按 subagent 渲染（mode=subagent 或参数缺失兜底，保证不丢卡）
         return (
           <SubagentInlineCard
             key={tc.id}
@@ -1753,27 +1793,6 @@ const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap,
             isError={matched?.result.isError}
           />
         );
-      })}
-      {/* agent_teams_create 工具调用 → 专家团专属卡片（设计参考 Max/TeamUI/专家团.png：
-          团队名 + 任务数 + 进度点阵 + 阶段徽章 + 成员头像任务行；teamId 绑定后实时刷新） */}
-      {message.toolCalls?.filter((tc) => tc.name === 'agent_teams_create').map((tc) => {
-        const matched = message.toolResults?.find((tr) => tr.toolCallId === tc.id);
-        const resultText = matched?.result.content
-          .filter((c) => c.type === 'text')
-          .map((c) => (c.type === 'text' ? c.text : ''))
-          .join('\n');
-        let args: { name?: string; members?: InlineTeamPlan['members']; tasks?: InlineTeamPlan['tasks'] } = {};
-        try {
-          args = JSON.parse(tc.arguments || '{}') as typeof args;
-        } catch {
-          // 非 JSON 参数：留空由卡片内部渲染最小占位
-        }
-        const plan: InlineTeamPlan | null = args.name
-          ? { name: args.name, members: args.members ?? [], tasks: args.tasks ?? [] }
-          : null;
-        // 从结果文本 "Team created: id=<teamId> phase=..." 提取团队 id 绑定实时数据
-        const teamId = resultText?.match(/id=([A-Za-z0-9_-]+)/)?.[1] ?? null;
-        return <AgentTeamInlineCard key={tc.id} plan={plan} teamId={teamId} />;
       })}
       {/* todo 工具调用 → 在任务流中渲染 TodoProgressCard（像其他工具一样在调用位置显示）。
           渲染条件基于消息自身快照（?? 回落到 store）：store 被清空不牵连历史卡片。 */}
@@ -1822,11 +1841,11 @@ const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap,
           </div>
         );
       })}
-      {/* 非 todo/ask/专属卡片工具调用（可折叠：展开显示参数与结果）。
-          subagent_run / agent_teams_create 已由上方专属卡片渲染。 */}
-      {message.toolCalls && message.toolCalls.filter((tc) => tc.name !== 'todo' && tc.name !== 'ask' && tc.name !== 'subagent_run' && tc.name !== 'agent_teams_create').length > 0 && (
+      {/* 非 todo/ask/agent 工具调用（可折叠：展开显示参数与结果）。
+          agent 工具已由上方专属卡片渲染。 */}
+      {message.toolCalls && message.toolCalls.filter((tc) => tc.name !== 'todo' && tc.name !== 'ask' && tc.name !== 'agent').length > 0 && (
         <div className="flex flex-col gap-1">
-          {message.toolCalls.filter((tc) => tc.name !== 'todo' && tc.name !== 'ask' && tc.name !== 'subagent_run' && tc.name !== 'agent_teams_create').map((tc) => {
+          {message.toolCalls.filter((tc) => tc.name !== 'todo' && tc.name !== 'ask' && tc.name !== 'agent').map((tc) => {
             const matchedResult = message.toolResults?.find((tr) => tr.toolCallId === tc.id);
             const resultText = matchedResult?.result.content
               .filter((c) => c.type === 'text')

@@ -100,20 +100,20 @@ import {
   createSetDefaultAgentHandler,
 } from './routes/agenteam';
 import {
-  createListAgentTeamsHandler,
-  createGetAgentTeamHandler,
-  createGetAgentTeamMessagesHandler,
-  createCreateAgentTeamHandler,
-  createApproveAgentTeamHandler,
-  createDiscardAgentTeamHandler,
-  createHaltAgentTeamHandler,
-  createResumeAgentTeamHandler,
-  createDeleteAgentTeamHandler,
-  createListTeamProfilesHandler,
-  createSaveTeamProfileHandler,
-  createDeleteTeamProfileHandler,
+  createListAgenteamsHandler,
+  createGetAgenteamHandler,
+  createGetAgenteamMessagesHandler,
+  createCreateAgenteamHandler,
+  createApproveAgenteamHandler,
+  createDiscardAgenteamHandler,
+  createHaltAgenteamHandler,
+  createResumeAgenteamHandler,
+  createDeleteAgenteamHandler,
+  createListAgenteamProfilesHandler,
+  createSaveAgenteamProfileHandler,
+  createDeleteAgenteamProfileHandler,
   createRunSubagentHandler,
-} from './routes/agent-teams';
+} from './routes/agenteams';
 import { createListAutomationsHandler,
   createCreateAutomationHandler,
   createGetAutomationHandler,
@@ -268,11 +268,11 @@ class ServerModule implements Module {
     ctx.eventBus.onAction('mcp:server:error', (data) => {
       this.wsHandler.broadcast({ type: 'mcp.status', payload: data });
     });
-    // AgentTeam 编排事件：团队状态变化（前端专家团标签页监听后拉取刷新）
+    // agenteam 编排事件：团队状态变化（前端专家团标签页监听后拉取刷新）
     ctx.eventBus.onAction('agenteam:team-changed', (data) => {
       this.wsHandler.broadcast({ type: 'agenteam.team.changed', payload: data });
     });
-    // AgentTeam 成员事件（成员 run 的 agent 事件流；专家团面板展示活动摘要）
+    // agenteam 成员事件（成员 run 的 agent 事件流；专家团面板展示活动摘要）
     ctx.eventBus.onAction('agenteam:member-event', (data) => {
       this.wsHandler.broadcast({ type: 'agenteam.member.event', payload: data });
     });
@@ -396,19 +396,19 @@ class ServerModule implements Module {
     this.router.addRoute({ method: 'DELETE', pattern: '/api/agenteam/:id', handler: createDeleteAgentHandler(services), auth: true });
     this.router.addRoute({ method: 'PUT', pattern: '/api/agenteam/default', handler: createSetDefaultAgentHandler(services), auth: true });
 
-    // agent-teams（AgentTeam 编排：团队/消息/生命周期/模板/临时subagent）
-    this.router.addRoute({ method: 'GET', pattern: '/api/agent-teams', handler: createListAgentTeamsHandler(services), auth: true });
-    this.router.addRoute({ method: 'GET', pattern: '/api/agent-teams/:id', handler: createGetAgentTeamHandler(services), auth: true });
-    this.router.addRoute({ method: 'GET', pattern: '/api/agent-teams/:id/messages', handler: createGetAgentTeamMessagesHandler(services), auth: true });
-    this.router.addRoute({ method: 'POST', pattern: '/api/agent-teams', handler: createCreateAgentTeamHandler(services), auth: true });
-    this.router.addRoute({ method: 'POST', pattern: '/api/agent-teams/:id/approve', handler: createApproveAgentTeamHandler(services), auth: true });
-    this.router.addRoute({ method: 'POST', pattern: '/api/agent-teams/:id/discard', handler: createDiscardAgentTeamHandler(services), auth: true });
-    this.router.addRoute({ method: 'POST', pattern: '/api/agent-teams/:id/halt', handler: createHaltAgentTeamHandler(services), auth: true });
-    this.router.addRoute({ method: 'POST', pattern: '/api/agent-teams/:id/resume', handler: createResumeAgentTeamHandler(services), auth: true });
-    this.router.addRoute({ method: 'DELETE', pattern: '/api/agent-teams/:id', handler: createDeleteAgentTeamHandler(services), auth: true });
-    this.router.addRoute({ method: 'GET', pattern: '/api/agent-team-profiles', handler: createListTeamProfilesHandler(services), auth: true });
-    this.router.addRoute({ method: 'POST', pattern: '/api/agent-team-profiles', handler: createSaveTeamProfileHandler(services), auth: true });
-    this.router.addRoute({ method: 'DELETE', pattern: '/api/agent-team-profiles/:name', handler: createDeleteTeamProfileHandler(services), auth: true });
+    // agenteams（agenteam 编排：团队/消息/生命周期/模板/临时subagent）
+    this.router.addRoute({ method: 'GET', pattern: '/api/agenteams', handler: createListAgenteamsHandler(services), auth: true });
+    this.router.addRoute({ method: 'GET', pattern: '/api/agenteams/:id', handler: createGetAgenteamHandler(services), auth: true });
+    this.router.addRoute({ method: 'GET', pattern: '/api/agenteams/:id/messages', handler: createGetAgenteamMessagesHandler(services), auth: true });
+    this.router.addRoute({ method: 'POST', pattern: '/api/agenteams', handler: createCreateAgenteamHandler(services), auth: true });
+    this.router.addRoute({ method: 'POST', pattern: '/api/agenteams/:id/approve', handler: createApproveAgenteamHandler(services), auth: true });
+    this.router.addRoute({ method: 'POST', pattern: '/api/agenteams/:id/discard', handler: createDiscardAgenteamHandler(services), auth: true });
+    this.router.addRoute({ method: 'POST', pattern: '/api/agenteams/:id/halt', handler: createHaltAgenteamHandler(services), auth: true });
+    this.router.addRoute({ method: 'POST', pattern: '/api/agenteams/:id/resume', handler: createResumeAgenteamHandler(services), auth: true });
+    this.router.addRoute({ method: 'DELETE', pattern: '/api/agenteams/:id', handler: createDeleteAgenteamHandler(services), auth: true });
+    this.router.addRoute({ method: 'GET', pattern: '/api/agenteam-profiles', handler: createListAgenteamProfilesHandler(services), auth: true });
+    this.router.addRoute({ method: 'POST', pattern: '/api/agenteam-profiles', handler: createSaveAgenteamProfileHandler(services), auth: true });
+    this.router.addRoute({ method: 'DELETE', pattern: '/api/agenteam-profiles/:name', handler: createDeleteAgenteamProfileHandler(services), auth: true });
     this.router.addRoute({ method: 'POST', pattern: '/api/subagents/run', handler: createRunSubagentHandler(services), auth: true });
 
     // automations

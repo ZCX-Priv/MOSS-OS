@@ -1,17 +1,17 @@
-// src/modules/server/routes/agent-teams.ts
-// AgentTeam 编排 REST 路由
-// GET    /api/agent-teams                       列出全部团队（摘要）
-// GET    /api/agent-teams/:id                   团队详情（成员/任务）
-// GET    /api/agent-teams/:id/messages          消息流（?since=ts）
-// POST   /api/agent-teams                       创建团队（UI；approval=true 走审批）
-// POST   /api/agent-teams/:id/approve           审批通过
-// POST   /api/agent-teams/:id/discard           驳回计划
-// POST   /api/agent-teams/:id/halt              暂停
-// POST   /api/agent-teams/:id/resume            恢复
-// DELETE /api/agent-teams/:id                   删除
-// GET    /api/agent-team-profiles               团队模板列表
-// POST   /api/agent-team-profiles               保存团队模板
-// DELETE /api/agent-team-profiles/:name         删除团队模板
+// src/modules/server/routes/agenteams.ts
+// agenteam 编排 REST 路由（团队会话由 agent 工具创建，此处供 UI 面板与外部调用）
+// GET    /api/agenteams                        列出全部团队（摘要）
+// GET    /api/agenteams/:id                    团队详情（成员/任务）
+// GET    /api/agenteams/:id/messages           消息流（?since=ts）
+// POST   /api/agenteams                        创建团队（UI；approval=true 走审批）
+// POST   /api/agenteams/:id/approve            审批通过
+// POST   /api/agenteams/:id/discard            驳回计划
+// POST   /api/agenteams/:id/halt               暂停
+// POST   /api/agenteams/:id/resume             恢复
+// DELETE /api/agenteams/:id                    删除
+// GET    /api/agenteam-profiles                团队模板列表
+// POST   /api/agenteam-profiles                保存团队模板
+// DELETE /api/agenteam-profiles/:name          删除团队模板
 // POST   /api/subagents/run                    手动运行临时 subagent
 
 import type { HttpRequest, HttpResponse, RouteHandler } from '../types';
@@ -34,46 +34,46 @@ function toPermissionMode(v: unknown): PermissionMode | undefined {
 // 团队
 // ============================================================================
 
-export function createListAgentTeamsHandler(services: ServiceRegistry): RouteHandler {
+export function createListAgenteamsHandler(services: ServiceRegistry): RouteHandler {
   return async (): Promise<HttpResponse> => {
     const orch = resolveOrchestrator(services);
     if (!orch) {
-      return { status: 503, body: { error: ErrorCode.AGENTTEAM_ORCHESTRATOR_UNAVAILABLE } };
+      return { status: 503, body: { error: ErrorCode.AGENTEAM_ORCHESTRATOR_UNAVAILABLE } };
     }
     return { status: 200, body: { teams: orch.summaries() } };
   };
 }
 
-export function createGetAgentTeamHandler(services: ServiceRegistry): RouteHandler {
+export function createGetAgenteamHandler(services: ServiceRegistry): RouteHandler {
   return async (_req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
     const orch = resolveOrchestrator(services);
     if (!orch) {
-      return { status: 503, body: { error: ErrorCode.AGENTTEAM_ORCHESTRATOR_UNAVAILABLE } };
+      return { status: 503, body: { error: ErrorCode.AGENTEAM_ORCHESTRATOR_UNAVAILABLE } };
     }
     const id = params?.id;
     if (!id) {
-      return { status: 400, body: { error: ErrorCode.AGENTTEAM_ID_REQUIRED } };
+      return { status: 400, body: { error: ErrorCode.AGENTEAM_ID_REQUIRED } };
     }
     const team = orch.get(id);
     if (!team) {
-      return { status: 404, body: { error: ErrorCode.AGENTTEAM_NOT_FOUND } };
+      return { status: 404, body: { error: ErrorCode.AGENTEAM_NOT_FOUND } };
     }
     return { status: 200, body: team };
   };
 }
 
-export function createGetAgentTeamMessagesHandler(services: ServiceRegistry): RouteHandler {
+export function createGetAgenteamMessagesHandler(services: ServiceRegistry): RouteHandler {
   return async (req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
     const orch = resolveOrchestrator(services);
     if (!orch) {
-      return { status: 503, body: { error: ErrorCode.AGENTTEAM_ORCHESTRATOR_UNAVAILABLE } };
+      return { status: 503, body: { error: ErrorCode.AGENTEAM_ORCHESTRATOR_UNAVAILABLE } };
     }
     const id = params?.id;
     if (!id) {
-      return { status: 400, body: { error: ErrorCode.AGENTTEAM_ID_REQUIRED } };
+      return { status: 400, body: { error: ErrorCode.AGENTEAM_ID_REQUIRED } };
     }
     if (!orch.get(id)) {
-      return { status: 404, body: { error: ErrorCode.AGENTTEAM_NOT_FOUND } };
+      return { status: 404, body: { error: ErrorCode.AGENTEAM_NOT_FOUND } };
     }
     const sinceRaw = req.query?.since;
     const since = typeof sinceRaw === 'string' ? Number(sinceRaw) : undefined;
@@ -82,11 +82,11 @@ export function createGetAgentTeamMessagesHandler(services: ServiceRegistry): Ro
   };
 }
 
-export function createCreateAgentTeamHandler(services: ServiceRegistry): RouteHandler {
+export function createCreateAgenteamHandler(services: ServiceRegistry): RouteHandler {
   return async (req: HttpRequest): Promise<HttpResponse> => {
     const orch = resolveOrchestrator(services);
     if (!orch) {
-      return { status: 503, body: { error: ErrorCode.AGENTTEAM_ORCHESTRATOR_UNAVAILABLE } };
+      return { status: 503, body: { error: ErrorCode.AGENTEAM_ORCHESTRATOR_UNAVAILABLE } };
     }
     const body = (req.body ?? {}) as {
       name?: string;
@@ -98,10 +98,10 @@ export function createCreateAgentTeamHandler(services: ServiceRegistry): RouteHa
       approval?: boolean;
     };
     if (!body.name?.trim()) {
-      return { status: 400, body: { error: ErrorCode.AGENTTEAM_NAME_REQUIRED } };
+      return { status: 400, body: { error: ErrorCode.AGENTEAM_NAME_REQUIRED } };
     }
     if (!body.members || body.members.length === 0) {
-      return { status: 400, body: { error: ErrorCode.AGENTTEAM_MEMBERS_REQUIRED } };
+      return { status: 400, body: { error: ErrorCode.AGENTEAM_MEMBERS_REQUIRED } };
     }
     if (!body.cwd?.trim()) {
       return { status: 400, body: { error: ErrorCode.INVALID_BODY } };
@@ -130,98 +130,98 @@ export function createCreateAgentTeamHandler(services: ServiceRegistry): RouteHa
       });
       return { status: 201, body: team };
     } catch (err) {
-      return { status: 400, body: { error: ErrorCode.AGENTTEAM_INVALID_STATE, message: err instanceof Error ? err.message : String(err) } };
+      return { status: 400, body: { error: ErrorCode.AGENTEAM_INVALID_STATE, message: err instanceof Error ? err.message : String(err) } };
     }
   };
 }
 
-export function createApproveAgentTeamHandler(services: ServiceRegistry): RouteHandler {
+export function createApproveAgenteamHandler(services: ServiceRegistry): RouteHandler {
   return async (_req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
     const orch = resolveOrchestrator(services);
     if (!orch) {
-      return { status: 503, body: { error: ErrorCode.AGENTTEAM_ORCHESTRATOR_UNAVAILABLE } };
+      return { status: 503, body: { error: ErrorCode.AGENTEAM_ORCHESTRATOR_UNAVAILABLE } };
     }
     const id = params?.id;
     if (!id) {
-      return { status: 400, body: { error: ErrorCode.AGENTTEAM_ID_REQUIRED } };
+      return { status: 400, body: { error: ErrorCode.AGENTEAM_ID_REQUIRED } };
     }
     try {
       const team = orch.approvePlan(id);
       return { status: 200, body: team };
     } catch (err) {
-      return { status: 400, body: { error: ErrorCode.AGENTTEAM_INVALID_STATE, message: err instanceof Error ? err.message : String(err) } };
+      return { status: 400, body: { error: ErrorCode.AGENTEAM_INVALID_STATE, message: err instanceof Error ? err.message : String(err) } };
     }
   };
 }
 
-export function createDiscardAgentTeamHandler(services: ServiceRegistry): RouteHandler {
+export function createDiscardAgenteamHandler(services: ServiceRegistry): RouteHandler {
   return async (_req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
     const orch = resolveOrchestrator(services);
     if (!orch) {
-      return { status: 503, body: { error: ErrorCode.AGENTTEAM_ORCHESTRATOR_UNAVAILABLE } };
+      return { status: 503, body: { error: ErrorCode.AGENTEAM_ORCHESTRATOR_UNAVAILABLE } };
     }
     const id = params?.id;
     if (!id) {
-      return { status: 400, body: { error: ErrorCode.AGENTTEAM_ID_REQUIRED } };
+      return { status: 400, body: { error: ErrorCode.AGENTEAM_ID_REQUIRED } };
     }
     try {
       const team = orch.discardPlan(id);
       return { status: 200, body: team };
     } catch (err) {
-      return { status: 400, body: { error: ErrorCode.AGENTTEAM_INVALID_STATE, message: err instanceof Error ? err.message : String(err) } };
+      return { status: 400, body: { error: ErrorCode.AGENTEAM_INVALID_STATE, message: err instanceof Error ? err.message : String(err) } };
     }
   };
 }
 
-export function createHaltAgentTeamHandler(services: ServiceRegistry): RouteHandler {
+export function createHaltAgenteamHandler(services: ServiceRegistry): RouteHandler {
   return async (_req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
     const orch = resolveOrchestrator(services);
     if (!orch) {
-      return { status: 503, body: { error: ErrorCode.AGENTTEAM_ORCHESTRATOR_UNAVAILABLE } };
+      return { status: 503, body: { error: ErrorCode.AGENTEAM_ORCHESTRATOR_UNAVAILABLE } };
     }
     const id = params?.id;
     if (!id) {
-      return { status: 400, body: { error: ErrorCode.AGENTTEAM_ID_REQUIRED } };
+      return { status: 400, body: { error: ErrorCode.AGENTEAM_ID_REQUIRED } };
     }
     if (!orch.get(id)) {
-      return { status: 404, body: { error: ErrorCode.AGENTTEAM_NOT_FOUND } };
+      return { status: 404, body: { error: ErrorCode.AGENTEAM_NOT_FOUND } };
     }
     const team = orch.halt(id);
     return { status: 200, body: team };
   };
 }
 
-export function createResumeAgentTeamHandler(services: ServiceRegistry): RouteHandler {
+export function createResumeAgenteamHandler(services: ServiceRegistry): RouteHandler {
   return async (_req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
     const orch = resolveOrchestrator(services);
     if (!orch) {
-      return { status: 503, body: { error: ErrorCode.AGENTTEAM_ORCHESTRATOR_UNAVAILABLE } };
+      return { status: 503, body: { error: ErrorCode.AGENTEAM_ORCHESTRATOR_UNAVAILABLE } };
     }
     const id = params?.id;
     if (!id) {
-      return { status: 400, body: { error: ErrorCode.AGENTTEAM_ID_REQUIRED } };
+      return { status: 400, body: { error: ErrorCode.AGENTEAM_ID_REQUIRED } };
     }
     if (!orch.get(id)) {
-      return { status: 404, body: { error: ErrorCode.AGENTTEAM_NOT_FOUND } };
+      return { status: 404, body: { error: ErrorCode.AGENTEAM_NOT_FOUND } };
     }
     const team = orch.resume(id);
     return { status: 200, body: team };
   };
 }
 
-export function createDeleteAgentTeamHandler(services: ServiceRegistry): RouteHandler {
+export function createDeleteAgenteamHandler(services: ServiceRegistry): RouteHandler {
   return async (_req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
     const orch = resolveOrchestrator(services);
     if (!orch) {
-      return { status: 503, body: { error: ErrorCode.AGENTTEAM_ORCHESTRATOR_UNAVAILABLE } };
+      return { status: 503, body: { error: ErrorCode.AGENTEAM_ORCHESTRATOR_UNAVAILABLE } };
     }
     const id = params?.id;
     if (!id) {
-      return { status: 400, body: { error: ErrorCode.AGENTTEAM_ID_REQUIRED } };
+      return { status: 400, body: { error: ErrorCode.AGENTEAM_ID_REQUIRED } };
     }
     const deleted = orch.deleteTeam(id);
     if (!deleted) {
-      return { status: 404, body: { error: ErrorCode.AGENTTEAM_NOT_FOUND } };
+      return { status: 404, body: { error: ErrorCode.AGENTEAM_NOT_FOUND } };
     }
     return { status: 200, body: { deleted: true } };
   };
@@ -231,25 +231,25 @@ export function createDeleteAgentTeamHandler(services: ServiceRegistry): RouteHa
 // 团队模板
 // ============================================================================
 
-export function createListTeamProfilesHandler(services: ServiceRegistry): RouteHandler {
+export function createListAgenteamProfilesHandler(services: ServiceRegistry): RouteHandler {
   return async (): Promise<HttpResponse> => {
     const orch = resolveOrchestrator(services);
     if (!orch) {
-      return { status: 503, body: { error: ErrorCode.AGENTTEAM_ORCHESTRATOR_UNAVAILABLE } };
+      return { status: 503, body: { error: ErrorCode.AGENTEAM_ORCHESTRATOR_UNAVAILABLE } };
     }
     return { status: 200, body: { profiles: orch.listProfiles() } };
   };
 }
 
-export function createSaveTeamProfileHandler(services: ServiceRegistry): RouteHandler {
+export function createSaveAgenteamProfileHandler(services: ServiceRegistry): RouteHandler {
   return async (req: HttpRequest): Promise<HttpResponse> => {
     const orch = resolveOrchestrator(services);
     if (!orch) {
-      return { status: 503, body: { error: ErrorCode.AGENTTEAM_ORCHESTRATOR_UNAVAILABLE } };
+      return { status: 503, body: { error: ErrorCode.AGENTEAM_ORCHESTRATOR_UNAVAILABLE } };
     }
     const body = (req.body ?? {}) as Partial<TeamProfileConfig>;
     if (!body.name?.trim() || !Array.isArray(body.members) || body.members.length === 0 || !Array.isArray(body.tasks)) {
-      return { status: 400, body: { error: ErrorCode.AGENTTEAM_PROFILE_INVALID } };
+      return { status: 400, body: { error: ErrorCode.AGENTEAM_PROFILE_INVALID } };
     }
     const ok = orch.saveProfile({
       name: body.name,
@@ -262,17 +262,17 @@ export function createSaveTeamProfileHandler(services: ServiceRegistry): RouteHa
       reviewPolicy: body.reviewPolicy,
     });
     if (!ok) {
-      return { status: 400, body: { error: ErrorCode.AGENTTEAM_PROFILE_INVALID, message: 'builtin profile name cannot be overwritten' } };
+      return { status: 400, body: { error: ErrorCode.AGENTEAM_PROFILE_INVALID, message: 'builtin profile name cannot be overwritten' } };
     }
     return { status: 201, body: { saved: true } };
   };
 }
 
-export function createDeleteTeamProfileHandler(services: ServiceRegistry): RouteHandler {
+export function createDeleteAgenteamProfileHandler(services: ServiceRegistry): RouteHandler {
   return async (_req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
     const orch = resolveOrchestrator(services);
     if (!orch) {
-      return { status: 503, body: { error: ErrorCode.AGENTTEAM_ORCHESTRATOR_UNAVAILABLE } };
+      return { status: 503, body: { error: ErrorCode.AGENTEAM_ORCHESTRATOR_UNAVAILABLE } };
     }
     const name = params?.name;
     if (!name) {
@@ -280,7 +280,7 @@ export function createDeleteTeamProfileHandler(services: ServiceRegistry): Route
     }
     const deleted = orch.deleteProfile(name);
     if (!deleted) {
-      return { status: 404, body: { error: ErrorCode.AGENTTEAM_NOT_FOUND } };
+      return { status: 404, body: { error: ErrorCode.AGENTEAM_NOT_FOUND } };
     }
     return { status: 200, body: { deleted: true } };
   };
@@ -294,7 +294,7 @@ export function createRunSubagentHandler(services: ServiceRegistry): RouteHandle
   return async (req: HttpRequest): Promise<HttpResponse> => {
     const orch = resolveOrchestrator(services);
     if (!orch) {
-      return { status: 503, body: { error: ErrorCode.AGENTTEAM_ORCHESTRATOR_UNAVAILABLE } };
+      return { status: 503, body: { error: ErrorCode.AGENTEAM_ORCHESTRATOR_UNAVAILABLE } };
     }
     const body = (req.body ?? {}) as {
       template?: string;

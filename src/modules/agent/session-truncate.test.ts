@@ -36,7 +36,7 @@ afterEach(() => {
 });
 
 function makeStore(): SessionStore {
-  return new SessionStore({ dataDir } as Environment, logger, { resolveGroupId: () => 'test' });
+  return new SessionStore({ dataDir } as Environment, logger, { resolveSessionDir: () => 'test' });
 }
 
 /** 构造带时间戳的消息 */

@@ -60,13 +60,22 @@ type AgentEngineWithTasks = AgentEngine & {
     name: string;
     expanded?: boolean;
     taskCount?: number;
+    source?: 'folder' | 'manual';
+    dir?: string;
+    hidden?: boolean;
   }>;
-  createTaskGroup?: (name: string, source?: 'folder' | 'manual') => {
+  createTaskGroup?: (
+    name: string,
+    source?: 'folder' | 'manual',
+    opts?: { id?: string; dir?: string; hidden?: boolean },
+  ) => {
     id: string;
     name: string;
     expanded?: boolean;
     taskCount?: number;
     source?: 'folder' | 'manual';
+    dir?: string;
+    hidden?: boolean;
   };
   updateTaskGroup?: (id: string, patch: { name?: string }) => {
     id: string;
@@ -93,14 +102,21 @@ function resolveEngine(services: ServiceRegistry): AgentEngineWithTasks | null {
 // 任务
 // ============================================================================
 
+/** 隐藏分组（subagent / agenteam 衍生会话）不出现在侧边栏列表；直接访问 /api/tasks/:id 仍可用 */
+function hiddenGroupIds(engine: AgentEngineWithTasks): Set<string> {
+  const groups = engine.listTaskGroups?.() ?? [];
+  return new Set(groups.filter((g) => g.hidden === true).map((g) => g.id));
+}
+
 export function createListTasksHandler(services: ServiceRegistry): RouteHandler {
   return async (): Promise<HttpResponse> => {
     const engine = resolveEngine(services);
     if (!engine) {
       return { status: 200, body: { groups: [], tasks: [] } };
     }
-    const tasks = engine.listTasks?.() ?? [];
-    const groups = engine.listTaskGroups?.() ?? [];
+    const hidden = hiddenGroupIds(engine);
+    const tasks = (engine.listTasks?.() ?? []).filter((tk) => !hidden.has(tk.groupId));
+    const groups = (engine.listTaskGroups?.() ?? []).filter((g) => g.hidden !== true);
     return { status: 200, body: { groups, tasks } };
   };
 }
@@ -238,7 +254,7 @@ export function createListTaskGroupsHandler(services: ServiceRegistry): RouteHan
     if (!engine) {
       return { status: 200, body: { groups: [] } };
     }
-    const groups = engine.listTaskGroups?.() ?? [];
+    const groups = (engine.listTaskGroups?.() ?? []).filter((g) => g.hidden !== true);
     return { status: 200, body: { groups } };
   };
 }

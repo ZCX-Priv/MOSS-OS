@@ -1,9 +1,9 @@
 // src/modules/agenteam/profiles.ts
 // 团队模板（Profiles）：可复用的团队配置。
 // 内置 1 个默认 profile「研发流水线」；用户可将当前团队保存为模板，
-// 持久化于 ~/.moss/agent-team-profiles.json。
+// 持久化于 ~/.moss/agenteam-profiles.json。
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import type { Logger } from '../../core/types';
 import type { TeamProfileConfig } from './types';
@@ -68,8 +68,19 @@ export class TeamProfileStore {
   private profiles: Map<string, TeamProfileConfig>;
 
   constructor(dataDir: string, logger: Logger) {
-    this.storePath = join(dataDir, 'agent-team-profiles.json');
+    this.storePath = join(dataDir, 'agenteam-profiles.json');
     this.logger = logger;
+    // 存量迁移：旧 agent-team-profiles.json → agenteam-profiles.json（幂等；失败不阻断启动，下次重试）
+    const legacyPath = join(dataDir, 'agent-team-profiles.json');
+    try {
+      if (existsSync(legacyPath) && !existsSync(this.storePath)) {
+        renameSync(legacyPath, this.storePath);
+      }
+    } catch (err) {
+      logger.warn('agenteam: profiles migrate failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
     this.profiles = this.load();
   }
 
@@ -90,7 +101,7 @@ export class TeamProfileStore {
         }
       }
     } catch (err) {
-      this.logger.warn('agent-teams: profiles load failed, using builtin only', {
+      this.logger.warn('agenteam: profiles load failed, using builtin only', {
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -107,7 +118,7 @@ export class TeamProfileStore {
         'utf8',
       );
     } catch (err) {
-      this.logger.error('agent-teams: profiles save failed', {
+      this.logger.error('agenteam: profiles save failed', {
         error: err instanceof Error ? err.message : String(err),
       });
     }

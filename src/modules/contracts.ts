@@ -179,11 +179,21 @@ export interface AgentEngine {
    */
   createTask(title: string, groupId?: string): import('./agent/task-store').TaskItem;
 
-  /** 列出全部分组（automation 按 cwd 派生文件夹分组用） */
+  /** 列出全部分组（含隐藏分组，供内部按 id/名查找；HTTP 边界另行过滤） */
   listTaskGroups(): import('./agent/task-store').TaskGroup[];
 
-  /** 创建分组（source='folder' 的空组由 task-store 自动销毁） */
-  createTaskGroup(name: string, source?: 'folder' | 'manual'): import('./agent/task-store').TaskGroup;
+  /** 删除分组（agenteam 删除团队时清理其隐藏分组与成员会话用） */
+  deleteTaskGroup(
+    id: string,
+    opts?: { moveTasksTo?: string; deleteTasks?: boolean },
+  ): boolean;
+
+  /** 创建分组（source='folder' / hidden 的空组由 task-store 自动销毁；dir 支持嵌套目录） */
+  createTaskGroup(
+    name: string,
+    source?: 'folder' | 'manual',
+    opts?: { id?: string; dir?: string; hidden?: boolean },
+  ): import('./agent/task-store').TaskGroup;
 
   /**
    * 前端回复 ask 工具的提问（accept=已回答 / cancel=取消）。

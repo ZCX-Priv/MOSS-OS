@@ -60,7 +60,7 @@ const MODULE_DESTROY_TIMEOUT_MS = 10_000;
  * - context → llm（压缩摘要调用 LLMRouter；agent 每轮请求经其流水线，须先于 agent 注册）
  * - agent → llm, tools, filesys, safety, context, rules, hooks, memory
  * - agenteam → agent（编排服务复用 AgentEngine 派发成员任务；registry 部分无依赖，
- *   但模块整体须后于 agent 注册；server 的 /api/agent-teams 路由为请求时 tryResolve，不受影响）
+ *   但模块整体须后于 agent 注册；server 的 /api/agenteams 路由为请求时 tryResolve，不受影响）
  * - file-history → tools, filesys（shell 快照回填运行时 tryResolve）
  * - daemon → server
  * - automation → agent, server

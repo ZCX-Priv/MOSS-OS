@@ -476,7 +476,7 @@ export const zh = {
     agentCreated: 'Agent 已创建: {{id}} ({{name}})',
     agentRemoved: 'Agent 已移除: {{id}}',
     defaultSet: '默认 Agent 已设置: {{id}}',
-    moduleInitialized: 'AgentTeam 模块已初始化',
+    moduleInitialized: 'agenteam 模块已初始化',
   },
   automation: {
     schedulerStarted: '自动化调度器已启动',

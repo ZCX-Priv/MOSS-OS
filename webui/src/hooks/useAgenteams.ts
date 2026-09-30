@@ -1,4 +1,4 @@
-// webui/src/hooks/useAgentTeams.ts
+// webui/src/hooks/useAgenteams.ts
 // 专家团数据 hook：团队列表 + 选中团队详情 + 消息流。
 // WS agenteam.team.changed 实时推送触发刷新 + running 团队轮询兜底。
 
@@ -6,17 +6,17 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api/http';
 import { wsClient } from '../api/ws';
 import type {
-  AgentTeam,
-  AgentTeamSummary,
+  Agenteam,
+  AgenteamSummary,
   TeamMessage,
 } from '../types/api';
 
 const POLL_INTERVAL_MS = 4000;
 
-export function useAgentTeams() {
-  const [teams, setTeams] = useState<AgentTeamSummary[]>([]);
+export function useAgenteams() {
+  const [teams, setTeams] = useState<AgenteamSummary[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [detail, setDetail] = useState<AgentTeam | null>(null);
+  const [detail, setDetail] = useState<Agenteam | null>(null);
   const [messages, setMessages] = useState<TeamMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const lastMessageTs = useRef<number>(0);
@@ -25,7 +25,7 @@ export function useAgentTeams() {
 
   const refreshList = useCallback(async () => {
     try {
-      const res = await api.listAgentTeams();
+      const res = await api.listAgenteams();
       setTeams(res.teams ?? []);
       return res.teams ?? [];
     } catch {
@@ -40,9 +40,9 @@ export function useAgentTeams() {
       return;
     }
     try {
-      const team = await api.getAgentTeam(teamId);
+      const team = await api.getAgenteam(teamId);
       setDetail(team);
-      const msgRes = await api.getAgentTeamMessages(teamId);
+      const msgRes = await api.getAgenteamMessages(teamId);
       setMessages(msgRes.messages ?? []);
       if (msgRes.messages?.length) {
         lastMessageTs.current = msgRes.messages[msgRes.messages.length - 1].ts;

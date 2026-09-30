@@ -1,8 +1,8 @@
 // src/modules/agenteam/index.ts
-// AgentTeam 模块入口：实现 AgentRegistry + TeamOrchestrator 编排服务。
+// agenteam 模块入口：实现 AgentRegistry + TeamOrchestrator 编排服务。
 // 注册 agenteam.registry 与 agenteam.orchestrator 服务。
 // 持久化：注册表 ~/.moss/agenteam.json（含 1 个默认 Agent + 4 个内置模板）；
-//        团队 ~/.moss/agent-teams/；团队模板 ~/.moss/agent-team-profiles.json。
+//        团队 ~/.moss/agenteam/；团队模板 ~/.moss/agenteam-profiles.json。
 
 import { t } from '../../core/i18n';
 import { existsSync, readFileSync, renameSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -14,7 +14,7 @@ import { TeamStore } from './store';
 import { TeamProfileStore } from './profiles';
 import { TeamOrchestrator } from './orchestrator';
 import { buildTemplateAgents } from './templates';
-import { registerAgentTeamTools } from './tools';
+import { registerAgentTools } from './tools';
 
 // ============================================================================
 // 类型定义（与前端 webui/src/types/api.ts 对齐）
@@ -245,12 +245,12 @@ class AgentRegistryImpl implements AgentRegistry {
 // Module 入口
 // ============================================================================
 
-class AgentTeamModule implements Module {
+class AgenteamModule implements Module {
   private orchestrator: TeamOrchestrator | null = null;
 
   async initialize(ctx: ModuleContext): Promise<void> {
     const registry = new AgentRegistryImpl(ctx.env, ctx.logger);
-    ctx.services.register(ServiceNames.AGENTTEAM_REGISTRY, registry, {
+    ctx.services.register(ServiceNames.AGENTEAM_REGISTRY, registry, {
       scope: 'agenteam',
     });
 
@@ -268,11 +268,11 @@ class AgentTeamModule implements Module {
         env: ctx.env,
         services: ctx.services,
       });
-      ctx.services.register(ServiceNames.AGENTTEAM_ORCHESTRATOR, this.orchestrator, {
+      ctx.services.register(ServiceNames.AGENTEAM_ORCHESTRATOR, this.orchestrator, {
         scope: 'agenteam',
       });
-      // captain 工具集注册（agent_teams_* / subagent_run）
-      registerAgentTeamTools(ctx.services, this.orchestrator, ctx.logger);
+      // 单一 agent 工具注册（mode=subagent|agenteam）
+      registerAgentTools(ctx.services, this.orchestrator, ctx.logger);
     } else {
       ctx.logger.warn('agenteam: agent engine unavailable, orchestrator disabled');
     }
@@ -289,4 +289,4 @@ class AgentTeamModule implements Module {
   }
 }
 
-export default (): Module => new AgentTeamModule();
+export default (): Module => new AgenteamModule();

@@ -20,10 +20,10 @@ import type {
   ProviderBalanceResult,
   AgentItem,
   AgentDetail,
-  AgentTeam,
-  AgentTeamSummary,
-  AgentTeamProfile,
-  CreateAgentTeamInput,
+  Agenteam,
+  AgenteamSummary,
+  AgenteamProfile,
+  CreateAgenteamInput,
   TeamMessage,
   SubagentRunOutput,
   SkillItem,
@@ -476,26 +476,26 @@ export const api = {
     request<{ default: string }>('PUT', '/api/agenteam/default', { id }),
 
   // ==========================================================================
-  // AgentTeam 编排（见 routes/agent-teams.ts）
+  // agenteam 编排（见 routes/agenteams.ts）
   // ==========================================================================
-  listAgentTeams: () => request<{ teams: AgentTeamSummary[] }>('GET', '/api/agent-teams'),
-  getAgentTeam: (id: string) => request<AgentTeam>('GET', `/api/agent-teams/${id}`),
-  getAgentTeamMessages: (id: string, since?: number) =>
+  listAgenteams: () => request<{ teams: AgenteamSummary[] }>('GET', '/api/agenteams'),
+  getAgenteam: (id: string) => request<Agenteam>('GET', `/api/agenteams/${id}`),
+  getAgenteamMessages: (id: string, since?: number) =>
     request<{ messages: TeamMessage[] }>(
       'GET',
-      `/api/agent-teams/${id}/messages${since !== undefined ? `?since=${since}` : ''}`,
+      `/api/agenteams/${id}/messages${since !== undefined ? `?since=${since}` : ''}`,
     ),
-  createAgentTeam: (data: CreateAgentTeamInput) => request<AgentTeam>('POST', '/api/agent-teams', data),
-  approveAgentTeam: (id: string) => request<AgentTeam>('POST', `/api/agent-teams/${id}/approve`),
-  discardAgentTeam: (id: string) => request<AgentTeam>('POST', `/api/agent-teams/${id}/discard`),
-  haltAgentTeam: (id: string) => request<AgentTeam>('POST', `/api/agent-teams/${id}/halt`),
-  resumeAgentTeam: (id: string) => request<AgentTeam>('POST', `/api/agent-teams/${id}/resume`),
-  deleteAgentTeam: (id: string) => request<{ deleted: boolean }>('DELETE', `/api/agent-teams/${id}`),
-  listAgentTeamProfiles: () => request<{ profiles: AgentTeamProfile[] }>('GET', '/api/agent-team-profiles'),
-  saveAgentTeamProfile: (data: AgentTeamProfile) =>
-    request<{ saved: boolean }>('POST', '/api/agent-team-profiles', data),
-  deleteAgentTeamProfile: (name: string) =>
-    request<{ deleted: boolean }>('DELETE', `/api/agent-team-profiles/${encodeURIComponent(name)}`),
+  createAgenteam: (data: CreateAgenteamInput) => request<Agenteam>('POST', '/api/agenteams', data),
+  approveAgenteam: (id: string) => request<Agenteam>('POST', `/api/agenteams/${id}/approve`),
+  discardAgenteam: (id: string) => request<Agenteam>('POST', `/api/agenteams/${id}/discard`),
+  haltAgenteam: (id: string) => request<Agenteam>('POST', `/api/agenteams/${id}/halt`),
+  resumeAgenteam: (id: string) => request<Agenteam>('POST', `/api/agenteams/${id}/resume`),
+  deleteAgenteam: (id: string) => request<{ deleted: boolean }>('DELETE', `/api/agenteams/${id}`),
+  listAgenteamProfiles: () => request<{ profiles: AgenteamProfile[] }>('GET', '/api/agenteam-profiles'),
+  saveAgenteamProfile: (data: AgenteamProfile) =>
+    request<{ saved: boolean }>('POST', '/api/agenteam-profiles', data),
+  deleteAgenteamProfile: (name: string) =>
+    request<{ deleted: boolean }>('DELETE', `/api/agenteam-profiles/${encodeURIComponent(name)}`),
   runSubagent: (data: { template: string; task: string; cwd: string; permissionMode?: 'ask' | 'auto' | 'skip' }) =>
     request<SubagentRunOutput>('POST', '/api/subagents/run', data),
 

@@ -1,9 +1,9 @@
 // src/modules/agenteam/orchestrator.ts
-// TeamOrchestrator：AgentTeam 编排服务（核心）。
+// TeamOrchestrator：agenteam 编排服务（核心）。
 // 职责：团队生命周期（创建/审批/暂停/恢复/删除）、成员任务创建、
 // DAG 调度派发（复用 AgentEngine.run + 持久成员会话）、质量门禁循环、
 // 事件广播（agenteam:team-changed / agenteam:member-event）。
-// 参考 Max/dsh-agent-teams-main 语义适配 MOSS 微内核。
+// 参考多智能体编排语义适配 MOSS 微内核。
 
 import type { EventBus, Environment, Logger } from '../../core/types';
 import { ServiceNames } from '../../core/types';
@@ -38,6 +38,9 @@ import { TERMINAL_TASK_STATUSES } from './types';
 
 /** 普通任务（work/implementation 等非质量门禁类）失败自动重试上限（对齐 dsh maxRepairAttempts 默认） */
 const MAX_TASK_RETRY_ATTEMPTS = 2;
+
+/** subagent 隐藏分组固定 id（dir=subagent，平坦存放每次 subagent 会话） */
+const SUBAGENT_GROUP_ID = 'subagent';
 
 /** 创建团队输入 */
 export interface CreateTeamInput {
@@ -215,12 +218,9 @@ export class TeamOrchestrator {
       if (!validation.ok) throw new Error(validation.reason ?? 'invalid task');
     }
 
-    // UI 建队（无 captain 会话）：创建队长专属持久会话（agent_captain 模板），
-    // 用户可在侧边栏点进队长会话查看/干预（对齐 dsh 的可对话 captain）。
+    // UI 建队（无 captain 会话）：仅标记为自动队长；队长专属持久会话延迟到首次运行
+    // （审批通过 / 首次派发 / 最终汇报）时创建，保证 agenteam 目录"跑过才建"。
     if (!team.captainSessionId) {
-      const group = this.ensureTeamGroup();
-      const captainTask = this.engine.createTask(`${team.name} / Captain`, group?.id);
-      team.captainSessionId = captainTask.id;
       team.captainIsAuto = true;
     }
 
@@ -229,7 +229,7 @@ export class TeamOrchestrator {
     if (team.phase === 'running') {
       void this.kick(team.id);
     }
-    this.logger.info('agent-teams: team created', { teamId: id, name: team.name });
+    this.logger.info('agenteam: team created', { teamId: id, name: team.name });
     return team;
   }
 
@@ -246,7 +246,7 @@ export class TeamOrchestrator {
     this.enqueueCaptainRun(
       team,
       [
-        `[AgentTeams] 你领导的团队「${team.name}」计划已获用户批准，开始执行。`,
+        `[Agenteam] 你领导的团队「${team.name}」计划已获用户批准，开始执行。`,
         team.description ? `团队目标: ${team.description}` : '',
         `成员: ${team.members.filter((m) => m.status !== 'removed').map((m) => `${m.name}(${m.role ?? m.agentId ?? 'custom'})`).join(', ')}`,
         `任务: ${team.tasks.length} 个（${team.tasks.map((t) => t.id).join(', ')}）`,
@@ -331,8 +331,18 @@ export class TeamOrchestrator {
     this.summarizing.delete(teamId);
     const ok = this.store.delete(teamId);
     if (ok) {
+      // 清理团队专属隐藏分组：成员/自动队长会话文件与 tasks/agenteam/<teamId>/ 一并删除。
+      // 未跑过的团队无分组（deleteTaskGroup 返回 false，无副作用）；工具建队的 captain 属用户会话，不在该组内
+      try {
+        this.engine.deleteTaskGroup(teamId, { deleteTasks: true });
+      } catch (err) {
+        this.logger.warn('agenteam: delete task group failed', {
+          teamId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
       this.notifyChanged(teamId);
-      this.logger.info('agent-teams: team deleted', { teamId });
+      this.logger.info('agenteam: team deleted', { teamId });
     }
     return ok;
   }
@@ -389,7 +399,7 @@ export class TeamOrchestrator {
       // 检查团队是否整体完成
       this.checkTeamCompletion(teamId);
     } catch (err) {
-      this.logger.error('agent-teams: kick failed', {
+      this.logger.error('agenteam: kick failed', {
         teamId,
         error: err instanceof Error ? err.message : String(err),
       });
@@ -440,7 +450,7 @@ export class TeamOrchestrator {
           .filter(Boolean)
           .join('\n');
 
-    this.logger.info('agent-teams: dispatch task', {
+    this.logger.info('agenteam: dispatch task', {
       teamId: team.id,
       member: member.name,
       taskId: task.id,
@@ -473,7 +483,7 @@ export class TeamOrchestrator {
         const freshMember = fresh.members.find((m) => m.name === member.name);
         if (!freshTask || !freshMember) return;
 
-        // 成员已在 run 中通过 agent_teams_update_task 自我报告（任务已终态且产出已写）：
+        // 成员已在 run 中通过 agent(mode=agenteam, action=update_task) 自我报告（任务已终态且产出已写）：
         // 只重置成员状态并推进调度，不重复处理/重复报告
         if (TERMINAL_TASK_STATUSES.includes(freshTask.status) && freshTask.output !== undefined) {
           if (freshMember.status === 'working') {
@@ -502,7 +512,7 @@ export class TeamOrchestrator {
             freshTask.status = 'pending';
             freshTask.updatedAt = completeTime;
             reportStatus = 'pending';
-            const gateMsg = `质量门禁未通过：${evaluation.reason}。请继续完善（可在完成时调用 agent_teams_update_task 补充 verdict/acceptanceResults）。`;
+            const gateMsg = `质量门禁未通过：${evaluation.reason}。请继续完善（可在完成时调用 agent(mode=agenteam, action=update_task) 补充 verdict/acceptanceResults）。`;
             this.appendMessage(fresh, {
               from: 'captain',
               to: member.name,
@@ -551,12 +561,12 @@ export class TeamOrchestrator {
         this.enqueueCaptainRun(
           fresh,
           [
-            `[AgentTeams] 成员 ${member.name} 报告：`,
+            `[Agenteam] 成员 ${member.name} 报告：`,
             `任务 ${task.id}「${task.subject}」${reportStatus === 'completed' ? '已完成' : reportStatus === 'pending' ? '被打回重做' : '失败'}。产出：`,
             truncate(outputText, 800),
             '',
             `当前团队进度：${completedCount}/${fresh.tasks.length} 完成，${failedCount} 失败。`,
-            '作为队长请决策下一步：无需行动则简短确认；需要时可调用 agent_teams_* 工具调整任务/重派/发消息。',
+            '作为队长请决策下一步：无需行动则简短确认；需要时可调用 agent（mode=agenteam）调整任务/重派/发消息。',
           ].join('\n'),
         );
 
@@ -581,7 +591,7 @@ export class TeamOrchestrator {
               this.enqueueCaptainRun(
                 fresh,
                 [
-                  `[AgentTeams] 成员 ${member.name} 执行异常：`,
+                  `[Agenteam] 成员 ${member.name} 执行异常：`,
                   `任务 ${task.id}「${task.subject}」run 抛错：${err instanceof Error ? err.message : String(err)}`,
                   '作为队长请决策（重派/换人/调整方案）。',
                 ].join('\n'),
@@ -628,16 +638,11 @@ export class TeamOrchestrator {
     }
   }
 
-  /** 成员侧边栏任务幂等创建（分组=团队名；sessionId=taskId） */
+  /** 成员会话任务幂等创建（团队专属隐藏分组；sessionId=taskId；不出现在侧边栏） */
   private ensureMemberTask(team: TeamState, member: TeamState['members'][number]): void {
     if (member.sessionId && member.taskId) return;
-    const groupName = `Agent Teams · ${team.name}`;
-    const groups = this.engine.listTaskGroups();
-    let group = groups.find((g) => g.name === groupName);
-    if (!group) {
-      group = this.engine.createTaskGroup(groupName, 'manual');
-    }
-    const task = this.engine.createTask(`${team.name} / ${member.name}`, group?.id);
+    const group = this.ensureTeamGroup(team);
+    const task = this.engine.createTask(`${team.name} / ${member.name}`, group.id);
     member.sessionId = task.id;
     member.taskId = task.id;
     const fresh = this.store.get(team.id);
@@ -663,8 +668,8 @@ export class TeamOrchestrator {
     const failed = team.tasks.filter((t) => t.status === 'failed');
     const cancelled = team.tasks.filter((t) => t.status === 'cancelled');
 
-    // 无队长会话（极端兜底）：自动拼 summary 并置终态
-    if (!team.captainSessionId) {
+    // 无可用队长（既无既有会话又非自动队长，工具建队异常）→ 自动拼 summary 并置终态
+    if (!team.captainSessionId && !team.captainIsAuto) {
       this.finalizeTeam(team, completed, failed, cancelled, this.buildFallbackSummary(team, completed));
       return;
     }
@@ -673,8 +678,8 @@ export class TeamOrchestrator {
     this.enqueueCaptainRun(
       team,
       [
-        `[AgentTeams] 团队「${team.name}」所有任务已到达终态（${completed.length} 完成 / ${failed.length} 失败 / ${cancelled.length} 取消）。`,
-        '请调用 agent_teams_status 查看全部任务与产出，然后输出面向用户的最终总结报告：',
+        `[Agenteam] 团队「${team.name}」所有任务已到达终态（${completed.length} 完成 / ${failed.length} 失败 / ${cancelled.length} 取消）。`,
+        '请调用 agent(mode=agenteam, action=status) 查看全部任务与产出，然后输出面向用户的最终总结报告：',
         '- 各任务成果摘要（引用关键产出）',
         '- 失败任务的失败原因与影响',
         '- 后续建议（如有）',
@@ -724,20 +729,15 @@ export class TeamOrchestrator {
   // 临时 Subagent
   // ========================================================================
 
-  /** 一次性 subagent：模板 agentId + 专属 session，同步返回结果 */
+  /** 一次性 subagent：模板 agentId + 专属 session，同步返回结果（落盘 tasks/subagent/） */
   async runSubagent(input: SubagentRunInput): Promise<SubagentRunOutput> {
     if (!input.template?.trim()) throw new Error('template required');
     if (!input.task?.trim()) throw new Error('task required');
 
-    const groupName = 'Subagents';
-    const groups = this.engine.listTaskGroups();
-    let group = groups.find((g) => g.name === groupName);
-    if (!group) {
-      group = this.engine.createTaskGroup(groupName, 'manual');
-    }
-    const task = this.engine.createTask(`Subagent · ${input.template}`, group?.id);
+    const group = this.ensureSubagentGroup();
+    const task = this.engine.createTask(`Subagent · ${input.template}`, group.id);
 
-    this.logger.info('agent-teams: subagent run', {
+    this.logger.info('agenteam: subagent run', {
       template: input.template,
       taskId: task.id,
     });
@@ -920,10 +920,10 @@ export class TeamOrchestrator {
         this.enqueueCaptainRun(
           team,
           [
-            `[AgentTeams] ${from} 消息：`,
+            `[Agenteam] ${from} 消息：`,
             content,
             '',
-            '作为队长请决策下一步：无需行动则简短确认；需要时用 agent_teams_* 工具行动。',
+            '作为队长请决策下一步：无需行动则简短确认；需要时用 agent（mode=agenteam）行动。',
           ].join('\n'),
         );
       }
@@ -950,12 +950,46 @@ export class TeamOrchestrator {
   // Captain 机制（dsh steer 语义的 MOSS 等价物：串行决策队列）
   // ========================================================================
 
-  /** 获取/创建「Agent Teams」任务分组 */
-  private ensureTeamGroup(): { id: string } | undefined {
+  /**
+   * 获取/创建团队专属隐藏分组（id=teamId，dir=agenteam/<teamId>，hidden）。
+   * 成员与自动队长会话均落于 tasks/agenteam/<teamId>/；分组不出现在侧边栏。
+   */
+  private ensureTeamGroup(team: TeamState): { id: string } {
     const groups = this.engine.listTaskGroups();
-    const existing = groups.find((g) => g.name === 'Agent Teams');
+    const existing = groups.find((g) => g.id === team.id);
     if (existing) return existing;
-    return this.engine.createTaskGroup('Agent Teams', 'manual');
+    return this.engine.createTaskGroup(`Agenteam · ${team.name}`, 'manual', {
+      id: team.id,
+      dir: `agenteam/${team.id}`,
+      hidden: true,
+    });
+  }
+
+  /** 获取/创建 subagent 隐藏分组（id='subagent'，dir=subagent，hidden；平坦存放每次会话） */
+  private ensureSubagentGroup(): { id: string } {
+    const groups = this.engine.listTaskGroups();
+    const existing = groups.find((g) => g.id === SUBAGENT_GROUP_ID);
+    if (existing) return existing;
+    return this.engine.createTaskGroup('Subagent', 'manual', {
+      id: SUBAGENT_GROUP_ID,
+      dir: 'subagent',
+      hidden: true,
+    });
+  }
+
+  /**
+   * 自动队长持久会话（UI 建队）：延迟创建（首次运行/审批时才建），保证 agenteam 目录"跑过才建"。
+   * 工具建队（captainIsAuto=false）时 captain = 用户自身会话，不新建，返回 null。
+   */
+  private ensureCaptainTask(team: TeamState): string | null {
+    if (team.captainSessionId) return team.captainSessionId;
+    if (!team.captainIsAuto) return null;
+    const group = this.ensureTeamGroup(team);
+    const task = this.engine.createTask(`${team.name} / Captain`, group.id);
+    team.captainSessionId = task.id;
+    this.store.save(team);
+    this.notifyChanged(team.id);
+    return task.id;
   }
 
   /**
@@ -963,13 +997,14 @@ export class TeamOrchestrator {
    * UI 建队 → agent_captain 模板；工具建队 → 用户会话自身（不传 agentId）。
    */
   private enqueueCaptainRun(team: TeamState, content: string, opts?: { isFinalReport?: boolean }): void {
-    if (!team.captainSessionId) return;
+    // 自动队长（UI 建队）：此处为"首次运行"，按需创建队长持久会话（跑过才建）
+    if (!this.ensureCaptainTask(team)) return;
     const teamId = team.id;
     const previous = this.captainRuns.get(teamId) ?? Promise.resolve();
     const next = previous
       .then(() => this.runCaptainTurn(teamId, content, opts?.isFinalReport === true))
       .catch((err: unknown) => {
-        this.logger.warn('agent-teams: captain run failed', {
+        this.logger.warn('agenteam: captain run failed', {
           teamId,
           error: err instanceof Error ? err.message : String(err),
         });
@@ -983,17 +1018,19 @@ export class TeamOrchestrator {
   /** 执行一次队长决策 turn（引擎调用 + 事件广播 + 最终汇报落盘） */
   private async runCaptainTurn(teamId: string, content: string, isFinalReport: boolean): Promise<void> {
     const team = this.store.get(teamId);
-    if (!team || !team.captainSessionId) return;
+    if (!team) return;
     // 暂停/未批准/已删除的团队不打扰队长
     if (team.phase === 'halted' || team.phase === 'staged') return;
+    const captainSessionId = this.ensureCaptainTask(team);
+    if (!captainSessionId) return;
 
     const controller = new AbortController();
-    this.activeCaptainRuns.set(team.captainSessionId, controller);
-    this.registerExternalRun(team.captainSessionId, controller);
-    this.logger.info('agent-teams: captain turn', { teamId, isFinalReport });
+    this.activeCaptainRuns.set(captainSessionId, controller);
+    this.registerExternalRun(captainSessionId, controller);
+    this.logger.info('agenteam: captain turn', { teamId, isFinalReport });
     try {
       const result = await this.engine.run({
-        sessionId: team.captainSessionId,
+        sessionId: captainSessionId,
         // UI 建队的队长使用 agent_captain 模板；工具建队的队长=用户会话（用户自身配置）
         agentId: team.captainIsAuto ? 'agent_captain' : undefined,
         userMessage: content,
@@ -1037,14 +1074,14 @@ export class TeamOrchestrator {
         }
       }
       if (!controller.signal.aborted) {
-        this.logger.warn('agent-teams: captain turn error', {
+        this.logger.warn('agenteam: captain turn error', {
           teamId,
           error: err instanceof Error ? err.message : String(err),
         });
       }
     } finally {
-      this.activeCaptainRuns.delete(team.captainSessionId);
-      this.unregisterExternalRun(team.captainSessionId, controller);
+      this.activeCaptainRuns.delete(captainSessionId);
+      this.unregisterExternalRun(captainSessionId, controller);
     }
   }
 
@@ -1064,16 +1101,16 @@ export class TeamOrchestrator {
     this.notifyChanged(team.id);
 
     const content = [
-      '[AgentTeams] 你收到团队消息：',
+      '[Agenteam] 你收到团队消息：',
       ...messages.map((m) => `- ${m}`),
       '',
-      '请阅读并按消息内容行事（若需要回复，可用 agent_teams_send_message，to=captain 或队友名；若无实际行动需要，简短确认即可）。',
+      '请阅读并按消息内容行事（若需要回复，可用 agent(mode=agenteam, action=send_message)，to=captain 或队友名；若无实际行动需要，简短确认即可）。',
     ].join('\n');
 
     const controller = new AbortController();
     this.activeMemberRuns.set(member.sessionId, controller);
     this.registerExternalRun(member.sessionId, controller);
-    this.logger.info('agent-teams: deliver messages to member', {
+    this.logger.info('agenteam: deliver messages to member', {
       teamId: team.id,
       member: member.name,
       count: messages.length,
@@ -1109,7 +1146,7 @@ export class TeamOrchestrator {
       })
       .catch((err: unknown) => {
         if (!controller.signal.aborted) {
-          this.logger.warn('agent-teams: member message run failed', {
+          this.logger.warn('agenteam: member message run failed', {
             teamId: team.id,
             member: member.name,
             error: err instanceof Error ? err.message : String(err),

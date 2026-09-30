@@ -1,5 +1,5 @@
 // src/modules/agenteam/store.ts
-// 团队持久化存储：~/.moss/agent-teams/<teamId>/team.json + messages.jsonl
+// 团队持久化存储：~/.moss/agenteam/<teamId>/team.json + messages.jsonl
 // 写入原子化（临时文件 + rename），消息流追加写。
 
 import {
@@ -30,12 +30,23 @@ export class TeamStore {
   private readonly logger: Logger;
 
   constructor(dataDir: string, logger: Logger) {
-    this.rootDir = join(dataDir, 'agent-teams');
+    this.rootDir = join(dataDir, 'agenteam');
     this.logger = logger;
+    // 存量迁移：旧 ~/.moss/agent-teams/ → ~/.moss/agenteam/（幂等；失败不阻断启动，下次重试）
+    const legacyDir = join(dataDir, 'agent-teams');
+    try {
+      if (existsSync(legacyDir) && !existsSync(this.rootDir)) {
+        renameSync(legacyDir, this.rootDir);
+      }
+    } catch (err) {
+      logger.warn('agenteam: store dir migrate failed', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
     try {
       mkdirSync(this.rootDir, { recursive: true });
     } catch (err) {
-      this.logger.error('agent-teams: store dir create failed', {
+      this.logger.error('agenteam: store dir create failed', {
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -63,7 +74,7 @@ export class TeamStore {
         if (team) teams.push(team);
       }
     } catch (err) {
-      this.logger.warn('agent-teams: list failed', {
+      this.logger.warn('agenteam: list failed', {
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -115,7 +126,7 @@ export class TeamStore {
       writeFileSync(tmp, JSON.stringify(team, null, 2), 'utf8');
       renameSync(tmp, this.teamFile(team.id));
     } catch (err) {
-      this.logger.error('agent-teams: save failed', {
+      this.logger.error('agenteam: save failed', {
         teamId: team.id,
         error: err instanceof Error ? err.message : String(err),
       });
@@ -129,7 +140,7 @@ export class TeamStore {
       rmSync(dir, { recursive: true, force: true });
       return true;
     } catch (err) {
-      this.logger.error('agent-teams: delete failed', {
+      this.logger.error('agenteam: delete failed', {
         teamId,
         error: err instanceof Error ? err.message : String(err),
       });
@@ -144,7 +155,7 @@ export class TeamStore {
       const file = this.messagesFile(teamId);
       writeFileSync(file, JSON.stringify(message) + '\n', { encoding: 'utf8', flag: 'a' });
     } catch (err) {
-      this.logger.warn('agent-teams: appendMessage failed', {
+      this.logger.warn('agenteam: appendMessage failed', {
         teamId,
         error: err instanceof Error ? err.message : String(err),
       });

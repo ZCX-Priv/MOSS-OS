@@ -1,18 +1,18 @@
-// webui/src/components/agenteam/AgentTeamInlineCard.tsx
+// webui/src/components/agenteam/AgenteamInlineCard.tsx
 // 对话流内专家团卡片（参考 Max/TeamUI/专家团.png 设计）：
-// 容器卡 = 头部（GitFork 图标 + 团队名 + 任务数 + 进度点阵 + 阶段徽章）
+// 容器卡 = 头部（机器人图标 Bot + 团队名 + 任务数 + 进度点阵 + 阶段徽章）
 //        + 任务行（成员头像 + 成员名 + 序号 + 树形任务描述 + 状态图标）。
 // 数据：工具参数静态计划立即渲染；result 解析出 teamId 后经 useTeamLive 实时刷新。
 
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { CircleCheck, CircleDashed, CircleX, GitFork, Loader2, TriangleAlert } from 'lucide-react';
+import { Bot, CircleCheck, CircleDashed, CircleX, Loader2, TriangleAlert } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { HumationAvatar } from './HumationAvatar';
 import { useTeamLive } from '../../hooks/useTeamLive';
 import type { TeamPhase, TeamTaskStatus } from '../../types/api';
 
-/** 从 agent_teams_create 工具参数解析出的静态计划 */
+/** 从 agent（mode=agenteam, action=create）工具参数解析出的静态计划 */
 export interface InlineTeamPlan {
   name: string;
   members: Array<{ name: string; role?: string; agentId?: string }>;
@@ -27,7 +27,7 @@ interface InlineTaskRow {
   status: TeamTaskStatus;
 }
 
-interface AgentTeamInlineCardProps {
+interface AgenteamInlineCardProps {
   plan: InlineTeamPlan | null;
   /** 从工具结果解析的团队 id（非空时拉取实时状态） */
   teamId: string | null;
@@ -69,10 +69,10 @@ function TaskStatusIcon({ status }: { status: TeamTaskStatus }) {
   }
 }
 
-export const AgentTeamInlineCard = memo(function AgentTeamInlineCard({
+export const AgenteamInlineCard = memo(function AgenteamInlineCard({
   plan,
   teamId,
-}: AgentTeamInlineCardProps) {
+}: AgenteamInlineCardProps) {
   const { t } = useTranslation();
   const live = useTeamLive(teamId);
 
@@ -100,7 +100,7 @@ export const AgentTeamInlineCard = memo(function AgentTeamInlineCard({
     <div className="flex flex-col gap-2 rounded-xl border border-border bg-card p-3 shadow-sm">
       {/* 头部：图标 + 团队名 + 任务数 + 进度点阵 + 阶段徽章 */}
       <div className="flex min-w-0 items-center gap-1.5">
-        <GitFork className="size-4 shrink-0 text-muted-foreground" />
+        <Bot className="size-4 shrink-0 text-muted-foreground" />
         <span className="min-w-0 truncate text-sm font-medium text-foreground" title={name}>
           {name || t('agenteam.title')}
         </span>

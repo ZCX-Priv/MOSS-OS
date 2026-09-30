@@ -777,7 +777,7 @@ export interface AgentDetail extends AgentItem {
 }
 
 // ============================================================================
-// AgentTeam 编排（GET/POST /api/agent-teams）
+// agenteam 编排（GET/POST /api/agenteams）
 // ============================================================================
 
 /** 团队任务状态 */
@@ -865,7 +865,7 @@ export interface TeamMessage {
 export type TeamPhase = 'staged' | 'running' | 'completed' | 'failed' | 'halted';
 
 /** 团队详情 */
-export interface AgentTeam {
+export interface Agenteam {
   id: string;
   name: string;
   description?: string;
@@ -894,7 +894,7 @@ export interface AgentTeam {
 }
 
 /** 团队列表摘要 */
-export interface AgentTeamSummary {
+export interface AgenteamSummary {
   id: string;
   name: string;
   description?: string;
@@ -908,7 +908,7 @@ export interface AgentTeamSummary {
 }
 
 /** 团队模板 */
-export interface AgentTeamProfile {
+export interface AgenteamProfile {
   name: string;
   description?: string;
   protocol?: string;
@@ -926,7 +926,7 @@ export interface AgentTeamProfile {
 }
 
 /** 创建团队请求体 */
-export interface CreateAgentTeamInput {
+export interface CreateAgenteamInput {
   name: string;
   description?: string;
   cwd: string;

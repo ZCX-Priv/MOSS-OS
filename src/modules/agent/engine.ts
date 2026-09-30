@@ -119,11 +119,11 @@ export class AgentEngineImpl implements AgentEngine {
     this.eventBus = deps.eventBus;
     this.logger = deps.logger;
     this.env = deps.env;
-    // TaskStore 先建：SessionStore 路径解析依赖总管索引（task↔session 归属）。
-    // 不注入时 resolveGroupId 恒 null，非 default 组新建的 session 文件会错落到 default/
+    // TaskStore 先建：SessionStore 路径解析依赖总管索引（task↔session 归属目录）。
+    // 不注入时 resolveSessionDir 恒 null，非 default 组的 session 文件指向无法解析
     this.tasks = new TaskStore(deps.env, deps.logger);
     this.sessions = new SessionStore(deps.env, deps.logger, {
-      resolveGroupId: (sid) => this.tasks.getGroupIdOf(sid),
+      resolveSessionDir: (sid) => this.tasks.getDirOf(sid),
     });
 
     // 订阅 filesys 变更事件总线：file-created/edited/deleted/moved/shell-changed 统一转 WS，
@@ -967,8 +967,12 @@ export class AgentEngineImpl implements AgentEngine {
     return this.tasks.listGroups();
   }
 
-  createTaskGroup(name: string, source?: 'folder' | 'manual'): TaskGroup {
-    return this.tasks.createGroup(name, source);
+  createTaskGroup(
+    name: string,
+    source?: 'folder' | 'manual',
+    opts?: { id?: string; dir?: string; hidden?: boolean },
+  ): TaskGroup {
+    return this.tasks.createGroup(name, source, opts);
   }
 
   updateTaskGroup(id: string, patch: { name?: string }): TaskGroup | null {

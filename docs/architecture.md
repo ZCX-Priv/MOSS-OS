@@ -32,7 +32,7 @@ MOSS 是一个基于 **微内核 + 模组化架构** 的 AI Agent 应用，运�
 │     路由)      │                │ /Command/Spec) │                │
 └────────────────┴────────────────┴────────────────┴────────────────┘
 ┌────────────────┬────────────────┬────────────────┬────────────────┐
-│ AgentTeam 模组 │  Update 模组   │ Filesys 模组   │ Safety 模组    │
+│ agenteam 模组  │ Update 模组    │ Filesys 模组   │ Safety 模组    │
 │ (Agent CRUD)   │  (版本检查)    │   (虚拟FS)     │  (权限决策)    │
 └────────────────┴────────────────┴────────────────┴────────────────┘
 ┌────────────────┬────────────────┬────────────────┬────────────────┐
@@ -147,7 +147,7 @@ MOSS/
 | `mcp.manager` | MCP 模组 | `MCPManager`（listServers/listTools/callTool/connect/disconnect）|
 | `agent.engine` | Agent 模组 | `AgentEngine`（run/resolveAsk）|
 | `server.instance` | Server 模组 | `ServerInstance`（addRoute/broadcastWS/sendToSession/onWSMessage）|
-| `agenteam.registry` | AgentTeam 模组 | `AgentRegistry`（list/get/create/update/delete/setDefault）|
+| `agenteam.registry` | agenteam 模组 | `AgentRegistry`（list/get/create/update/delete/setDefault）|
 | `automation.service` | Automation 模组 | `AutomationService`（list/create/update/delete/trigger/pause/resume/history）|
 | `file.history` | File-history 模组 | `FileHistoryService`（Track Edit + Snapshot + undo）|
 | `file.sys` | Filesys 模组 | `FilesysService`（统一文件 IO / 读缓存 / roots / 变更事件）|

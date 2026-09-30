@@ -6,10 +6,10 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api/http';
 import { wsClient } from '../api/ws';
-import type { AgentTeam } from '../types/api';
+import type { Agenteam } from '../types/api';
 
-export function useTeamLive(teamId: string | null): AgentTeam | null {
-  const [team, setTeam] = useState<AgentTeam | null>(null);
+export function useTeamLive(teamId: string | null): Agenteam | null {
+  const [team, setTeam] = useState<Agenteam | null>(null);
 
   useEffect(() => {
     if (!teamId) return;
@@ -17,7 +17,7 @@ export function useTeamLive(teamId: string | null): AgentTeam | null {
 
     const load = () => {
       api
-        .getAgentTeam(teamId)
+        .getAgenteam(teamId)
         .then((t) => {
           if (alive) setTeam(t);
         })

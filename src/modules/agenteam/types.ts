@@ -1,6 +1,6 @@
 // src/modules/agenteam/types.ts
-// AgentTeam 编排类型定义（参考 Max/dsh-agent-teams-main/src/types.ts 适配 MOSS）。
-// 团队持久化于 ~/.moss/agent-teams/<teamId>/，成员执行复用 AgentEngine 的
+// agenteam 编排类型定义（参考多智能体编排语义适配 MOSS）。
+// 团队持久化于 ~/.moss/agenteam/<teamId>/，成员执行复用 AgentEngine 的
 // agentId + 持久 session 机制。
 
 import type { PermissionMode } from '../safety/types';
@@ -298,7 +298,7 @@ export interface TeamProfileTask {
   assignee?: string;
 }
 
-/** 团队模板配置（持久化于 ~/.moss/agent-team-profiles.json） */
+/** 团队模板配置（持久化于 ~/.moss/agenteam-profiles.json） */
 export interface TeamProfileConfig {
   name: string;
   description?: string;

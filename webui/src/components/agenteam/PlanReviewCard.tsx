@@ -9,10 +9,10 @@ import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { HumationAvatar } from './HumationAvatar';
-import type { AgentTeam } from '../../types/api';
+import type { Agenteam } from '../../types/api';
 
 interface PlanReviewCardProps {
-  team: AgentTeam;
+  team: Agenteam;
   onApprove: () => Promise<void>;
   onDiscard: () => Promise<void>;
 }

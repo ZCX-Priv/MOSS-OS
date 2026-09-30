@@ -1,4 +1,4 @@
-// webui/src/components/agenteam/AgentTeamPanel.tsx
+// webui/src/components/agenteam/AgenteamPanel.tsx
 // 专家团标签页主面板：全局团队列表 + 选中团队详情
 //（计划审批卡片 / 成员卡片 / 任务列表 / 消息流 / 汇总 / 生命周期操作）。
 
@@ -31,7 +31,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { api } from '../../api/http';
-import { useAgentTeams } from '../../hooks/useAgentTeams';
+import { useAgenteams } from '../../hooks/useAgenteams';
 import { cn } from '@/lib/utils';
 import { HumationAvatar } from './HumationAvatar';
 import { PlanReviewCard } from './PlanReviewCard';
@@ -49,10 +49,10 @@ const PHASE_STYLE: Record<TeamPhase, string> = {
   halted: 'border-muted text-muted-foreground',
 };
 
-export function AgentTeamPanel() {
+export function AgenteamPanel() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const { teams, selectedId, detail, messages, select, refreshList, refreshDetail } = useAgentTeams();
+  const { teams, selectedId, detail, messages, select, refreshList, refreshDetail } = useAgenteams();
   const [createOpen, setCreateOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [actionBusy, setActionBusy] = useState(false);
@@ -74,29 +74,26 @@ export function AgentTeamPanel() {
   );
 
   const handleApprove = () => act(async () => {
-    if (selectedId) await api.approveAgentTeam(selectedId);
+    if (selectedId) await api.approveAgenteam(selectedId);
   });
   const handleDiscard = () => act(async () => {
-    if (selectedId) await api.discardAgentTeam(selectedId);
+    if (selectedId) await api.discardAgenteam(selectedId);
   });
   const handleHalt = () => act(async () => {
-    if (selectedId) await api.haltAgentTeam(selectedId);
+    if (selectedId) await api.haltAgenteam(selectedId);
   });
   const handleResume = () => act(async () => {
-    if (selectedId) await api.resumeAgentTeam(selectedId);
+    if (selectedId) await api.resumeAgenteam(selectedId);
   });
   const handleDelete = () =>
     act(async () => {
       if (!deleteTarget) return;
-      await api.deleteAgentTeam(deleteTarget);
+      await api.deleteAgenteam(deleteTarget);
       if (deleteTarget === selectedId) select(null);
       setDeleteTarget(null);
     });
 
   const activeMembers = detail?.members.filter((m) => m.status !== 'removed') ?? [];
-  const workingMemberNames = new Set(
-    activeMembers.filter((m) => m.status === 'working').map((m) => m.name),
-  );
 
   return (
     <div className="flex h-full min-h-0 flex-col">

@@ -476,7 +476,7 @@ export const en = {
     agentCreated: 'Agent created: {{id}} ({{name}})',
     agentRemoved: 'Agent removed: {{id}}',
     defaultSet: 'Default agent set: {{id}}',
-    moduleInitialized: 'AgentTeam module initialized',
+    moduleInitialized: 'agenteam module initialized',
   },
   automation: {
     schedulerStarted: 'Automation scheduler started',

@@ -1,6 +1,6 @@
 // webui/src/components/agenteam/CreateTeamDialog.tsx
 // 创建团队对话框：名称/目标 + 成员选择（注册表 agent，含内置模板）+
-// 权限模式 + 自动执行开关。提交 POST /api/agent-teams。
+// 权限模式 + 自动执行开关。提交 POST /api/agenteams。
 
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -29,7 +29,7 @@ import {
 import { api } from '../../api/http';
 import { useStore } from '../../store';
 import { HumationAvatar } from './HumationAvatar';
-import type { AgentItem, AgentTeamProfile, CreateAgentTeamInput } from '../../types/api';
+import type { AgentItem, AgenteamProfile, CreateAgenteamInput } from '../../types/api';
 
 interface CreateTeamDialogProps {
   open: boolean;
@@ -38,7 +38,7 @@ interface CreateTeamDialogProps {
 }
 
 /** 预置任务模板（按 explorer→planner→coder→reviewer 流水线） */
-const DEFAULT_TASKS: CreateAgentTeamInput['tasks'] = [
+const DEFAULT_TASKS: CreateAgenteamInput['tasks'] = [
   { subject: '探索代码库结构与相关模块', kind: 'work', dependencies: [], assignee: 'explorer' },
   { subject: '梳理需求与实现方案', kind: 'requirements', dependencies: ['t1'], assignee: 'planner' },
   { subject: '按方案实现改动', kind: 'implementation', dependencies: ['t2'], assignee: 'coder' },
@@ -49,13 +49,13 @@ export function CreateTeamDialog({ open, onOpenChange, onCreated }: CreateTeamDi
   const { t } = useTranslation();
   const workingDirectory = useStore((s) => s.workingDirectory);
   const [agents, setAgents] = useState<AgentItem[]>([]);
-  const [profiles, setProfiles] = useState<AgentTeamProfile[]>([]);
+  const [profiles, setProfiles] = useState<AgenteamProfile[]>([]);
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [permissionMode, setPermissionMode] = useState<'ask' | 'auto' | 'skip'>('auto');
   const [autoStart, setAutoStart] = useState(false);
   const [members, setMembers] = useState<Array<{ name: string; role?: string; agentId?: string; inlinePrompt?: string }>>([]);
-  const [tasks, setTasks] = useState<CreateAgentTeamInput['tasks']>([]);
+  const [tasks, setTasks] = useState<CreateAgenteamInput['tasks']>([]);
   const [submitting, setSubmitting] = useState(false);
 
   // 加载 agent 注册表与团队模板
@@ -65,7 +65,7 @@ export function CreateTeamDialog({ open, onOpenChange, onCreated }: CreateTeamDi
       try {
         const [agentsRes, profilesRes] = await Promise.all([
           api.listAgents(),
-          api.listAgentTeamProfiles(),
+          api.listAgenteamProfiles(),
         ]);
         setAgents(agentsRes.agents ?? []);
         setProfiles(profilesRes.profiles ?? []);
@@ -91,7 +91,7 @@ export function CreateTeamDialog({ open, onOpenChange, onCreated }: CreateTeamDi
     setAutoStart(false);
   }, [open]);
 
-  const applyProfile = useCallback((profile: AgentTeamProfile) => {
+  const applyProfile = useCallback((profile: AgenteamProfile) => {
     setMembers(
       profile.members.map((m) => ({
         name: m.name,
@@ -139,7 +139,7 @@ export function CreateTeamDialog({ open, onOpenChange, onCreated }: CreateTeamDi
     }
     setSubmitting(true);
     try {
-      const team = await api.createAgentTeam({
+      const team = await api.createAgenteam({
         name: trimmedName,
         description: description.trim() || undefined,
         cwd: workingDirectory,

@@ -26,7 +26,7 @@ interface SubagentInlineCardProps {
   isError?: boolean;
 }
 
-/** subagent_run 结果文本固定前缀（tools.ts 拼装），剥离后为最终报告正文 */
+/** agent(mode=subagent) 结果文本固定前缀（tools.ts 拼装），剥离后为最终报告正文 */
 const SUBAGENT_PREFIX = /^Subagent finished \(finishReason=[^,]+, session=[^)]+\):\n*/;
 
 export const SubagentInlineCard = memo(function SubagentInlineCard({
