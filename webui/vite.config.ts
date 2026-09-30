@@ -44,8 +44,9 @@ export default defineConfig({
       workbox: {
         globPatterns: ['**/*.{js,css,png,svg,ico,woff2}'],
         navigateFallbackDenylist: [/^\/api\//, /^\/ws/],
-        // 主 chunk 含 @lobehub/icons 品牌图标（约 +0.8MB raw），放宽预缓存上限
-        maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
+        // 主 chunk 含 @lobehub/icons 品牌图标（约 +0.8MB raw）+ react-material-icon-theme
+        // 文件类型图标数据（约 +1.1MB minified，见 components/shared/FileTypeIcon），放宽预缓存上限
+        maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
         // 消除更新闪屏：默认 skipWaiting+clientsClaim 会让新 SW 在旧页面仍运行时
         // 立即激活并 cleanupOutdatedCaches 清掉旧 precache——旧页面的懒加载 chunk
         // 随之 404，表现为「先显示旧版完整界面 → 闪一下 → 重回 loading」（PWA 尤甚）。

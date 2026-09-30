@@ -41,16 +41,18 @@ export interface ToolResult {
 }
 
 /** 右侧边栏标签页类型 */
-export type SidebarTabType = 'summary' | 'terminal' | 'agenteam';
+export type SidebarTabType = 'summary' | 'terminal' | 'agenteam' | 'file';
 
 /** 右侧边栏标签页 */
 export interface SidebarTab {
   id: string;
   type: SidebarTabType;
-  /** 标题 i18n key（如 'task.taskSummary' / 'terminal.title'） */
+  /** 标题 i18n key（如 'task.taskSummary' / 'terminal.title'）；type==='file' 时为文件完整名称（不参与 i18n） */
   title: string;
   /** 仅 terminal 类型：绑定特定 toolCallId（可选，缺省显示当前 session 所有 shell 调用） */
   toolCallId?: string;
+  /** 仅 file 类型：文件绝对路径（预览数据源） */
+  filePath?: string;
   createdAt: number;
 }
 

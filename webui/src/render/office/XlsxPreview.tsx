@@ -122,11 +122,11 @@ export function XlsxPreview({ buffer }: XlsxPreviewProps) {
   }, [buffer]);
 
   if (error !== null) {
-    return <div className="flex h-[calc(80dvh-9rem)] items-center justify-center text-sm text-destructive">{error}</div>;
+    return <div className="flex h-full items-center justify-center text-sm text-destructive">{error}</div>;
   }
   if (parsed === null) {
     return (
-      <div className="flex h-[calc(80dvh-9rem)] items-center justify-center text-muted-foreground">
+      <div className="flex h-full items-center justify-center text-muted-foreground">
         <Loader2 className="mr-2 size-5 animate-spin" />
         <span className="text-sm">Parsing workbook…</span>
       </div>
@@ -135,7 +135,7 @@ export function XlsxPreview({ buffer }: XlsxPreviewProps) {
 
   const sheet = parsed.sheets[active] ?? parsed.sheets[0];
   if (!sheet) {
-    return <div className="flex h-[calc(80dvh-9rem)] items-center justify-center text-sm text-muted-foreground">Empty workbook</div>;
+    return <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Empty workbook</div>;
   }
 
   // 合并单元格：起点格 span，覆盖格跳过
@@ -157,7 +157,7 @@ export function XlsxPreview({ buffer }: XlsxPreviewProps) {
   };
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex h-full min-h-0 flex-col gap-2">
       {parsed.sheets.length > 1 && (
         <div className="flex flex-wrap gap-1.5">
           {parsed.sheets.map((s, i) => (
@@ -173,7 +173,7 @@ export function XlsxPreview({ buffer }: XlsxPreviewProps) {
           ))}
         </div>
       )}
-      <div className="max-h-[calc(80dvh-9rem)] overflow-auto rounded border border-border">
+      <div className="min-h-0 flex-1 overflow-auto rounded border border-border">
         <table className="xlsx-table w-full border-collapse text-xs">
           <tbody>
             {sheet.rows.map((row, r) => (

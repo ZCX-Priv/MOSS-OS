@@ -65,6 +65,8 @@ export function ModelSelector() {
   const { providers, currentModel, setCurrent, updateProviderModel } = useProviders();
   const isMobile = useIsMobile();
   const hasAnyModel = providers.some((p) => p.models.length > 0);
+  // 模型列表只展示「有模型的模型服务商」；搜索服务商（kind='search'）不属于模型服务，一律隐藏
+  const modelProviders = providers.filter((p) => p.kind !== 'search' && p.models.length > 0);
   const currentModelName = providers
     .flatMap((p) => p.models)
     .find((m) => m.id === currentModel)?.name;
@@ -192,54 +194,48 @@ export function ModelSelector() {
                   {t('modelSelector.noModels')}
                 </div>
               )}
-              {providers.map((provider) => (
+              {modelProviders.map((provider) => (
                 <div key={provider.id} className="flex flex-col">
                   {/* 服务商分组标题（含品牌图标） */}
                   <GroupLabel provider={provider} />
-                  {provider.models.length === 0 ? (
-                    <div className="px-2 py-1.5 text-xs text-muted-foreground/60">
-                      {t('modelSelector.noModelsInProvider', { defaultValue: '暂无模型' })}
-                    </div>
-                  ) : (
-                    provider.models.map((model) => {
-                      const isSelected = currentModel === model.id;
-                      return (
-                        <div key={model.id} className="flex flex-col">
-                          <div
-                            className={cn(
-                              'flex items-center justify-between rounded-md px-2 py-1.5',
-                              isSelected && 'bg-muted',
-                            )}
-                          >
-                            <button
-                              className="min-w-0 flex-1 truncate text-left text-sm"
-                              onClick={() => {
-                                void setCurrent(model.id);
-                                setSheetOpen(false);
-                              }}
-                            >
-                              {model.name}
-                            </button>
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              className="shrink-0"
-                              onClick={() =>
-                                setExpandedId((p) => (p === model.id ? undefined : model.id))
-                              }
-                            >
-                              <SlidersHorizontal className="size-3.5" />
-                            </Button>
-                          </div>
-                          {expandedId === model.id && (
-                            <div className="border-t px-1 py-3">
-                              {renderSettings({ ...model, providerId: provider.id }, provider)}
-                            </div>
+                  {provider.models.map((model) => {
+                    const isSelected = currentModel === model.id;
+                    return (
+                      <div key={model.id} className="flex flex-col">
+                        <div
+                          className={cn(
+                            'flex items-center justify-between rounded-md px-2 py-1.5',
+                            isSelected && 'bg-muted',
                           )}
+                        >
+                          <button
+                            className="min-w-0 flex-1 truncate text-left text-sm"
+                            onClick={() => {
+                              void setCurrent(model.id);
+                              setSheetOpen(false);
+                            }}
+                          >
+                            {model.name}
+                          </button>
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            className="shrink-0"
+                            onClick={() =>
+                              setExpandedId((p) => (p === model.id ? undefined : model.id))
+                            }
+                          >
+                            <SlidersHorizontal className="size-3.5" />
+                          </Button>
                         </div>
-                      );
-                    })
-                  )}
+                        {expandedId === model.id && (
+                          <div className="border-t px-1 py-3">
+                            {renderSettings({ ...model, providerId: provider.id }, provider)}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               ))}
               <DropdownMenuSeparator />
@@ -300,7 +296,7 @@ export function ModelSelector() {
             {t('modelSelector.noModels')}
           </div>
         )}
-        {providers.map((provider) => (
+        {modelProviders.map((provider) => (
           <div key={provider.id}>
             {/* 服务商分组标题（品牌图标 + 名称） */}
             <GroupLabel provider={provider} className="px-2 py-1.5" />

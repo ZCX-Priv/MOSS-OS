@@ -10,6 +10,7 @@ export type { MarkdownRendererProps } from './markdown/MarkdownRenderer';
 // 文件预览
 export { FilePreviewCard } from './file/FilePreviewCard';
 export { FilePreviewDialog } from './file/FilePreviewDialog';
+export { FilePreviewPane } from './file/FilePreviewPane';
 export { detectFileKind, fileNameOf, fileExtension } from './file/detector';
 
 // 设置

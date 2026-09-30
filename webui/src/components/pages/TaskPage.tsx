@@ -25,7 +25,6 @@ import {
   CircleAlert,
   Package,
   Zap,
-  Paperclip,
   Inbox,
   Users,
 } from 'lucide-react';
@@ -39,7 +38,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { resolveToolIcon } from '@/lib/tool-icons';
-import { MarkdownRenderer } from '../../render';
+import { FilePreviewPane, MarkdownRenderer } from '../../render';
 import type { OverlayType } from '../../types';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -73,6 +72,8 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { TaskInput } from '../shared/TaskInput';
+import { MessageAttachmentCards } from '../shared/AttachmentCards';
+import { FileTypeIcon } from '../shared/FileTypeIcon';
 import { ScrollToBottomButton } from '../shared/ScrollToBottomButton';
 import { useAutoScroll } from '../../hooks/useAutoScroll';
 import { TodoProgressCard, TodoRow } from '../shared/TodoProgressCard';
@@ -374,8 +375,18 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
   const removeSidebarTab = useStore((s) => s.removeSidebarTab);
   const setActiveSidebarTab = useStore((s) => s.setActiveSidebarTab);
   const reorderSidebarTabs = useStore((s) => s.reorderSidebarTabs);
+  const openFileTab = useStore((s) => s.openFileTab);
   const toolIconMap = useStore((s) => s.toolIconMap);
   const { sendMessage, abort } = useTask();
+
+  // 点击消息流附件卡片：在右侧边栏打开该文件预览标签页并展开面板
+  const openAttachment = useCallback(
+    (path: string) => {
+      openFileTab(path);
+      setRightPanelOpen(taskId, true);
+    },
+    [openFileTab, setRightPanelOpen, taskId],
+  );
 
   // 当前活跃标签对象
   const activeTab = sidebarTabs.find((t) => t.id === activeSidebarTabId) ?? sidebarTabs[0];
@@ -886,6 +897,11 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
           <TerminalView toolCallId={activeTab.toolCallId} />
         )}
         {activeTab?.type === 'agenteam' && <AgentTeamPanel />}
+        {activeTab?.type === 'file' && activeTab.filePath && (
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <FilePreviewPane path={activeTab.filePath} active />
+          </div>
+        )}
       </div>
     </>
   );
@@ -972,6 +988,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
                     onCopy={handleCopyMessage}
                     onContinue={() => void handleSend(t('task.maxTurnsContinue'))}
                     continueDisabled={isGenerating}
+                    onOpenAttachment={openAttachment}
                   />
                 </div>
               ))}
@@ -1404,10 +1421,17 @@ function SortableTab({ tab, isActive, canShowClose, onSelect, onRemove }: Sortab
         <Terminal className="size-3.5" />
       ) : tab.type === 'agenteam' ? (
         <Users className="size-3.5" />
+      ) : tab.type === 'file' ? (
+        <FileTypeIcon fileName={tab.title} size={14} className="shrink-0" />
       ) : (
         <List className="size-3.5" />
       )}
-      <span className="max-w-[120px] truncate">{t(tab.title)}</span>
+      <span
+        className={cn('truncate', tab.type === 'file' ? 'max-w-[160px]' : 'max-w-[120px]')}
+        title={tab.type === 'file' ? tab.title : undefined}
+      >
+        {tab.type === 'file' ? tab.title : t(tab.title)}
+      </span>
       {/* hover 时显示 X 关闭按钮（单标签不显示） */}
       {canShowClose && !isDragging && (
         <button
@@ -1563,8 +1587,10 @@ interface MessageBubbleProps {
   onContinue?: () => void;
   /** 生成中禁用继续按钮（防并发 run） */
   continueDisabled?: boolean;
+  /** 点击用户消息附件卡片：在右侧边栏打开该文件预览标签页 */
+  onOpenAttachment?: (path: string) => void;
 }
-const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap, truncateDisabled, onTruncate, onCopy, onContinue, continueDisabled }: MessageBubbleProps) {
+const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap, truncateDisabled, onTruncate, onCopy, onContinue, continueDisabled, onOpenAttachment }: MessageBubbleProps) {
   const { t } = useTranslation();
   // 超长正文截断渲染（防止单条巨型文本布局卡死）；展开后完整渲染。
   // 流式生成中超限时显示尾部（正在生成的内容在末尾），结束后恢复头部截断。
@@ -1616,22 +1642,11 @@ const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap,
   if (message.role === 'user') {
     return (
       <div className="group flex flex-col items-end gap-1">
+        {userAttachments && userAttachments.paths.length > 0 && (
+          <MessageAttachmentCards paths={userAttachments.paths} onOpen={onOpenAttachment ?? (() => {})} />
+        )}
         <div className="max-w-[80%] rounded-2xl border border-border bg-indigo-100 px-3 py-2 text-sm text-foreground shadow-sm break-words whitespace-pre-wrap dark:bg-blue-600 dark:text-white dark:shadow-[0_2px_14px_rgba(37,99,235,0.35)]">
         {userBodyDisplay}
-        {userAttachments && userAttachments.paths.length > 0 && (
-          <div className="mt-2 flex flex-col gap-1">
-            {userAttachments.paths.map((p) => (
-              <div
-                key={p}
-                className="flex items-center gap-1.5 rounded-md border border-foreground/10 bg-foreground/5 px-2 py-1"
-                title={p}
-              >
-                <Paperclip className="size-3 shrink-0 opacity-70" />
-                <span className="truncate font-mono text-xs">{p}</span>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
       {overLimit && (
         <button

@@ -80,14 +80,14 @@ export function PdfPreview({ buffer }: PdfPreviewProps) {
   }, [doc, page, zoom]);
 
   if (error !== null) {
-    return <div className="flex h-[calc(80dvh-9rem)] items-center justify-center text-sm text-destructive">{error}</div>;
+    return <div className="flex h-full items-center justify-center text-sm text-destructive">{error}</div>;
   }
   if (doc === null) {
-    return <div className="flex h-[calc(80dvh-9rem)] items-center justify-center text-sm text-muted-foreground">Loading PDF…</div>;
+    return <div className="flex h-full items-center justify-center text-sm text-muted-foreground">Loading PDF…</div>;
   }
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex h-full min-h-0 flex-col gap-2">
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5">
           <Button
@@ -130,7 +130,7 @@ export function PdfPreview({ buffer }: PdfPreviewProps) {
           </SelectContent>
         </Select>
       </div>
-      <div className="max-h-[calc(80dvh-9rem)] overflow-auto rounded border border-border bg-muted/30 p-3">
+      <div className="min-h-0 flex-1 overflow-auto rounded border border-border bg-muted/30 p-3">
         <canvas ref={canvasRef} className="mx-auto block max-w-full rounded shadow-sm" />
       </div>
     </div>

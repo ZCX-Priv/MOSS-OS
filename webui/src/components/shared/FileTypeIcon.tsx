@@ -1,0 +1,84 @@
+// components/shared/FileTypeIcon.tsx
+// 文件类型图标 + 图片附件缩略图 hook。
+// 图标来源 react-material-icon-theme（VS Code Material Icon Theme）：按完整文件名 / 扩展名识别类型；
+// 库无法识别时回退 lucide 附件（回形针）图标。
+// 仅依赖 render/file 下的纯函数模块，避免把 markdown/katex 等重依赖带入首页包。
+
+import { useEffect, useMemo, useState } from 'react';
+import { getFileIcon, getIconSvg, MaterialIcon } from 'react-material-icon-theme';
+import { Paperclip } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { fetchFileObjectUrl, mimeOfPath } from '../../render/file/fetcher';
+import { fileExtension } from '../../render/file/detector';
+import { useDarkMode } from '../../render/core/use-dark-mode';
+
+/**
+ * 哨兵：库的图标清单里没有任何命中时返回该值（库默认 fallback 是 "file" 通用文档图标，
+ * 无法与「命中通用图标」区分），用于判定「无法识别」→ 回退附件（回形针）图标。
+ */
+const NO_ICON = '\u0000moss-no-icon';
+
+/** 库内是否真有该图标名对应的 SVG 数据（库清单存在「解析出名字但无数据」的条目） */
+function hasIconData(name: string): boolean {
+  return getIconSvg(name) !== null;
+}
+
+export interface FileTypeIconProps {
+  /** 文件名（含扩展名）：库按「完整文件名」（.gitignore / package.json 等）与「扩展名」两级匹配 */
+  fileName: string;
+  /** 图标边长（px），默认 22 */
+  size?: number;
+  className?: string;
+}
+
+export function FileTypeIcon({ fileName, size = 22, className }: FileTypeIconProps) {
+  const dark = useDarkMode();
+  // 扩展名（小写、不带点）；无扩展名 → ''（库内部按 falsy 跳过该校验）
+  const ext = fileExtension(fileName);
+  const iconName = useMemo(() => {
+    // 必须同时传 fileName 与 fileExtension：库的 fileName 匹配是「完整文件名精确相等」，
+    // 只传 fileName 时普通扩展名文件会全部落到 fallback，表现为「所有文件同一个图标」。
+    const base = getFileIcon({ fileName, fileExtension: ext, fallback: NO_ICON });
+    if (base === NO_ICON) return NO_ICON;
+    // 深色模式优先 _light 变体；再校验库内确有 SVG 数据（否则库会渲染 📄 错误态）
+    const light = `${base}_light`;
+    if (dark && hasIconData(light)) return light;
+    if (hasIconData(base)) return base;
+    return hasIconData(light) ? light : NO_ICON;
+  }, [fileName, ext, dark]);
+
+  // 无法识别 → 回退附件图标（中性色，与彩色类型图标区分）
+  if (iconName === NO_ICON) {
+    return <Paperclip size={size} className={cn('shrink-0 text-muted-foreground', className)} />;
+  }
+
+  // 用已解析（且已选定明暗变体）的图标名直接渲染，避免 FileIcon 二次解析落到 📄 错误态
+  return <MaterialIcon name={iconName} size={size} className={className} alt={fileName} />;
+}
+
+/**
+ * 图片附件缩略图：仅 enabled（确为图片）时经 /api/filesystem/raw 拉取并生成 objectURL。
+ * 返回 null 表示未就绪或加载失败（调用方回退类型图标 / spinner）。
+ */
+export function useFileThumbnail(path: string, enabled: boolean): string | null {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!enabled) {
+      setUrl(null);
+      return;
+    }
+    let cancelled = false;
+    setUrl(null);
+    void fetchFileObjectUrl(path, mimeOfPath(path))
+      .then((u) => {
+        if (!cancelled) setUrl(u);
+      })
+      .catch(() => {
+        // 加载失败：保持 null，调用方回退类型图标
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [path, enabled]);
+  return url;
+}

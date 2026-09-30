@@ -6,15 +6,14 @@ import {
   Mic,
   ArrowUp,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   FolderOpen,
   FolderInput,
   Loader2,
   Square,
   Monitor,
   Paperclip,
-  Image as ImageIcon,
-  Video,
-  Music,
   X,
   Zap,
   Bot,
@@ -45,14 +44,15 @@ import { DirectoryPickerDialog } from '../overlays/DirectoryPickerDialog';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   resolveWorkingDirectoryName,
-  formatFileSize,
   getAttachmentKind,
+  cn,
   type AttachmentKind,
 } from '@/lib/utils';
 import { resolveSkillIcon } from '@/lib/skill-icons';
 import { api } from '../../api/http';
 import { matchesShortcut } from '../../utils/shortcut';
 import { MentionMenu } from './MentionMenu';
+import { SendAttachmentCard } from './AttachmentCard';
 import {
   detectTrigger,
   filterMentionItems,
@@ -88,26 +88,6 @@ interface MentionChip {
   agentId?: string;
   /** file chip：文件绝对路径（发送时并入附件路径行） */
   filePath?: string;
-}
-
-/** 卡片副标题用的大写扩展名（无扩展名显示 FILE） */
-function attachmentExtLabel(name: string): string {
-  const idx = name.lastIndexOf('.');
-  if (idx <= 0 || idx === name.length - 1) return 'FILE';
-  return name.slice(idx + 1).toUpperCase();
-}
-
-function AttachmentKindIcon({ kind }: { kind: AttachmentKind }) {
-  switch (kind) {
-    case 'image':
-      return <ImageIcon className="size-4" />;
-    case 'video':
-      return <Video className="size-4" />;
-    case 'audio':
-      return <Music className="size-4" />;
-    default:
-      return <Paperclip className="size-4" />;
-  }
 }
 
 /** 按扩展名选择 # 文件菜单图标 */
@@ -212,6 +192,33 @@ export function TaskInput({
   const removeAttachment = (id: string) => {
     setAttachments((prev) => prev.filter((a) => a.id !== id));
   };
+
+  // 附件单行横向滚动：溢出时显示左右箭头（不溢出则 invisible，保持布局不跳动）
+  const attachmentsScrollRef = useRef<HTMLDivElement>(null);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+
+  const updateAttachmentArrows = () => {
+    const el = attachmentsScrollRef.current;
+    if (!el) return;
+    const max = el.scrollWidth - el.clientWidth;
+    setCanScrollLeft(el.scrollLeft > 1);
+    setCanScrollRight(max > 1 && el.scrollLeft < max - 1);
+  };
+
+  const scrollAttachments = (dir: -1 | 1) => {
+    attachmentsScrollRef.current?.scrollBy({ left: dir * 220, behavior: 'smooth' });
+  };
+
+  // 附件增删 / 容器尺寸变化时重算箭头显隐
+  useEffect(() => {
+    const el = attachmentsScrollRef.current;
+    if (!el) return;
+    updateAttachmentArrows();
+    const observer = new ResizeObserver(() => updateAttachmentArrows());
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [attachments.length]);
 
   // ==========================================================================
   // / @ # 触发菜单 + 行内 chip
@@ -519,37 +526,44 @@ export function TaskInput({
         />
       )}
       {attachments.length > 0 && (
-        <div className="flex flex-wrap gap-2 px-1 pt-1">
-          {attachments.map((a) => (
-            <Tooltip key={a.id} delayDuration={400}>
-              <TooltipTrigger asChild>
-                <div className="relative flex w-56 items-center gap-2 rounded-xl border border-border bg-muted/50 py-2 pl-2 pr-3 transition-colors duration-150 hover:border-foreground/20">
-                  <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-background/80 text-muted-foreground">
-                    <AttachmentKindIcon kind={a.kind} />
-                  </div>
-                  <div className="flex min-w-0 flex-1 flex-col">
-                    <span className="truncate text-[13px] font-medium leading-tight">
-                      {a.name}
-                    </span>
-                    <span className="text-[11px] leading-tight text-muted-foreground">
-                      {attachmentExtLabel(a.name)} · {formatFileSize(a.size)}
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => removeAttachment(a.id)}
-                    className="absolute -right-1.5 -top-1.5 flex size-[18px] cursor-pointer items-center justify-center rounded-full border border-border bg-popover text-muted-foreground shadow-sm transition-colors duration-150 hover:text-foreground"
-                    title={t('taskInput.removeAttachment')}
-                  >
-                    <X className="size-3" />
-                  </button>
-                </div>
-              </TooltipTrigger>
-              <TooltipContent side="top" className="max-w-xs break-all">
-                {a.path}
-              </TooltipContent>
-            </Tooltip>
-          ))}
+        <div className="flex items-center gap-1 px-1 pt-1">
+          <button
+            type="button"
+            onClick={() => scrollAttachments(-1)}
+            title={t('taskInput.scrollAttachmentsLeft')}
+            className={cn(
+              'flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground',
+              !canScrollLeft && 'invisible',
+            )}
+          >
+            <ChevronLeft className="size-4" />
+          </button>
+          <div
+            ref={attachmentsScrollRef}
+            onScroll={updateAttachmentArrows}
+            className="no-scrollbar flex flex-1 items-center gap-2 overflow-x-auto scroll-smooth py-1"
+          >
+            {attachments.map((a) => (
+              <SendAttachmentCard
+                key={a.id}
+                path={a.path}
+                name={a.name}
+                size={a.size}
+                onRemove={() => removeAttachment(a.id)}
+              />
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={() => scrollAttachments(1)}
+            title={t('taskInput.scrollAttachmentsRight')}
+            className={cn(
+              'flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground',
+              !canScrollRight && 'invisible',
+            )}
+          >
+            <ChevronRight className="size-4" />
+          </button>
         </div>
       )}
       <div className="flex flex-wrap items-start gap-1">

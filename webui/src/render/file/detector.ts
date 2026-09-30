@@ -3,6 +3,22 @@
 
 import type { RendererKind } from '../core/types';
 
+// 纯文本/代码/配置类扩展名（预览时按纯文本渲染；正文内联卡片仍回退 code 文本）
+const TEXT_EXTS = [
+  'txt', 'md', 'markdown',
+  // 配置 / 数据
+  'json', 'jsonc', 'json5', 'yaml', 'yml', 'toml', 'ini', 'conf', 'cfg', 'env',
+  'gitignore', 'gitattributes', 'editorconfig', 'lock', 'csv', 'tsv', 'log',
+  'makefile', 'dockerfile',
+  // 代码
+  'sh', 'bash', 'zsh', 'bat', 'cmd', 'ps1',
+  'py', 'ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'mts', 'cts',
+  'rs', 'go', 'java', 'kt', 'kts', 'c', 'h', 'cpp', 'hpp', 'cc', 'cs', 'php', 'rb',
+  'swift', 'r', 'lua', 'vue', 'svelte', 'dart', 'scala', 'pl', 'sql',
+  // 标记 / 样式
+  'css', 'scss', 'less', 'html', 'htm', 'xml', 'xsl', 'svgz',
+] as const;
+
 const KIND_BY_EXT: Record<string, RendererKind> = {
   docx: 'office-docx',
   xlsx: 'office-xlsx',
@@ -18,8 +34,10 @@ const KIND_BY_EXT: Record<string, RendererKind> = {
   gif: 'image',
   webp: 'image',
   svg: 'image',
-  txt: 'text',
-  md: 'text',
+  bmp: 'image',
+  ico: 'image',
+  avif: 'image',
+  ...Object.fromEntries(TEXT_EXTS.map((e) => [e, 'text' as RendererKind])),
 };
 
 export function fileExtension(path: string): string {

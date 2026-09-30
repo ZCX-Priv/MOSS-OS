@@ -34,6 +34,7 @@ import type {
   ContextStats,
 } from '../types/api';
 import { DEFAULT_RENDER_SETTINGS, isValidRenderSettings, type RenderSettings } from '../render/core/types';
+import { fileNameOf } from '../render/file/detector';
 import { DEFAULT_ANIMATION_SETTINGS, isValidAnimationSettings, type AnimationSettings } from '../types/animation';
 
 // ============================================================================
@@ -394,6 +395,8 @@ interface UIActions {
   // 右侧边栏标签页
   /** 新建标签页，返回新标签 id；自动设为活跃 */
   addSidebarTab: (type: SidebarTabType, title: string, toolCallId?: string) => string;
+  /** 以文件预览标签打开路径（同一路径已打开则聚焦，不重复建页）；返回标签 id */
+  openFileTab: (path: string) => string;
   /** 删除标签页；若删的是活跃标签则自动切到最后一个；删空则重建默认 summary */
   removeSidebarTab: (id: string) => void;
   /** 设置活跃标签页 */
@@ -438,11 +441,18 @@ function defaultSidebarTab(): SidebarTab {
   };
 }
 
+/** 生成标签页唯一 id */
+function newTabId(): string {
+  return typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `tab-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 // ============================================================================
 // Store 实现
 // ============================================================================
 
-export const useStore = create<Store>((set) => ({
+export const useStore = create<Store>((set, get) => ({
   // --- 会话 / 消息 ---
   activeSessionId: null,
   sessions: [],
@@ -1000,11 +1010,33 @@ export const useStore = create<Store>((set) => ({
 
   // --- Actions: 右侧边栏标签页 ---
   addSidebarTab: (type, title, toolCallId) => {
-    const id =
-      typeof crypto !== 'undefined' && 'randomUUID' in crypto
-        ? crypto.randomUUID()
-        : `tab-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const id = newTabId();
     const tab: SidebarTab = { id, type, title, toolCallId, createdAt: Date.now() };
+    set((state) => {
+      const tabs = [...state.sidebarTabs, tab];
+      void idbSet('moss-sidebar-tabs', tabs);
+      void idbSet('moss-active-sidebar-tab', id);
+      return { sidebarTabs: tabs, activeSidebarTabId: id };
+    });
+    return id;
+  },
+
+  openFileTab: (path) => {
+    // 同一路径已打开 → 聚焦已有标签，不重复建页
+    const existing = get().sidebarTabs.find((t) => t.type === 'file' && t.filePath === path);
+    if (existing) {
+      void idbSet('moss-active-sidebar-tab', existing.id);
+      set({ activeSidebarTabId: existing.id });
+      return existing.id;
+    }
+    const id = newTabId();
+    const tab: SidebarTab = {
+      id,
+      type: 'file',
+      title: fileNameOf(path),
+      filePath: path,
+      createdAt: Date.now(),
+    };
     set((state) => {
       const tabs = [...state.sidebarTabs, tab];
       void idbSet('moss-sidebar-tabs', tabs);
