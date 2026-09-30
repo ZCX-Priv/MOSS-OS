@@ -81,7 +81,7 @@ MOSS 是一个基于**微内核 + 模组化架构**的本地 AI Agent 应用，�
 |---|---|---|
 | `llm` | 多 Provider 路由与流式调用 | `llm.router` |
 | `server` | HTTP + WebSocket 服务 | `server.instance` |
-| `tools` | 内置工具 + Skill/Command/Spec 注册表 | `tool.registry`、`skill.registry`、`command.registry`、`spec.registry` |
+| `tools` | 内置工具 + Skill/Command 注册表 | `tool.registry`、`skill.registry`、`command.registry` |
 | `mcp` | MCP 客户端管理 + 对外 MCP Server 暴露 | `mcp.manager` |
 | `agenteam` | 自定义 Agent CRUD | `agenteam.registry` |
 | `update` | npm registry 版本检查 | — |

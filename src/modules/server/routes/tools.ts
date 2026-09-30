@@ -8,6 +8,7 @@ import { ServiceNames } from '../../../core/types';
 import type { ToolRegistry } from '../../contracts';
 import { ErrorCode } from '../../../core/error-codes';
 import { localizeDescription } from '../../tools/loader';
+import { compareToolNames } from '../../tools/sort';
 import { buildConfigShape, validateToolConfigPatch } from '../../tools/manifest';
 import type { ToolConfigManifest } from '../../tools/types';
 import { z } from 'zod';
@@ -67,7 +68,8 @@ export function createListToolsHandler(services: ServiceRegistry, config: Config
     if (!registry) {
       return { status: 200, body: { tools: [] } };
     }
-    const tools = registry.list().map((t) => {
+    // 顺序：字符序 A-Z → a-z → 0-9，短在前长在后（与发给模型的工具列表一致）
+    const tools = registry.list().sort((a, b) => compareToolNames(a.name, b.name)).map((t) => {
       const stored = readStoredToolConfig(config, t.name);
       // 当前生效值 = defaults 深合并 config.json 覆盖值（config 优先）
       const configValues: Record<string, unknown> = { ...(t.configManifest?.defaults ?? {}) };

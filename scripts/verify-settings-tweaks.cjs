@@ -38,7 +38,7 @@ check(SP, 'Settings: 记忆 Tab 用 Notebook', s =>
   s.includes('<Notebook className="size-3.5" />'));
 check(SP, 'Settings: 无 docs TabsTrigger', s => !s.includes('value="docs"'));
 check(SP, 'Settings: tab 白名单无 docs（回落 engine）', s =>
-  s.includes("['specs', 'index', 'rules', 'memory'].includes(suffix)"));
+  s.includes("['index', 'rules', 'memory'].includes(suffix)"));
 check(SP, 'Settings: 渲染设置无 Card 包裹', s => {
   const m = s.match(/export function RenderSettingsSection[\s\S]*?\n\}/);
   return m ? !m[0].includes('<Card') : false;

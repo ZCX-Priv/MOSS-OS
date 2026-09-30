@@ -544,7 +544,7 @@ export interface FileHistoryService {
 
 // ============================================================================
 // Safety Service（由 safety 模块注册，ServiceNames.SAFETY）
-// 统一权限决策入口：所有工具（builtin/custom/MCP/use_mcp）执行前必须经过 evaluate。
+// 统一权限决策入口：所有工具（builtin/custom/MCP/mcp）执行前必须经过 evaluate。
 // ============================================================================
 
 export interface SafetyService {

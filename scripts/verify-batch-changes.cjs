@@ -92,7 +92,7 @@ check('webui/src/components/pages/SettingsPage.tsx', 'Settings: navItems 移除 
   return !["id: 'specs'", "id: 'index'", "id: 'docs'", "id: 'rules'", "id: 'memory'"].some(x => m[0].includes(x));
 });
 check('webui/src/components/pages/SettingsPage.tsx', 'Settings: ContextSettings Tab 容器', s =>
-  s.includes('/** 上下文设置：Tab 容器（引擎/规范/索引/规则/记忆；路由驱动） */') &&
+  s.includes('/** 上下文设置：Tab 容器（引擎/索引/规则/记忆；路由驱动） */') &&
   s.includes("value=\"engine\"") && s.includes("value=\"memory\""));
 check('webui/src/components/pages/SettingsPage.tsx', 'Settings: ContextEngineSettings 导出', s =>
   s.includes('export function ContextEngineSettings()'));
@@ -116,14 +116,12 @@ check('webui/src/App.tsx', 'App: 新组件 import', s =>
   s.includes('ContextEngineSettings,') && s.includes('AppearanceSettings,'));
 check('webui/src/App.tsx', 'App: context 嵌套路由', s =>
   s.includes('<Route path="context" element={<ContextSettings />}>') &&
-  s.includes('<Route index element={<ContextEngineSettings />} />') &&
-  s.includes('<Route path="specs" element={<SpecsSettings />} />'));
+  s.includes('<Route index element={<ContextEngineSettings />} />'));
 check('webui/src/App.tsx', 'App: appearance 嵌套路由', s =>
   s.includes('<Route path="appearance" element={<AppearanceSettings />}>') &&
   s.includes('<Route path="render" element={<RenderSettingsSection />} />'));
 check('webui/src/App.tsx', 'App: 旧路径重定向', s =>
   s.includes('<Navigate to="/settings/appearance/render" replace />') &&
-  s.includes('<Navigate to="/settings/context/specs" replace />') &&
   s.includes('<Navigate to="/settings/context/memory" replace />'));
 
 // ===== 6. Sidebar 无需改（渲染 settingsNavItems）——确认无硬编码旧项 =====

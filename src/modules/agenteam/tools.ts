@@ -438,6 +438,7 @@ async function runAgenteamMode(
 function createAgentTool(orch: TeamOrchestrator): Tool {
   return {
     name: 'agent',
+    icon: 'bot',
     description: `Unified agent tool. mode="subagent" runs a one-off subagent (template + task). mode="agenteam" orchestrates a persistent multi-agent team (action selects the operation). ${USAGE_PROTOCOL}`,
     inputSchema: {
       type: 'object',

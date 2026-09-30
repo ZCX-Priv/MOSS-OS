@@ -7,7 +7,6 @@ export {
   getSystemSections,
   invalidateSystemPromptCache,
   FALLBACK_SYSTEM_PROMPT,
-  SPEC_GUIDE_SECTION,
 } from './system-prompt';
 export {
   buildEnvContextMessage,

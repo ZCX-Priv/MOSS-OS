@@ -1,7 +1,7 @@
 // UI/src/store/index.ts
 // 全局状态：Zustand。迁移自 webui/src/store/index.ts 并扩展新切片。
 // 切片：会话/消息/输入/生成态/模型/Agent/任务/任务分组/Todo/Context/
-//       自动化/插件/Skills/Specs/MCP/配置/WS/面板。
+//       自动化/插件/Skills/MCP/配置/WS/面板。
 
 import { create } from 'zustand';
 import { idbSet } from '../utils/idb';
@@ -24,7 +24,6 @@ import type {
   AutomationItem,
   AutomationRun,
   SkillItem,
-  SpecItem,
   ToolItem,
   CommandItem,
   SidebarTab,
@@ -116,9 +115,8 @@ interface UIState {
   /** 表单打开序号（每次 open 递增；作为 Dialog key 强制重挂载，保证表单状态独立不继承上次输入） */
   automationFormSeq: number;
 
-  // --- Skills / Specs / Commands ---
+  // --- Skills / Commands ---
   skills: SkillItem[];
-  specs: SpecItem[];
   /** 自定义斜杠命令（~/.moss/commands/<name>.md；/ 菜单与设置页数据源） */
   commands: CommandItem[];
 
@@ -295,9 +293,8 @@ interface UIActions {
   openAutomationForm: (editingId?: string) => void;
   closeAutomationForm: () => void;
 
-  // Skills / Specs / Commands
+  // Skills / Commands
   setSkills: (s: SkillItem[]) => void;
-  setSpecs: (s: SpecItem[]) => void;
   setCommands: (c: CommandItem[]) => void;
 
   // 工具
@@ -500,9 +497,8 @@ export const useStore = create<Store>((set, get) => ({
   automationFormEditingId: null,
   automationFormSeq: 0,
 
-  // --- Skills / Specs / Commands ---
+  // --- Skills / Commands ---
   skills: [],
-  specs: [],
   commands: [],
 
   // --- 工具 ---
@@ -809,9 +805,8 @@ export const useStore = create<Store>((set, get) => ({
     })),
   closeAutomationForm: () => set({ automationFormOpen: false, automationFormEditingId: null }),
 
-  // --- Actions: Skills / Specs / Commands ---
+  // --- Actions: Skills / Commands ---
   setSkills: (skills) => set({ skills }),
-  setSpecs: (specs) => set({ specs }),
   setCommands: (commands) => set({ commands }),
 
   // --- Actions: 工具 ---

@@ -27,21 +27,36 @@ import { matchDangerousCommand, matchProtectedPath, isHardProtectedPath, matchMo
 import { SYSTEM_SCOPE } from '../filesys/roots';
 
 /** 内置工具风险分类表（按操作可恢复性；fail-closed：未知工具归 L3） */
-const READONLY_TOOLS = new Set(['read', 'glob', 'grep', 'list_mcp', 'list_skill', 'list_spec', 'get_spec', 'use_skill']);
+const READONLY_TOOLS = new Set(['read', 'glob', 'grep']);
 const STATE_TOOLS = new Set(['ask', 'todo']);
 const RECOVERABLE_WRITE_TOOLS = new Set(['write', 'edit', 'move', 'delete', 'copy']);
 const UNSAFE_TOOLS = new Set(['shell']);
 
-/** 风险分级：按工具名 + 注解综合判定 */
-export function classifyRisk(req: Pick<SafetyRequest, 'toolName' | 'annotations' | 'mcpAnnotations'>): RiskClass {
+/**
+ * 风险分级：按工具名 + 注解综合判定。
+ * 合并工具（memory/mcp/skill）按 params.action 分级，保持合并前的风险语义：
+ *   memory: save=L3 / search|list_rooms=L0
+ *   mcp:    list=L0 / call=L3（未标注 MCP 工具 fail-closed，保持合并前调用工具的风险等级）
+ *   skill:  list|use=L0
+ */
+export function classifyRisk(
+  req: Pick<SafetyRequest, 'toolName' | 'params' | 'annotations' | 'mcpAnnotations'>,
+): RiskClass {
   const { toolName } = req;
   if (READONLY_TOOLS.has(toolName)) return 'L0';
+
+  // 合并工具：按 action 分级（单工具单份 annotations 无法表达混合语义）
+  const action = (req.params as { action?: string } | null | undefined)?.action;
+  if (toolName === 'memory') return action === 'save' ? 'L3' : 'L0';
+  if (toolName === 'mcp') return action === 'list' ? 'L0' : 'L3';
+  if (toolName === 'skill') return 'L0';
+
   if (STATE_TOOLS.has(toolName)) return 'L1';
   if (RECOVERABLE_WRITE_TOOLS.has(toolName)) return 'L2';
   if (UNSAFE_TOOLS.has(toolName)) return 'L3';
-  // MCP 工具（mcp__ 前缀或 use_mcp）：按 MCP 注解
+  // MCP 直调工具（mcp__ 前缀）：按 MCP 注解
   const mcpAnno = req.mcpAnnotations;
-  if (toolName.startsWith('mcp__') || toolName === 'use_mcp') {
+  if (toolName.startsWith('mcp__')) {
     if (mcpAnno?.readOnlyHint === true && mcpAnno.destructiveHint !== true) return 'L0';
     if (mcpAnno?.destructiveHint === true) return 'L3';
     return 'L3'; // 未标注的 MCP 工具 fail-closed

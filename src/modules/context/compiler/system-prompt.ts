@@ -1,7 +1,7 @@
 // src/modules/context/compiler/system-prompt.ts
 // 静态系统提示组装（缓存对齐布局核心）：
-// - 从 ~/.moss/agent/prompts/main/ 加载基本设定并按序拼接（soul → identity → rules → 其他 → 规范引导）
-// - always 用户规则段（rules 引擎注入）插在规范引导之前；规则集内容指纹纳入缓存键
+// - 从 ~/.moss/agent/prompts/main/ 加载基本设定并按序拼接（soul → identity → rules → 其他）
+// - always 用户规则段（rules 引擎注入）插在末尾；规则集内容指纹纳入缓存键
 // - 只保留进程内静态变量（PLATFORM/CWD/model_id 等）；cur_time/cur_date 等动态变量
 //   一律移出（移至 env-context 消息），保证 system prompt 字节级稳定 → 前缀缓存命中
 // - mtime 缓存：文件未变不重复读盘；变更即进入新缓存周期
@@ -20,7 +20,7 @@ import { estimateTextTokens } from '../budgeter/estimator';
 /** 兜底系统提示词（agent/prompts/main/ 下无任何基本设定文件时） */
 export const FALLBACK_SYSTEM_PROMPT = `你是 MOSS，一个运行在真实环境中的交互式 AI 智能体。
 
-你可以使用工具读写文件、执行命令、调用 skill、调用 MCP 服务器，并按需读取规范文档。
+你可以使用工具读写文件、执行命令、调用 skill、调用 MCP 服务器。
 
 # 核心原则
 1. **第一性原理**：从根本推理，不浮于表面。
@@ -33,18 +33,6 @@ export const FALLBACK_SYSTEM_PROMPT = `你是 MOSS，一个运行在真实环境
 - 简洁直接，先给答案或行动，不铺垫推理。
 - 使用工具时简述在做什么及为什么。
 - 工具执行后总结结果并继续。`;
-
-/** 规范引导段落：告知 agent 如何按需读取 spec 规范文件 */
-export const SPEC_GUIDE_SECTION = `# 规范
-
-你可以通过两个工具按需读取规范文档：
-- \`list_spec\`：列出所有可用的规范文件（树形视图，含描述）。
-- \`get_spec\`：按 id 读取某个规范的完整内容。
-
-规范文件位于 \`agent/prompts/main/spec/\`，可按子目录组织。
-spec id 为相对路径去掉 \`.md\` 扩展名（如 "coding/typescript"）。
-先用 \`list_spec\` 发现可用规范，再用 \`get_spec\` 读取与当前任务相关的规范。
-不要读取不需要的规范。`;
 
 /** always 用户规则段（rules 引擎注入；规则集变更 = 新缓存周期，与 skill 切换同级） */
 export interface RulesSectionInput {
@@ -69,7 +57,6 @@ const SEGMENT_TITLES: Record<string, string> = {
   identity: '身份认知（identity）',
   rules: '行为规则（rules）',
   'user-rules': '用户规则（user rules）',
-  'spec-guide': '规范引导（spec guide）',
   fallback: '基础设定（内置兜底）',
 };
 
@@ -175,7 +162,7 @@ function promptDirMtime(userDir: string): number {
 
 /**
  * 加载系统提示词分段（带 mtime + 规则指纹缓存）。
- * 顺序：system/soul → base/identity → rule/rules → 其他 *.md（字母序）→ 用户规则 → 规范引导。
+ * 顺序：system/soul → base/identity → rule/rules → 其他 *.md（字母序）→ 用户规则。
  * @param rulesSection rules 引擎注入的 always 规则段（可选）
  */
 export function loadSystemPromptSegments(env: Environment, rulesSection?: RulesSectionInput | null): SystemSection[] {
@@ -244,7 +231,7 @@ export function loadSystemPromptSegments(env: Environment, rulesSection?: RulesS
     });
   }
 
-  // 4. always 用户规则段（rules 引擎注入；插在 spec-guide 之前）
+  // 4. always 用户规则段（rules 引擎注入；恒在末尾）
   if (rulesSection?.text) {
     segments.push({
       id: 'user-rules',
@@ -254,15 +241,6 @@ export function loadSystemPromptSegments(env: Environment, rulesSection?: RulesS
       defaultOpen: false,
     });
   }
-
-  // 5. 规范引导（固定段落，恒在末尾）
-  segments.push({
-    id: 'spec-guide',
-    title: SEGMENT_TITLES['spec-guide'],
-    tokens: 0,
-    content: SPEC_GUIDE_SECTION,
-    defaultOpen: false,
-  });
 
   promptCache = {
     key: cacheKey,

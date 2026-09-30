@@ -489,8 +489,6 @@ export const ServiceNames = {
   SKILL_REGISTRY: 'skill.registry',
   /** Command 注册表（由 tools 模块注册：~/.moss/commands/*.md 自定义斜杠命令） */
   COMMAND_REGISTRY: 'command.registry',
-  /** Spec 注册表（由 tools 模块注册） */
-  SPEC_REGISTRY: 'spec.registry',
   /** Agent 注册表（由 agenteam 模块注册） */
   AGENTEAM_REGISTRY: 'agenteam.registry',
   /** agenteam 编排服务（由 agenteam 模块注册：团队生命周期/DAG调度/质量门禁/临时subagent） */

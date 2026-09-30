@@ -90,7 +90,6 @@ MOSS/
 │   │   └── automation/          # 自动化任务（cron/once 调度）
 │   └── utils/                   # 通用工具
 ├── agent/prompts/main/          # Agent 系统提示词（.md）
-│   └── spec/                    # 规范文档（递归子目录）
 ├── skills/                      # Skill 定义（.md，YAML front-matter，播种到 ~/.moss/skills/）
 ├── config/                      # 配置模板
 │   ├── config.json              # AppConfig 模板
@@ -143,7 +142,6 @@ MOSS/
 | `tool.registry` | Tools 模组 | `ToolRegistry`（register/get/list/listSchemas/execute）|
 | `skill.registry` | Tools 模组 | `SkillRegistry`（register/list/get/reloadBySourceFile）|
 | `command.registry` | Tools 模组 | `CommandRegistry`（自定义斜杠命令注册表）|
-| `spec.registry` | Tools 模组 | `SpecRegistry`（register/list/get/reloadBySourceFile）|
 | `mcp.manager` | MCP 模组 | `MCPManager`（listServers/listTools/callTool/connect/disconnect）|
 | `agent.engine` | Agent 模组 | `AgentEngine`（run/resolveAsk）|
 | `server.instance` | Server 模组 | `ServerInstance`（addRoute/broadcastWS/sendToSession/onWSMessage）|
@@ -207,8 +205,8 @@ MOSS/
     "write": { "enabled": true, "requireConfirmation": true },
     "edit": { "enabled": true, "requireConfirmation": false },
     "shell": { "enabled": true, "timeout": 30000, "requireConfirmation": true },
-    "use_skill": { "enabled": true },
-    "use_mcp": { "enabled": true }
+    "skill": { "enabled": true },
+    "mcp": { "enabled": true }
     // ...其他工具
   },
   "mcpServers": {},
@@ -324,7 +322,6 @@ onEvent('done', finishReason)
 | `~/.moss/automations-history.json` | 自动化运行历史 | JSON |
 | `~/.moss/skills/` | 用户自定义 Skill（唯一运行时加载源；包内 skills/ 首次启动播种） | .md（YAML front-matter + body）|
 | `~/.moss/agent/prompts/main/` | 用户自定义系统提示词 | .md |
-| `~/.moss/agent/prompts/main/spec/` | 用户自定义规范 | .md（递归子目录）|
 
 ## 八、相关文档
 

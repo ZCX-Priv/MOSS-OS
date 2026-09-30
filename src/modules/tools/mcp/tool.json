@@ -1,0 +1,52 @@
+{
+  "name": "mcp",
+  "description": "统一 MCP 工具（action 分派）。action=list 列出已连接的 MCP 服务器及其工具（可用 server 限定单个服务器）；action=call 调用指定 MCP 服务器上的工具（需 server + tool，arguments 传参）。",
+  "description_en": "Unified MCP tool (dispatched by action). action=list lists connected MCP servers and their tools (optionally limited to one server); action=call invokes a tool on the given MCP server (requires server + tool, pass params via arguments).",
+  "icon": "plug",
+  "annotations": {
+    "readOnlyHint": false,
+    "destructiveHint": false
+  },
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string",
+        "enum": ["list", "call"],
+        "description": "MCP 操作",
+        "description_en": "MCP operation"
+      },
+      "server": {
+        "type": "string",
+        "description": "list：可选，仅列出该服务器；call：必填，MCP 服务器名称",
+        "description_en": "list: optional server filter; call: required MCP server name"
+      },
+      "tool": {
+        "type": "string",
+        "description": "call：要调用的服务器上的工具名称",
+        "description_en": "call: name of the tool on the server to call"
+      },
+      "arguments": {
+        "type": "object",
+        "description": "call：传递给工具的参数",
+        "description_en": "call: arguments passed to the tool",
+        "additionalProperties": true
+      }
+    },
+    "required": ["action"],
+    "additionalProperties": false
+  },
+  "config": {
+    "defaults": {
+      "enabled": true,
+      "timeout": 120000
+    },
+    "schema": {
+      "timeout": {
+        "type": "integer",
+        "min": 1000,
+        "max": 600000
+      }
+    }
+  }
+}

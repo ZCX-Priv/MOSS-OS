@@ -1,6 +1,6 @@
 // src/modules/memory/types.ts
 // 记忆引擎类型契约：记忆宫殿（Wing→Room→Hall→Drawer）层次结构 + verbatim/蒸馏混合存储。
-// 四层记忆栈：L0 身份（系统提示承担）/ L1 关键事实常驻 / L2 主题召回 / L3 深度检索（memory_search 工具）。
+// 四层记忆栈：L0 身份（系统提示承担）/ L1 关键事实常驻 / L2 主题召回 / L3 深度检索（memory 工具 action=search）。
 
 /** 记忆厅类型（Hall：记忆的语义分类） */
 export type MemoryHall = 'decision' | 'event' | 'discovery' | 'preference' | 'suggestion';

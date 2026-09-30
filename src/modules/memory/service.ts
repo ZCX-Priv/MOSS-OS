@@ -249,10 +249,10 @@ export class MemoryEngineServiceImpl {
   }
 
   // ========================================================================
-  // 检索与 CRUD 直通（memory_* 工具与 REST 路由消费）
+  // 检索与 CRUD 直通（memory 工具与 REST 路由消费）
   // ========================================================================
 
-  /** 检索（memory_search 工具 / REST 列表） */
+  /** 检索（memory 工具 action=search / REST 列表） */
   search(
     cwd: string,
     query: string,
@@ -281,7 +281,7 @@ export class MemoryEngineServiceImpl {
     return buildPalaceTree(this.env, cwd);
   }
 
-  /** 创建记忆（memory_save 工具 / REST） */
+  /** 创建记忆（memory 工具 action=save / REST） */
   save(cwd: string, input: MemoryUpsertInput): ScopedMemoryRecord {
     const record = buildMemoryRecord(input);
     // preference/suggestion → 全局 user wing；其余 → 当前项目 wing

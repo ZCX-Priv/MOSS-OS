@@ -49,7 +49,6 @@
 
 已注册但**未暴露 HTTP**的后端服务：
 - `SkillRegistry`（`skill.registry`）—— Skills 已加载但无查询接口
-- `SpecRegistry`（`spec.registry`）—— Specs 已加载但无查询接口
 - `kernel.modules` —— 模块状态查询（仅 /api/health 间接暴露）
 
 **当时完全缺失的后端模组**（迁移启动时的状态，现已实现）：
@@ -286,28 +285,6 @@ interface SkillItem {
 }
 interface SkillDetail extends SkillItem {
   prompt: string;
-  sourceFile?: string;
-}
-```
-
-#### 3.2.6 Specs 查询（SettingsPage-Docs/Rules 等）
-
-> 后端 `SpecRegistry` 已注册，仅需在 `server/routes/` 新增路由。
-
-```
-GET    /api/specs                      → { specs: SpecItem[] }
-GET    /api/specs/:id                  → { spec: SpecDetail }
-```
-
-**类型定义**：
-```ts
-interface SpecItem {
-  id: string;              // 相对路径，如 "coding" / "spec/coding"
-  description: string;
-  source: 'builtin' | 'user';
-}
-interface SpecDetail extends SpecItem {
-  content: string;
   sourceFile?: string;
 }
 ```
@@ -598,8 +575,6 @@ export interface AgentItem { /* 见 3.2.3 */ }
 export interface AgentDetail extends AgentItem { /* 见 3.2.3 */ }
 export interface SkillItem { /* 见 3.2.5 */ }
 export interface SkillDetail extends SkillItem { /* 见 3.2.5 */ }
-export interface SpecItem { /* 见 3.2.6 */ }
-export interface SpecDetail extends SpecItem { /* 见 3.2.6 */ }
 export interface AutomationItem { /* 见 3.2.7 */ }
 export interface AutomationRun { /* 见 3.2.7 */ }
 export interface AutomationTemplate { /* 见 3.2.7 */ }
@@ -654,7 +629,6 @@ webui/src/
 │   ├── useAgents.ts         # Agent 列表 + 切换
 │   ├── useAutomations.ts    # 自动化 CRUD + 历史
 │   ├── useSkills.ts         # Skills 查询
-│   ├── useSpecs.ts          # Specs 查询
 │   ├── useTodos.ts          # 任务 todo 实时更新（WS）
 │   └── useContextFiles.ts   # 任务上下文文件实时更新（WS）
 ├── types/
@@ -799,7 +773,6 @@ webui/src/
 | 模型 | GET/PUT/POST/PATCH/DELETE | /api/models, /api/models/current, /api/models/:id | 🆕 新增 |
 | Agent | GET/POST/GET/PATCH/DELETE/PUT | /api/agenteam, /api/agenteam/:id, /api/agenteam/default | 🆕 新增 |
 | Skills | GET/GET | /api/skills, /api/skills/:name | 🆕 新增 |
-| Specs | GET/GET | /api/specs, /api/specs/:id | 🆕 新增 |
 | 自动化 | GET/POST/GET/PATCH/DELETE/POST/GET | /api/automations, /api/automations/:id, .../:id/{trigger,pause,resume,history} | 🆕 新增 |
 | 自动化模板 | GET | /api/automation-templates | 🆕 新增 |
 | Todo | GET/PUT | /api/todos/:sessionId | 🆕 新增 |

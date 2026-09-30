@@ -214,7 +214,6 @@ console.log('\n===== D. 提示词文件（外部化 + 播种源） =====');
 file('存在 agent/prompts/main/system/soul.md', 'agent/prompts/main/system/soul.md');
 file('存在 agent/prompts/main/base/identity.md', 'agent/prompts/main/base/identity.md');
 file('存在 agent/prompts/main/rule/rules.md', 'agent/prompts/main/rule/rules.md');
-file('存在 agent/prompts/main/spec/context.md', 'agent/prompts/main/spec/context.md');
 file('存在 agent/prompts/compact/compaction.md', 'agent/prompts/compact/compaction.md');
 file('存在 agent/prompts/heal/tool-error.md', 'agent/prompts/heal/tool-error.md');
 ok('soul.md 内容特征（第一性原理/工具纪律）', 'agent/prompts/main/system/soul.md', [
@@ -232,12 +231,6 @@ ok('rules.md 内容特征（积极调用工具）', 'agent/prompts/main/rule/rul
   '# 行为规则',
   '积极调用工具',
   '工具选择',
-]);
-ok('spec/context.md 内容特征（七段表）', 'agent/prompts/main/spec/context.md', [
-  '# 上下文机制规范',
-  '持续事实与约束',
-  '待办与下一步',
-  '工具结果修剪',
 ]);
 ok('compact/compaction.md 七段式 + FOCUS 变量', 'agent/prompts/compact/compaction.md', [
   '## 持续事实与约束',

@@ -339,7 +339,7 @@ export interface CacheHitSample {
 
 /** 系统上下文构成（前端「系统」标签页折叠栏数据源） */
 export interface SystemSection {
-  /** 'identity' | 'rules' | 'spec-guide' | 'skill' | 'env' | 'summary' */
+  /** 'identity' | 'rules' | 'skill' | 'env' | 'summary' */
   id: string;
   title: string;
   tokens: number;

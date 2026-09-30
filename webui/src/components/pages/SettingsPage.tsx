@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, type ReactNode } from 'react';
-import { Outlet, useNavigate, useLocation, useOutletContext } from 'react-router-dom';
+import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import type { LucideIcon } from 'lucide-react';
 import {
   Settings,
@@ -27,7 +27,6 @@ import {
   Loader2,
   Search,
   Wrench,
-  FileCode,
   Pencil,
   ShieldCheck,
   ScrollText,
@@ -66,7 +65,6 @@ import {
 } from '@/components/ui/dialog';
 import { useAgents } from '../../hooks/useAgents';
 import { useTools } from '../../hooks/useTools';
-import { useSpecs } from '../../hooks/useSpecs';
 import { useCommands } from '../../hooks/useCommands';
 import { useConfig } from '../../hooks/useConfig';
 import { useFileIndex } from '../../hooks/useFileIndex';
@@ -76,7 +74,7 @@ import { eventToShortcut, formatShortcutLabel } from '../../utils/shortcut';
 import { api } from '../../api/http';
 import { TOOL_ICON_MAP } from '../../lib/tool-icons';
 import { SKILL_ICON_CHOICES, resolveSkillIcon } from '../../lib/skill-icons';
-import type { SpecDetail, SafetyConfig, LogLevel, LogsConfig, LogFileInfo, ContextEngineConfig, FileIndexConfig, ToolItem, AgentDetail } from '../../types/api';
+import type { SafetyConfig, LogLevel, LogsConfig, LogFileInfo, ContextEngineConfig, FileIndexConfig, ToolItem, AgentDetail } from '../../types/api';
 import { ToolEditDialog } from './settings/ToolEditDialog';
 import { CreateAgentDialog } from '../settings/CreateAgentDialog';
 import {
@@ -153,7 +151,6 @@ export const settingsSearchIndex: SearchableSetting[] = [
   { labelKey: 'settings.context.healerTitle', descriptionKey: 'settings.context.healerDesc', section: 'context' },
   { labelKey: 'settings.nav.tools', section: 'tools' },
   { labelKey: 'settings.tools.maxTurnsLabel', descriptionKey: 'settings.tools.maxTurnsDesc', section: 'tools' },
-  { labelKey: 'settings.nav.specs', section: 'specs' },
   { labelKey: 'settings.nav.safety', section: 'safety' },
   { labelKey: 'settings.nav.remote', section: 'remote' },
   { labelKey: 'settings.remote.title', descriptionKey: 'settings.remote.desc', section: 'remote' },
@@ -773,14 +770,7 @@ function ContextSettingRow({
   );
 }
 
-/** 上下文>规范 Tab 的 Outlet context（搜索框/新建按钮在标题区，列表在子路由） */
-interface SpecOutletContext {
-  query: string;
-  /** 创建规范成功后 +1，触发子路由重拉列表 */
-  refreshKey: number;
-}
-
-/** 上下文设置：Tab 容器（引擎/规范/索引/规则/记忆；路由驱动） */
+/** 上下文设置：Tab 容器（引擎/索引/规则/记忆；路由驱动） */
 export function ContextSettings() {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -788,73 +778,18 @@ export function ContextSettings() {
   const suffix = pathname.startsWith('/settings/context/')
     ? pathname.slice('/settings/context/'.length)
     : '';
-  const tab = ['specs', 'index', 'rules', 'memory'].includes(suffix)
+  const tab = ['index', 'rules', 'memory'].includes(suffix)
     ? suffix
     : 'engine';
 
-  // 规范 Tab：标题区搜索词 + 新建弹窗 + 列表刷新信号
-  const [specQuery, setSpecQuery] = useState('');
-  const [specCreateOpen, setSpecCreateOpen] = useState(false);
-  const [specsRefreshKey, setSpecsRefreshKey] = useState(0);
-  const [newSpecId, setNewSpecId] = useState('');
-  const [newSpecDesc, setNewSpecDesc] = useState('');
-  const [creating, setCreating] = useState(false);
-
-  const createSpec = useCallback(async () => {
-    const id = newSpecId.trim();
-    if (!/^[a-zA-Z0-9_-]+$/.test(id) || creating) return;
-    setCreating(true);
-    try {
-      await api.createSpec({ id, description: newSpecDesc.trim() || undefined });
-      toast.success(t('settings.specs.created', { id }));
-      setSpecCreateOpen(false);
-      setNewSpecId('');
-      setNewSpecDesc('');
-      setSpecsRefreshKey((k) => k + 1);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : '';
-      if (msg.includes('SPEC_ALREADY_EXISTS')) {
-        toast.error(t('settings.specs.exists'));
-      } else if (msg.includes('SPEC_ID_INVALID')) {
-        toast.error(t('settings.specs.idInvalid'));
-      } else {
-        toast.error(msg || t('settings.specs.createFailed'));
-      }
-    } finally {
-      setCreating(false);
-    }
-  }, [newSpecId, newSpecDesc, creating, t]);
-
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      {/* 标题区：左标题右操作（规范 Tab 显示搜索+新建；移动端搜索独占一行、按钮 icon-only） */}
+      {/* 标题区：左标题右操作 */}
       <div className="flex flex-col gap-4 px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-col gap-1">
           <h1 className="text-xl font-semibold text-foreground">{t('settings.nav.context')}</h1>
           <p className="text-sm text-muted-foreground">{t('settings.context.subtitle')}</p>
         </div>
-        {tab === 'specs' && (
-          <div className="flex items-center gap-2">
-            <div className="relative w-full sm:w-64 sm:shrink-0">
-              <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                type="text"
-                placeholder={t('settings.specs.searchPlaceholder')}
-                className="pl-8"
-                value={specQuery}
-                onChange={(e) => setSpecQuery(e.target.value)}
-              />
-            </div>
-            <Button
-              className="shrink-0 gap-1.5"
-              onClick={() => setSpecCreateOpen(true)}
-              aria-label={t('settings.specs.create')}
-            >
-              <Plus className="size-3.5" />
-              <span className="hidden sm:inline">{t('settings.specs.create')}</span>
-            </Button>
-          </div>
-        )}
       </div>
       <Tabs
         value={tab}
@@ -867,10 +802,6 @@ export function ContextSettings() {
             <TabsTrigger value="engine" className="gap-1.5">
               <Activity className="size-3.5" />
               {t('settings.context.tabEngine')}
-            </TabsTrigger>
-            <TabsTrigger value="specs" className="gap-1.5">
-              <FileCode className="size-3.5" />
-              {t('settings.nav.specs')}
             </TabsTrigger>
             <TabsTrigger value="index" className="gap-1.5">
               <Globe className="size-3.5" />
@@ -892,52 +823,8 @@ export function ContextSettings() {
         key={pathname}
         className="anim-route animate-in fade-in slide-in-from-bottom-1 duration-200 flex-1 overflow-auto"
       >
-        <Outlet context={{ query: specQuery, refreshKey: specsRefreshKey }} />
+        <Outlet />
       </div>
-
-      {/* 新建规范弹窗（写 ~/.moss/agent/prompts/main/spec/<id>.md，watch 热重载生效） */}
-      <Dialog open={specCreateOpen} onOpenChange={(o) => !creating && setSpecCreateOpen(o)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t('settings.specs.createTitle')}</DialogTitle>
-            <DialogDescription>{t('settings.specs.createDesc')}</DialogDescription>
-          </DialogHeader>
-          <DialogBody>
-            <div className="flex flex-col gap-4">
-              <div className="flex flex-col gap-2">
-                <Label htmlFor="new-spec-id">{t('settings.specs.idLabel')}</Label>
-                <Input
-                  id="new-spec-id"
-                  value={newSpecId}
-                  onChange={(e) => setNewSpecId(e.target.value)}
-                  placeholder={t('settings.specs.idPlaceholder')}
-                  autoFocus
-                />
-              </div>
-              <div className="flex flex-col gap-2">
-                <Label htmlFor="new-spec-desc">{t('settings.specs.descLabel')}</Label>
-                <Input
-                  id="new-spec-desc"
-                  value={newSpecDesc}
-                  onChange={(e) => setNewSpecDesc(e.target.value)}
-                  placeholder={t('settings.specs.descPlaceholder')}
-                />
-              </div>
-            </div>
-          </DialogBody>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setSpecCreateOpen(false)} disabled={creating}>
-              {t('common.cancel')}
-            </Button>
-            <Button
-              onClick={() => void createSpec()}
-              disabled={creating || !/^[a-zA-Z0-9_-]+$/.test(newSpecId.trim())}
-            >
-              {t('settings.specs.create')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
@@ -2266,125 +2153,6 @@ export function ToolsSettings() {
         onOpenChange={(open) => !open && setEditingTool(null)}
         onSave={handleSaveToolConfig}
       />
-    </div>
-  );
-}
-
-/* ===== 规范设置（Spec 查看与编辑；搜索框/新建在 ContextSettings 标题区） ===== */
-export function SpecsSettings() {
-  const { t } = useTranslation();
-  const { query, refreshKey } = useOutletContext<SpecOutletContext>();
-  const { specs, reload } = useSpecs();
-
-  const [detail, setDetail] = useState<SpecDetail | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [content, setContent] = useState('');
-  const [saving, setSaving] = useState(false);
-
-  // 标题区「新建规范」成功后 refreshKey+1 → 重拉列表
-  useEffect(() => {
-    void reload();
-  }, [refreshKey, reload]);
-
-  const q = query.trim().toLowerCase();
-  const filteredSpecs = q
-    ? specs.filter(
-        (s) => s.id.toLowerCase().includes(q) || s.description.toLowerCase().includes(q),
-      )
-    : specs;
-
-  const openSpec = useCallback(async (id: string) => {
-    setLoading(true);
-    try {
-      const resp = await api.getSpec(id);
-      setDetail(resp.spec);
-      setContent(resp.spec.content);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : t('settings.specs.loadFailed'));
-    } finally {
-      setLoading(false);
-    }
-  }, [t]);
-
-  const save = useCallback(async () => {
-    if (!detail || saving) return;
-    setSaving(true);
-    try {
-      await api.updateSpec(detail.id, content);
-      toast.success(t('settings.specs.saved'));
-      setDetail(null);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : t('settings.specs.saveFailed'));
-    } finally {
-      setSaving(false);
-    }
-  }, [detail, content, saving, t]);
-
-  return (
-    <div className="flex flex-col gap-4 p-6">
-      {/* 规范设置（上下文页「规范」Tab 内容；搜索框/新建按钮在标题区） */}
-
-      <div className="flex flex-col gap-2">
-        {filteredSpecs.length === 0 && (
-          <div className="py-12 text-center text-sm text-muted-foreground">
-            {t('settings.specs.noSpecs')}
-          </div>
-        )}
-        {filteredSpecs.map((spec) => (
-          <Card
-            key={spec.id}
-            className="flex cursor-pointer flex-row items-center gap-3 p-3 transition-colors hover:bg-muted/40"
-            onClick={() => void openSpec(spec.id)}
-          >
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-              <FileCode className="size-5" />
-            </div>
-            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <div className="flex items-center gap-2">
-                <h3 className="text-sm font-medium text-foreground">{spec.id}</h3>
-                <Badge variant="outline" className="font-normal">
-                  {spec.source === 'builtin' ? t('settings.tools.builtin') : t('settings.tools.custom')}
-                </Badge>
-              </div>
-              <p className="truncate text-xs text-muted-foreground">{spec.description}</p>
-            </div>
-            <Pencil className="size-4 shrink-0 text-muted-foreground/50" />
-          </Card>
-        ))}
-      </div>
-
-      {/* 查看/编辑弹窗 */}
-      <Dialog open={detail !== null || loading} onOpenChange={(o) => !o && !saving && setDetail(null)}>
-        <DialogContent size="lg">
-          <DialogHeader>
-            <DialogTitle>{detail ? detail.id : t('common.loading')}</DialogTitle>
-            <DialogDescription>{detail?.description}</DialogDescription>
-          </DialogHeader>
-          <DialogBody>
-            {loading ? (
-              <div className="flex items-center justify-center gap-2 py-8 text-muted-foreground">
-                <Loader2 className="size-4 animate-spin" />
-              </div>
-            ) : detail ? (
-              <Textarea
-                value={content}
-                onChange={(e) => setContent(e.target.value)}
-                disabled={saving}
-                className="min-h-[50vh] font-mono text-xs"
-              />
-            ) : null}
-          </DialogBody>
-          <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => setDetail(null)} disabled={saving}>
-              {t('common.cancel')}
-            </Button>
-            <Button size="sm" onClick={() => void save()} disabled={saving || !detail}>
-              {saving ? <Loader2 className="size-3.5 animate-spin" /> : null}
-              {t('common.save')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

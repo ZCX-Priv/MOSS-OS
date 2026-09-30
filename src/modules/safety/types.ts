@@ -1,6 +1,6 @@
 // src/modules/safety/types.ts
 // 安全（safety）模块类型定义。
-// 统一权限决策入口：所有工具（builtin/custom/MCP/use_mcp）执行前必须经过 SafetyPolicy.evaluate。
+// 统一权限决策入口：所有工具（builtin/custom/MCP/mcp）执行前必须经过 SafetyPolicy.evaluate。
 // 设计借鉴 Claude Code 权限系统（ccs-map 源码分析），按 MOSS-OS 服务化架构裁剪。
 
 /** 权限模式（对齐前端 PermissionModeSelector 现有 UI：3 种） */
@@ -73,7 +73,7 @@ export interface SafetyRequest {
   params: unknown;
   /** builtin 工具注解 */
   annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean };
-  /** MCP 工具注解（mcp__ 前缀工具或 use_mcp） */
+  /** MCP 工具注解（mcp__ 前缀直调工具，或 mcp 工具 action=call） */
   mcpAnnotations?: { readOnlyHint?: boolean; destructiveHint?: boolean };
   mode: PermissionMode;
   sessionId: string;

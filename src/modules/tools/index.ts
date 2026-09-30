@@ -1,5 +1,5 @@
 // src/modules/tools/index.ts
-// Tools 模块入口：注册 ToolRegistry + 内置工具 + Skill/Command/Spec 三注册表。
+// Tools 模块入口：注册 ToolRegistry + 内置工具 + Skill/Command 两注册表。
 // 工具从 tools 目录的「tool.json + index.ts」结构加载，新增工具只需加目录。
 // 支持配置热重载（enabled 变更即时生效）和文件级增量热重载（tool.json/index.ts 变更即时生效）。
 
@@ -9,9 +9,8 @@ import { ServiceNames } from '../../core/types';
 import { join } from 'node:path';
 import { existsSync, statSync, watch, mkdirSync, readdirSync, type FSWatcher } from 'node:fs';
 import { ToolRegistryImpl } from './registry';
-import { createSkillRegistry } from './use_skill/registry';
+import { createSkillRegistry } from './shared/skill-registry';
 import { createCommandRegistry } from './use_command/registry';
-import { createSpecRegistry } from './get_spec/registry';
 import { BUILTIN_TOOL_NAMES } from './manifest';
 import { loadToolsFromDir, loadToolFromDir, resolveBuiltinDir } from './loader';
 import type { Tool } from './types';
@@ -31,8 +30,7 @@ class ToolsModule implements Module {
     this.ctx = ctx;
     this.registry = new ToolRegistryImpl(ctx.logger, ctx.config);
     const skillRegistry = createSkillRegistry(ctx.env, ctx.logger, ctx.eventBus, ctx.config);
-    const commandRegistry = createCommandRegistry(ctx.env, ctx.logger, ctx.eventBus, ctx.config);
-    const specRegistry = createSpecRegistry(ctx.env, ctx.logger, ctx.eventBus);
+    const commandRegistry = createCommandRegistry(ctx.env, ctx.logger, ctx.eventBus);
 
     // 1. 加载并注册内置工具（从 tools 目录，按 config 过滤）
     await this.loadAndRegisterBuiltinTools(ctx);
@@ -48,9 +46,6 @@ class ToolsModule implements Module {
       scope: 'tools',
     });
     ctx.services.register(ServiceNames.COMMAND_REGISTRY, commandRegistry, {
-      scope: 'tools',
-    });
-    ctx.services.register(ServiceNames.SPEC_REGISTRY, specRegistry, {
       scope: 'tools',
     });
 

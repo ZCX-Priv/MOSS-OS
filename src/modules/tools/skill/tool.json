@@ -1,0 +1,40 @@
+{
+  "name": "skill",
+  "description": "统一 skill 工具（action 分派）。action=list 列出所有可用 skill（渐进式披露第一级：仅 name + description，token 消耗极小）；action=use 激活指定 skill 并返回完整指令模板（第二级；目录式 skill 附带附属资源清单；args 替换模板中的 {{placeholder}} 占位符）。",
+  "description_en": "Unified skill tool (dispatched by action). action=list lists all available skills (progressive disclosure level 1: name + description only, minimal token cost); action=use activates a skill and returns its full instruction template (level 2; directory-based skills include companion resources; args fill {{placeholder}} tokens).",
+  "icon": "sparkles",
+  "annotations": {
+    "readOnlyHint": true,
+    "idempotentHint": true
+  },
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string",
+        "enum": ["list", "use"],
+        "description": "skill 操作",
+        "description_en": "Skill operation"
+      },
+      "skill": {
+        "type": "string",
+        "description": "use：要激活的技能名称",
+        "description_en": "use: name of the skill to activate"
+      },
+      "args": {
+        "type": "object",
+        "description": "use：替换到技能提示词占位符中的参数（如 {topic: \"react hooks\"} 对应 {{topic}}）。",
+        "description_en": "use: arguments substituted into the skill prompt placeholders (e.g. {topic: \"react hooks\"} fills {{topic}}).",
+        "additionalProperties": true
+      }
+    },
+    "required": ["action"],
+    "additionalProperties": false
+  },
+  "config": {
+    "defaults": {
+      "enabled": true
+    },
+    "schema": {}
+  }
+}

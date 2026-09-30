@@ -1,0 +1,76 @@
+{
+  "name": "memory",
+  "description": "统一记忆工具（action 分派）。action=save 保存一条长期记忆到记忆宫殿（hall：decision/event/discovery/preference/suggestion；preference/suggestion 自动存入全局 user 翼，其余存入当前项目翼）；action=search 深度检索记忆宫殿（L3 全量跨翼 BM25，可按 wing/room/hall 过滤）；action=list_rooms 列出记忆宫殿结构（翼→房间→厅 与数量）。",
+  "description_en": "Unified memory tool (dispatched by action). action=save stores a long-term memory into the memory palace (hall: decision/event/discovery/preference/suggestion; preference/suggestion go to the global 'user' wing, others to the current project wing); action=search deep-searches the palace (L3 full cross-wing BM25, filterable by wing/room/hall); action=list_rooms lists the palace structure (wing→room→hall with counts).",
+  "icon": "brain",
+  "annotations": {
+    "readOnlyHint": false,
+    "idempotentHint": false
+  },
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string",
+        "enum": ["save", "search", "list_rooms"],
+        "description": "记忆操作",
+        "description_en": "Memory operation"
+      },
+      "room": {
+        "type": "string",
+        "description": "save：主题房间名（英文小写连字符，如 context-engine；同类主题保持同名以形成关联）",
+        "description_en": "save: topic room name (lowercase hyphenated, e.g. context-engine; reuse the same name for related topics)"
+      },
+      "hall": {
+        "type": "string",
+        "enum": ["decision", "event", "discovery", "preference", "suggestion"],
+        "description": "记忆分类（save 必填；search 可选过滤）",
+        "description_en": "Memory category (required for save; optional filter for search)"
+      },
+      "verbatim": {
+        "type": "string",
+        "description": "save：对话原文片段（保留关键原话，供追溯）",
+        "description_en": "save: original text fragment from the conversation (keeps key quotes for traceability)"
+      },
+      "insight": {
+        "type": "string",
+        "description": "save：一句话洞察（将来注入上下文的内容，要自包含、无歧义）",
+        "description_en": "save: one-sentence insight (injected into future contexts; self-contained and unambiguous)"
+      },
+      "tags": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "save：标签（可选，便于过滤）",
+        "description_en": "save: tags (optional, for filtering)"
+      },
+      "importance": {
+        "type": "number",
+        "description": "save：重要性 0-1（>=0.75 进入关键事实常驻层；默认 0.5）",
+        "description_en": "save: importance 0-1 (>=0.75 enters the always-on key facts layer; default 0.5)"
+      },
+      "query": {
+        "type": "string",
+        "description": "search：检索查询（自然语言关键词）",
+        "description_en": "search: natural language query"
+      },
+      "wing": {
+        "type": "string",
+        "description": "search：限定翼（项目名或 'user'；缺省=全翼检索）",
+        "description_en": "search: restrict to a wing (project name or 'user'; default = all wings)"
+      },
+      "topK": {
+        "type": "integer",
+        "description": "search：返回条数上限（默认 10，最大 50）",
+        "description_en": "search: max results (default 10, max 50)"
+      }
+    },
+    "required": ["action"],
+    "additionalProperties": false
+  },
+  "config": {
+    "defaults": {
+      "enabled": true
+    },
+    "schema": {}
+  }
+}

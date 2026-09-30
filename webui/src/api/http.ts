@@ -30,8 +30,6 @@ import type {
   SkillDetail,
   CommandItem,
   CommandUpsertBody,
-  SpecItem,
-  SpecDetail,
   ToolItem,
   AutomationItem,
   AutomationDetail,
@@ -500,7 +498,7 @@ export const api = {
     request<SubagentRunOutput>('POST', '/api/subagents/run', data),
 
   // ==========================================================================
-  // Skills / Specs（见文档 3.2.5 / 3.2.6）
+  // Skills（见文档 3.2.5）
   // ==========================================================================
   listSkills: () => request<{ skills: SkillItem[] }>('GET', '/api/skills'),
   getSkill: (name: string) => request<{ skill: SkillDetail }>('GET', `/api/skills/${name}`),
@@ -529,20 +527,6 @@ export const api = {
   /** 切换命令启停（写 config.commands[name].enabled，热生效） */
   toggleCommand: (name: string, enabled: boolean) =>
     request<{ name: string; enabled: boolean }>('PATCH', `/api/commands/${encodeURIComponent(name)}`, { enabled }),
-  listSpecs: () => request<{ specs: SpecItem[] }>('GET', '/api/specs'),
-  // detail 用 query 形式规避路径参数含斜杠问题
-  getSpec: (id: string) =>
-    request<{ spec: SpecDetail }>('GET', `/api/specs?id=${encodeURIComponent(id)}`),
-  /** 保存 spec 内容（仅用户目录 spec 可编辑；id 走 query 与后端一致） */
-  updateSpec: (id: string, content: string, description?: string) =>
-    request<{ saved: boolean; id: string }>(
-      'PUT',
-      `/api/specs?id=${encodeURIComponent(id)}`,
-      { content, description },
-    ),
-  /** 新建 spec（用户 spec 目录下创建 <id>.md，watch 热重载生效） */
-  createSpec: (data: { id: string; description?: string }) =>
-    request<{ id: string }>('POST', '/api/specs', data),
 
   // ==========================================================================
   // 规则引擎（/api/rules；cwd 走 query）

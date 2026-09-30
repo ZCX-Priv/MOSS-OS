@@ -28,7 +28,7 @@ import type { FileChangeEvent } from '../filesys/types';
 import type { ConfigService, EventBus, Logger, ServiceRegistry, Environment, ApiConfig } from '../../core/types';
 import { ServiceNames } from '../../core/types';
 import type { AskOutcome, AskPayload, ToolResult } from '../tools/types';
-import type { SkillRegistry } from '../tools/use_skill/registry';
+import type { SkillRegistry } from '../tools/shared/skill-registry';
 import { readSessionTodoStore, getSessionTodoPath } from '../tools/todo/shared/store';
 import { buildStaticSystemPrompt, buildRequestView, MAX_TURNS_NOTICE_MSG_NAME } from '../context/compiler';
 import { DEFAULT_TOOL_PRUNING_CONFIG } from '../context/types';

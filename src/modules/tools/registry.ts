@@ -6,6 +6,7 @@ import type { Logger, ConfigService } from '../../core/types';
 import type { Tool, ToolContext, ToolResult } from './types';
 import type { ToolRegistry } from '../contracts';
 import { localizeDescription, localizeSchema } from './loader';
+import { compareToolNames } from './sort';
 
 export class ToolRegistryImpl implements ToolRegistry {
   private readonly tools = new Map<string, Tool>();
@@ -93,9 +94,11 @@ export class ToolRegistryImpl implements ToolRegistry {
     annotations?: Record<string, unknown>;
   }> {
     // 仅暴露启用的工具给 LLM（enabled 从 config 实时读取）；
-    // description/schema 按当前后端 locale live 解析（en 时用 description_en）
+    // description/schema 按当前后端 locale live 解析（en 时用 description_en）；
+    // 顺序：字符序 A-Z → a-z → 0-9，短在前长在后（compareToolNames）
     return this.list()
       .filter(t => this.isEnabled(t.name))
+      .sort((a, b) => compareToolNames(a.name, b.name))
       .map(t => ({
         name: t.name,
         description: localizeDescription(t),

@@ -977,7 +977,7 @@ export interface ToolItem {
 }
 
 // ============================================================================
-// Skills / Specs 查询（见文档 3.2.5 / 3.2.6）
+// Skills 查询（见文档 3.2.5）
 // ============================================================================
 
 export interface SkillItem {
@@ -1029,20 +1029,6 @@ export interface CommandUpsertBody {
   prompt: string;
   argumentHint?: string;
   icon?: string;
-}
-
-export interface SpecItem {
-  /** 相对路径，如 "coding" / "spec/coding" */
-  id: string;
-  description: string;
-  source: 'builtin' | 'user';
-}
-
-export interface SpecDetail extends SpecItem {
-  content: string;
-  sourceFile?: string;
-  /** 是否可通过 PUT /api/specs 编辑（仅用户目录内的 spec） */
-  editable?: boolean;
 }
 
 // ============================================================================

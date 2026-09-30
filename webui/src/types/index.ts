@@ -12,7 +12,6 @@ export type SettingsSection =
   | 'provider'
   | 'context'
   | 'tools'
-  | 'specs'
   | 'safety'
   | 'remote'
   | 'logs'

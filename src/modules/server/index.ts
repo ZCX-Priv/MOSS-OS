@@ -44,7 +44,6 @@ import {
   createDeleteCommandHandler,
   createToggleCommandHandler,
 } from './routes/commands';
-import { createSpecsHandler, createUpdateSpecHandler, createCreateSpecHandler } from './routes/specs';
 import { createListToolsHandler, createUpdateToolHandler } from './routes/tools';
 import { createVersionHandler } from './routes/version';
 import {
@@ -322,7 +321,7 @@ class ServerModule implements Module {
     this.router.addRoute({ method: 'PUT', pattern: '/api/mcp/servers/:name', handler: createUpdateMcpServerHandler(services), auth: true });
     this.router.addRoute({ method: 'DELETE', pattern: '/api/mcp/servers/:name', handler: createDeleteMcpServerHandler(services), auth: true });
 
-    // skills / specs
+    // skills
     this.router.addRoute({ method: 'GET', pattern: '/api/skills', handler: createListSkillsHandler(services), auth: true });
     this.router.addRoute({ method: 'GET', pattern: '/api/skills/:name', handler: createGetSkillHandler(services), auth: true });
     this.router.addRoute({ method: 'PATCH', pattern: '/api/skills/:name', handler: createUpdateSkillHandler(services, config), auth: true });
@@ -335,11 +334,6 @@ class ServerModule implements Module {
     this.router.addRoute({ method: 'PUT', pattern: '/api/commands/:name', handler: createUpdateCommandHandler(services, env), auth: true });
     this.router.addRoute({ method: 'DELETE', pattern: '/api/commands/:name', handler: createDeleteCommandHandler(services), auth: true });
     this.router.addRoute({ method: 'PATCH', pattern: '/api/commands/:name', handler: createToggleCommandHandler(services, config), auth: true });
-    this.router.addRoute({ method: 'GET', pattern: '/api/specs', handler: createSpecsHandler(services), auth: true });
-    // specs 保存（写回 ~/.moss/agent/prompts/main/spec/ 下文件）
-    this.router.addRoute({ method: 'PUT', pattern: '/api/specs', handler: createUpdateSpecHandler(services, env), auth: true });
-    // specs 新建（在用户 spec 目录下创建 <id>.md）
-    this.router.addRoute({ method: 'POST', pattern: '/api/specs', handler: createCreateSpecHandler(services, env), auth: true });
 
     // tools（工具元信息 + 可编辑参数定义；PATCH 更新 config.tools[name] 热生效）
     this.router.addRoute({ method: 'GET', pattern: '/api/tools', handler: createListToolsHandler(services, config), auth: true });
