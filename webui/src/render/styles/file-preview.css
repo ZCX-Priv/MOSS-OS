@@ -1,0 +1,82 @@
+/* render/styles/file-preview.css
+   文件预览专用样式：代码行号视图 / PPTX 容器 / HTML 沙箱 / 字体样张 / 表格。
+   由 render/index.ts 统一引入。 */
+
+/* ============ 代码文件：行号 + 高亮 ============ */
+.code-file-viewer {
+  font-family: 'Geist Variable', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.code-file-body pre,
+.code-file-plain {
+  margin: 0;
+  padding: 6px 0;
+  background: transparent !important;
+  /* 折叠 .line 之间的换行文本节点，避免行间出现空行 */
+  white-space: normal;
+  min-width: max-content;
+}
+
+.code-file-body code,
+.code-file-plain code {
+  display: block;
+  counter-reset: codeline;
+}
+
+.code-file-body .line,
+.code-file-plain .line {
+  counter-increment: codeline;
+  display: block;
+  /* 行内保留原始空白（缩进） */
+  white-space: pre;
+  min-height: 1.6em;
+  padding-left: 3.5rem;
+  position: relative;
+}
+
+.code-file-body .line::before,
+.code-file-plain .line::before {
+  content: counter(codeline);
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 2.75rem;
+  padding-right: 0.75rem;
+  text-align: right;
+  color: var(--muted-foreground);
+  opacity: 0.6;
+  user-select: none;
+}
+
+/* ============ PPTX 高保真容器 ============ */
+.pptx-viewer-host {
+  width: 100%;
+  height: 100%;
+  min-height: 320px;
+}
+
+/* ============ HTML 沙箱预览 ============ */
+.html-preview-frame {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #ffffff;
+}
+
+/* ============ 字体样张 ============ */
+.font-preview-sample {
+  font-size: 28px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+/* ============ 分隔符表格（CSV/TSV） ============ */
+.data-table td,
+.data-table th {
+  white-space: nowrap;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

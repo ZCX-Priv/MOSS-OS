@@ -14,7 +14,7 @@
 //   ../../types               — ToolContext, ToolResult, ToolResultContent
 //   ../../../contracts        — FileHistoryService, FilesysService
 //   ./shared/detector         — detectFileType
-//   ./handlers/*              — readText/readImage/readPdf/readOffice/readNotebook
+//   ./handlers/*              — readText/readImage/readPdf/readOffice/readNotebook/readEbook
 
 import { existsSync, statSync, type Stats } from 'node:fs';
 import { ServiceNames } from '../../../core/types';
@@ -25,6 +25,7 @@ import { readImage } from './handlers/image';
 import { readPdf } from './handlers/pdf';
 import { readOffice } from './handlers/office';
 import { readNotebook } from './handlers/notebook';
+import { readEbook } from './handlers/ebook';
 import type { FileHistoryService, FilesysService } from '../../contracts';
 import type { ToolContext, ToolResult, ToolResultContent } from '../types';
 
@@ -186,6 +187,8 @@ async function dispatchByType(
       return readOffice(absPath);
     case 'notebook':
       return readNotebook(absPath);
+    case 'ebook':
+      return readEbook(absPath);
     case 'text':
     default:
       return readText(absPath, {

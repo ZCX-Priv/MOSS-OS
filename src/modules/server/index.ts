@@ -133,6 +133,8 @@ import {
   createGetRootsHandler,
   createUpdateRootsHandler,
   createReadFileHandler,
+  createMediaHandler,
+  createTextExtractHandler,
 } from './routes/filesystem';
 import {
   createContextStatsHandler,
@@ -429,6 +431,10 @@ class ServerModule implements Module {
     this.router.addRoute({ method: 'GET', pattern: '/api/filesystem/search-files', handler: createSearchFilesHandler(env), auth: true });
     // 文件只读预览（渲染模块取 docx/pdf/图片/3D 模型二进制；走 filesys roots 权限 + 白名单）
     this.router.addRoute({ method: 'GET', pattern: '/api/filesystem/raw', handler: createReadFileHandler(this.ctx.services), auth: true });
+    // 视频/音频直链：<video>/<audio> 无法携带 Authorization 头 → query token 鉴权（handler 内校验）
+    this.router.addRoute({ method: 'GET', pattern: '/api/filesystem/media', handler: createMediaHandler(this.ctx.services, config), auth: false });
+    // 通用文本提取（Office/电子书等无前端渲染格式的回退）
+    this.router.addRoute({ method: 'GET', pattern: '/api/filesystem/text', handler: createTextExtractHandler(this.ctx.services), auth: true });
 
     // filesys roots（虚拟文件系统授权目录管理）
     this.router.addRoute({ method: 'GET', pattern: '/api/filesys/roots', handler: createGetRootsHandler(this.ctx.services), auth: true });
@@ -762,6 +768,9 @@ async function handleHttp(
     if (typeof result.body === 'string') {
       responseBody = result.body;
     } else if (result.body instanceof Uint8Array) {
+      responseBody = result.body as BodyInit;
+    } else if (typeof (result.body as { getReader?: unknown }).getReader === 'function') {
+      // Web ReadableStream（文件流式响应，见 filesystem 路由的 Range/媒体直链）
       responseBody = result.body as BodyInit;
     } else if (typeof Buffer !== 'undefined' && result.body instanceof Buffer) {
       responseBody = new Uint8Array(result.body as Buffer) as BodyInit;

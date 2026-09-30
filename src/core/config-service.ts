@@ -283,6 +283,8 @@ const appConfigSchema = z.object({
     .object({
       enabled: z.boolean(),
       allowedTools: z.array(z.string()),
+      // 缺省 'sse'：SDK 默认响应模式，长任务有 keep-alive 保护（见 types.ts 注释）
+      responseMode: z.enum(['json', 'sse']).default('sse'),
     })
     .optional(),
   // Skill 启停（可选）
@@ -344,7 +346,7 @@ export function defaultAppConfig(): AppConfig {
     tools: buildToolsDefaults() as AppConfig['tools'],
     mcpServers: {},
     mcp: { callTimeoutMs: 120000, allowSampling: true },
-    mcpServer: { enabled: false, allowedTools: [] },
+    mcpServer: { enabled: false, allowedTools: [], responseMode: 'sse' },
     skills: {},
     security: { authToken: '', bindLocalhostOnly: true },
     remote: { enabled: false, lanEnabled: true, lanPasswordEnabled: true, lanIpOverride: '' },

@@ -5,7 +5,7 @@
 import { extname } from 'node:path';
 
 /** 文件类型分类，决定分派到哪个 handler */
-export type FileType = 'text' | 'image' | 'pdf' | 'office' | 'notebook';
+export type FileType = 'text' | 'image' | 'pdf' | 'office' | 'notebook' | 'ebook';
 
 /** 图片扩展名集合 */
 const IMAGE_EXTS = new Set<string>([
@@ -32,6 +32,14 @@ const OFFICE_EXTS = new Set<string>([
 ]);
 
 /**
+ * 电子书扩展名集合。
+ * - EPUB：.epub/.opf（jszip + OPF spine 解析）
+ * - FB2：.fb2（XML，cheerio 解析）
+ * - MOBI/AZW3：.mobi/.azw3/.azw（无纯 JS 解析方案，handler 内明确报错提示转换）
+ */
+const EBOOK_EXTS = new Set<string>(['.epub', '.opf', '.mobi', '.azw3', '.azw', '.fb2']);
+
+/**
  * 根据扩展名检测文件类型。
  * 默认回退为 'text'，由 text handler 做二进制检测兜底
  * （避免将 GBK 编码的 .txt 误判为二进制而拒绝）。
@@ -42,5 +50,6 @@ export function detectFileType(path: string): FileType {
   if (ext === '.ipynb') return 'notebook';
   if (IMAGE_EXTS.has(ext)) return 'image';
   if (OFFICE_EXTS.has(ext)) return 'office';
+  if (EBOOK_EXTS.has(ext)) return 'ebook';
   return 'text';
 }

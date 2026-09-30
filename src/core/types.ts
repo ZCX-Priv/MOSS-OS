@@ -230,8 +230,17 @@ export interface AppConfig {
   mcpServer?: {
     /** 是否启用对外暴露，默认 false */
     enabled: boolean;
-    /** 暴露的工具白名单；空数组 = 全部内置工具（requireConfirmation 工具除外） */
+    /** 暴露的工具白名单；空数组 = 全部内置工具（requireConfirmation/destructiveHint 工具始终除外） */
     allowedTools: string[];
+    /**
+     * POST 响应体模式，默认 'sse'。
+     * - 'sse'：Streamable HTTP 默认行为，响应为 text/event-stream；
+     *   连接持续有 SDK 的 15s keep-alive 帧，长任务不会被 Bun 的 idleTimeout 掐断。
+     * - 'json'：响应为 application/json（单次返回）。
+     *   ⚠ 该模式下等待期间无任何字节下行，超过 Bun.serve idleTimeout（60s）的
+     *   工具调用会被连接层直接断开，仅作兼容逃生舱。
+     */
+    responseMode?: 'json' | 'sse';
   };
   /** Skill 启停（name → { enabled }，缺省视为启用） */
   skills?: Record<string, { enabled?: boolean }>;

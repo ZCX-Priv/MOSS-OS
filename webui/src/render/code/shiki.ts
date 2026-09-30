@@ -13,10 +13,13 @@ const LANG_ALIAS: Record<string, string> = {
   ts: 'typescript',
   tsx: 'tsx',
   py: 'python',
+  pyi: 'python',
   rb: 'ruby',
   sh: 'bash',
   shell: 'bash',
   zsh: 'bash',
+  ps1: 'powershell',
+  psm1: 'powershell',
   'c++': 'cpp',
   cc: 'cpp',
   h: 'c',
@@ -25,6 +28,7 @@ const LANG_ALIAS: Record<string, string> = {
   'c#': 'csharp',
   yml: 'yaml',
   md: 'markdown',
+  mdx: 'mdx',
   rs: 'rust',
   dockerfile: 'dockerfile',
   text: 'plaintext',
@@ -32,10 +36,71 @@ const LANG_ALIAS: Record<string, string> = {
   plain: 'plaintext',
   ini: 'ini',
   conf: 'ini',
+  cfg: 'ini',
+  env: 'dotenv',
+  dotenv: 'dotenv',
+  toml: 'toml',
+  makefile: 'make',
+  mk: 'make',
+  cmake: 'cmake',
+  pl: 'perl',
+  pm: 'perl',
+  kt: 'kotlin',
+  kts: 'kotlin',
+  sc: 'scala',
+  ex: 'elixir',
+  exs: 'elixir',
+  exts: 'elixir',
+  clj: 'clojure',
+  cljs: 'clojure',
+  hs: 'haskell',
+  fs: 'fsharp',
+  m: 'objective-c',
+  mm: 'objective-cpp',
+  proto: 'proto',
+  gql: 'graphql',
+  styl: 'stylus',
+  sass: 'sass',
+  xsl: 'xml',
+  xslt: 'xml',
+  plist: 'xml',
+  dtd: 'xml',
+  htm: 'html',
+  xhtml: 'html',
+  diff: 'diff',
+  patch: 'diff',
+  vrml: 'vrml',
+  wrl: 'vrml',
+  log: 'log',
+  properties: 'properties',
+};
+
+/** 文件名（无扩展名 / 特殊文件名）→ Shiki 语言 id */
+const FILENAME_LANG: Record<string, string> = {
+  dockerfile: 'dockerfile',
+  makefile: 'make',
+  'cmakelists.txt': 'cmake',
+  '.gitignore': 'gitignore',
+  '.gitattributes': 'gitignore',
+  '.editorconfig': 'ini',
+  '.env': 'dotenv',
 };
 
 let highlighterPromise: Promise<Highlighter> | null = null;
 const loadedLangs = new Set<string>();
+
+/**
+ * 从文件路径推断 Shiki 语言候选 id（别名已归一；未知返回扩展名本身）。
+ * 返回值仍需经 resolveLang 校验是否在 bundledLanguages 内；不在则调用方回退纯文本。
+ */
+export function langFromPath(path: string): string {
+  const name = (path.split(/[\\/]/).pop() ?? '').toLowerCase();
+  if (FILENAME_LANG[name]) return FILENAME_LANG[name];
+  const dot = name.lastIndexOf('.');
+  const ext = dot === -1 ? '' : name.slice(dot + 1);
+  if (!ext) return '';
+  return LANG_ALIAS[ext] ?? ext;
+}
 
 function getHighlighter(): Promise<Highlighter> {
   if (!highlighterPromise) {

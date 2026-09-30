@@ -38,6 +38,7 @@
     "cheerio": "^1.2.0",
     "cron-parser": "^5.7.0",
     "iconv-lite": "^0.7.3",
+    "jszip": "^3.10.2",
     "mammoth": "^1.12.1",
     "nativefiledialog-for-bun": "^0.3.2",
     "officeparser": "^7.6.1",

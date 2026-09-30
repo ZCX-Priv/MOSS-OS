@@ -13,10 +13,24 @@ export interface RenderBlock {
 
 /** 文件预览类型（按扩展名检测） */
 export type RendererKind =
+  // Office：有原生前端渲染
   | 'office-docx'
   | 'office-xlsx'
   | 'office-pptx'
+  // Office：无成熟前端方案，走后端文本提取回退
+  | 'office-odf'
+  | 'office-legacy'
   | 'pdf'
+  // 电子书（epub 走 epubjs；mobi/azw3/fb2 走文本回退）
+  | 'ebook'
+  | 'video'
+  | 'audio'
+  | 'html'
+  | 'markdown'
+  | 'code'
+  | 'data'
+  | 'font'
+  | 'archive'
   | 'three-d'
   | 'image'
   | 'text'

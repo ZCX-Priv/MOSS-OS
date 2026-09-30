@@ -3,7 +3,21 @@
 // filePreviewEnabled=false 或未知类型时回退普通 code 文本（零开销）。
 
 import { useEffect, useState } from 'react';
-import { Box, File, FileImage, FileSpreadsheet, FileText, Presentation } from 'lucide-react';
+import {
+  Archive,
+  BookOpen,
+  Box,
+  Code,
+  File,
+  FileImage,
+  FileSpreadsheet,
+  FileText,
+  Music,
+  Presentation,
+  Table,
+  Type,
+  Video,
+} from 'lucide-react';
 import { detectFileKind, fileNameOf } from './detector';
 import { fetchFileObjectUrl, mimeOfPath } from './fetcher';
 import { FilePreviewDialog } from './FilePreviewDialog';
@@ -18,8 +32,27 @@ function iconOf(kind: RendererKind) {
       return FileSpreadsheet;
     case 'office-pptx':
       return Presentation;
+    case 'office-odf':
+    case 'office-legacy':
+      return FileText;
     case 'pdf':
       return FileText;
+    case 'ebook':
+      return BookOpen;
+    case 'video':
+      return Video;
+    case 'audio':
+      return Music;
+    case 'html':
+    case 'code':
+    case 'markdown':
+      return Code;
+    case 'data':
+      return Table;
+    case 'font':
+      return Type;
+    case 'archive':
+      return Archive;
     case 'three-d':
       return Box;
     case 'image':
@@ -33,7 +66,18 @@ const KIND_LABEL: Record<RendererKind, string> = {
   'office-docx': 'DOCX',
   'office-xlsx': 'XLSX',
   'office-pptx': 'PPTX',
+  'office-odf': 'ODF',
+  'office-legacy': 'OFFICE',
   pdf: 'PDF',
+  ebook: 'BOOK',
+  video: 'VIDEO',
+  audio: 'AUDIO',
+  html: 'HTML',
+  markdown: 'MD',
+  code: 'CODE',
+  data: 'CSV',
+  font: 'FONT',
+  archive: 'ZIP',
   'three-d': '3D',
   image: 'IMG',
   text: 'TXT',

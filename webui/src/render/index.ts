@@ -18,6 +18,7 @@ export { useRenderSettings } from './core/settings';
 export { DEFAULT_RENDER_SETTINGS, isValidRenderSettings } from './core/types';
 export type { RenderSettings, RenderBlock, RendererKind } from './core/types';
 
-// 样式（katex 字体 + 排版）
+// 样式（katex 字体 + 排版 + 文件预览）
 import 'katex/dist/katex.min.css';
 import './styles/markdown.css';
+import './styles/file-preview.css';

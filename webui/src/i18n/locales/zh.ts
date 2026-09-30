@@ -133,7 +133,7 @@ export const zh = {
       codeHighlightDesc: '使用 Shiki（VS Code 同款引擎）高亮代码块，明暗主题自动切换',
       filePreview: '文件内联预览',
       filePreviewDesc: '识别消息中的文件路径并渲染为预览卡片（Office/PDF/图片/3D，点击全屏预览）',
-      pptxLimited: '纯前端暂无高保真 PPTX 渲染方案，仅展示每页文本大纲。',
+      pptxLimited: '高保真 PPTX 渲染不可用时的文本大纲回退（部分复杂元素会降级）。',
       contentTitle: '渲染内容',
     },
     anim: {
@@ -1223,6 +1223,48 @@ export const zh = {
     duration: '耗时',
     summaryModel: '摘要模型',
     compactionRunning: '正在压缩上下文…',
+  },
+  // 文件预览渲染模块（webui/src/render）
+  preview: {
+    loading: '加载中…',
+    error: '加载失败',
+    unsupported: '无法预览此格式',
+    download: '下载',
+    openInNewTab: '在新标签打开',
+    retry: '重试',
+    // PPT
+    pptxDegraded: '高保真渲染不可用，已回退为文本大纲',
+    slide: '第 {{index}} 页',
+    // 电子书
+    ebookFallback: '电子书渲染不可用，已回退为文本',
+    toc: '目录',
+    // 视频 / 音频
+    mediaUnsupported: '浏览器不支持该媒体格式（容器或编码）',
+    mediaUnsupportedHint: '可下载后使用本地播放器打开',
+    video: '视频',
+    audio: '音频',
+    // 代码
+    codeTooLarge: '文件过大，已关闭语法高亮（仍可滚动查看与复制）',
+    codeLines: '{{count}} 行',
+    // 网页
+    htmlSandboxNotice: '已在沙箱中渲染，页面脚本无法访问宿主应用',
+    htmlSource: '源码',
+    htmlPreview: '预览',
+    // 字体
+    fontSampleText: '字体样张',
+    fontLoadFailed: '字体加载失败',
+    fontMeta: '格式 {{ext}}',
+    // 压缩包
+    archiveEntries: '{{count}} 个条目',
+    archiveUnsupported: '暂不支持该压缩包格式（当前仅支持 zip 列表预览）',
+    archiveEmpty: '空压缩包',
+    // 表格
+    dataParseFailed: '表格解析失败，已回退为文本视图',
+    // 通用回退
+    extractedTextTitle: '提取的文本内容',
+    extractedTruncated: '内容过长，仅显示前 {{chars}} 个字符',
+    noTextAvailable: '该格式无法提取文本',
+    fallbackHint: '该文件类型暂不支持可视化预览',
   },
   modelSelector: {
     title: '选择模型',

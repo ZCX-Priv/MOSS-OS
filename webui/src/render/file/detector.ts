@@ -1,44 +1,111 @@
 // render/file/detector.ts
 // 文件类型检测：扩展名 → RendererKind（预览分发）。
+// 本文件是「扩展名 → kind」的唯一真源；fetcher.mimeOfPath / FilePreviewCard / FilePreviewPane 均据此派生。
 
 import type { RendererKind } from '../core/types';
 
-// 纯文本/代码/配置类扩展名（预览时按纯文本渲染；正文内联卡片仍回退 code 文本）
-const TEXT_EXTS = [
-  'txt', 'md', 'markdown',
-  // 配置 / 数据
-  'json', 'jsonc', 'json5', 'yaml', 'yml', 'toml', 'ini', 'conf', 'cfg', 'env',
-  'gitignore', 'gitattributes', 'editorconfig', 'lock', 'csv', 'tsv', 'log',
-  'makefile', 'dockerfile',
-  // 代码
-  'sh', 'bash', 'zsh', 'bat', 'cmd', 'ps1',
-  'py', 'ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'mts', 'cts',
-  'rs', 'go', 'java', 'kt', 'kts', 'c', 'h', 'cpp', 'hpp', 'cc', 'cs', 'php', 'rb',
-  'swift', 'r', 'lua', 'vue', 'svelte', 'dart', 'scala', 'pl', 'sql',
-  // 标记 / 样式
-  'css', 'scss', 'less', 'html', 'htm', 'xml', 'xsl', 'svgz',
+// ── 各 kind 的扩展名集合（小写、不带点） ──────────────────────────────────────
+
+/** 图片：浏览器原生可解码 + 需解码库（tiff/heic） */
+const IMAGE_EXTS = [
+  'png', 'jpg', 'jpeg', 'jfif', 'gif', 'webp', 'svg', 'bmp', 'ico', 'avif', 'apng',
+  // 需前端解码后转 canvas（utif / heic2any）
+  'tiff', 'tif', 'heic', 'heif',
 ] as const;
 
-const KIND_BY_EXT: Record<string, RendererKind> = {
-  docx: 'office-docx',
-  xlsx: 'office-xlsx',
-  pptx: 'office-pptx',
-  pdf: 'pdf',
-  glb: 'three-d',
-  gltf: 'three-d',
-  obj: 'three-d',
-  stl: 'three-d',
-  png: 'image',
-  jpg: 'image',
-  jpeg: 'image',
-  gif: 'image',
-  webp: 'image',
-  svg: 'image',
-  bmp: 'image',
-  ico: 'image',
-  avif: 'image',
-  ...Object.fromEntries(TEXT_EXTS.map((e) => [e, 'text' as RendererKind])),
-};
+/** 视频：原生可播（mp4/webm/ogv/mov）+ 需回退的容器（mkv/avi/wmv/flv…） */
+const VIDEO_EXTS = [
+  'mp4', 'm4v', 'webm', 'ogv', 'mov',
+  'mkv', 'avi', 'wmv', 'flv', '3gp', '3g2', 'ts', 'm2ts', 'mpg', 'mpeg', 'rmvb',
+] as const;
+
+/** 音频 */
+const AUDIO_EXTS = [
+  'mp3', 'wav', 'ogg', 'oga', 'opus', 'flac', 'm4a', 'aac', 'weba',
+  'wma', 'amr', 'mid', 'midi', 'aiff', 'aif',
+] as const;
+
+/** 电子书 */
+const EBOOK_EXTS = ['epub', 'opf', 'mobi', 'azw3', 'azw', 'fb2'] as const;
+
+/** 网页 */
+const HTML_EXTS = ['html', 'htm', 'xhtml'] as const;
+
+/** Markdown */
+const MARKDOWN_EXTS = ['md', 'markdown', 'mdx'] as const;
+
+/** 纯文本 / 代码 / 配置 */
+const CODE_EXTS = [
+  'txt', 'text', 'log',
+  // 配置 / 数据
+  'json', 'jsonc', 'json5', 'yaml', 'yml', 'toml', 'ini', 'conf', 'cfg', 'env',
+  'properties', 'gitignore', 'gitattributes', 'editorconfig', 'lock', 'dotenv',
+  'makefile', 'dockerfile', 'cmake', 'gradle', 'bazel', 'tf', 'tfvars', 'hcl', 'nomad',
+  // 代码
+  'sh', 'bash', 'zsh', 'fish', 'bat', 'cmd', 'ps1', 'psm1', 'nu',
+  'py', 'pyi', 'ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'mts', 'cts',
+  'rs', 'go', 'java', 'kt', 'kts', 'gradle', 'groovy', 'c', 'h', 'cpp', 'hpp', 'cc', 'hh',
+  'cxx', 'cs', 'php', 'rb', 'swift', 'm', 'mm', 'r', 'lua', 'vue', 'svelte', 'dart',
+  'scala', 'sc', 'pl', 'pm', 'ex', 'exs', 'erl', 'hrl', 'clj', 'cljs', 'edn', 'hs',
+  'ml', 'mli', 'fs', 'fsx', 'vb', 'jl', 'nim', 'zig', 'v', 'asm', 's', 'sql', 'graphql',
+  'gql', 'proto', 'thrift', 'sol', 'wasm', 'wat',
+  // 标记 / 样式
+  'css', 'scss', 'sass', 'less', 'styl', 'xml', 'xsl', 'xslt', 'dtd', 'plist', 'svgz',
+  'http', 'rest', 'diff', 'patch',
+] as const;
+
+/** 分隔符数据（表格预览） */
+const DATA_EXTS = ['csv', 'tsv'] as const;
+
+/** 字体 */
+const FONT_EXTS = ['ttf', 'otf', 'woff', 'woff2', 'eot'] as const;
+
+/** 压缩包 */
+const ARCHIVE_EXTS = ['zip', 'tar', 'gz', 'tgz', 'bz2', 'xz', '7z', 'rar'] as const;
+
+/** 3D 模型 */
+const THREE_D_EXTS = [
+  'glb', 'gltf', 'obj', 'stl', 'fbx', 'ply', '3mf', 'dae', '3ds', 'wrl', 'vrml', 'amf', 'mtl',
+] as const;
+
+/** Office（有原生前端渲染） */
+const DOCX_EXTS = ['docx', 'docm', 'dotx'] as const;
+const XLSX_EXTS = ['xlsx', 'xlsm', 'xltx', 'xltm'] as const;
+const PPTX_EXTS = ['pptx', 'pptm', 'potx', 'ppsx'] as const;
+
+/** OpenDocument / RTF：走后端文本提取回退 */
+const ODF_EXTS = ['odt', 'ods', 'odp', 'ott', 'ots', 'otp', 'fodt', 'fods', 'fodp', 'rtf'] as const;
+
+/** Office 旧版二进制：走后端文本提取回退 */
+const LEGACY_OFFICE_EXTS = ['doc', 'xls', 'ppt', 'dot', 'xlt', 'pot'] as const;
+
+// ── 扩展名 → kind 映射表 ────────────────────────────────────────────────────
+
+function toMap(exts: readonly string[], kind: RendererKind): Array<[string, RendererKind]> {
+  return exts.map((e) => [e, kind] as [string, RendererKind]);
+}
+
+const KIND_BY_EXT: Record<string, RendererKind> = Object.fromEntries([
+  ...toMap(IMAGE_EXTS, 'image'),
+  ...toMap(VIDEO_EXTS, 'video'),
+  ...toMap(AUDIO_EXTS, 'audio'),
+  ...toMap(EBOOK_EXTS, 'ebook'),
+  ...toMap(HTML_EXTS, 'html'),
+  ...toMap(MARKDOWN_EXTS, 'markdown'),
+  ...toMap(CODE_EXTS, 'code'),
+  ...toMap(DATA_EXTS, 'data'),
+  ...toMap(FONT_EXTS, 'font'),
+  ...toMap(ARCHIVE_EXTS, 'archive'),
+  ...toMap(THREE_D_EXTS, 'three-d'),
+  ...toMap(DOCX_EXTS, 'office-docx'),
+  ...toMap(XLSX_EXTS, 'office-xlsx'),
+  ...toMap(PPTX_EXTS, 'office-pptx'),
+  ...toMap(ODF_EXTS, 'office-odf'),
+  ...toMap(LEGACY_OFFICE_EXTS, 'office-legacy'),
+  ['pdf', 'pdf'],
+]);
+
+// ── 公共纯函数 ──────────────────────────────────────────────────────────────
 
 export function fileExtension(path: string): string {
   const name = path.split(/[\\/]/).pop() ?? '';
@@ -52,4 +119,9 @@ export function detectFileKind(path: string): RendererKind {
 
 export function fileNameOf(path: string): string {
   return path.split(/[\\/]/).pop() ?? path;
+}
+
+/** 视频/音频：可用「直链 + query token」流式播放（Range），无需先整读入内存 */
+export function isStreamableMedia(kind: RendererKind): boolean {
+  return kind === 'video' || kind === 'audio';
 }
