@@ -586,6 +586,8 @@ export const en = {
     versionRuntime: 'Bun {{version}}',
     versionPlatform: 'Platform: {{platform}}/{{arch}}',
     failedToReadVersion: 'Failed to read version: {{error}}',
-    helpText: 'MOSS - AI Agent Application\n\nUsage: moss <command> [options]\n\nCommands:\n  start       Start MOSS as a daemon (default)\n  stop        Stop the running daemon\n  status      Show running status\n  restart     Restart the daemon\n  update      Check for updates\n  version     Show version info\n  help        Show this help\n\nOptions:\n  --foreground, -f    Run in foreground (no daemon)\n  --log-level <level> Set log level (debug/info/warn/error/fatal)\n\nExamples:\n  moss start --foreground --log-level debug\n  moss status\n',
+    helpText: 'MOSS - AI Agent Application\n\nUsage: moss <command> [options]\n\nCommands:\n  start       Start MOSS as a daemon (default)\n  stop        Stop the running daemon\n  status      Show running status\n  restart     Restart the daemon\n  mcp         Run the MCP server over stdio (for Claude Desktop / Cursor etc.)\n  update      Check for updates\n  version     Show version info\n  help        Show this help\n\nOptions:\n  --foreground, -f    Run in foreground (no daemon)\n  --log-level <level> Set log level (debug/info/warn/error/fatal)\n\nExamples:\n  moss start --foreground --log-level debug\n  moss status\n',
+    mcpStarted: 'MOSS MCP server started (stdio)',
+    mcpFailed: 'Failed to start MCP server: {{error}}',
   },
 };

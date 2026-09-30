@@ -9,7 +9,7 @@ import {
   Search, WandSparkles, Wrench, Cable,
   Loader2, Plus, RefreshCw, Trash2, PlugZap, Unplug,
   BookOpen, ListChecks, Eye, Lightbulb, Sparkles, ShieldAlert, FlaskConical,
-  Server, Copy, FileUp,
+  Server, Copy, FileUp, Terminal,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useLocation, Outlet, useOutletContext } from 'react-router-dom';
@@ -632,19 +632,22 @@ function parseMcpJsonInput(raw: string): ParsedMcpDef[] {
 }
 
 /**
- * MOSS 自身 MCP 服务器（/mcp 端点）置顶卡片：
- * 开关（PUT /api/config 热更新）+ 端点预览 + 复制 JSON（主流 Agent 的 mcpServers 片段）。
+ * MOSS 自身 MCP 服务器置顶卡片：
+ * 开关（PUT /api/config 热更新）+ 端点预览 + 复制配置
+ * （HTTP 片段 type:'http' + url；stdio 片段 command:'moss' args:['mcp']）。
  */
 function MossServerCard() {
   const { t } = useTranslation();
   const appConfig = useStore((s) => s.appConfig);
-  const enabledToolCount = useStore((s) => s.tools.filter((tl) => tl.enabled).length);
   const enabled = appConfig?.mcpServer?.enabled === true;
+  const trackSummary = appConfig?.mcpServer?.trackSummary !== false;
+  const exposeInternalTools = appConfig?.mcpServer?.exposeInternalTools === true;
   const port = appConfig?.server?.port ?? 7766;
   const host =
     appConfig?.security?.bindLocalhostOnly === false ? window.location.hostname : '127.0.0.1';
   const endpoint = `http://${host}:${port}/mcp`;
   const [toggling, setToggling] = useState(false);
+  const [optionBusy, setOptionBusy] = useState(false);
 
   const toggle = useCallback(
     async (on: boolean): Promise<void> => {
@@ -688,6 +691,48 @@ function MossServerCard() {
     }
   }, [appConfig, endpoint, t]);
 
+  /** 改写 mcpServer 的单个开关（显式带上其余字段，避免深合并丢失既有值） */
+  const patchOption = useCallback(
+    async (patch: { trackSummary?: boolean; exposeInternalTools?: boolean }): Promise<void> => {
+      setOptionBusy(true);
+      try {
+        await api.updateAppConfig({
+          mcpServer: {
+            enabled,
+            allowedTools: appConfig?.mcpServer?.allowedTools ?? [],
+            responseMode: appConfig?.mcpServer?.responseMode ?? 'sse',
+            exposeInternalTools,
+            trackSummary,
+            ...patch,
+          },
+        });
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : t('plugins.mcpToggleFailed'));
+      } finally {
+        setOptionBusy(false);
+      }
+    },
+    [appConfig, enabled, exposeInternalTools, t, trackSummary],
+  );
+
+  /** 复制 stdio 片段：客户端以 `moss mcp` 子进程方式接入（无需端口与令牌） */
+  const copyStdioJson = useCallback(async (): Promise<void> => {
+    const snippet = {
+      mcpServers: {
+        moss: {
+          command: 'moss',
+          args: ['mcp'],
+        },
+      },
+    };
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(snippet, null, 2));
+      toast.success(`${t('plugins.mossServerStdioCopied')}（${t('plugins.mossServerStdioHint')}）`);
+    } catch {
+      toast.error(t('plugins.mossServerCopyFailed'));
+    }
+  }, [t]);
+
   return (
     <Card className="flex flex-col gap-2 border-primary-strong/30 p-3">
       <div className="flex flex-row items-center gap-3">
@@ -704,11 +749,16 @@ function MossServerCard() {
             <h3 className="text-sm font-medium text-foreground">{t('plugins.mossServerTitle')}</h3>
             <Badge variant="outline" className="font-normal">http</Badge>
             <Badge variant="secondary" className="font-normal">
-              {t('plugins.mcpToolCount', { count: enabledToolCount })}
+              {t('plugins.mossServerAgentBadge')}
             </Badge>
           </div>
           <p className="truncate text-xs text-muted-foreground" title={endpoint}>{endpoint}</p>
           <p className="truncate text-xs text-muted-foreground">{t('plugins.mossServerDesc')}</p>
+          {!appConfig?.security?.authToken ? (
+            <p className="truncate text-xs text-amber-600 dark:text-amber-500">
+              {t('plugins.mossServerNoTokenHint')}
+            </p>
+          ) : null}
         </div>
         <div className="flex shrink-0 items-center gap-1">
           <Button
@@ -717,12 +767,40 @@ function MossServerCard() {
           >
             <Copy className="size-4" />
           </Button>
+          <Button
+            variant="ghost" size="icon-sm" title={t('plugins.mossServerCopyStdio')}
+            onClick={() => void copyStdioJson()}
+          >
+            <Terminal className="size-4" />
+          </Button>
           <Switch
             checked={enabled}
             disabled={toggling}
             onCheckedChange={(checked) => void toggle(checked)}
             aria-label={enabled ? t('common.close') : t('common.open')}
           />
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-border/60 pt-2">
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Switch
+            checked={trackSummary}
+            disabled={optionBusy || !enabled}
+            onCheckedChange={(checked) => void patchOption({ trackSummary: checked })}
+            aria-label={t('plugins.mossServerTrackSummary')}
+          />
+          <span>{t('plugins.mossServerTrackSummary')}</span>
+          <span className="text-muted-foreground/70">{t('plugins.mossServerTrackSummaryHint')}</span>
+        </div>
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Switch
+            checked={exposeInternalTools}
+            disabled={optionBusy || !enabled}
+            onCheckedChange={(checked) => void patchOption({ exposeInternalTools: checked })}
+            aria-label={t('plugins.mossServerExposeInternal')}
+          />
+          <span>{t('plugins.mossServerExposeInternal')}</span>
+          <span className="text-amber-600 dark:text-amber-500">{t('plugins.mossServerExposeInternalHint')}</span>
         </div>
       </div>
     </Card>

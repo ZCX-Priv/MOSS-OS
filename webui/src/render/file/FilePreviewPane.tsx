@@ -10,6 +10,7 @@ import { detectFileKind, fileNameOf, fileExtension } from './detector';
 import {
   fetchFileBuffer,
   fetchFileObjectUrl,
+  fetchExtractedText,
   mimeOfPath,
   isNativeImageExt,
 } from './fetcher';
@@ -21,7 +22,7 @@ import type { RendererKind } from '../core/types';
 // ── 懒加载渲染器（每个自带 chunk） ────────────────────────────────────────────
 const DocxPreview = lazy(() => import('../office/DocxPreview').then((m) => ({ default: m.DocxPreview })));
 const XlsxPreview = lazy(() => import('../office/XlsxPreview').then((m) => ({ default: m.XlsxPreview })));
-const PptxViewer = lazy(() => import('../office/PptxViewer').then((m) => ({ default: m.PptxViewer })));
+const PptxRenderer = lazy(() => import('../office/PptxRenderer').then((m) => ({ default: m.PptxRenderer })));
 const PdfPreview = lazy(() => import('../pdf/PdfPreview').then((m) => ({ default: m.PdfPreview })));
 const Model3DViewer = lazy(() => import('../three-d/Model3DViewer').then((m) => ({ default: m.Model3DViewer })));
 const EpubViewer = lazy(() => import('../ebook/EpubViewer').then((m) => ({ default: m.EpubViewer })));
@@ -34,7 +35,7 @@ const FontPreview = lazy(() => import('../font/FontPreview').then((m) => ({ defa
 const ArchivePreview = lazy(() => import('../archive/ArchivePreview').then((m) => ({ default: m.ArchivePreview })));
 const FallbackPreview = lazy(() => import('../text/FallbackPreview').then((m) => ({ default: m.FallbackPreview })));
 
-/** 需要拉取二进制缓冲的 kind */
+/** 需要拉取二进制缓冲的 kind（二进制类渲染器） */
 const NEEDS_BUFFER: ReadonlySet<RendererKind> = new Set<RendererKind>([
   'office-docx',
   'office-xlsx',
@@ -43,14 +44,9 @@ const NEEDS_BUFFER: ReadonlySet<RendererKind> = new Set<RendererKind>([
   'ebook',
   'font',
   'archive',
-  'code',
-  'markdown',
-  'data',
-  'html',
-  'text',
 ]);
 
-/** 需要将缓冲解码为文本的 kind */
+/** 文本类 kind：走 /api/filesystem/text（有界 8MB 读取 + UTF-8/GBK 编码检测 + NUL 二进制拒绝） */
 const NEEDS_TEXT: ReadonlySet<RendererKind> = new Set<RendererKind>([
   'code',
   'markdown',
@@ -103,10 +99,13 @@ interface FileContent {
   buffer: ArrayBuffer | null;
   objectUrl: string | null;
   text: string | null;
+  /** 文本类内容被后端截断（超 maxChars / 有界读取上限） */
+  truncated?: boolean;
   error: string | null;
 }
 
 export function FilePreviewPane({ path, active = true, heightClass = 'h-full' }: FilePreviewPaneProps) {
+  const { t } = useTranslation();
   const kind = detectFileKind(path);
   const ext = fileExtension(path);
   const name = fileNameOf(path);
@@ -154,12 +153,18 @@ export function FilePreviewPane({ path, active = true, heightClass = 'h-full' }:
           if (!cancelled) setContent({ buffer: null, objectUrl: url, text: null, error: null });
           return;
         }
+        // 文本类：走 /text（有界读取 + 编码检测），避免超大文本整块入内存、非 UTF-8 乱码
+        if (NEEDS_TEXT.has(kind)) {
+          const extracted = await fetchExtractedText(path);
+          if (cancelled) return;
+          setContent({ buffer: null, objectUrl: null, text: extracted.text, truncated: extracted.truncated, error: null });
+          return;
+        }
         // 其余需要二进制
         if (NEEDS_BUFFER.has(kind)) {
           const buf = await fetchFileBuffer(path);
           if (cancelled) return;
-          const text = NEEDS_TEXT.has(kind) ? new TextDecoder('utf-8').decode(buf) : null;
-          setContent({ buffer: buf, objectUrl: null, text, error: null });
+          setContent({ buffer: buf, objectUrl: null, text: null, truncated: false, error: null });
           return;
         }
         // 视频/音频：直接使用后端 media 直链，无需预取
@@ -189,6 +194,19 @@ export function FilePreviewPane({ path, active = true, heightClass = 'h-full' }:
     </PreviewErrorBoundary>
   );
 
+  /** 文本被后端截断时，在渲染器上方插入提示（内容过长，仅显示前 N 个字符） */
+  const withTruncationNotice = (node: ReactNode, chars: number): ReactNode =>
+    content.truncated ? (
+      <div className="flex h-full min-h-0 flex-col gap-1">
+        <div className="shrink-0 rounded border border-border bg-muted/40 px-2 py-1 text-[11px] text-muted-foreground">
+          {t('preview.extractedTruncated', { chars })}
+        </div>
+        <div className="min-h-0 flex-1">{node}</div>
+      </div>
+    ) : (
+      node
+    );
+
   const loading = <Loading heightClass={heightClass} />;
   const textFallback = content.text !== null ? <PlainText text={content.text} heightClass={heightClass} /> : loading;
   const genericFallback = guard(
@@ -209,8 +227,8 @@ export function FilePreviewPane({ path, active = true, heightClass = 'h-full' }:
       case 'office-xlsx':
         return guard(content.buffer ? <XlsxPreview buffer={content.buffer} /> : loading, genericFallback);
       case 'office-pptx':
-        // PptxViewer 内部已回退到文本大纲；此处再兜底到通用回退
-        return guard(content.buffer ? <PptxViewer buffer={content.buffer} /> : loading, genericFallback);
+        // PptxRenderer 内部已回退到文本大纲；此处再兜底到通用回退
+        return guard(content.buffer ? <PptxRenderer buffer={content.buffer} /> : loading, genericFallback);
       case 'pdf':
         return guard(content.buffer ? <PdfPreview buffer={content.buffer} /> : loading, genericFallback);
       case 'ebook':
@@ -240,23 +258,28 @@ export function FilePreviewPane({ path, active = true, heightClass = 'h-full' }:
         );
       case 'html':
         return guard(
-          content.text !== null ? <HtmlPreview text={content.text} path={path} /> : loading,
+          content.text !== null
+            ? withTruncationNotice(<HtmlPreview text={content.text} path={path} />, content.text.length)
+            : loading,
           textFallback,
         );
       case 'markdown':
         return guard(
-          content.text !== null ? (
-            <div className="h-full overflow-y-auto p-2">
-              <MarkdownRenderer text={content.text} streaming={false} />
-            </div>
-          ) : (
-            loading
-          ),
+          content.text !== null
+            ? withTruncationNotice(
+                <div className="h-full overflow-y-auto p-2">
+                  <MarkdownRenderer text={content.text} streaming={false} />
+                </div>,
+                content.text.length,
+              )
+            : loading,
           textFallback,
         );
       case 'data':
         return guard(
-          content.text !== null ? <CsvPreview text={content.text} path={path} ext={ext} /> : loading,
+          content.text !== null
+            ? withTruncationNotice(<CsvPreview text={content.text} path={path} ext={ext} />, content.text.length)
+            : loading,
           textFallback,
         );
       case 'font':
@@ -272,7 +295,9 @@ export function FilePreviewPane({ path, active = true, heightClass = 'h-full' }:
       case 'code':
       case 'text':
         return guard(
-          content.text !== null ? <CodeFileViewer text={content.text} path={path} /> : loading,
+          content.text !== null
+            ? withTruncationNotice(<CodeFileViewer text={content.text} path={path} />, content.text.length)
+            : loading,
           textFallback,
         );
       case 'office-odf':

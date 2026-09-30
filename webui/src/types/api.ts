@@ -104,10 +104,14 @@ export interface AppConfig {
   /** 对外 MCP Server 暴露配置（/mcp 端点；可选，旧 config 无此段时视为关闭） */
   mcpServer?: {
     enabled: boolean;
-    /** 暴露工具白名单；空数组 = 全部内置工具（requireConfirmation/destructiveHint 工具始终除外） */
+    /** 内部工具白名单；仅在 exposeInternalTools 开启时生效（空数组 = 全部启用工具） */
     allowedTools: string[];
     /** POST 响应体模式，默认 'sse'（'json' 为兼容逃生舱，长任务有 60s 上限） */
     responseMode?: 'json' | 'sse';
+    /** 是否额外暴露 MOSS 的内部工具（read/glob/shell…），默认 false */
+    exposeInternalTools?: boolean;
+    /** moss_task_status 是否附带 LLM 轨迹摘要，默认 true */
+    trackSummary?: boolean;
   };
   security: { authToken: string; bindLocalhostOnly: boolean };
   /** 统一权限决策配置（safety 模块；可选，旧 config 无此段时用默认值） */

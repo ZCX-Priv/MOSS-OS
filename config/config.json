@@ -71,7 +71,10 @@
   },
   "mcpServer": {
     "enabled": false,
-    "allowedTools": []
+    "allowedTools": [],
+    "responseMode": "sse",
+    "exposeInternalTools": false,
+    "trackSummary": true
   },
   "skills": {},
   "security": {

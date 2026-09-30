@@ -586,6 +586,8 @@ export const zh = {
     versionRuntime: 'Bun {{version}}',
     versionPlatform: '平台: {{platform}}/{{arch}}',
     failedToReadVersion: '读取版本信息失败: {{error}}',
-    helpText: 'MOSS - AI Agent 应用\n\n用法: moss <命令> [选项]\n\n命令:\n  start       作为守护进程启动 MOSS（默认）\n  stop        停止运行中的守护进程\n  status      查看运行状态\n  restart     重启守护进程\n  update      检查更新\n  version     显示版本信息\n  help        显示此帮助\n\n选项:\n  --foreground, -f    前台运行（不作为守护进程）\n  --log-level <级别>  设置日志级别 (debug/info/warn/error/fatal)\n\n示例:\n  moss start --foreground --log-level debug\n  moss status\n',
+    helpText: 'MOSS - AI Agent 应用\n\n用法: moss <命令> [选项]\n\n命令:\n  start       作为守护进程启动 MOSS（默认）\n  stop        停止运行中的守护进程\n  status      查看运行状态\n  restart     重启守护进程\n  mcp         以 stdio 方式启动 MCP 服务器（供 Claude Desktop / Cursor 等客户端调用）\n  update      检查更新\n  version     显示版本信息\n  help        显示此帮助\n\n选项:\n  --foreground, -f    前台运行（不作为守护进程）\n  --log-level <级别>  设置日志级别 (debug/info/warn/error/fatal)\n\n示例:\n  moss start --foreground --log-level debug\n  moss status\n',
+    mcpStarted: 'MOSS MCP 服务器已启动（stdio）',
+    mcpFailed: '启动 MCP 服务器失败: {{error}}',
   },
 };

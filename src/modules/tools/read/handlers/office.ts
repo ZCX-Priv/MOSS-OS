@@ -41,13 +41,16 @@ interface XlsxModule {
 /** Word OOXML 家族扩展名（mammoth 按内容解析，同族均可处理） */
 const WORD_OOXML_EXTS = new Set(['.docx', '.docm', '.dotx']);
 
-/** Excel 家族扩展名（SheetJS 原生支持读 OOXML 与旧版 BIFF .xls） */
-const EXCEL_EXTS = new Set(['.xlsx', '.xlsm', '.xltx', '.xltm', '.xls']);
+/** 旧版 OLE Word 家族（word-extractor 按内容解析，模板 .dot 同容器） */
+const WORD_OLE_EXTS = new Set(['.doc', '.dot']);
 
-/** officeparser 处理的扩展名（PPT OOXML / OpenDocument / RTF） */
+/** Excel 家族扩展名（SheetJS 原生支持读 OOXML、旧版 BIFF .xls 与模板 .xlt） */
+const EXCEL_EXTS = new Set(['.xlsx', '.xlsm', '.xltx', '.xltm', '.xls', '.xlt']);
+
+/** officeparser 处理的扩展名（PPT OOXML / OpenDocument（含模板族）/ RTF） */
 const OFFICEPARSER_EXTS = new Set([
   '.pptx', '.pptm', '.potx', '.ppsx',
-  '.odt', '.ods', '.odp', '.rtf',
+  '.odt', '.ods', '.odp', '.ott', '.ots', '.otp', '.rtf',
 ]);
 
 /**
@@ -60,7 +63,7 @@ export async function readOffice(path: string): Promise<ToolResult> {
     if (WORD_OOXML_EXTS.has(ext)) {
       return await readDocx(path);
     }
-    if (ext === '.doc') {
+    if (WORD_OLE_EXTS.has(ext)) {
       return await readLegacyDoc(path);
     }
     if (EXCEL_EXTS.has(ext)) {
@@ -69,11 +72,11 @@ export async function readOffice(path: string): Promise<ToolResult> {
     if (OFFICEPARSER_EXTS.has(ext)) {
       return await readWithOfficeParser(path, ext);
     }
-    if (ext === '.ppt') {
+    if (ext === '.ppt' || ext === '.pot') {
       return {
         content: [{
           type: 'text',
-          text: `Error: legacy PowerPoint (.ppt) is not supported. Please convert the file to .pptx (open in PowerPoint/WPS and "Save As" .pptx), then read again: ${path}`,
+          text: `Error: legacy PowerPoint (${ext}) is not supported. Please convert the file to .pptx (open in PowerPoint/WPS and "Save As" .pptx), then read again: ${path}`,
         }],
         isError: true,
         metadata: { type: 'ppt', supported: false },

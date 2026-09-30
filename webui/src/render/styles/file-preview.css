@@ -1,6 +1,11 @@
 /* render/styles/file-preview.css
    文件预览专用样式：代码行号视图 / PPTX 容器 / HTML 沙箱 / 字体样张 / 表格。
-   由 render/index.ts 统一引入。 */
+   由 render/index.ts 统一引入。
+
+   护栏：第三方样式表一律不得全局 import（历史事故：PPT 编辑器库的 styles 是全文档级
+   Tailwind preflight + :root 主题变量，注入后把整站配色/字体改掉）。若确需引入，
+   必须 ?inline + 给选择器统一加前缀做作用域化。
+   本文件仅包含自有作用域类（.code-file-* / .pptx-viewer-host / .html-preview-frame 等）。 */
 
 /* ============ 代码文件：行号 + 高亮 ============ */
 .code-file-viewer {
@@ -10,11 +15,13 @@
 }
 
 .code-file-body pre,
+.code-file-body pre.shiki,
 .code-file-plain {
   margin: 0;
   padding: 6px 0;
   background: transparent !important;
-  /* 折叠 .line 之间的换行文本节点，避免行间出现空行 */
+  /* 折叠 .line 之间的换行文本节点，避免行间出现空行
+     （shiki 输出为 <span class="line">…</span>\n<span class="line">…</span>，新行在 span 之外） */
   white-space: normal;
   min-width: max-content;
 }

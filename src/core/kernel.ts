@@ -98,6 +98,12 @@ export interface KernelStartOptions {
   foreground?: boolean;
   /** 初始日志级别 */
   logLevel?: LogLevel;
+  /**
+   * 需要跳过的模块名（MODULE_FACTORIES 中的 name）。
+   * 用于无 HTTP 服务的轻量入口，如 `moss mcp`（stdio MCP 服务器）：
+   * 不能起 server/remote（会与常驻 MOSS 抢端口），也不需要 daemon/automation/update。
+   */
+  disabledModules?: string[];
 }
 
 export class Microkernel {
@@ -172,7 +178,12 @@ export class Microkernel {
     this.services.register(ServiceNames.CONFIG_SERVICE, this.config, { scope: 'kernel' });
 
     // 4. 静态实例化并按序初始化模块（失败记日志并继续，与原拓扑编排韧性一致）
+    const disabled = new Set(options.disabledModules ?? []);
     for (const factory of MODULE_FACTORIES) {
+      if (disabled.has(factory.name)) {
+        this.logger.debug('module disabled by start options', { name: factory.name });
+        continue;
+      }
       this.modules.push({ name: factory.name, instance: factory.create(), state: 'loaded' });
     }
 

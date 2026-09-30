@@ -749,6 +749,16 @@ class AutomationModule implements Module {
     ctx.services.register(ServiceNames.AUTOMATION_SERVICE, this.service, {
       scope: 'automation',
     });
+    // stdio MCP 入口（`moss mcp`）由客户端按需拉起，可能与本机常驻 MOSS 同时存在：
+    // 服务照常注册（外部 Agent 需要 create/list/update/trigger 等能力），但**不启动调度器**，
+    // 否则同一批定时任务会被两个进程各跑一遍。
+    if (process.env.MOSS_STDIO_MCP === '1') {
+      ctx.logger.info(t('automation.moduleInitialized'), {
+        automationCount: this.service.list().length,
+        scheduler: 'disabled (stdio mcp mode)',
+      });
+      return;
+    }
     this.service.startScheduler();
     ctx.logger.info(t('automation.moduleInitialized'), {
       automationCount: this.service.list().length,

@@ -13,10 +13,12 @@ const IMAGE_EXTS = [
   'tiff', 'tif', 'heic', 'heif',
 ] as const;
 
-/** 视频：原生可播（mp4/webm/ogv/mov）+ 需回退的容器（mkv/avi/wmv/flv…） */
+/** 视频：原生可播（mp4/webm/ogv/mov）+ 需回退的容器（mkv/avi/wmv/flv…）
+ *  注意：不含 'ts'——在开发工具语境下 .ts 绝大多数是 TypeScript，归入 code；
+ *  MPEG-TS 用 'm2ts' 承载。扩展名跨 kind 冲突会导致解析依赖键顺序，故须唯一归属。 */
 const VIDEO_EXTS = [
   'mp4', 'm4v', 'webm', 'ogv', 'mov',
-  'mkv', 'avi', 'wmv', 'flv', '3gp', '3g2', 'ts', 'm2ts', 'mpg', 'mpeg', 'rmvb',
+  'mkv', 'avi', 'wmv', 'flv', '3gp', '3g2', 'm2ts', 'mpg', 'mpeg', 'rmvb',
 ] as const;
 
 /** 音频 */
@@ -40,7 +42,7 @@ const CODE_EXTS = [
   // 配置 / 数据
   'json', 'jsonc', 'json5', 'yaml', 'yml', 'toml', 'ini', 'conf', 'cfg', 'env',
   'properties', 'gitignore', 'gitattributes', 'editorconfig', 'lock', 'dotenv',
-  'makefile', 'dockerfile', 'cmake', 'gradle', 'bazel', 'tf', 'tfvars', 'hcl', 'nomad',
+  'makefile', 'dockerfile', 'cmake', 'bazel', 'tf', 'tfvars', 'hcl', 'nomad',
   // 代码
   'sh', 'bash', 'zsh', 'fish', 'bat', 'cmd', 'ps1', 'psm1', 'nu',
   'py', 'pyi', 'ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'mts', 'cts',
@@ -81,29 +83,39 @@ const LEGACY_OFFICE_EXTS = ['doc', 'xls', 'ppt', 'dot', 'xlt', 'pot'] as const;
 
 // ── 扩展名 → kind 映射表 ────────────────────────────────────────────────────
 
-function toMap(exts: readonly string[], kind: RendererKind): Array<[string, RendererKind]> {
-  return exts.map((e) => [e, kind] as [string, RendererKind]);
-}
+/**
+ * 各 kind 的扩展名清单 —— 「可预览扩展名」的单一真源。
+ * 一致性脚本据此断言「后端 RAW_MIME_MAP 覆盖这里出现的每个扩展名」，从根上防止
+ * 「前端认为可预览、后端却 415 不支持」的回归。
+ */
+export const KIND_EXTENSIONS: Record<RendererKind, readonly string[]> = {
+  image: IMAGE_EXTS,
+  video: VIDEO_EXTS,
+  audio: AUDIO_EXTS,
+  ebook: EBOOK_EXTS,
+  html: HTML_EXTS,
+  markdown: MARKDOWN_EXTS,
+  code: CODE_EXTS,
+  data: DATA_EXTS,
+  font: FONT_EXTS,
+  archive: ARCHIVE_EXTS,
+  'three-d': THREE_D_EXTS,
+  'office-docx': DOCX_EXTS,
+  'office-xlsx': XLSX_EXTS,
+  'office-pptx': PPTX_EXTS,
+  'office-odf': ODF_EXTS,
+  'office-legacy': LEGACY_OFFICE_EXTS,
+  pdf: ['pdf'],
+  // 当前无扩展名映射到 text（txt/log 归入 code）；unknown 为未识别，二者不参与白名单校验
+  text: [],
+  unknown: [],
+};
 
-const KIND_BY_EXT: Record<string, RendererKind> = Object.fromEntries([
-  ...toMap(IMAGE_EXTS, 'image'),
-  ...toMap(VIDEO_EXTS, 'video'),
-  ...toMap(AUDIO_EXTS, 'audio'),
-  ...toMap(EBOOK_EXTS, 'ebook'),
-  ...toMap(HTML_EXTS, 'html'),
-  ...toMap(MARKDOWN_EXTS, 'markdown'),
-  ...toMap(CODE_EXTS, 'code'),
-  ...toMap(DATA_EXTS, 'data'),
-  ...toMap(FONT_EXTS, 'font'),
-  ...toMap(ARCHIVE_EXTS, 'archive'),
-  ...toMap(THREE_D_EXTS, 'three-d'),
-  ...toMap(DOCX_EXTS, 'office-docx'),
-  ...toMap(XLSX_EXTS, 'office-xlsx'),
-  ...toMap(PPTX_EXTS, 'office-pptx'),
-  ...toMap(ODF_EXTS, 'office-odf'),
-  ...toMap(LEGACY_OFFICE_EXTS, 'office-legacy'),
-  ['pdf', 'pdf'],
-]);
+const KIND_BY_EXT: Record<string, RendererKind> = Object.fromEntries(
+  (Object.entries(KIND_EXTENSIONS) as Array<[RendererKind, readonly string[]]>).flatMap(([kind, exts]) =>
+    exts.map((e) => [e, kind] as [string, RendererKind]),
+  ),
+);
 
 // ── 公共纯函数 ──────────────────────────────────────────────────────────────
 

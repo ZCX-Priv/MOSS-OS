@@ -285,6 +285,10 @@ const appConfigSchema = z.object({
       allowedTools: z.array(z.string()),
       // 缺省 'sse'：SDK 默认响应模式，长任务有 keep-alive 保护（见 types.ts 注释）
       responseMode: z.enum(['json', 'sse']).default('sse'),
+      // 缺省 false：/mcp 只暴露 agent 级工具（moss_*），不暴露 MOSS 内部工具
+      exposeInternalTools: z.boolean().default(false),
+      // 缺省 true：moss_task_status 附带 LLM 轨迹摘要（失败自动降级）
+      trackSummary: z.boolean().default(true),
     })
     .optional(),
   // Skill 启停（可选）
@@ -346,7 +350,7 @@ export function defaultAppConfig(): AppConfig {
     tools: buildToolsDefaults() as AppConfig['tools'],
     mcpServers: {},
     mcp: { callTimeoutMs: 120000, allowSampling: true },
-    mcpServer: { enabled: false, allowedTools: [], responseMode: 'sse' },
+    mcpServer: { enabled: false, allowedTools: [], responseMode: 'sse', exposeInternalTools: false, trackSummary: true },
     skills: {},
     security: { authToken: '', bindLocalhostOnly: true },
     remote: { enabled: false, lanEnabled: true, lanPasswordEnabled: true, lanIpOverride: '' },

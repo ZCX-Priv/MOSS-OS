@@ -230,7 +230,7 @@ export interface AppConfig {
   mcpServer?: {
     /** 是否启用对外暴露，默认 false */
     enabled: boolean;
-    /** 暴露的工具白名单；空数组 = 全部内置工具（requireConfirmation/destructiveHint 工具始终除外） */
+    /** 暴露的工具白名单；空数组 = 全部内置工具（仅在 exposeInternalTools 开启时生效） */
     allowedTools: string[];
     /**
      * POST 响应体模式，默认 'sse'。
@@ -241,6 +241,19 @@ export interface AppConfig {
      *   工具调用会被连接层直接断开，仅作兼容逃生舱。
      */
     responseMode?: 'json' | 'sse';
+    /**
+     * 是否额外暴露 MOSS 的内部工具（read/glob/grep/shell/memory…），默认 false。
+     * /mcp 的定位是「让别的 Agent 驱动 MOSS」（agent 级工具 moss_*），而不是把 MOSS
+     * 降级成工具代理。开启后仍需 allowedTools 白名单，且 requireConfirmation /
+     * destructiveHint / ask 类工具始终不会暴露。
+     */
+    exposeInternalTools?: boolean;
+    /**
+     * 任务轨迹摘要开关，默认 true。
+     * 开启后 moss_task_status 会额外调用摘要模型，把当前轨迹（近若干步、过滤后的
+     * 工具结果、todo）压缩成 2-4 句摘要返回；失败自动降级（仅少一个字段，不影响轮询）。
+     */
+    trackSummary?: boolean;
   };
   /** Skill 启停（name → { enabled }，缺省视为启用） */
   skills?: Record<string, { enabled?: boolean }>;
@@ -502,4 +515,9 @@ export const ServiceNames = {
   LOGGER: 'kernel.logger',
   /** 远程访问服务（由 remote 模块注册：隧道生命周期/状态快照） */
   REMOTE_SERVICE: 'remote.service',
+  /**
+   * MCP 对外派发的任务注册表（由 mcp 模块注册）：
+   * 外部 Agent 经 /mcp 或 `moss mcp` 派发的异步任务状态（进度/轨迹/结果）。
+   */
+  MCP_TASK_REGISTRY: 'mcp.task.registry',
 } as const;

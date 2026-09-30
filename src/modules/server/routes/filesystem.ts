@@ -14,13 +14,14 @@
 import type { HttpRequest, HttpResponse, RouteHandler } from '../types';
 import type { ConfigService, Environment, ServiceRegistry } from '../../../core/types';
 import { ServiceNames } from '../../../core/types';
-import { readdirSync, existsSync, statSync, createReadStream, openSync, readSync, closeSync, type Dirent } from 'node:fs';
+import { readdirSync, existsSync, statSync, openSync, readSync, closeSync, type Dirent } from 'node:fs';
 import { isAbsolute, join, normalize, extname } from 'node:path';
 import * as nfd from 'nativefiledialog-for-bun';
 import { ErrorCode } from '../../../core/error-codes';
 import { SYSTEM_SCOPE } from '../../filesys/roots';
 import { decodeShellOutput } from '../../../utils/encoding';
-import { parseRangeHeader } from './range';
+import { parseRangeHeader, clampChunk } from './range';
+import { RAW_MIME_MAP, MEDIA_EXTS, isTextualExt } from './preview-mime';
 import type { FilesysService } from '../../filesys/types';
 
 interface ResolveBody {
@@ -473,149 +474,17 @@ export function createUpdateRootsHandler(
 // 扩展名白名单（未知名 415）防止退化为任意文件下载器；支持 HTTP Range（206）流式读取。
 // ============================================================================
 
-/**
- * 预览扩展名白名单 → MIME。
- * 覆盖全部 RendererKind（office/ebook/视频/音频/3D/图片/html/字体/压缩包/文本），
- * 与 webui/src/render/file/detector.ts 的扩展名集合对齐。
- */
-const RAW_MIME_MAP: Record<string, string> = {
-  // 文档
-  pdf: 'application/pdf',
-  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  docm: 'application/vnd.ms-word.document.macroenabled.12',
-  dotx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.template',
-  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  xlsm: 'application/vnd.ms-excel.sheet.macroenabled.12',
-  xltx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.template',
-  xltm: 'application/vnd.ms-excel.template.macroenabled.12',
-  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-  pptm: 'application/vnd.ms-powerpoint.presentation.macroenabled.12',
-  potx: 'application/vnd.openxmlformats-officedocument.presentationml.template',
-  ppsx: 'application/vnd.openxmlformats-officedocument.presentationml.slideshow',
-  doc: 'application/msword',
-  xls: 'application/vnd.ms-excel',
-  ppt: 'application/vnd.ms-powerpoint',
-  // OpenDocument / RTF
-  odt: 'application/vnd.oasis.opendocument.text',
-  ods: 'application/vnd.oasis.opendocument.spreadsheet',
-  odp: 'application/vnd.oasis.opendocument.presentation',
-  rtf: 'application/rtf',
-  // 电子书
-  epub: 'application/epub+zip',
-  opf: 'application/oebps-package+xml',
-  mobi: 'application/x-mobipocket-ebook',
-  azw3: 'application/vnd.amazon.ebook',
-  azw: 'application/vnd.amazon.ebook',
-  fb2: 'application/x-fictionbook+xml',
-  // 网页
-  html: 'text/html; charset=utf-8',
-  htm: 'text/html; charset=utf-8',
-  xhtml: 'application/xhtml+xml',
-  // 字体
-  ttf: 'font/ttf',
-  otf: 'font/otf',
-  woff: 'font/woff',
-  woff2: 'font/woff2',
-  eot: 'application/vnd.ms-fontobject',
-  // 压缩包
-  zip: 'application/zip',
-  tar: 'application/x-tar',
-  gz: 'application/gzip',
-  tgz: 'application/gzip',
-  bz2: 'application/x-bzip2',
-  xz: 'application/x-xz',
-  '7z': 'application/x-7z-compressed',
-  rar: 'application/vnd.rar',
-  // 3D
-  glb: 'model/gltf-binary',
-  gltf: 'model/gltf+json',
-  obj: 'text/plain; charset=utf-8',
-  mtl: 'text/plain; charset=utf-8',
-  stl: 'model/stl',
-  fbx: 'application/octet-stream',
-  ply: 'application/octet-stream',
-  '3mf': 'model/3mf',
-  dae: 'model/vnd.collada+xml',
-  '3ds': 'application/octet-stream',
-  wrl: 'model/vrml',
-  vrml: 'model/vrml',
-  amf: 'application/x-amf',
-  // 图片
-  png: 'image/png',
-  jpg: 'image/jpeg',
-  jpeg: 'image/jpeg',
-  jfif: 'image/jpeg',
-  gif: 'image/gif',
-  webp: 'image/webp',
-  svg: 'image/svg+xml',
-  bmp: 'image/bmp',
-  ico: 'image/x-icon',
-  avif: 'image/avif',
-  apng: 'image/apng',
-  tiff: 'image/tiff',
-  tif: 'image/tiff',
-  heic: 'image/heic',
-  heif: 'image/heif',
-  // 视频
-  mp4: 'video/mp4',
-  m4v: 'video/mp4',
-  webm: 'video/webm',
-  ogv: 'video/ogg',
-  mov: 'video/quicktime',
-  mkv: 'video/x-matroska',
-  avi: 'video/x-msvideo',
-  wmv: 'video/x-ms-wmv',
-  flv: 'video/x-flv',
-  '3gp': 'video/3gpp',
-  '3g2': 'video/3gpp2',
-  ts: 'video/mp2t',
-  m2ts: 'video/mp2t',
-  mpg: 'video/mpeg',
-  mpeg: 'video/mpeg',
-  rmvb: 'application/vnd.rn-realmedia-vbr',
-  // 音频
-  mp3: 'audio/mpeg',
-  wav: 'audio/wav',
-  ogg: 'audio/ogg',
-  oga: 'audio/ogg',
-  opus: 'audio/ogg',
-  flac: 'audio/flac',
-  m4a: 'audio/mp4',
-  aac: 'audio/aac',
-  weba: 'audio/webm',
-  wma: 'audio/x-ms-wma',
-  amr: 'audio/amr',
-  mid: 'audio/midi',
-  midi: 'audio/midi',
-  aiff: 'audio/aiff',
-  aif: 'audio/aiff',
-  // 文本 / 数据
-  txt: 'text/plain; charset=utf-8',
-  md: 'text/plain; charset=utf-8',
-  csv: 'text/csv; charset=utf-8',
-  tsv: 'text/tab-separated-values; charset=utf-8',
-};
-
-/** 纯文本类扩展名：可用 utf-8 直接解码（code/markdown/data/html/3d 文本格式） */
-const TEXT_PREVIEW_EXTS = new Set([
-  'txt', 'text', 'log', 'md', 'markdown', 'mdx',
-  'json', 'jsonc', 'json5', 'yaml', 'yml', 'toml', 'ini', 'conf', 'cfg', 'env',
-  'properties', 'gitignore', 'gitattributes', 'editorconfig', 'lock', 'dotenv',
-  'makefile', 'dockerfile', 'cmake', 'gradle', 'bazel', 'tf', 'tfvars', 'hcl', 'nomad',
-  'sh', 'bash', 'zsh', 'fish', 'bat', 'cmd', 'ps1', 'psm1', 'nu',
-  'py', 'pyi', 'ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'mts', 'cts',
-  'rs', 'go', 'java', 'kt', 'kts', 'groovy', 'c', 'h', 'cpp', 'hpp', 'cc', 'hh',
-  'cxx', 'cs', 'php', 'rb', 'swift', 'm', 'mm', 'r', 'lua', 'vue', 'svelte', 'dart',
-  'scala', 'sc', 'pl', 'pm', 'ex', 'exs', 'erl', 'hrl', 'clj', 'cljs', 'edn', 'hs',
-  'ml', 'mli', 'fs', 'fsx', 'vb', 'jl', 'nim', 'zig', 'v', 'asm', 's', 'sql', 'graphql',
-  'gql', 'proto', 'thrift', 'sol', 'wasm', 'wat',
-  'css', 'scss', 'sass', 'less', 'styl', 'xml', 'xsl', 'xslt', 'dtd', 'plist', 'svgz',
-  'http', 'rest', 'diff', 'patch', 'csv', 'tsv', 'gltf', 'obj', 'mtl', 'dae', 'wrl', 'vrml',
-  'opf', 'fb2', 'svg',
-]);
+// 预览扩展名白名单 / MIME / 文本类扩展名 / 媒体扩展名：单一真源见 ./preview-mime.ts
+// （该模块为纯模块，便于一致性脚本直接校验「前端可预览扩展名 ⊆ 后端白名单」，防 415 回归）
 
 /** 普通文件（raw）大小上限：100MB */
 const RAW_MAX_BYTES = 100 * 1024 * 1024;
+
+/** 单次 Range 响应最多返回的字节数（有界分块，防大文件整读入内存） */
+const RAW_CHUNK_BYTES = 8 * 1024 * 1024;
+
+/** 媒体路由「无 Range 请求」时允许整块返回的上限；超过则只返回首块（206） */
+const MEDIA_FULL_READ_LIMIT = 64 * 1024 * 1024;
 
 /** 媒体文件（media 路由）大小上限：2GB */
 const MEDIA_MAX_BYTES = 2 * 1024 * 1024 * 1024;
@@ -658,28 +527,25 @@ function statFileSafe(absPath: string): { size: number } | null {
 }
 
 /**
- * 以文件流返回指定区间（end 省略 → 读到文件末尾）。
- * 返回 Web ReadableStream，由 handleHttp 直接作为 Response body（真流式，不整读进内存）。
- * end 为包含端点；用基础流事件手工桥接（不依赖 Readable.toWeb，跨运行时更稳）。
+ * 按区间读取文件（端点含），返回字节。
+ * 有界：内存占用 = 区间长度（调用方先用 clampChunk 夹紧区间）。
  */
-function streamFileRange(absPath: string, start: number, end?: number): ReadableStream<Uint8Array> {
-  const nodeStream = createReadStream(absPath, { start, end });
-  return new ReadableStream<Uint8Array>({
-    start(controller) {
-      nodeStream.on('data', (chunk: Buffer | string) => {
-        controller.enqueue(typeof chunk === 'string' ? new TextEncoder().encode(chunk) : new Uint8Array(chunk));
-      });
-      nodeStream.on('end', () => {
-        controller.close();
-      });
-      nodeStream.on('error', (err: Error) => {
-        controller.error(err);
-      });
-    },
-    cancel() {
-      nodeStream.destroy();
-    },
-  });
+function readByteRange(absPath: string, start: number, end: number): Uint8Array {
+  const length = end - start + 1;
+  if (length <= 0) return new Uint8Array(0);
+  const buf = Buffer.alloc(length);
+  const fd = openSync(absPath, 'r');
+  try {
+    let offset = 0;
+    while (offset < length) {
+      const read = readSync(fd, buf, offset, length - offset, start + offset);
+      if (read <= 0) break;
+      offset += read;
+    }
+    return new Uint8Array(buf.subarray(0, offset));
+  } finally {
+    closeSync(fd);
+  }
 }
 
 export function createReadFileHandler(services: ServiceRegistry): RouteHandler {
@@ -714,32 +580,38 @@ export function createReadFileHandler(services: ServiceRegistry): RouteHandler {
       return { status: 413, body: { error: `File too large for preview (limit ${RAW_MAX_BYTES} bytes)` } };
     }
 
-    // HTTP Range：只读所需区间（206，真流式）。<video>/<audio> 直链由 /api/filesystem/media 提供，
+    // HTTP Range：只读所需区间（206，有界分块）。<video>/<audio> 直链由 /api/filesystem/media 提供，
     // 此处 Range 主要服务前端「带头 fetch 的 blob/PDF」与通用客户端。
     const range = parseRangeHeader(req.headers['range'], st.size);
     if (range) {
+      const chunk = clampChunk(range, RAW_CHUNK_BYTES);
       return {
         status: 206,
         headers: {
           'Content-Type': mime,
-          'Content-Range': `bytes ${range.start}-${range.end}/${st.size}`,
-          'Content-Length': String(range.end - range.start + 1),
+          'Content-Range': `bytes ${chunk.start}-${chunk.end}/${st.size}`,
+          'Content-Length': String(chunk.end - chunk.start + 1),
           'Accept-Ranges': 'bytes',
           'Cache-Control': 'no-store',
         },
-        body: streamFileRange(absPath, range.start, range.end),
+        body: readByteRange(absPath, chunk.start, chunk.end),
       };
     }
 
+    // 无 Range：整块返回（≤ RAW_MAX_BYTES，走 filesys 读取缓存）
+    const result = filesys.readFile(absPath);
+    if (!result) {
+      return { status: 404, body: { error: 'File not found (or not a regular file)' } };
+    }
     return {
       status: 200,
       headers: {
         'Content-Type': mime,
-        'Content-Length': String(st.size),
+        'Content-Length': String(result.size),
         'Accept-Ranges': 'bytes',
         'Cache-Control': 'no-store',
       },
-      body: streamFileRange(absPath, 0),
+      body: new Uint8Array(result.rawBuffer),
     };
   };
 }
@@ -747,16 +619,9 @@ export function createReadFileHandler(services: ServiceRegistry): RouteHandler {
 // ============================================================================
 // GET /api/filesystem/media?path=<绝对路径>&token=<authToken>
 // 视频/音频直链：浏览器 <video>/<audio> 无法携带 Authorization 头，故鉴权改走 query token。
-// 必须支持 HTTP Range（206）流式播放与拖动进度；大小上限 2GB。
+// 支持 HTTP Range（206，有界分块）播放与拖动进度；大小上限 2GB。
 // 仅允许视频/音频扩展名（防退化为任意文件下载器）。
 // ============================================================================
-
-const MEDIA_EXTS = new Set([
-  'mp4', 'm4v', 'webm', 'ogv', 'mov', 'mkv', 'avi', 'wmv', 'flv', '3gp', '3g2',
-  'ts', 'm2ts', 'mpg', 'mpeg', 'rmvb',
-  'mp3', 'wav', 'ogg', 'oga', 'opus', 'flac', 'm4a', 'aac', 'weba', 'wma', 'amr',
-  'mid', 'midi', 'aiff', 'aif',
-]);
 
 export function createMediaHandler(services: ServiceRegistry, config: ConfigService): RouteHandler {
   return async (req: HttpRequest): Promise<HttpResponse> => {
@@ -797,29 +662,45 @@ export function createMediaHandler(services: ServiceRegistry, config: ConfigServ
 
     const range = parseRangeHeader(req.headers['range'], st.size);
     if (range) {
+      const chunk = clampChunk(range, RAW_CHUNK_BYTES);
       return {
         status: 206,
         headers: {
           'Content-Type': mime,
-          'Content-Range': `bytes ${range.start}-${range.end}/${st.size}`,
-          'Content-Length': String(range.end - range.start + 1),
+          'Content-Range': `bytes ${chunk.start}-${chunk.end}/${st.size}`,
+          'Content-Length': String(chunk.end - chunk.start + 1),
           'Accept-Ranges': 'bytes',
           'Cache-Control': 'no-store',
         },
-        body: streamFileRange(absPath, range.start, range.end),
+        body: readByteRange(absPath, chunk.start, chunk.end),
       };
     }
 
-    // 无 Range（如直链下载）：全量流式返回（内存占用与文件大小无关）
+    // 无 Range（裸 GET 下载；浏览器 <video>/<audio> 必然先发 Range）：
+    // ≤ MEDIA_FULL_READ_LIMIT 整块返回；超过则只返回首块（206），保证内存有界。
+    if (st.size <= MEDIA_FULL_READ_LIMIT) {
+      return {
+        status: 200,
+        headers: {
+          'Content-Type': mime,
+          'Content-Length': String(st.size),
+          'Accept-Ranges': 'bytes',
+          'Cache-Control': 'no-store',
+        },
+        body: readByteRange(absPath, 0, Math.max(0, st.size - 1)),
+      };
+    }
+    const firstChunk = clampChunk({ start: 0, end: st.size - 1 }, RAW_CHUNK_BYTES);
     return {
-      status: 200,
+      status: 206,
       headers: {
         'Content-Type': mime,
-        'Content-Length': String(st.size),
+        'Content-Range': `bytes ${firstChunk.start}-${firstChunk.end}/${st.size}`,
+        'Content-Length': String(firstChunk.end - firstChunk.start + 1),
         'Accept-Ranges': 'bytes',
         'Cache-Control': 'no-store',
       },
-      body: streamFileRange(absPath, 0),
+      body: readByteRange(absPath, firstChunk.start, firstChunk.end),
     };
   };
 }
@@ -850,17 +731,14 @@ export function createTextExtractHandler(services: ServiceRegistry): RouteHandle
       return { status: 403, body: { error: 'Access denied: path outside allowed roots or blocked' } };
     }
 
-    // 仅接受 read 工具能处理的类型（防止把任意文件当文本读）
+    // 仅接受已知预览类型（防止把任意文件当文本读）
     const ext = extname(absPath).slice(1).toLowerCase();
-    const supportedExts = new Set([
-      ...Object.keys(RAW_MIME_MAP),
-    ]);
-    if (!supportedExts.has(ext)) {
+    if (!(ext in RAW_MIME_MAP)) {
       return { status: 415, body: { error: `Unsupported text extraction type: .${ext || '(none)'}` } };
     }
 
     // 纯文本类：bounded 头部读取 + 编码检测（UTF-8 / GBK）
-    if (TEXT_PREVIEW_EXTS.has(ext)) {
+    if (isTextualExt(ext)) {
       const st = statFileSafe(absPath);
       if (!st) {
         return { status: 404, body: { error: 'File not found (or not a regular file)' } };
@@ -885,8 +763,8 @@ export function createTextExtractHandler(services: ServiceRegistry): RouteHandle
       const { readEbook } = await import('../../tools/read/handlers/ebook');
       let result;
       const officeExts = new Set([
-        'docx', 'docm', 'dotx', 'doc', 'xlsx', 'xlsm', 'xltx', 'xltm', 'xls',
-        'pptx', 'pptm', 'potx', 'ppsx', 'ppt', 'odt', 'ods', 'odp', 'rtf',
+        'docx', 'docm', 'dotx', 'doc', 'dot', 'xlsx', 'xlsm', 'xltx', 'xltm', 'xls', 'xlt',
+        'pptx', 'pptm', 'potx', 'ppsx', 'ppt', 'pot', 'odt', 'ods', 'odp', 'ott', 'ots', 'otp', 'rtf',
       ]);
       const ebookExts = new Set(['epub', 'opf', 'mobi', 'azw3', 'azw', 'fb2']);
       if (officeExts.has(ext)) {

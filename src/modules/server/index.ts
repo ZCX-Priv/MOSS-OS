@@ -769,9 +769,6 @@ async function handleHttp(
       responseBody = result.body;
     } else if (result.body instanceof Uint8Array) {
       responseBody = result.body as BodyInit;
-    } else if (typeof (result.body as { getReader?: unknown }).getReader === 'function') {
-      // Web ReadableStream（文件流式响应，见 filesystem 路由的 Range/媒体直链）
-      responseBody = result.body as BodyInit;
     } else if (typeof Buffer !== 'undefined' && result.body instanceof Buffer) {
       responseBody = new Uint8Array(result.body as Buffer) as BodyInit;
     } else {

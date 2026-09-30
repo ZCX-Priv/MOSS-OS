@@ -4,9 +4,12 @@
 // 由 config.mcpServer.enabled 控制（默认关闭）；复用主端口的 authToken Bearer 鉴权
 // （config.security.authToken 为空时回退环境变量 MOSS_AUTH_TOKEN；两者皆空则不鉴权）。
 //
-// 暴露范围：config.mcpServer.allowedTools 白名单（空数组 = 全部已启用工具）。
-// 需要交互/确认通道的工具（requireConfirmation / destructiveHint / ask）一律不暴露——
-// 外部客户端没有确认与提问通道，放出去只会静默失败或被当成破坏性操作的后门。
+// 暴露范围（agent 级定位）：
+//   · 始终暴露 agent 级工具集（moss_*，见 agent-tools.ts）——让别的 Agent 给 MOSS 派任务、
+//     轮询进度、管理自动化、查看会话。
+//   · MOSS 的内部工具（read/glob/grep/shell/memory…）**默认不暴露**（它们是 MOSS 自己用的，
+//     放出去等于把 MOSS 降级成工具代理）。逃生舱：config.mcpServer.exposeInternalTools=true
+//     ＋ allowedTools 白名单；且仍需排除 requireConfirmation / destructiveHint / ask。
 //
 // 实现要点（均依据 @modelcontextprotocol/sdk 1.30.0 真实行为）：
 // 1. 无状态：每个 POST 新建 transport + Server（SDK 明确要求 stateless transport 不可复用，
@@ -25,6 +28,8 @@ import type { ConfigService, Logger, ServiceRegistry } from '../../core/types';
 import { ServiceNames } from '../../core/types';
 import type { ToolRegistry } from '../contracts';
 import type { Tool, ToolContext, ToolResult } from '../tools/types';
+import { createAgentTools, type AgentTool } from './agent-tools';
+import type { McpTaskRegistry } from './task-registry';
 
 /** 最小化 SDK 类型契约（动态 import，避免版本差异） */
 export interface SdkServer {
@@ -131,15 +136,33 @@ function projectTool(tool: Tool): ExposedTool {
 
 /**
  * 计算当前可暴露的工具集合（每次请求实时计算，支持工具热重载与配置热更新）。
- * 过滤顺序：已启用 → 非危险/交互型 → 白名单（allowedTools 非空时）。
+ *
+ * 两段式（agent 级定位的关键）：
+ * 1. agent 级工具（moss_*）：始终暴露 —— 它们是「让别的 Agent 驱动 MOSS」的对外契约。
+ * 2. 内部工具（MOSS 自己的 read/glob/shell…）：仅当 config.mcpServer.exposeInternalTools
+ *    为 true 时才考虑，且仍需通过启用/危险/白名单过滤。
  */
 export function collectExposedTools(deps: ExposureDeps): ExposedTool[] {
+  const out: ExposedTool[] = [];
+
+  // 1. agent 级工具：不过滤（annotations 仅供客户端提示，不作为暴露门槛）
+  for (const tool of resolveAgentTools(deps)) {
+    const annotations = tool.annotations;
+    out.push({
+      name: tool.name,
+      description: tool.description,
+      inputSchema: normalizeInputSchema(tool.inputSchema),
+      ...(annotations ? { annotations } : {}),
+    });
+  }
+
+  // 2. 内部工具：默认关闭（逃生舱需显式开启，并受白名单约束）
+  if (!internalToolsEnabled(deps)) return out;
   const registry = deps.services.tryResolve<ToolRegistry>(ServiceNames.TOOL_REGISTRY);
-  if (!registry) return [];
+  if (!registry) return out;
   const cfg = deps.config.getAppConfig();
   const allowed = cfg.mcpServer?.allowedTools ?? [];
   const toolsCfg = cfg.tools as Record<string, { requireConfirmation?: boolean }> | undefined;
-  const out: ExposedTool[] = [];
   for (const tool of registry.list()) {
     if (!registry.isEnabled(tool.name)) continue;
     if (isNonExposable(tool, toolsCfg)) continue;
@@ -147,6 +170,25 @@ export function collectExposedTools(deps: ExposureDeps): ExposedTool[] {
     out.push(projectTool(tool));
   }
   return out;
+}
+
+/** 内部工具是否放行（默认 false：/mcp 只暴露 agent 级契约） */
+function internalToolsEnabled(deps: ExposureDeps): boolean {
+  try {
+    return deps.config.getAppConfig().mcpServer?.exposeInternalTools === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 解析 agent 级工具集（每次请求重建，开销可忽略）。
+ * MCP 任务注册表在此**请求时**解析：mcp 模块在 server 模块之后初始化，
+ * 构造期注入必然拿不到服务。
+ */
+function resolveAgentTools(deps: ExposureDeps): AgentTool[] {
+  const registry = deps.services.tryResolve<McpTaskRegistry>(ServiceNames.MCP_TASK_REGISTRY);
+  return createAgentTools(registry);
 }
 
 /** ToolResult → MCP CallToolResult（text/image + 可选 structuredContent） */
@@ -205,7 +247,22 @@ export function registerToolHandlers(
     if (typeof name !== 'string' || name.length === 0) {
       return toolError('Error: missing tool name');
     }
-    // 每次调用重新过滤：未暴露的工具一律拒绝（含白名单/危险过滤）
+
+    // 1. agent 级工具优先（始终可用）
+    const agentTool = resolveAgentTools(deps).find(t => t.name === name);
+    if (agentTool) {
+      try {
+        const result = await agentTool.execute(args, deps);
+        return toCallToolResult(result);
+      } catch (err) {
+        return toolError(`Error: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    // 2. 内部工具：仅逃生舱开启时可用，且必须仍在暴露集合内
+    if (!internalToolsEnabled(deps)) {
+      return toolError(`Error: unknown tool "${name}" (this MCP server exposes MOSS agent tools only)`);
+    }
     if (!collectExposedTools(deps).some(t => t.name === name)) {
       return toolError(`Error: tool "${name}" is not exposed`);
     }
@@ -446,8 +503,9 @@ export class McpExpose {
       SUPPORTED_PROTOCOL_VERSIONS: string[];
     };
 
-    if (!this.services.tryResolve<ToolRegistry>(ServiceNames.TOOL_REGISTRY)) {
-      return this.jsonError(500, -32603, 'Tool registry unavailable');
+    if (!this.services.tryResolve<McpTaskRegistry>(ServiceNames.MCP_TASK_REGISTRY)) {
+      // 注册表未就绪只影响任务类工具（它们会返回可读错误），不阻断整个端点
+      this.logger.warn('mcp expose: task registry unavailable (agent tools will report an error until ready)');
     }
 
     const protocolVersion = await this.resolveProtocolVersion(req, SUPPORTED_PROTOCOL_VERSIONS);

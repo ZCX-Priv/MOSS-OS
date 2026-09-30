@@ -1,5 +1,5 @@
 // src/cli/commands.ts
-// CLI 命令路由：start/stop/status/restart/update/version
+// CLI 命令路由：start/stop/status/restart/mcp/update/version
 
 import { Microkernel } from '../core/kernel';
 import { detectEnvironment } from '../core/env';
@@ -12,6 +12,7 @@ import {
 } from '../utils/pid';
 import { ServiceNames, type LogLevel } from '../core/types';
 import type { ServerInstance } from '../modules/server/types';
+import { startMcpStdio } from '../modules/mcp/stdio';
 import { t } from '../core/i18n';
 
 export interface ParsedArgs {
@@ -62,6 +63,7 @@ const VALID_COMMANDS = new Set([
   'update',
   'version',
   'help',
+  'mcp',
 ]);
 
 export async function runCommand(parsed: ParsedArgs): Promise<number> {
@@ -85,6 +87,8 @@ export async function runCommand(parsed: ParsedArgs): Promise<number> {
       return cmdUpdate();
     case 'version':
       return cmdVersion();
+    case 'mcp':
+      return cmdMcp(parsed);
     case 'help':
       printHelp();
       return 0;
@@ -302,6 +306,76 @@ async function cmdVersion(): Promise<number> {
   } catch (err) {
     console.error(t('cli.failedToReadVersion', { error: err instanceof Error ? err.message : String(err) }));
     return 1;
+  }
+}
+
+/**
+ * `moss mcp`：以 stdio 方式启动 MCP 服务器（供 Claude Desktop / Cursor 等客户端调用）。
+ *
+ * 与 start 的关键差异：
+ * - stdout 是 MCP 协议通道 → 必须先把 console 改道到 stderr，否则日志会污染协议流；
+ * - 不起 HTTP 服务（禁用 server/remote），避免与常驻 MOSS 抢端口；daemon/update 与 stdio
+ *   会话无关（automation 模块保留，但会因 MOSS_STDIO_MCP 跳过调度器以避免重复触发）；
+ * - 不写 PID 文件、不做单例检测（不是守护进程，由客户端拉起）。
+ */
+async function cmdMcp(parsed: ParsedArgs): Promise<number> {
+  redirectConsoleToStderr();
+  // 标记 stdio 模式：automation 模块据此跳过调度器（避免与常驻 MOSS 重复触发定时任务）
+  process.env.MOSS_STDIO_MCP = '1';
+  const kernel = new Microkernel();
+  try {
+    const ctx = await kernel.start({
+      foreground: true,
+      logLevel: parsed.logLevel,
+      // 不起 HTTP 服务（会与常驻 MOSS 抢端口）；daemon/update 与 stdio 会话无关
+      disabledModules: ['server', 'remote', 'daemon', 'update'],
+    });
+
+    const server = await startMcpStdio(ctx);
+    console.error(t('cli.mcpStarted'));
+
+    const cleanup = async (): Promise<void> => {
+      await server.close().catch(() => {});
+      await kernel.stop().catch(() => {});
+      process.exit(0);
+    };
+    process.on('SIGINT', cleanup);
+    process.on('SIGTERM', cleanup);
+    process.on('SIGHUP', cleanup);
+
+    // 常驻：客户端关闭 stdin（断开连接）时由 SDK 结束进程
+    return new Promise<number>(() => {
+      // 永不 resolve，由信号或 stdin 关闭退出
+    });
+  } catch (err) {
+    console.error(t('cli.mcpFailed', { error: err instanceof Error ? err.message : String(err) }));
+    await kernel.stop().catch(() => {});
+    return 1;
+  }
+}
+
+/**
+ * 把 console.log/info/debug 改道到 stderr。
+ * stdio MCP 传输要求 stdout 只承载 JSON-RPC 消息，而内核与依赖库会往 stdout 打日志；
+ * 改道必须发生在 kernel.start() 之前（否则第一条启动日志就已污染协议流）。
+ * console.warn/error 本就写 stderr，无需处理。
+ */
+function redirectConsoleToStderr(): void {
+  const toStderr = (...args: unknown[]): void => {
+    process.stderr.write(args.map(formatConsoleArg).join(' ') + '\n');
+  };
+  console.log = toStderr;
+  console.info = toStderr;
+  console.debug = toStderr;
+}
+
+function formatConsoleArg(arg: unknown): string {
+  if (typeof arg === 'string') return arg;
+  if (arg instanceof Error) return arg.message;
+  try {
+    return JSON.stringify(arg) ?? String(arg);
+  } catch {
+    return String(arg);
   }
 }
 

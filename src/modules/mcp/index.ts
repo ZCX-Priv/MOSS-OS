@@ -1,14 +1,17 @@
 // src/modules/mcp/index.ts
-// MCP Client 模块入口：注册 MCPManager 服务。
+// MCP Client 模块入口：注册 MCPManager 服务 + 对外派发任务注册表。
 
 import { t } from '../../core/i18n';
 import type { Module, ModuleContext } from '../../core/types';
 import { ServiceNames } from '../../core/types';
 import { MCPManagerImpl } from './manager';
+import { McpTaskRegistry } from './task-registry';
 
 class McpModule implements Module {
 
   private manager: MCPManagerImpl | null = null;
+  /** 对外派发任务注册表（/mcp 与 `moss mcp` 的异步任务状态） */
+  private taskRegistry: McpTaskRegistry | null = null;
 
   async initialize(ctx: ModuleContext): Promise<void> {
     this.manager = new MCPManagerImpl({
@@ -19,6 +22,18 @@ class McpModule implements Module {
       services: ctx.services,
     });
     ctx.services.register(ServiceNames.MCP_MANAGER, this.manager, {
+      scope: 'mcp',
+    });
+
+    // 对外暴露层的任务注册表：请求时按 ServiceNames.MCP_TASK_REGISTRY 解析
+    // （server 模块先于本模块初始化，故不能构造期注入）
+    this.taskRegistry = new McpTaskRegistry({
+      config: ctx.config,
+      services: ctx.services,
+      logger: ctx.logger,
+      env: ctx.env,
+    });
+    ctx.services.register(ServiceNames.MCP_TASK_REGISTRY, this.taskRegistry, {
       scope: 'mcp',
     });
 
@@ -48,6 +63,8 @@ class McpModule implements Module {
     if (this.manager) {
       await this.manager.shutdown();
     }
+    // 中止仍在运行的外部派发任务，避免进程退出时悬挂 run
+    this.taskRegistry?.dispose();
   }
 }
 

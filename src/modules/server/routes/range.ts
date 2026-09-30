@@ -41,3 +41,12 @@ export function parseRangeHeader(header: string | undefined, size: number): Byte
 
   return { start, end };
 }
+
+/**
+ * 夹紧区间长度到 maxBytes 内。
+ * RFC 7233 允许服务端返回「少于请求量」的 206；浏览器/播放器会据此继续发起后续
+ * Range 请求，故单次响应内存有界，且不破坏拖动进度语义。
+ */
+export function clampChunk(range: ByteRange, maxBytes: number): ByteRange {
+  return { start: range.start, end: Math.min(range.end, range.start + maxBytes - 1) };
+}

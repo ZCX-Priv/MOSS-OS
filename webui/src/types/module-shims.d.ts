@@ -1,9 +1,8 @@
 // src/types/module-shims.d.ts
 // 第三方库类型补充：库未随包提供 TypeScript 声明时的最小结构声明。
-
-/** pptx-react-viewer 的样式表入口（exports map 暴露，无类型声明） */
-declare module 'pptx-react-viewer/styles';
-declare module 'pptx-react-viewer/styles.css';
+// 护栏：任何第三方样式表一律不得全局 import（历史事故：PPT 编辑器库的 styles 是
+// 全文档级 Tailwind preflight + :root 主题变量，注入后污染整站）。若确实需要，
+// 必须走 ?inline + 选择器加前缀的作用域化方案。
 
 declare module 'utif' {
   interface UtifIFD {
