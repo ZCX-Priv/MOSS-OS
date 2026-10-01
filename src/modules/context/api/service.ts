@@ -31,6 +31,7 @@ import { TokenCalibrator } from '../budgeter/calibration';
 import { estimateTextTokens, messagesChars, parseContextWindow } from '../budgeter/estimator';
 import { buildStaticSystemPrompt, buildRequestView, getSystemSections } from '../compiler';
 import type { RulesSectionInput } from '../compiler/system-prompt';
+import { ensureEnvProbed } from '../compiler/env-probe';
 import { buildRulesSection } from '../../rules/inject';
 import type { RulesEngineServiceImpl } from '../../rules/service';
 import { ENV_CONTEXT_MSG_NAME } from '../compiler/env-context';
@@ -163,6 +164,9 @@ export class ContextEngineServiceImpl {
     session: ContextSessionLike,
     opts: PrepareRequestOptions,
   ): Promise<PreparedRequest> {
+    // 环境探测预热（首次 ~1s 并行探测 shell/工具链/编码，之后进程级缓存 0ms）；
+    // 确保 system prompt 中的环境信息自第一帧起完整且字节级稳定（缓存周期不中途切换）
+    await ensureEnvProbed(this.env);
     const windowTokens = opts.windowTokens ?? this.resolveWindowTokens(opts.model);
     this.noteCwd(opts.cwd);
     const deps = this.buildGovernorDeps();
@@ -178,9 +182,6 @@ export class ContextEngineServiceImpl {
     const skillName = session.activeSkill?.mode === 'system' ? session.activeSkill.name : undefined;
     const sections = getSystemSections(
       this.env,
-      opts.cwd,
-      opts.model,
-      opts.modelDisplayName,
       skillName,
       name => this.resolveSkillPrompt(name),
       this.buildRulesSectionForTelemetry(opts.cwd),
@@ -209,16 +210,6 @@ export class ContextEngineServiceImpl {
     t.lastSentChars = sentChars;
 
     return prepared;
-  }
-
-  /** 静态系统提示词构建（agent fallback / 路由复用） */
-  buildSystemPrompt(
-    cwd: string,
-    model: string,
-    modelDisplayName: string,
-    skillPrompt?: string | null,
-  ): string {
-    return buildStaticSystemPrompt(this.env, cwd, model, modelDisplayName, skillPrompt);
   }
 
   // ========================================================================
@@ -527,9 +518,6 @@ export class ContextEngineServiceImpl {
       const rulesSection = this.buildRulesSectionForTelemetry(cwd);
       const staticSystemPrompt = buildStaticSystemPrompt(
         this.env,
-        cwd,
-        model,
-        model,
         this.resolveSkillPrompt(skillName),
         rulesSection,
       );
@@ -541,9 +529,6 @@ export class ContextEngineServiceImpl {
       t.lastWindowTokens = this.resolveWindowTokens(model);
       t.lastSystemSections = getSystemSections(
         this.env,
-        cwd,
-        model,
-        model,
         skillName,
         name => this.resolveSkillPrompt(name),
         rulesSection,

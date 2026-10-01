@@ -21,10 +21,18 @@ let seeded = false;
  * 后续版本演进由 manifest 机制接管，新迁移时在此追加旧指纹即可。
  */
 const LEGACY_SEED_HASHES: Readonly<Record<string, ReadonlyArray<string>>> = {
-  'prompts/main/system.md': ['61a92fc6c815da130d26a3f17ebe0d87d954bb897f9eda175b6fd901659d64f0'],
+  'prompts/main/system.md': [
+    '61a92fc6c815da130d26a3f17ebe0d87d954bb897f9eda175b6fd901659d64f0',
+    'd56794dff898e11fe8fdaafbc8c6e196a8b62e5a99a939cb7cb4b31745b06bf8',
+    // 二期版本（环境变量注入版）：rules 并入 system、环境信息迁往 env-context 前的形态
+    '5008ed358b2239ceeab49d6ec42a31c8aec809e9f3ab08b6fcc402c1fe69bf54',
+    // 二期落地版（rules 并入 + 环境信息迁 env-context）：三期新增语言思考/输出渲染段前的形态
+    '83a6f4069fe6ca3c1849a29f3c171e13366204b842d4b0f022ab9af614c47169',
+  ],
   'prompts/main/rules.md': [
     '9a80c5af645cf3feffacf6cfe936349424c19085fa0cfff09c1659c799b91928',
     'afecb8d831bd60b5c9254def1e9baac7974989fa3481079c1d2e8c2114d8e48a',
+    '166d069be3dd54329e74fd53a04e302b3de075cd0a7088f8970ab4bee3e3c5f7',
   ],
 };
 
@@ -34,13 +42,17 @@ const MANIFEST_FILE = '.seed-manifest.json';
 /**
  * 已废弃的种子路径（relpath，相对 ~/.moss/agent/）。
  * 系统提示词加载器只读 main/*.md，早期版本误放进 main/ 子目录的提示词从未生效；
- * spec 功能已整体移除，其目录也不再需要。启动播种时从用户目录清理残留（幂等）。
+ * spec 功能已整体移除；rules.md 内容已并入 system.md（rules 解析段同步移除）；
+ * base.md 已更名为 identity.md（identity 本就是加载器第二候选名）。
+ * 启动播种时从用户目录清理残留（幂等）。
  */
 const DEPRECATED_SEED_PATHS: ReadonlyArray<string> = [
   'prompts/main/system',
   'prompts/main/base',
+  'prompts/main/base.md',
   'prompts/main/rule',
   'prompts/main/spec',
+  'prompts/main/rules.md',
 ];
 
 interface SeedManifest {

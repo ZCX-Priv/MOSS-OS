@@ -1,13 +1,19 @@
 // src/modules/context/compiler/env-context.ts
-// 环境上下文消息：时间/平台/git 状态等动态信息以会话首条消息锚定（append-only），
-// system prompt 保持纯静态 → 前缀字节级稳定（缓存命中黄金法则：静态在前、动态在后）。
+// 环境上下文消息（会话首条锚定消息，append-only）：系统提示词保持零变量纯静态，
+// 全部环境信息（平台/工作目录/设备/语言编码/模型/shell 实测/工具链实测/git/时间）集中于此。
+// - 缓存布局黄金法则：静态在前（system prompt 纯文本拼接）、动态在后（本消息锚定）
 // - 会话创建时生成一次，之后永不修改（修改旧消息 = 破坏前缀）
-// - 跨天继续会话：在消息流末尾「追加」日期提示消息（不改动历史）
-// - 旧会话（无 env-context）：首次 run 补建并插到消息流最前（一次性进入新缓存周期）
+// - 时间放最后（用户约定）；跨天继续会话：末尾「追加」日期提示消息（不改动历史）
+// - 旧会话（旧格式 env-context）：不迁移，保持原样（新会话起用新格式）
+// - shell/工具链/编码来自 env-probe（启动实测；工具链经 prepareRequest 开头
+//   await ensureEnvProbed 预热，本消息构建时缓存已就绪）
 
 import { execSync } from 'node:child_process';
-import type { Environment } from '../../../core/types';
+import { hostname, arch, cpus, release } from 'node:os';
+import type { Environment, Platform } from '../../../core/types';
 import type { ContextMessage, ContextSessionLike } from '../types';
+import { buildShellInfoText, buildDevToolsText, buildEncodingText } from './env-probe';
+import { SYSTEM_SCOPE } from '../../filesys/roots';
 
 /** 消息 name 标识 */
 export const ENV_CONTEXT_MSG_NAME = 'env-context';
@@ -31,6 +37,15 @@ function nowTimeString(): string {
   const now = new Date();
   const pad = (n: number): string => String(n).padStart(2, '0');
   return `${todayDate()} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+}
+
+function prettyPlatform(p: Platform): string {
+  switch (p) {
+    case 'win32': return 'Windows';
+    case 'darwin': return 'macOS';
+    case 'linux': return 'Linux';
+    default: return 'Other';
+  }
 }
 
 /** 安全执行 git 命令（失败/超时返回 null） */
@@ -69,18 +84,46 @@ function buildGitSnapshot(cwd: string): string | null {
   ].join('\n');
 }
 
+/** 工作目录展示文案（System 作用域特殊说明，语义与旧 system.md 变量一致） */
+function cwdText(cwd: string, env: Environment): string {
+  return cwd === SYSTEM_SCOPE
+    ? `System-wide access mode (full filesystem access; default working directory: ${env.homeDir}; under ~/.moss only the agent/, mcps/, skills/ subdirectories are accessible)`
+    : cwd;
+}
+
 /**
- * 构建环境上下文消息（会话首条锚定消息）。
- * content 含生成时刻的时间快照——此后永不修改（append-only 纪律）。
+ * 构建环境上下文消息（会话首条锚定消息）——全部环境信息的唯一承载处。
+ * content 含生成时刻的快照（含时间，置于最后）——此后永不修改（append-only 纪律）。
  */
-export function buildEnvContextMessage(env: Environment, cwd: string): ContextMessage {
+export function buildEnvContextMessage(
+  env: Environment,
+  cwd: string,
+  model?: string,
+  modelDisplayName?: string,
+): ContextMessage {
+  let cpuModel = 'unknown';
+  try {
+    cpuModel = cpus()[0]?.model ?? cpuModel;
+  } catch {
+    // 忽略
+  }
+
   const parts: string[] = [
     '[环境上下文]',
-    `当前时间: ${nowTimeString()}（${Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'UTC'}）`,
-    `平台: ${prettyPlatform(env.platform)}（${env.platform}, ${env.arch}）`,
+    `平台: ${prettyPlatform(env.platform)}（${env.platform}, ${arch()}，${release()}）`,
+    `工作目录: ${cwdText(cwd, env)}`,
+    `设备信息: ${hostname()} / ${arch()} / ${cpuModel}`,
+    `语言/编码: ${buildEncodingText(env)}`,
   ];
+  if (modelDisplayName || model) {
+    parts.push(`模型: ${modelDisplayName || model}${model ? `（ID：${model}）` : ''}`);
+  }
+  parts.push(`# Shell 环境（启动时实测）\n${buildShellInfoText(env)}`);
+  parts.push(`# 开发工具链（启动时实测）\n${buildDevToolsText(env)}`);
   const gitSnapshot = buildGitSnapshot(cwd);
   if (gitSnapshot) parts.push(gitSnapshot);
+  // 时间放最后（用户约定）
+  parts.push(`当前时间: ${nowTimeString()}（${Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'UTC'}）`);
   return {
     role: 'user',
     name: ENV_CONTEXT_MSG_NAME,
@@ -89,28 +132,25 @@ export function buildEnvContextMessage(env: Environment, cwd: string): ContextMe
   };
 }
 
-function prettyPlatform(p: string): string {
-  switch (p) {
-    case 'win32': return 'Windows';
-    case 'darwin': return 'macOS';
-    case 'linux': return 'Linux';
-    default: return 'Other';
-  }
-}
-
 /**
  * 会话环境上下文保障（每次 run 开始时调用）：
  * 1. 无 env-context 消息（旧会话/新会话）→ 补建并插到消息流最前 + 写 envContext 锚定信息
  * 2. 跨天（envContext.date ≠ 今天）→ 末尾追加日期提示消息（append-only，不破坏前缀）
  * @returns true 表示消息流发生了变化（需要持久化）
  */
-export function ensureEnvContext(session: ContextSessionLike, env: Environment, cwd: string): boolean {
+export function ensureEnvContext(
+  session: ContextSessionLike,
+  env: Environment,
+  cwd: string,
+  model?: string,
+  modelDisplayName?: string,
+): boolean {
   let changed = false;
   const today = todayDate();
 
   const hasEnvMsg = session.messages.some(m => m.name === ENV_CONTEXT_MSG_NAME);
   if (!hasEnvMsg) {
-    session.messages.unshift(buildEnvContextMessage(env, cwd));
+    session.messages.unshift(buildEnvContextMessage(env, cwd, model, modelDisplayName));
     session.envContext = { createdAt: new Date().toISOString(), date: today };
     changed = true;
   }

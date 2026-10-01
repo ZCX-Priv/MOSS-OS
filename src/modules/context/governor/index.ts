@@ -123,9 +123,9 @@ export async function prepareRequest(
   const { session, cwd, model, modelDisplayName, windowTokens } = input;
   const config = deps.getConfig();
 
-  // ===== 1. 环境上下文保障（跨天追加 / 旧会话补建）=====
+  // ===== 1. 环境上下文保障（跨天追加 / 旧会话补建；模型信息随消息锚定）=====
   try {
-    if (ensureEnvContext(session, deps.env, cwd)) {
+    if (ensureEnvContext(session, deps.env, cwd, model, modelDisplayName)) {
       deps.persistSession(session);
     }
   } catch (err) {
@@ -204,14 +204,11 @@ export async function prepareRequest(
   // ===== 1.8 always 用户规则段（rules 引擎；paths 规则由 agent 工具调用后追加锚定）=====
   const rulesSection = buildRulesSectionForRequest(deps, config, session.id, cwd);
 
-  // ===== 2. 静态系统提示（skill system 模式注入 + always 用户规则段）=====
+  // ===== 2. 静态系统提示（纯文本拼接；skill system 模式注入 + always 用户规则段）=====
   const skillName = session.activeSkill?.mode === 'system' ? session.activeSkill.name : undefined;
   const skillPrompt = resolveSkillPromptFromRegistry(deps.services, skillName);
   const staticSystemPrompt = buildStaticSystemPrompt(
     deps.env,
-    cwd,
-    model,
-    modelDisplayName,
     skillPrompt,
     rulesSection,
   );
@@ -328,9 +325,6 @@ export async function manualCompact(
   const skillName = input.session.activeSkill?.mode === 'system' ? input.session.activeSkill.name : undefined;
   const staticSystemPrompt = buildStaticSystemPrompt(
     deps.env,
-    input.cwd,
-    input.model,
-    input.modelDisplayName,
     resolveSkillPromptFromRegistry(deps.services, skillName),
     buildRulesSectionForRequest(deps, config, input.session.id, input.cwd),
   );

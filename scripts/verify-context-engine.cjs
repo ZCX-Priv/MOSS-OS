@@ -223,28 +223,36 @@ gone('engine.ts 旧三连已替换', 'src/modules/agent/engine.ts', [
 console.log('\n===== D. 提示词文件（外部化 + 播种源） =====');
 // main/ 下直接放扁平 .md（加载器只读 main/*.md，子目录内容不会生效）
 file('存在 agent/prompts/main/system.md', 'agent/prompts/main/system.md');
-file('存在 agent/prompts/main/base.md', 'agent/prompts/main/base.md');
-file('存在 agent/prompts/main/rules.md', 'agent/prompts/main/rules.md');
+file('存在 agent/prompts/main/identity.md', 'agent/prompts/main/identity.md');
 file('存在 agent/prompts/compact/compaction.md', 'agent/prompts/compact/compaction.md');
 file('存在 agent/prompts/heal/tool-error.md', 'agent/prompts/heal/tool-error.md');
 absent('废弃子目录 main/system 已删除', 'agent/prompts/main/system');
 absent('废弃子目录 main/base 已删除', 'agent/prompts/main/base');
 absent('废弃子目录 main/rule 已删除', 'agent/prompts/main/rule');
 absent('已移除功能目录 main/spec 已删除', 'agent/prompts/main/spec');
-ok('system.md 内容特征（运行环境变量）', 'agent/prompts/main/system.md', [
+absent('已更名的 main/base.md 已删除', 'agent/prompts/main/base.md');
+absent('已并入 system.md 的 main/rules.md 已删除', 'agent/prompts/main/rules.md');
+ok('system.md 内容特征（环境指向 + 能力纪律 + 纪律规则，零动态变量）', 'agent/prompts/main/system.md', [
   '# 运行环境',
-  '{{PLATFORM}}',
-  '{{CWD}}',
-]);
-ok('base.md 内容特征（身份/核心能力）', 'agent/prompts/main/base.md', [
-  '# 身份',
-  '核心能力',
-  '知识边界',
-]);
-ok('rules.md 内容特征（核心原则/待办进度保留）', 'agent/prompts/main/rules.md', [
+  '[环境上下文]',
+  '# 能力使用纪律',
   '# 核心原则',
+  '# 执行纪律',
+  '# 输出渲染',
   '第一性原理',
   '保留 completed 状态',
+]);
+gone('system.md 已无动态替换变量（环境信息迁往 env-context）', 'agent/prompts/main/system.md', [
+  '{{PLATFORM}}',
+  '{{CWD}}',
+  '{{shell_info}}',
+]);
+ok('identity.md 内容特征（身份/延续性/知识边界）', 'agent/prompts/main/identity.md', [
+  '# 身份',
+  '# 延续性',
+  '# Harness',
+  '# 行为倾向',
+  '# 知识边界',
 ]);
 ok('compact/compaction.md 七段式 + FOCUS 变量', 'agent/prompts/compact/compaction.md', [
   '## 持续事实与约束',

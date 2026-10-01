@@ -1,26 +1,25 @@
 // src/modules/context/compiler/system-prompt.ts
 // 静态系统提示组装（缓存对齐布局核心）：
-// - 从 ~/.moss/agent/prompts/main/ 加载基本设定并按序拼接（soul → identity → rules → 其他）
+// - 从 ~/.moss/agent/prompts/main/ 加载基本设定并按序拼接（soul → identity → 其他）
+//   （rules 解析段已移除：rules.md 内容已并入 system.md，见 agent/prompts/main/）
+// - 零动态变量替换：全部环境信息（平台/CWD/设备/编码/模型/shell/工具链/时间）
+//   统一由 env-context 消息承载 → system prompt 纯文本拼接，字节级稳定（前缀缓存锚点）
 // - always 用户规则段（rules 引擎注入）插在末尾；规则集内容指纹纳入缓存键
-// - 只保留进程内静态变量（PLATFORM/CWD/model_id 等）；cur_time/cur_date 等动态变量
-//   一律移出（移至 env-context 消息），保证 system prompt 字节级稳定 → 前缀缓存命中
 // - mtime 缓存：文件未变不重复读盘；变更即进入新缓存周期
 // 迁移自 agent/context.ts（loadBasePrompt/buildSystemPrompt），并输出分段结构
 //（供 WebUI「系统」标签页折叠栏展示）。
 
 import { join } from 'node:path';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { release, hostname, arch, cpus } from 'node:os';
-import type { Environment, Platform } from '../../../core/types';
+import type { Environment } from '../../../core/types';
 import type { SystemSection } from '../types';
 import { seedBuiltinAgentPrompts } from '../../tools/shared/agent-seed';
-import { SYSTEM_SCOPE } from '../../filesys/roots';
 import { estimateTextTokens } from '../budgeter/estimator';
 
 /** 兜底系统提示词（agent/prompts/main/ 下无任何基本设定文件时） */
 export const FALLBACK_SYSTEM_PROMPT = `你是 MOSS，一个运行在真实环境中的交互式 AI 智能体。
 
-你可以使用工具读写文件、执行命令、调用 skill、调用 MCP 服务器。
+你可以使用工具读写文件、执行命令、调用 skill、调用 MCP 服务器。环境信息（平台、工作目录、shell、开发工具链、时间等）以会话首条 [环境上下文] 消息为准。
 
 # 核心原则
 1. **第一性原理**：从根本推理，不浮于表面。
@@ -46,7 +45,6 @@ export interface RulesSectionInput {
 const BASE_PROMPT_CANDIDATES: ReadonlyArray<ReadonlyArray<string>> = [
   ['system', 'soul'],
   ['base', 'identity'],
-  ['rule', 'rules'],
 ];
 
 const CANDIDATE_NAMES: ReadonlySet<string> = new Set<string>(BASE_PROMPT_CANDIDATES.flat());
@@ -55,7 +53,6 @@ const CANDIDATE_NAMES: ReadonlySet<string> = new Set<string>(BASE_PROMPT_CANDIDA
 const SEGMENT_TITLES: Record<string, string> = {
   soul: '工作哲学（soul）',
   identity: '身份认知（identity）',
-  rules: '行为规则（rules）',
   'user-rules': '用户规则（user rules）',
   fallback: '基础设定（内置兜底）',
 };
@@ -71,15 +68,6 @@ interface PromptCacheEntry {
 
 let promptCache: PromptCacheEntry | null = null;
 
-function prettyPlatform(p: Platform): string {
-  switch (p) {
-    case 'win32': return 'Windows';
-    case 'darwin': return 'macOS';
-    case 'linux': return 'Linux';
-    default: return 'Other';
-  }
-}
-
 function readFileNoBom(path: string): string {
   const raw = readFileSync(path, 'utf8');
   return raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw;
@@ -91,54 +79,6 @@ function fileExists(path: string): boolean {
   } catch {
     return false;
   }
-}
-
-/**
- * 收集系统提示词的静态变量（进程内不变；动态时间变量已移至 env-context 消息）。
- */
-function collectStaticPromptVars(
-  env: Environment,
-  cwd: string,
-  model: string,
-  modelDisplayName: string,
-): Record<string, string> {
-  let locale = 'unknown';
-  let timezone = 'unknown';
-  try {
-    const resolved = Intl.DateTimeFormat().resolvedOptions();
-    locale = resolved.locale ?? locale;
-    timezone = resolved.timeZone ?? timezone;
-  } catch {
-    // 极少数环境 Intl 不可用
-  }
-
-  let cpuModel = 'unknown';
-  try {
-    cpuModel = cpus()[0]?.model ?? cpuModel;
-  } catch {
-    // 忽略
-  }
-
-  return {
-    PLATFORM: prettyPlatform(env.platform),
-    CWD:
-      cwd === SYSTEM_SCOPE
-        ? `System-wide access mode (full filesystem access; default working directory: ${env.homeDir}; under ~/.moss only the agent/, mcps/, skills/ subdirectories are accessible)`
-        : cwd,
-    model_id: model,
-    model_name: modelDisplayName,
-    locale,
-    timezone,
-    system_version: `${prettyPlatform(env.platform)} ${release()}`,
-    device_info: `${hostname()} / ${arch()} / ${cpuModel}`,
-  };
-}
-
-/** 应用静态变量替换（未识别的 {{var}} 保持原样） */
-function applyVars(text: string, vars: Record<string, string>): string {
-  return text.replace(/\{\{(\w+)\}\}/g, (match, key: string) =>
-    Object.prototype.hasOwnProperty.call(vars, key) ? vars[key] : match,
-  );
 }
 
 /** 主提示词目录的 mtime 指纹（目录 + 候选文件；变更即缓存失效） */
@@ -162,7 +102,7 @@ function promptDirMtime(userDir: string): number {
 
 /**
  * 加载系统提示词分段（带 mtime + 规则指纹缓存）。
- * 顺序：system/soul → base/identity → rule/rules → 其他 *.md（字母序）→ 用户规则。
+ * 顺序：system/soul → identity → 其他 *.md（字母序）→ 用户规则。
  * @param rulesSection rules 引擎注入的 always 规则段（可选）
  */
 export function loadSystemPromptSegments(env: Environment, rulesSection?: RulesSectionInput | null): SystemSection[] {
@@ -253,16 +193,13 @@ export function loadSystemPromptSegments(env: Environment, rulesSection?: RulesS
 }
 
 /**
- * 构建静态系统提示词（变量替换后拼接全文）。
- * 只含进程内静态变量 → 同一进程内跨轮字节级一致（前缀缓存锚点）。
+ * 构建静态系统提示词（纯文本拼接，零变量替换）。
+ * 环境信息全部由 env-context 消息承载 → 同一份文件跨会话/跨重启字节级一致（前缀缓存锚点）。
  * @param skillPrompt 可选的 skill system 模式注入内容（拼接在末尾；skill 切换=新缓存周期，低频可接受）
  * @param rulesSection rules 引擎注入的 always 规则段（规则集变更=新缓存周期，低频可接受）
  */
 export function buildStaticSystemPrompt(
   env: Environment,
-  cwd: string,
-  model: string,
-  modelDisplayName: string,
   skillPrompt?: string | null,
   rulesSection?: RulesSectionInput | null,
 ): string {
@@ -279,12 +216,10 @@ export function buildStaticSystemPrompt(
     loadSystemPromptSegments(env, rulesSection);
   }
   const joined = promptCache?.joined ?? FALLBACK_SYSTEM_PROMPT;
-  const vars = collectStaticPromptVars(env, cwd, model, modelDisplayName);
-  let result = applyVars(joined, vars);
   if (skillPrompt) {
-    result += `\n\n---\n\n${skillPrompt}`;
+    return `${joined}\n\n---\n\n${skillPrompt}`;
   }
-  return result;
+  return joined;
 }
 
 /**
@@ -295,18 +230,11 @@ export function buildStaticSystemPrompt(
  */
 export function getSystemSections(
   env: Environment,
-  cwd: string,
-  model: string,
-  modelDisplayName: string,
   skillName?: string,
   resolveSkillPrompt?: (name: string) => string | null,
   rulesSection?: RulesSectionInput | null,
 ): SystemSection[] {
-  const vars = collectStaticPromptVars(env, cwd, model, modelDisplayName);
-  const segments = loadSystemPromptSegments(env, rulesSection).map(s => ({
-    ...s,
-    content: applyVars(s.content, vars),
-  }));
+  const segments = loadSystemPromptSegments(env, rulesSection);
   if (skillName && resolveSkillPrompt) {
     const skillPrompt = resolveSkillPrompt(skillName);
     if (skillPrompt) {

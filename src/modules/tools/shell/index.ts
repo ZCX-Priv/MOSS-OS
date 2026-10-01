@@ -13,6 +13,7 @@ import { homedir } from 'node:os';
 import { decodeShellOutput } from '../../../utils/encoding';
 import type { FilesysService, ShellChangeReport } from '../../contracts';
 import { SYSTEM_SCOPE } from '../../filesys/roots';
+import { probeShells, type ShellId } from '../../context/compiler/env-probe';
 import type { ToolContext, ToolResult } from '../types';
 
 /** shell 工具输入参数 */
@@ -21,7 +22,7 @@ interface ShellParams {
   cwd?: string;
   timeout?: number;
   env?: Record<string, string>;
-  /** 指定 shell：Windows 默认 cmd（可选 powershell），POSIX 默认 bash */
+  /** 指定 shell：实际可用性以 env-probe 实测为准（系统提示中的 Shell 环境段），不可用时回退默认 shell */
   shell?: 'cmd' | 'powershell' | 'bash';
 }
 
@@ -40,35 +41,121 @@ interface ShellConfig {
   args: string[];
   /** 命令包装器（如 cmd 的 chcp 前置、powershell 的 UTF-8 前置） */
   wrap: (cmd: string) => string;
+  /** 面向模型的显示名 */
+  label: string;
+  /** 请求的 shell 不可用而回退时，回告模型的说明（附在结果尾部） */
+  fallbackNote: string | null;
+}
+
+/** PowerShell 配置：前置 UTF-8 输出编码设置，避免 UTF-16LE/系统代码页导致乱码 */
+function powershellConfig(): ShellConfig {
+  return {
+    bin: 'powershell.exe',
+    args: ['-NoProfile', '-NonInteractive', '-Command'],
+    wrap: (c) => `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${c}`,
+    label: 'PowerShell',
+    fallbackNote: null,
+  };
+}
+
+/** cmd 配置：前置 chcp 65001 切换 UTF-8 代码页，避免 GBK 输出乱码 */
+function cmdConfig(): ShellConfig {
+  return {
+    bin: 'cmd.exe',
+    args: ['/c'],
+    wrap: (c) => `chcp 65001 >nul && ${c}`,
+    label: 'CMD',
+    fallbackNote: null,
+  };
+}
+
+/** 解析 Git Bash 可执行路径（PATH 中的 bash → 常见安装路径） */
+function resolveGitBashBin(): string | null {
+  try {
+    const hit = Bun.which('bash');
+    if (hit) return hit;
+  } catch {
+    // Bun.which 异常忽略
+  }
+  const candidates = [
+    'C:\\Program Files\\Git\\bin\\bash.exe',
+    'C:\\Program Files (x86)\\Git\\bin\\bash.exe',
+  ];
+  for (const p of candidates) {
+    try {
+      if (statSync(p).isFile()) return p;
+    } catch {
+      // 继续
+    }
+  }
+  return null;
 }
 
 /**
- * 根据平台与用户偏好解析 shell 配置。
- * Windows：默认 cmd.exe（可选 powershell）；POSIX：默认 bash（cmd/powershell 偏好忽略）。
+ * 根据平台、用户偏好与实测可用性解析 shell 配置（env-probe 单一事实源）。
+ * Windows：默认 PowerShell（实测可用时），否则 cmd；bash → Git Bash（实测存在时）；
+ * 请求的 shell 不可用时回退默认 shell 并生成 fallbackNote 回告模型（不写死任何 shell 假设）。
+ * POSIX：默认 shell 与探测一致（SHELL 声明的 bash/zsh）。
  */
-function resolveShell(pref: ShellParams['shell'], isWindows: boolean): ShellConfig {
+function resolveShell(pref: ShellParams['shell']): ShellConfig {
+  const isWindows = process.platform === 'win32';
+  const probe = probeShells(isWindows);
+  const available = new Set<ShellId>(probe.available);
+
   if (isWindows) {
+    // 默认 shell 与系统提示词 Shell 环境段声明一致（probe.defaultId）
+    const defaultCfg: ShellConfig = probe.defaultId === 'powershell'
+      ? powershellConfig()
+      : cmdConfig();
     if (pref === 'powershell') {
-      // PowerShell：前置 UTF-8 输出编码设置，避免 UTF-16LE/系统代码页导致乱码
+      if (available.has('powershell')) return powershellConfig();
       return {
-        bin: 'powershell.exe',
-        args: ['-NoProfile', '-NonInteractive', '-Command'],
-        wrap: (c) => `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${c}`,
+        ...defaultCfg,
+        fallbackNote: `请求的 PowerShell 不可用，实际以 ${defaultCfg.label} 执行；后续命令请按 ${defaultCfg.label} 语法编写`,
       };
     }
-    // 默认 cmd.exe：前置 chcp 65001 切换 UTF-8 代码页，避免 GBK 输出乱码
+    if (pref === 'cmd') {
+      if (available.has('cmd')) return cmdConfig();
+      return { ...defaultCfg, fallbackNote: `请求的 CMD 不可用，实际以 ${defaultCfg.label} 执行` };
+    }
+    if (pref === 'bash') {
+      const gitBash = available.has('git-bash') ? resolveGitBashBin() : null;
+      if (gitBash) {
+        return {
+          bin: gitBash,
+          args: ['-c'],
+          wrap: (c) => c,
+          label: 'Git Bash',
+          fallbackNote: null,
+        };
+      }
+      return {
+        ...defaultCfg,
+        fallbackNote: `本机没有 Git Bash，实际以 ${defaultCfg.label} 执行；请改用 ${defaultCfg.label} 语法`,
+      };
+    }
+    return defaultCfg;
+  }
+
+  // POSIX：默认 shell 与探测一致（SHELL 环境变量声明的 bash/zsh，否则探测结果首个）；
+  // cmd/powershell 在 POSIX 上无意义 → 回退默认并回告；显式 bash 即 bash
+  const defaultBin = probe.defaultId === 'zsh' ? '/bin/zsh' : '/bin/bash';
+  const defaultLabel = probe.defaultId === 'zsh' ? 'Zsh' : 'Bash';
+  if (pref === 'cmd' || pref === 'powershell') {
     return {
-      bin: 'cmd.exe',
-      args: ['/c'],
-      wrap: (c) => `chcp 65001 >nul && ${c}`,
+      bin: defaultBin,
+      args: ['-c'],
+      wrap: (c) => c,
+      label: defaultLabel,
+      fallbackNote: `POSIX 环境不支持 ${pref}，实际以 ${defaultLabel} 执行`,
     };
   }
-  // POSIX：默认 bash；'cmd'/'powershell' 在 POSIX 上无意义，回退 /bin/sh
-  const bin = pref === 'bash' ? '/bin/bash' : '/bin/sh';
   return {
-    bin,
+    bin: defaultBin,
     args: ['-c'],
     wrap: (c) => c,
+    label: defaultLabel,
+    fallbackNote: null,
   };
 }
 
@@ -126,8 +213,7 @@ export default {
     const rawTimeout = p.timeout ?? (ctx.toolConfig?.timeout as number | undefined) ?? 30000;
     const timeoutMs = Math.max(1000, Math.min(600000, rawTimeout));
 
-    const isWindows = process.platform === 'win32';
-    const shellCfg = resolveShell(p.shell, isWindows);
+    const shellCfg = resolveShell(p.shell);
     const actualCommand = shellCfg.wrap(p.command);
 
     // 环境变量引导子进程使用 UTF-8 输出
@@ -137,7 +223,7 @@ export default {
       PYTHONUTF8: '1',
       PYTHONIOENCODING: 'utf-8',
     } as Record<string, string>;
-    if (!isWindows) {
+    if (process.platform !== 'win32') {
       env.LANG = env.LANG ?? 'zh_CN.UTF-8';
       env.LC_ALL = env.LC_ALL ?? 'zh_CN.UTF-8';
     }
@@ -191,7 +277,8 @@ export default {
       const output =
         `${t('tools.shellExitCode', { code: exitCode })}\n` +
         `--- stdout ---\n${stdoutText || t('tools.shellEmpty')}\n` +
-        `--- stderr ---\n${stderrText || t('tools.shellEmpty')}`;
+        `--- stderr ---\n${stderrText || t('tools.shellEmpty')}` +
+        (shellCfg.fallbackNote ? `\n[shell 回告] ${shellCfg.fallbackNote}` : '');
 
       const durationMs = Date.now() - startedAt;
       ctx.logger.debug(t('tools.shellDone', { exitCode, durationMs }), {

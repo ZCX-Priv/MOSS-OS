@@ -1772,13 +1772,7 @@ export class AgentEngineImpl implements AgentEngine {
     const skillName =
       session.activeSkill?.mode === 'system' ? session.activeSkill.name : undefined;
     const skillPrompt = skillName ? this.resolveSkillPrompt(skillName) : null;
-    const systemContent = buildStaticSystemPrompt(
-      this.env,
-      cwd,
-      model,
-      modelDisplayName,
-      skillPrompt,
-    );
+    const systemContent = buildStaticSystemPrompt(this.env, skillPrompt);
     const view = buildRequestView(session, systemContent, {
       toolPruning: DEFAULT_TOOL_PRUNING_CONFIG,
       resolveSkillPrompt: name => this.resolveSkillPrompt(name),
