@@ -135,8 +135,11 @@ export function useTask() {
         pendingRunId.set(sessionId, guideRunId);
         finalizeStreamingMessages(sessionId);
 
+        // clientMessageId：本地乐观消息与服务端持久化副本同身份（尾部补齐时按 id 去重）
+        const guideClientMessageId = genId();
         const userMsg: TaskMessage = {
-          id: genId(),
+          id: guideClientMessageId,
+          clientMessageId: guideClientMessageId,
           role: 'user',
           content,
           ...(attachments ? { attachments } : {}),
@@ -147,7 +150,12 @@ export function useTask() {
         wsClient.send({
           type: 'task.guide',
           sessionId,
-          payload: { message: content, runId: guideRunId, attachments },
+          payload: {
+            message: content,
+            runId: guideRunId,
+            attachments,
+            clientMessageId: guideClientMessageId,
+          },
         });
         return taskId;
       }
@@ -160,8 +168,12 @@ export function useTask() {
       if (taskId) setActiveTaskId(taskId);
 
       // 5. 写入用户消息
+      // clientMessageId：本地乐观消息与服务端持久化副本同身份，
+      // 一轮结束后尾部补齐时按 id 天然去重（避免同一条消息渲染两份）
+      const clientMessageId = genId();
       const userMsg: TaskMessage = {
-        id: genId(),
+        id: clientMessageId,
+        clientMessageId,
         role: 'user',
         content,
         ...(attachments ? { attachments } : {}),
@@ -176,6 +188,8 @@ export function useTask() {
         sessionId,
         payload: {
           message: content,
+          // 前端消息 id（后端随用户消息持久化，前端据此与本地乐观副本对齐去重）
+          clientMessageId,
           // 附件绝对路径（后端结构化字段持久化 + 前端渲染卡片）
           attachments,
           model: state.currentModel || undefined,

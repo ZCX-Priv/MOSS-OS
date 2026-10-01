@@ -64,6 +64,8 @@ import type {
   RemoteStatus,
   RemotePasswords,
   RemoteToggleResult,
+  HistoryPageMeta,
+  SessionState,
 } from '../types/api';
 import i18n from '../i18n';
 
@@ -108,6 +110,11 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
  * - 过滤 system 消息（防御性，物理隔离后后端已不返回）
  * - 补 id / timestamp（后端 AgentMessage 无这两个字段）
  * - 把 role:'tool' 独立消息合并回前一条 assistant 的 toolResults
+ *
+ * id 策略（分页/虚拟列表的稳定标识）：
+ * - 分页接口会为每条消息附带服务端绝对 index → id = `h<index>`，
+ *   分页前后同一消息 id 恒定（避免上滑加载更早一页后 key 漂移导致整列表重挂载）。
+ * - 旧的全量路径无 index → 退化为位置 id（与既有行为一致）。
  */
 function adaptAgentMessages(raw: unknown[]): TaskMessage[] {
   const result: TaskMessage[] = [];
@@ -126,9 +133,19 @@ function adaptAgentMessages(raw: unknown[]): TaskMessage[] {
       isError?: boolean;
       metadata?: Record<string, unknown>;
       timestamp?: string;
+      /** 服务端绝对下标（分页接口附带；全量接口无） */
+      index?: number;
+      /** 前端下发并由后端持久化的消息身份（仅 user 消息可能有） */
+      clientMessageId?: string;
     } | null;
     if (!m) continue;
     if (m.role === 'system') continue;
+    // 稳定 id 优先级：
+    // ① clientMessageId —— 用户消息的真实身份，与本地乐观副本一致（据此去重，避免渲染两份）
+    // ② 服务端绝对下标（分页路径稳定）  ③ 位置 id（旧全量路径兜底）
+    const msgId =
+      (typeof m.clientMessageId === 'string' && m.clientMessageId) ||
+      (typeof m.index === 'number' ? `h${m.index}` : `${i}-${m.role ?? 'msg'}`);
     // 压缩摘要消息（compaction-summary）与 day-rollover/env-context 不进消息流：
     // 压缩卡片由 getCompactions 历史恢复（TaskPage 合并），其余为引擎内部锚定消息
     // （active-rules = paths 规则注入锚定 / memory-l1 = 记忆关键事实锚定）
@@ -145,11 +162,12 @@ function adaptAgentMessages(raw: unknown[]): TaskMessage[] {
     if (m.name === 'max-turns-notice') {
       const noticeMeta = m.metadata as { maxTurns?: number } | undefined;
       result.push({
-        id: `${i}-max-turns-notice`,
+        id: typeof m.index === 'number' ? `h${m.index}` : `${i}-max-turns-notice`,
         role: 'assistant',
         content: m.content ?? '',
         maxTurnsNotice: { maxTurns: typeof noticeMeta?.maxTurns === 'number' ? noticeMeta.maxTurns : 0 },
         timestamp: m.timestamp ?? new Date().toISOString(),
+        ...(typeof m.index === 'number' ? { historyIndex: m.index } : {}),
       });
       continue;
     }
@@ -171,12 +189,17 @@ function adaptAgentMessages(raw: unknown[]): TaskMessage[] {
     }
     // user / assistant
     result.push({
-      id: `${i}-${m.role ?? 'msg'}`,
+      id: msgId,
       role: m.role as MessageRole,
       content: m.content ?? '',
+      ...(typeof m.index === 'number' ? { historyIndex: m.index } : {}),
       // 附件结构化字段：仅 user 消息且为有效数组时透传（老会话无此字段 → 渲染端回退解析正文）
       ...(m.role === 'user' && Array.isArray(m.attachments) && m.attachments.length > 0
         ? { attachments: m.attachments }
+        : {}),
+      // 消息身份（仅 user 消息可能有）：与 id 同源，便于调试与后续按身份合并
+      ...(m.role === 'user' && typeof m.clientMessageId === 'string' && m.clientMessageId
+        ? { clientMessageId: m.clientMessageId }
         : {}),
       thinking: m.thinking,
       toolCalls: m.toolCalls,
@@ -217,20 +240,42 @@ export const api = {
   // 会话
   // ==========================================================================
   listSessions: () => request<{ sessions: Session[] }>('GET', '/api/session'),
-  getSessionHistory: async (id: string) => {
+  /**
+   * 会话历史（支持分页）。
+   * - 不传参：全量（保持旧调用方兼容）
+   * - limit：最新 limit 条（首屏）
+   * - limit + before：更早的一页（上滑加载）
+   * - limit + after：尾部增量（断线/完成后的补齐）
+   * 分页路径返回 page 元数据，每条消息带服务端绝对 index（前端据此生成稳定 id）。
+   */
+  getSessionHistory: async (
+    id: string,
+    opts?: { limit?: number; before?: number; after?: number },
+  ) => {
+    const qs = new URLSearchParams();
+    if (opts?.limit !== undefined) qs.set('limit', String(opts.limit));
+    if (opts?.before !== undefined) qs.set('before', String(opts.before));
+    if (opts?.after !== undefined) qs.set('after', String(opts.after));
+    const q = qs.toString();
     const resp = await request<{
       sessionId: string;
       messages: unknown[];
+      page?: HistoryPageMeta;
+      activeSkill?: { name: string; mode: 'system' | 'message' } | null;
       permissionMode?: 'ask' | 'auto' | 'skip';
       lastRunStats?: RunStats;
-    }>('GET', `/api/session/${id}`);
+    }>('GET', `/api/session/${id}${q ? `?${q}` : ''}`);
     return {
       sessionId: resp.sessionId,
       messages: adaptAgentMessages(resp.messages),
+      ...(resp.page ? { page: resp.page } : {}),
       ...(resp.permissionMode ? { permissionMode: resp.permissionMode } : {}),
       ...(resp.lastRunStats ? { lastRunStats: resp.lastRunStats } : {}),
     };
   },
+  /** 会话状态快照：运行态 + 半截流式草稿 + 待答/待确认（刷新/重连恢复的唯一入口） */
+  getSessionState: (id: string) =>
+    request<SessionState>('GET', `/api/session/${encodeURIComponent(id)}/state`),
   deleteSession: (id: string) => request<{ deleted: boolean }>('DELETE', `/api/session/${id}`),
   getSessionContext: (id: string) =>
     request<{ files: ContextFile[]; totalTokens: number; maxTokens: number }>(

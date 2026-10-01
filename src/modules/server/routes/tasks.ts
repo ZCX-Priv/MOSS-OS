@@ -12,9 +12,43 @@
 
 import type { HttpRequest, HttpResponse, RouteHandler } from '../types';
 import type { ServiceRegistry, Environment } from '../../../core/types';
+import { ServiceNames } from '../../../core/types';
 import type { AgentEngine } from '../../contracts';
 import { getSessionTodoPath, readSessionTodoStore } from '../../tools/todo/shared/store';
 import { ErrorCode } from '../../../core/error-codes';
+
+/**
+ * 任务列表实时广播（所有客户端侧边栏零刷新同步）。
+ * 广播失败绝不影响 CRUD 主流程；隐藏分组（subagent / agenteam 衍生会话）始终不出现在载荷中。
+ */
+function broadcastWS(services: ServiceRegistry, message: unknown): void {
+  try {
+    services
+      .tryResolve<{ broadcastWS?: (m: unknown) => void }>(ServiceNames.SERVER_INSTANCE)
+      ?.broadcastWS?.(message);
+  } catch {
+    // 广播通道不可用：静默（前端仍可通过刷新拿到最新列表）
+  }
+}
+
+/** 可见任务（剔除隐藏分组） */
+function visibleTasks(engine: AgentEngineWithTasks): ReturnType<NonNullable<AgentEngineWithTasks['listTasks']>> {
+  const hidden = hiddenGroupIds(engine);
+  return (engine.listTasks?.() ?? []).filter((tk) => !hidden.has(tk.groupId));
+}
+
+/** 可见分组（剔除隐藏分组） */
+function visibleGroups(engine: AgentEngineWithTasks): ReturnType<NonNullable<AgentEngineWithTasks['listTaskGroups']>> {
+  return (engine.listTaskGroups?.() ?? []).filter((g) => g.hidden !== true);
+}
+
+/** 广播完整任务 + 分组快照（分组增删 / 批量迁移等无法局部描述的场景） */
+function broadcastTasksChanged(services: ServiceRegistry, engine: AgentEngineWithTasks): void {
+  broadcastWS(services, {
+    type: 'tasks.changed',
+    payload: { tasks: visibleTasks(engine), groups: visibleGroups(engine) },
+  });
+}
 
 type AgentEngineWithTasks = AgentEngine & {
   listTasks?: () => Array<{
@@ -109,15 +143,21 @@ function hiddenGroupIds(engine: AgentEngineWithTasks): Set<string> {
 }
 
 export function createListTasksHandler(services: ServiceRegistry): RouteHandler {
-  return async (): Promise<HttpResponse> => {
+  return (): HttpResponse => {
     const engine = resolveEngine(services);
     if (!engine) {
       return { status: 200, body: { groups: [], tasks: [] } };
     }
-    const hidden = hiddenGroupIds(engine);
-    const tasks = (engine.listTasks?.() ?? []).filter((tk) => !hidden.has(tk.groupId));
-    const groups = (engine.listTaskGroups?.() ?? []).filter((g) => g.hidden !== true);
-    return { status: 200, body: { groups, tasks } };
+    // 运行态随列表一并返回（权威来源为 server 实例的 activeRuns）：
+    // 刷新后首屏即可渲染「运行中」转圈，彻底修复「任务在后台跑却显示已完成」。
+    const server = services.tryResolve<{ isSessionRunning?: (sid: string) => boolean }>(
+      ServiceNames.SERVER_INSTANCE,
+    );
+    const tasks = visibleTasks(engine).map((tk) => ({
+      ...tk,
+      running: server?.isSessionRunning?.(tk.sessionId ?? tk.id) ?? false,
+    }));
+    return { status: 200, body: { groups: visibleGroups(engine), tasks } };
   };
 }
 
@@ -132,6 +172,7 @@ export function createCreateTaskHandler(services: ServiceRegistry): RouteHandler
       return { status: 400, body: { error: ErrorCode.TASK_TITLE_REQUIRED } };
     }
     const task = engine.createTask(body.title, body.groupId);
+    broadcastWS(services, { type: 'task.created', payload: { task } });
     return { status: 201, body: task };
   };
 }
@@ -196,6 +237,9 @@ export function createUpdateTaskHandler(services: ServiceRegistry): RouteHandler
     if (!task) {
       return { status: 404, body: { error: ErrorCode.TASK_NOT_FOUND } };
     }
+    // 移组可能触发空分组自动销毁 → 一并广播分组列表
+    broadcastWS(services, { type: 'task.updated', payload: { taskId: task.id, task } });
+    broadcastWS(services, { type: 'task-groups.changed', payload: { groups: visibleGroups(engine) } });
     return { status: 200, body: task };
   };
 }
@@ -217,6 +261,9 @@ export function createDeleteTaskHandler(services: ServiceRegistry): RouteHandler
     if (!deleted) {
       return { status: 404, body: { error: ErrorCode.TASK_NOT_FOUND } };
     }
+    // 删除可能触发空分组自动销毁 → 一并广播分组列表
+    broadcastWS(services, { type: 'task.deleted', payload: { taskId: id } });
+    broadcastWS(services, { type: 'task-groups.changed', payload: { groups: visibleGroups(engine) } });
     return { status: 200, body: { deleted: true } };
   };
 }
@@ -239,7 +286,9 @@ export function createReorderTasksHandler(services: ServiceRegistry): RouteHandl
     if (!ok) {
       return { status: 400, body: { error: ErrorCode.SOME_TASK_NOT_FOUND } };
     }
-    const tasks = engine.listTasks?.() ?? [];
+    // 顺序是全局信息，广播完整可见列表（拖拽一次 = 一次广播，低频）
+    const tasks = visibleTasks(engine);
+    broadcastWS(services, { type: 'tasks.reordered', payload: { tasks } });
     return { status: 200, body: { reordered: true, tasks } };
   };
 }
@@ -270,6 +319,7 @@ export function createCreateTaskGroupHandler(services: ServiceRegistry): RouteHa
       return { status: 400, body: { error: ErrorCode.TASK_NAME_REQUIRED } };
     }
     const group = engine.createTaskGroup(body.name, body.source);
+    broadcastWS(services, { type: 'task-groups.changed', payload: { groups: visibleGroups(engine) } });
     return { status: 201, body: group };
   };
 }
@@ -289,6 +339,7 @@ export function createUpdateTaskGroupHandler(services: ServiceRegistry): RouteHa
     if (!group) {
       return { status: 404, body: { error: ErrorCode.GROUP_NOT_FOUND } };
     }
+    broadcastWS(services, { type: 'task-groups.changed', payload: { groups: visibleGroups(engine) } });
     return { status: 200, body: group };
   };
 }
@@ -314,6 +365,8 @@ export function createDeleteTaskGroupHandler(services: ServiceRegistry): RouteHa
         body: { error: ErrorCode.GROUP_NOT_FOUND_OR_DEFAULT },
       };
     }
+    // 组内任务可能被迁移或批量删除 → 广播完整任务 + 分组快照
+    broadcastTasksChanged(services, engine);
     return { status: 200, body: { deleted: true } };
   };
 }

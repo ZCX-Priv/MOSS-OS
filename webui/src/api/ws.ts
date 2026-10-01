@@ -4,7 +4,19 @@
 import type { WSMessage } from '../types/api';
 
 type MessageHandler = (msg: WSMessage) => void;
-type StatusHandler = (status: 'connecting' | 'open' | 'closed' | 'error') => void;
+
+/** 连接状态详情（状态条数据源：能显示「正在重连（第 N 次，约 X 秒后重试）」并支持立即重试） */
+export interface WsStatusInfo {
+  status: 'connecting' | 'open' | 'closed' | 'error';
+  /** 已发生的重连尝试次数（0 = 未在重连） */
+  attempt: number;
+  /** 下一次重连的预计时间戳（ms；null = 无待执行的退避重连） */
+  nextRetryAt: number | null;
+  /** 是否为「断开后重新连上」（状态条据此短暂提示「连接已恢复」） */
+  restored: boolean;
+}
+
+type StatusHandler = (info: WsStatusInfo) => void;
 
 export class WSClient {
   private ws: WebSocket | null = null;
@@ -20,6 +32,12 @@ export class WSClient {
   /** 心跳定时器 */
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private lastPong = 0;
+  /** 退避重连定时器（retryNow 需要能取消它） */
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  /** 下一次重连的预计时间戳（状态条倒计时用） */
+  private nextRetryAt: number | null = null;
+  /** 是否经历过断连（用于判定「已恢复」提示） */
+  private hadDisconnect = false;
   /** 心跳间隔与超时（毫秒） */
   private static readonly HEARTBEAT_INTERVAL = 15_000;
   private static readonly HEARTBEAT_TIMEOUT = 30_000;
@@ -49,8 +67,11 @@ export class WSClient {
     }
 
     this.ws.onopen = () => {
+      const restored = this.hadDisconnect;
       this.reconnectAttempts = 0;
-      this.notifyStatus('open');
+      this.hadDisconnect = false;
+      this.clearReconnectTimer();
+      this.notifyStatus('open', restored);
       this.startHeartbeat();
       // 重连后自动恢复 session 订阅（后端 sendToSession 按连接订阅的 sessionId 投递事件，
       // 新连接不重新订阅会导致 session-truncated/session-restored 等事件静默丢失）
@@ -87,6 +108,7 @@ export class WSClient {
 
     this.ws.onclose = () => {
       this.stopHeartbeat();
+      this.hadDisconnect = true;
       this.notifyStatus('closed');
       if (this.shouldReconnect) {
         this.scheduleReconnect();
@@ -97,8 +119,17 @@ export class WSClient {
   disconnect(): void {
     this.shouldReconnect = false;
     this.stopHeartbeat();
+    this.clearReconnectTimer();
     this.ws?.close();
     this.ws = null;
+  }
+
+  /** 立即重试：取消退避等待并马上发起连接（状态条的「立即重试」按钮） */
+  retryNow(): void {
+    if (this.ws?.readyState === WebSocket.OPEN) return;
+    this.clearReconnectTimer();
+    this.notifyStatus('connecting');
+    this.connect();
   }
 
   send(msg: WSMessage): void {
@@ -164,15 +195,35 @@ export class WSClient {
     this.reconnectAttempts++;
     const base = Math.min(this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1), 30000);
     const delay = base + Math.random() * 500;
-    setTimeout(() => {
+    this.clearReconnectTimer();
+    this.nextRetryAt = Date.now() + delay;
+    // 通知一次「重连已排期」：状态条据此显示第 N 次与倒计时
+    this.notifyStatus('closed');
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.nextRetryAt = null;
       if (this.shouldReconnect) this.connect();
     }, delay);
   }
 
-  private notifyStatus(status: 'connecting' | 'open' | 'closed' | 'error'): void {
+  private clearReconnectTimer(): void {
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.nextRetryAt = null;
+  }
+
+  private notifyStatus(status: 'connecting' | 'open' | 'closed' | 'error', restored = false): void {
+    const info: WsStatusInfo = {
+      status,
+      attempt: this.reconnectAttempts,
+      nextRetryAt: this.nextRetryAt,
+      restored,
+    };
     for (const h of this.statusHandlers) {
       try {
-        h(status);
+        h(info);
       } catch {
         // 静默
       }

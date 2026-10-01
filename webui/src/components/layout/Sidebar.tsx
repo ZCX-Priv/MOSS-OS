@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useRef, useState, useCallback, memo, type CSSProperties, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
@@ -125,9 +125,25 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
   const { isMobile, setOpenMobile } = useSidebar();
 
   // 移动端点击导航后关闭 Sheet 抽屉，避免 z-50 遮罩持续覆盖屏幕
-  const closeMobile = () => {
+  const closeMobile = useCallback(() => {
     if (isMobile) setOpenMobile(false);
-  };
+  }, [isMobile, setOpenMobile]);
+
+  // 任务行操作（useCallback 稳定引用：TaskRow memo 的浅比较依赖）
+  const handleTaskNavigate = useCallback(
+    (id: string) => {
+      closeMobile();
+      navigate(`/task/${id}`);
+    },
+    [closeMobile, navigate],
+  );
+  const handleTaskRename = useCallback((tk: TaskItem) => {
+    setRenameTitle(tk.title);
+    setRenameTask(tk);
+  }, []);
+  const handleTaskDelete = useCallback((id: string) => {
+    setDeleteTaskId(id);
+  }, []);
 
   // 任务项操作状态
   const [renameTask, setRenameTask] = useState<TaskItem | null>(null);
@@ -244,7 +260,8 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
     }
     setSelectedIds(new Set());
     setBatchDeleteOpen(false);
-    await reload();
+    // 删除广播已实时同步侧边栏；仅在广播不可用（WS 未连接）时兜底全量刷新
+    if (useStore.getState().wsStatus !== 'open') await reload();
     goHomeIfTaskGone(activeBefore);
   };
 
@@ -741,9 +758,9 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
                                   manageMode={manageMode}
                                   isSelected={selectedIds.has(task.id)}
                                   onToggleSelect={toggleSelect}
-                                  onNavigate={(id) => { closeMobile(); navigate(`/task/${id}`); }}
-                                  onRename={(tk) => { setRenameTitle(tk.title); setRenameTask(tk); }}
-                                  onDelete={(id) => setDeleteTaskId(id)}
+                                  onNavigate={handleTaskNavigate}
+                                  onRename={handleTaskRename}
+                                  onDelete={handleTaskDelete}
                                 />
                               ))}
                             </SortableContext>
@@ -948,7 +965,8 @@ interface TaskRowProps {
   onDelete: (id: string) => void;
 }
 
-function TaskRow({
+/** 任务行（memo：props 不变即跳过重渲——流式期间 store 高频更新时列表保持静止） */
+const TaskRow = memo(function TaskRow({
   task,
   manageMode,
   isSelected,
@@ -1068,7 +1086,7 @@ function TaskRow({
       </DropdownMenu>
     </li>
   );
-}
+});
 
 /**
  * 组级 droppable 容器：把分组任务列表区域注册为 drop 目标（id = `group:<groupId>`），

@@ -204,6 +204,8 @@ export function TaskInput({
   const [trigger, setTrigger] = useState<TriggerMatch | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
   const editorRef = useRef<MentionEditorHandle>(null);
+  /** 最近一次提交的内容与时间（同内容 300ms 内重复提交视为同一次，防止重复发送） */
+  const lastSubmitRef = useRef<{ text: string; at: number }>({ text: '', at: 0 });
   /** 触发状态镜像（避免在 setState 更新器里做副作用） */
   const triggerRef = useRef<TriggerMatch | null>(null);
 
@@ -396,6 +398,15 @@ export function TaskInput({
     ]
       .filter(Boolean)
       .join('\n\n');
+    // 重复提交门禁：同一内容在 300ms 内只受理一次。
+    // 覆盖「双击发送 / 快捷键与点击事件同时触发 / 事件重复派发」——
+    // 否则第二次提交会因生成态已置位而进入排队队列，任务结束后被自动续发（等于发两遍）。
+    const now = Date.now();
+    if (lastSubmitRef.current.text === message && now - lastSubmitRef.current.at < 300) {
+      return;
+    }
+    lastSubmitRef.current = { text: message, at: now };
+
     onSend?.(message, uniquePaths);
     setAttachments([]);
     editorRef.current?.clear();

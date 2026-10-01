@@ -2,6 +2,7 @@
 // Server 插件类型定义。
 
 import type { Server } from 'node:http';
+import type { AgentEvent } from '../contracts';
 
 /** HTTP 请求上下文（Bun.serve fetch handler 内构造） */
 export interface HttpRequest {
@@ -54,11 +55,18 @@ export interface ServerInstance {
   broadcastWS(message: unknown): void;
   /** 给指定 session 的 WS 连接发送消息 */
   sendToSession(sessionId: string, message: unknown): void;
+  /** 外部 run（MCP 派发 / 自动化）转发 agent 事件到 session 订阅者（高频类型自动合帧） */
+  sendAgentEvent(sessionId: string, event: AgentEvent): void;
   /** 注册外部发起的活跃 run（automation 等不经 task.stream 的运行）：
    *  session.subscribe/task.switch 的 running 判定包含该 session；task.abort 可中断 */
   registerExternalRun(sessionId: string, controller: AbortController): void;
   /** 注销外部活跃 run（仅当注册的 controller 仍是当前活跃 run 时移除，防误删用户新 run） */
   unregisterExternalRun(sessionId: string, controller: AbortController): void;
+  /**
+   * 该会话是否仍有任务在跑（权威运行态：含 task.stream 与外部注册的 run）。
+   * 供任务列表 / 会话状态快照给出「刷新后不丢」的运行态。
+   */
+  isSessionRunning(sessionId: string): boolean;
   /** 注册 WS 消息处理器 */
   onWSMessage(handler: WSMessageHandler): void;
   /** 注入请求门卫（remote 模块用：远程访问开启时拦截非本机请求；server 在 fetch 最前调用） */

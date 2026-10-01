@@ -21,13 +21,15 @@ export interface ControlHubModule {
 interface ControlHubProps {
   /** 左侧状态区（运行状态指示，由调用方注入） */
   status?: ReactNode;
+  /** chips 行最左侧的前置元素（如连接状态胶囊）：渲染在模块 chips 之前 */
+  leading?: ReactNode;
   modules: ControlHubModule[];
   /** 当前展开激活的模块 id；null/undefined = 折叠 */
   activeModuleId: string | null | undefined;
   onActiveModuleChange: (moduleId: string | null) => void;
 }
 
-export function ControlHub({ status, modules, activeModuleId, onActiveModuleChange }: ControlHubProps) {
+export function ControlHub({ status, leading, modules, activeModuleId, onActiveModuleChange }: ControlHubProps) {
   const { t } = useTranslation();
   // 收起后仍保持最后激活模块渲染：高度 0fr→1fr 过渡需要内容在场（卸载则无过渡可言）
   const [lastModuleId, setLastModuleId] = useState<string | null>(null);
@@ -49,6 +51,7 @@ export function ControlHub({ status, modules, activeModuleId, onActiveModuleChan
       <div className="flex min-w-0 items-center gap-2 px-2.5 py-1.5">
         {status && <div className="flex min-w-0 shrink-0 items-center gap-1.5">{status}</div>}
         <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-1">
+          {leading}
           {modules.map((m) => {
             const Icon = m.icon;
             const isActive = m.id === activeModuleId;

@@ -29,6 +29,17 @@ export const zh = {
     connect: '正在连接服务',
     ready: '即将就绪',
   },
+  // 连接状态胶囊（中控岛 chips 行最左：连接中 / 已连接 / 重连中 / 已恢复 / 会话恢复中）
+  conn: {
+    connecting: '正在连接…',
+    connected: '已连接',
+    reconnecting: '正在重连（第 {{count}} 次）…',
+    disconnected: '连接已断开',
+    disconnectedRetry: '连接已断开，正在重连（第 {{count}} 次，约 {{seconds}} 秒后重试）',
+    restored: '连接已恢复',
+    restoringSession: '正在恢复会话状态…',
+    retryNow: '立即重试',
+  },
   sidebar: {
     newTask: '新任务',
     pluginLibrary: '插件库',
@@ -810,6 +821,11 @@ export const zh = {
     },
     thinking: '响应中...',
     backToBottom: '返回底部',
+    // 历史分页（虚拟列表上滑加载更早）
+    loadingEarlier: '正在加载更早的消息…',
+    scrollUpForEarlier: '上滑加载更早的消息',
+    // 上次进程中断遗留的未完成回复（流式草稿 stale）
+    interruptedReply: '上次中断的回复（未完成）',
     noTodos: '暂无待办',
     noContextFiles: '暂无上下文文件',
     fileRemovedFromContext: '文件已移出上下文',

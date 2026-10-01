@@ -62,6 +62,11 @@ export interface TaskMessage {
   content: string;
   /** 用户消息附带的附件绝对路径（后端结构化字段；老会话缺失时回退解析正文附件块） */
   attachments?: string[];
+  /**
+   * 前端为这条用户消息生成并随请求下发的稳定 id（后端持久化、历史原样返回）。
+   * 本地乐观消息的 id 与它一致，因此「历史回放的同一消息」会被 id 去重，不会渲染两份。
+   */
+  clientMessageId?: string;
   thinking?: string;
   toolCalls?: ToolCall[];
   toolResults?: Array<{ toolCallId: string; result: ToolResult }>;
@@ -78,6 +83,87 @@ export interface TaskMessage {
   compaction?: CompactionRecord;
   /** 轮数触顶提示卡数据（达到 agent.maxTurns 上限时插入；驱动 MaxTurnsNoticeCard 渲染 + 继续按钮） */
   maxTurnsNotice?: { maxTurns: number };
+  /**
+   * 服务端权威消息 id：
+   * - 历史消息：`h<historyIndex>`（分页合并 / 虚拟列表 key 的稳定标识）
+   * - 流式草稿：`<sessionId>#<turn>`（后端 offset 续传协议的 messageId）
+   * 用于「刷新后恢复半截回复并接流」时把草稿消息与后续分片精确对齐。
+   */
+  serverMessageId?: string;
+  /** 服务端历史下标（分页游标；仅来自历史接口的消息有） */
+  historyIndex?: number;
+  /** 上次进程中断遗留的未完成回复（来自 liveDraft.stale）：渲染为「已中断」的静态消息 */
+  interrupted?: boolean;
+}
+
+/** 会话历史分页元数据（与后端 page 字段对齐） */
+export interface HistoryPageMeta {
+  total: number;
+  oldestIndex: number;
+  newestIndex: number;
+  hasMoreBefore: boolean;
+}
+
+/** 前端维护的分页/加载状态（HistoryPageMeta + 加载态） */
+export interface HistoryMeta extends HistoryPageMeta {
+  /** 是否正在加载更早的一页（防重复触发） */
+  loadingBefore: boolean;
+  /** 是否已完成首屏加载（用于骨架屏判定） */
+  loaded: boolean;
+}
+
+/** 流式草稿（后端 live-draft：刷新后恢复半截回复的数据源） */
+export interface LiveDraftPayload {
+  sessionId: string;
+  runId?: string;
+  messageId: string;
+  turnIndex: number;
+  content: string;
+  thinking: string;
+  toolCalls: Array<{ id: string; name: string; arguments: string; status?: ToolCall['status'] }>;
+  contentLength: number;
+  thinkingLength: number;
+  startedAt: string;
+  updatedAt: string;
+  /** 进程重启后的残留草稿（无活跃 run） */
+  stale?: boolean;
+}
+
+/** GET /api/session/:id/state（刷新/重连恢复「不丢状态」的契约） */
+export interface SessionState {
+  sessionId: string;
+  /** 后端权威运行态（含 automation / MCP 等外部注册的 run） */
+  running: boolean;
+  runId?: string;
+  totalMessages: number;
+  newestIndex: number;
+  liveDraft: LiveDraftPayload | null;
+  pendingAsks: Array<{
+    toolCallId: string;
+    sessionId: string;
+    question: string;
+    answerType?: PendingAsk['answerType'];
+    options?: AskOption[];
+    defaultAnswer?: string;
+    formSchema?: Record<string, unknown>;
+  }>;
+  pendingConfirms: Array<{
+    toolCallId: string;
+    sessionId: string;
+    question: string;
+    ruleSuggestion?: string;
+  }>;
+  permissionMode?: 'ask' | 'auto' | 'skip';
+  lastRunStats?: RunStats;
+}
+
+/** WS session.subscribed 回复载荷（与 SessionState 同构的超集） */
+export interface SessionSubscribedPayload {
+  running: boolean;
+  runId?: string;
+  totalMessages?: number;
+  newestIndex?: number;
+  liveDraft?: LiveDraftPayload | null;
 }
 
 export interface Session {
@@ -636,6 +722,8 @@ export interface TaskItem {
   sessionId?: string;
   /** 分组内排序权重（小→前）；缺失视为最后 */
   order?: number;
+  /** 后端权威运行态（GET /api/tasks 附带）：刷新后首屏即可显示「运行中」 */
+  running?: boolean;
 }
 
 export interface TaskGroup {

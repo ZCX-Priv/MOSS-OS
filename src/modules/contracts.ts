@@ -232,6 +232,26 @@ export interface AgentEngine {
    * 成功后向该 session 推送 session-restored WS 事件。
    */
   restoreTruncate(sessionId: string): Promise<TruncateRestoreResult | null>;
+
+  /**
+   * 会话历史分页视图（含服务端绝对 index，供前端做稳定 id 与游标分页）。
+   * @param opts.limit 返回条数（缺省 = 全量，保持旧调用方兼容）
+   * @param opts.before 返回 index < before 的区间（上滑加载更早）
+   * @param opts.after 返回 index > after 的区间（断线/完成后的尾部补齐）
+   */
+  getHistoryPage?(
+    sessionId: string,
+    opts?: { limit?: number; before?: number; after?: number },
+  ): {
+    messages: Array<AgentMessage & { index: number }>;
+    total: number;
+    oldestIndex: number;
+    newestIndex: number;
+    hasMoreBefore: boolean;
+  };
+
+  /** 进行中的流式草稿（刷新/重连后恢复半截回复 + 续接 offset） */
+  getLiveDraft?(sessionId: string): import('./agent/live-draft').LiveDraft | null;
 }
 
 export interface AgentRunInput {
@@ -257,6 +277,12 @@ export interface AgentRunInput {
   signal?: AbortSignal;
   /** 运行实例 ID（前端生成，用于隔离不同 run 的事件） */
   runId?: string;
+  /**
+   * 前端为这条用户消息生成的稳定 id（随用户消息持久化，历史接口原样返回）。
+   * 用途：前端「乐观写入的用户消息」与「服务端持久化副本」使用同一身份，
+   * 尾部补齐/分页合并时按 id 天然去重，不会出现同一条消息渲染两份。
+   */
+  clientMessageId?: string;
   /** 引导消息队列（引导模式下，工具调用完成后检查并中止当前 run） */
   guideMessages?: GuidanceMessage[];
 }
@@ -286,13 +312,27 @@ export interface RunStats {
   cachedTokens: number;
 }
 
+/**
+ * 流式事件携带的续传信息（offset 协议）：
+ * - messageId：本轮流式 assistant 消息的稳定 id（`<sessionId>#<turnIndex>`），
+ *   逐轮唯一 → 每个 messageId 拥有独立的 offset 空间，前端据此判断「是否同一轮」。
+ * - offset：该分片在其所属字段（content / thinking / 工具 arguments）中的起始字符下标。
+ * - total：该分片结束后的累计长度（前端自检用）。
+ * 前端 applyDelta 依据 offset 做「去重（重复投递）+ 续接（刷新/重连后接流）」。
+ */
+export interface StreamChunkMeta {
+  messageId?: string;
+  offset?: number;
+  total?: number;
+}
+
 export type AgentEvent =
-  | { type: 'assistant-text'; sessionId: string; text: string; runId?: string }
-  | { type: 'assistant-thinking'; sessionId: string; text: string; runId?: string }
-  | { type: 'tool-call-start'; sessionId: string; toolName: string; toolCallId: string; args: unknown; runId?: string }
-  | { type: 'tool-call-delta'; sessionId: string; toolCallId: string; argumentsDelta: string; runId?: string }
-  | { type: 'tool-call-executing'; sessionId: string; toolName: string; toolCallId: string; runId?: string }
-  | { type: 'tool-call-end'; sessionId: string; toolName: string; toolCallId: string; result: ToolResult; runId?: string }
+  | ({ type: 'assistant-text'; sessionId: string; text: string; runId?: string } & StreamChunkMeta)
+  | ({ type: 'assistant-thinking'; sessionId: string; text: string; runId?: string } & StreamChunkMeta)
+  | ({ type: 'tool-call-start'; sessionId: string; toolName: string; toolCallId: string; args: unknown; runId?: string } & StreamChunkMeta)
+  | ({ type: 'tool-call-delta'; sessionId: string; toolCallId: string; argumentsDelta: string; runId?: string } & StreamChunkMeta)
+  | ({ type: 'tool-call-executing'; sessionId: string; toolName: string; toolCallId: string; runId?: string } & StreamChunkMeta)
+  | ({ type: 'tool-call-end'; sessionId: string; toolName: string; toolCallId: string; result: ToolResult; runId?: string } & StreamChunkMeta)
   | { type: 'ask'; sessionId: string; toolCallId: string; question: string; answerType?: AskPayload['answerType']; options?: AskPayload['options']; defaultAnswer?: string; formSchema?: Record<string, unknown>; runId?: string }
   | { type: 'ask-timeout'; sessionId: string; toolCallId: string; runId?: string }
   | { type: 'confirm-required'; sessionId: string; toolCallId: string; toolName: string; question: string; details?: unknown; runId?: string; ruleSuggestion?: string }
@@ -322,6 +362,8 @@ export interface GuidanceMessage {
   message: string;
   /** 附件绝对路径（纯路径引用；透传到新 run 的用户消息上） */
   attachments?: string[];
+  /** 前端为这条消息生成的稳定 id（续跑的 run 持久化时写入，保证与本地乐观副本同身份） */
+  clientMessageId?: string;
 }
 
 export interface AgentMessage {
@@ -329,6 +371,11 @@ export interface AgentMessage {
   content: string;
   /** 用户消息附带的附件绝对路径（role=user；纯路径引用，供前端渲染附件卡片） */
   attachments?: string[];
+  /**
+   * 前端为该用户消息生成的稳定 id（role=user；前端随消息下发，后端持久化并原样返回）。
+   * 前端据此把「乐观写入的本地消息」与「历史回放的同一条消息」视为同一实体，避免重复渲染。
+   */
+  clientMessageId?: string;
   toolCalls?: Array<{
     id: string;
     name: string;
@@ -474,11 +521,19 @@ export interface ServerInstanceLike {
   readonly baseUrl: string;
   broadcastWS(message: unknown): void;
   sendToSession(sessionId: string, message: unknown): void;
+  /** 外部 run（MCP 派发 / 自动化）转发 agent 事件到 session 订阅者（高频类型自动合帧） */
+  sendAgentEvent(sessionId: string, event: AgentEvent): void;
   /** 注册外部发起的活跃 run（automation 等不经 task.stream 的运行）：
    *  session.subscribe/task.switch 的 running 判定包含该 session；task.abort 可中断 */
   registerExternalRun(sessionId: string, controller: AbortController): void;
   /** 注销外部活跃 run（仅当注册的 controller 仍是当前活跃 run 时移除，防误删用户新 run） */
   unregisterExternalRun(sessionId: string, controller: AbortController): void;
+  /**
+   * 该会话是否仍有任务在跑（权威运行态）。
+   * 覆盖 task.stream 与 registerExternalRun 注册的全部 run（automation / MCP 等），
+   * 供任务列表与状态快照接口给出「刷新后不丢」的运行态。
+   */
+  isSessionRunning?(sessionId: string): boolean;
 }
 
 // ============================================================================

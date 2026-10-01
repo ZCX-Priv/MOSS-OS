@@ -1,0 +1,896 @@
+// webui/src/lib/ws-events.ts
+// WS 事件分发单一入口（从 useWebSocket 抽出，避免 hook 内积压成 700+ 行的巨型 switch）。
+//
+// 职责分层：
+// - stream-buffer：高频流式分片的批处理与 offset 续传（本模块只负责把事件投递进去）
+// - 本模块：把 WS 事件落到 store（消息 / 会话 / 列表 / 自动化 / 专家团）
+// - useSessionHistory：会话级编排（快照对齐、分页、尾部补齐）——通过下方注册的回调感知时机
+//
+// 关键约定（「刷新后不丢状态」的核心）：
+// - 运行态只由权威信号写入：状态快照 / session.subscribed / 完成类事件 / 本地发送与中断
+// - 任何历史拉取都不得把 running 置 false
+
+import { toast } from 'sonner';
+import { useStore } from '../store';
+import { api } from '../api/http';
+import { pendingAssistant, pendingRunId } from './pending-assistant';
+import {
+  enqueueTextChunk,
+  enqueueToolArgsChunk,
+  flushPending,
+  seedStreamLength,
+} from './stream-buffer';
+import i18n from '../i18n';
+import type {
+  AgentEvent,
+  TaskMessage,
+  TaskItem,
+  TaskGroup,
+  TodoItem,
+  ContextFile,
+  AutomationRun,
+  WSMessage,
+  ToolCall,
+  RunStats,
+  CompactionRecord,
+  ContextStats,
+  LiveDraftPayload,
+  SessionSubscribedPayload,
+} from '../types/api';
+
+function genId(): string {
+  return `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** 需要做 runId 过滤的 agent 事件类型 */
+const AGENT_EVENT_TYPES = new Set([
+  'assistant-text', 'assistant-thinking',
+  'tool-call-start', 'tool-call-delta', 'tool-call-executing', 'tool-call-end',
+  'ask', 'error', 'done', 'stats-updated', 'task.done', 'task.aborted',
+]);
+
+// ============================================================================
+// 会话编排回调（由 useSessionHistory 注册）：本模块只负责「通知时机」，
+// 不承担分页/补拉逻辑，避免两个模块各自实现一遍造成竞态。
+// ============================================================================
+
+export type StreamSettleReason = 'done' | 'aborted' | 'error';
+
+type SnapshotHandler = (sessionId: string, payload: SessionSubscribedPayload) => void;
+type SettleHandler = (sessionId: string, reason: StreamSettleReason) => void;
+
+const snapshotHandlers = new Set<SnapshotHandler>();
+const settleHandlers = new Set<SettleHandler>();
+const invalidatedHandlers = new Set<(sessionId: string) => void>();
+
+/**
+ * 订阅：会话消息数组被服务端改动（撤回 / 恢复）→ 分页游标失效，需按末页重新加载。
+ * 与「快照」区分：此时不能按游标做增量（下标已变化），必须整体重载末页。
+ */
+export function onHistoryInvalidated(handler: (sessionId: string) => void): () => void {
+  invalidatedHandlers.add(handler);
+  return () => invalidatedHandlers.delete(handler);
+}
+
+function emitHistoryInvalidated(sessionId: string): void {
+  for (const h of invalidatedHandlers) {
+    try {
+      h(sessionId);
+    } catch {
+      // 单个回调异常不影响其他
+    }
+  }
+}
+
+/** 订阅：收到 session.subscribed 快照（后端权威状态）时回调 */
+export function onSessionSnapshot(handler: SnapshotHandler): () => void {
+  snapshotHandlers.add(handler);
+  return () => snapshotHandlers.delete(handler);
+}
+
+/** 订阅：一轮流结束（done/aborted/error）时回调——用于尾部增量补齐 */
+export function onStreamSettled(handler: SettleHandler): () => void {
+  settleHandlers.add(handler);
+  return () => settleHandlers.delete(handler);
+}
+
+function emitSnapshot(sessionId: string, payload: SessionSubscribedPayload): void {
+  for (const h of snapshotHandlers) {
+    try {
+      h(sessionId, payload);
+    } catch {
+      // 单个回调异常不影响其他
+    }
+  }
+}
+
+function emitSettled(sessionId: string, reason: StreamSettleReason): void {
+  for (const h of settleHandlers) {
+    try {
+      h(sessionId, reason);
+    } catch {
+      // 单个回调异常不影响其他
+    }
+  }
+}
+
+/**
+ * 把服务端流式草稿落成一条本地消息（刷新/重连后恢复半截回复，并让后续分片接得上）。
+ * - 以草稿 messageId 作为本地消息 id → 后续分片按同一 id 精确续接
+ * - 同时把已知长度写入续传缓冲（后续 offset 校验无需读 store）
+ */
+export function attachLiveDraft(draft: LiveDraftPayload): void {
+  const sessionId = draft.sessionId;
+  const st = useStore.getState();
+  // 新一轮开始后，上一条「上次中断的未完成回复」失去意义（其内容不会被服务端续用）→ 移除
+  const stale = (st.messagesBySession[sessionId] ?? []).filter(
+    (m) => m.interrupted && m.id !== draft.messageId,
+  );
+  if (!draft.stale && stale.length > 0) {
+    const staleIds = new Set(stale.map((m) => m.id));
+    st.setMessages(
+      sessionId,
+      (st.messagesBySession[sessionId] ?? []).filter((m) => !staleIds.has(m.id)),
+    );
+  }
+  const existing = (st.messagesBySession[sessionId] ?? []).find((m) => m.id === draft.messageId);
+  const streaming = !draft.stale;
+  const msg: TaskMessage = {
+    id: draft.messageId,
+    serverMessageId: draft.messageId,
+    role: 'assistant',
+    content: draft.content,
+    ...(draft.thinking ? { thinking: draft.thinking } : {}),
+    ...(draft.toolCalls.length > 0
+      ? {
+          toolCalls: draft.toolCalls.map<ToolCall>((tc) => ({
+            id: tc.id,
+            name: tc.name,
+            arguments: tc.arguments,
+            status: tc.status ?? 'generating',
+          })),
+        }
+      : {}),
+    timestamp: draft.startedAt,
+    streaming,
+    thinkingStreaming: false,
+    ...(draft.stale ? { interrupted: true } : {}),
+  };
+
+  if (existing) {
+    // 已有同 id 消息（重连二次恢复 / 分片先行创建）：以服务端内容为准整体覆盖
+    st.updateMessage(sessionId, draft.messageId, {
+      content: draft.content,
+      thinking: draft.thinking || undefined,
+      toolCalls: msg.toolCalls,
+      streaming,
+      thinkingStreaming: false,
+      ...(draft.stale ? { interrupted: true } : {}),
+    });
+  } else {
+    st.addMessage(sessionId, msg);
+  }
+
+  seedStreamLength(sessionId, draft.messageId, 'content', draft.contentLength);
+  seedStreamLength(sessionId, draft.messageId, 'thinking', draft.thinkingLength);
+  if (streaming) pendingAssistant.set(sessionId, { ...msg, streaming: true });
+}
+
+// ============================================================================
+
+export function applyWsMessage(msg: WSMessage): void {
+  const s = useStore.getState();
+  const sessionId = msg.sessionId ?? s.activeSessionId ?? '';
+
+  // runId 过滤：丢弃旧 run 的事件（防止打断发送时旧流事件污染新流状态）
+  if (sessionId && AGENT_EVENT_TYPES.has(msg.type)) {
+    const eventRunId = (msg.payload as { runId?: string })?.runId;
+    const currentRunId = pendingRunId.get(sessionId);
+    if (eventRunId && currentRunId && eventRunId !== currentRunId) return;
+  }
+
+  switch (msg.type) {
+    // ======================================================================
+    // Agent 事件流（payload 为完整 AgentEvent）
+    // ======================================================================
+    case 'assistant-text': {
+      if (!sessionId) return;
+      const event = msg.payload as Extract<AgentEvent, { type: 'assistant-text' }> & {
+        messageId?: string;
+        offset?: number;
+      };
+      const messageId = event.messageId ?? pendingAssistant.get(sessionId)?.id ?? genId();
+      enqueueTextChunk({
+        sessionId,
+        messageId,
+        field: 'content',
+        offset: event.offset,
+        text: event.text,
+      });
+      break;
+    }
+    case 'assistant-thinking': {
+      if (!sessionId) return;
+      const event = msg.payload as Extract<AgentEvent, { type: 'assistant-thinking' }> & {
+        messageId?: string;
+        offset?: number;
+      };
+      const messageId = event.messageId ?? pendingAssistant.get(sessionId)?.id ?? genId();
+      enqueueTextChunk({
+        sessionId,
+        messageId,
+        field: 'thinking',
+        offset: event.offset,
+        text: event.text,
+      });
+      break;
+    }
+    case 'tool-call-start': {
+      flushPending(); // 保证之前的文本分片先写入（保持事件顺序）
+      const event = msg.payload as Extract<AgentEvent, { type: 'tool-call-start' }> & { messageId?: string };
+      if (!sessionId) break;
+      const pending = ensureStreamingMessage(sessionId, event.messageId);
+      if (!pending) break;
+      const newToolCall: ToolCall = {
+        id: event.toolCallId,
+        name: event.toolName,
+        arguments: '',
+        status: 'generating',
+      };
+      const existing = pending.toolCalls ?? [];
+      // 幂等：同 id 已存在（重连重放 / 草稿已含该调用）时不重复追加
+      const merged = existing.some((tc) => tc.id === event.toolCallId)
+        ? existing.map((tc) =>
+            tc.id === event.toolCallId ? { ...tc, name: event.toolName, status: 'generating' as const } : tc,
+          )
+        : [...existing, newToolCall];
+      s.updateMessage(sessionId, pending.id, { toolCalls: merged, thinkingStreaming: false });
+      pendingAssistant.set(sessionId, { ...pending, toolCalls: merged });
+      break;
+    }
+    case 'tool-call-delta': {
+      const event = msg.payload as Extract<AgentEvent, { type: 'tool-call-delta' }> & {
+        messageId?: string;
+        offset?: number;
+      };
+      if (!sessionId) break;
+      const messageId = event.messageId ?? pendingAssistant.get(sessionId)?.id;
+      if (!messageId) break;
+      enqueueToolArgsChunk({
+        sessionId,
+        messageId,
+        toolCallId: event.toolCallId,
+        offset: event.offset,
+        argumentsDelta: event.argumentsDelta,
+      });
+      break;
+    }
+    case 'tool-call-executing': {
+      flushPending(); // 保证参数分片先写入
+      const event = msg.payload as Extract<AgentEvent, { type: 'tool-call-executing' }> & { messageId?: string };
+      if (!sessionId) break;
+      const pending = pendingAssistant.get(sessionId);
+      const targetId = pending?.id ?? event.messageId;
+      if (targetId) {
+        const msgs = useStore.getState().messagesBySession[sessionId] ?? [];
+        const target = msgs.find((m) => m.id === targetId) ?? findMessageByToolCallId(sessionId, event.toolCallId);
+        if (target?.toolCalls) {
+          const updatedToolCalls = target.toolCalls.map((tc) =>
+            tc.id === event.toolCallId ? { ...tc, status: 'executing' as const } : tc,
+          );
+          s.updateMessage(sessionId, target.id, { toolCalls: updatedToolCalls });
+          if (pending && pending.id === target.id) {
+            pendingAssistant.set(sessionId, { ...pending, toolCalls: updatedToolCalls });
+          }
+          break;
+        }
+      }
+      // 回退：无 pending 且历史里也没有该 toolCallId 的消息（刷新丢态）→ 定位含此 id 的消息
+      const fallback = findMessageByToolCallId(sessionId, event.toolCallId);
+      if (fallback?.toolCalls) {
+        s.updateMessage(sessionId, fallback.id, {
+          toolCalls: fallback.toolCalls.map((tc) =>
+            tc.id === event.toolCallId ? { ...tc, status: 'executing' as const } : tc,
+          ),
+        });
+      }
+      break;
+    }
+    case 'tool-call-end': {
+      flushPending(); // 保证参数分片先写入，避免 end 后还有残余 delta
+      const event = msg.payload as Extract<AgentEvent, { type: 'tool-call-end' }> & { messageId?: string };
+      if (!sessionId) break;
+      const pending = pendingAssistant.get(sessionId);
+      const targetId = pending?.id ?? event.messageId;
+      const msgs = useStore.getState().messagesBySession[sessionId] ?? [];
+      const target =
+        (targetId ? msgs.find((m) => m.id === targetId) : undefined) ??
+        findMessageByToolCallId(sessionId, event.toolCallId);
+      if (target?.toolCalls) {
+        const updatedToolCalls = target.toolCalls.map((tc) =>
+          tc.id === event.toolCallId
+            ? { ...tc, name: event.toolName, status: 'done' as const }
+            : tc,
+        );
+        const updatedToolResults = [
+          ...(target.toolResults ?? []),
+          { toolCallId: event.toolCallId, result: event.result },
+        ];
+        s.updateMessage(sessionId, target.id, {
+          toolCalls: updatedToolCalls,
+          toolResults: updatedToolResults,
+        });
+        if (pending && pending.id === target.id) {
+          pendingAssistant.set(sessionId, {
+            ...pending,
+            toolCalls: updatedToolCalls,
+            toolResults: updatedToolResults,
+          });
+        }
+      }
+      break;
+    }
+    case 'ask': {
+      if (!sessionId) return;
+      const event = (msg.payload ?? {}) as {
+        toolCallId?: string;
+        question?: string;
+        answerType?: 'text' | 'single' | 'multi' | 'boolean' | 'form';
+        options?: Array<{ value: string; label: string }>;
+        defaultAnswer?: string;
+        formSchema?: Record<string, unknown>;
+      };
+      if (!event.toolCallId || !event.question) break;
+      s.addPendingAsk({
+        toolCallId: event.toolCallId,
+        sessionId,
+        question: event.question,
+        answerType: event.answerType,
+        options: event.options,
+        defaultAnswer: event.defaultAnswer,
+        formSchema: event.formSchema,
+        createdAt: Date.now(),
+      });
+      break;
+    }
+    case 'ask-timeout': {
+      const event = (msg.payload ?? {}) as { toolCallId?: string };
+      if (event.toolCallId) useStore.getState().removePendingAsk(event.toolCallId);
+      break;
+    }
+    case 'confirm-required': {
+      if (!sessionId) return;
+      const event = msg.payload as Extract<AgentEvent, { type: 'confirm-required' }>;
+      s.addPendingConfirm({
+        toolCallId: event.toolCallId,
+        sessionId,
+        toolName: event.toolName,
+        question: event.question,
+        details: event.details,
+        ruleSuggestion: (msg.payload as { ruleSuggestion?: string }).ruleSuggestion,
+        createdAt: Date.now(),
+      });
+      break;
+    }
+    case 'stats-updated': {
+      if (!sessionId) return;
+      const event = (msg.payload ?? {}) as { stats?: RunStats };
+      if (event.stats) s.setRunStats(sessionId, event.stats);
+      break;
+    }
+    case 'error': {
+      flushPending(); // 流式文本在终止前全部写入
+      const event = (msg.payload ?? {}) as { message?: string };
+      const errorCode = event.message ?? '';
+      const localizedMessage = i18n.exists(`errors.${errorCode}`)
+        ? i18n.t(`errors.${errorCode}`)
+        : (errorCode || i18n.t('errors.UNKNOWN'));
+      if (sessionId) {
+        s.finalizeStreamingMessages(sessionId);
+        s.addMessage(sessionId, {
+          id: genId(),
+          role: 'assistant',
+          content: localizedMessage,
+          isError: true,
+          timestamp: new Date().toISOString(),
+        });
+        s.setGenerating(sessionId, false);
+        s.setTaskError(sessionId, true);
+        pendingAssistant.delete(sessionId);
+        emitSettled(sessionId, 'error');
+      }
+      toast.error(localizedMessage);
+      break;
+    }
+    case 'done': {
+      flushPending();
+      const doneEvent = (msg.payload ?? {}) as Extract<AgentEvent, { type: 'done' }>;
+      if (sessionId) {
+        s.finalizeStreamingMessages(sessionId);
+        const pending = pendingAssistant.get(sessionId);
+        if (pending) {
+          const finalizedToolCalls = pending.toolCalls?.map((tc) =>
+            tc.status === 'done' ? tc : { ...tc, status: 'done' as const },
+          );
+          s.updateMessage(sessionId, pending.id, {
+            streaming: false,
+            thinkingStreaming: false,
+            toolCalls: finalizedToolCalls,
+          });
+          pendingAssistant.delete(sessionId);
+        }
+        s.setGenerating(sessionId, false);
+        useStore.getState().clearPendingAsksBySession(sessionId);
+        useStore.getState().clearPendingConfirmsBySession(sessionId);
+        // 轮数触顶：插入提示卡（幂等防重）
+        if (doneEvent.finishReason === 'max_turns') {
+          const st = useStore.getState();
+          const maxTurns = st.appConfig?.agent.maxTurns ?? 0;
+          const cardMessage: TaskMessage = {
+            id: `max_turns_${doneEvent.runId ?? Date.now()}`,
+            role: 'assistant',
+            content: '',
+            timestamp: new Date().toISOString(),
+            maxTurnsNotice: { maxTurns },
+          };
+          const existing = st.messagesBySession[sessionId] ?? [];
+          if (!existing.some((m) => m.id === cardMessage.id)) {
+            st.setMessages(sessionId, [...existing, cardMessage]);
+          }
+        }
+        emitSettled(sessionId, 'done');
+      }
+      break;
+    }
+    case 'task.done': {
+      flushPending();
+      if (sessionId) {
+        s.finalizeStreamingMessages(sessionId);
+        const pending = pendingAssistant.get(sessionId);
+        if (pending) {
+          const finalizedToolCalls = pending.toolCalls?.map((tc) =>
+            tc.status === 'done' ? tc : { ...tc, status: 'done' as const },
+          );
+          s.updateMessage(sessionId, pending.id, {
+            streaming: false,
+            thinkingStreaming: false,
+            toolCalls: finalizedToolCalls,
+          });
+          pendingAssistant.delete(sessionId);
+        }
+        s.setGenerating(sessionId, false);
+        emitSettled(sessionId, 'done');
+      }
+      break;
+    }
+    case 'task.aborted': {
+      flushPending();
+      // 用户主动中断：仅清理流式状态（不写错误消息、不改 generating——
+      // 停止按钮场景 useTask.abort 已置 false；打断发送场景新流已置 true）
+      if (sessionId) {
+        s.finalizeStreamingMessages(sessionId);
+        const pending = pendingAssistant.get(sessionId);
+        if (pending) {
+          const finalizedToolCalls = pending.toolCalls?.map((tc) =>
+            tc.status === 'done' ? tc : { ...tc, status: 'done' as const },
+          );
+          s.updateMessage(sessionId, pending.id, {
+            streaming: false,
+            thinkingStreaming: false,
+            toolCalls: finalizedToolCalls,
+          });
+          pendingAssistant.delete(sessionId);
+        }
+        emitSettled(sessionId, 'aborted');
+      }
+      break;
+    }
+
+    // ======================================================================
+    // 会话订阅 / 撤回恢复
+    // ======================================================================
+    case 'session.subscribed': {
+      if (!sessionId) break;
+      const payload = (msg.payload ?? {}) as SessionSubscribedPayload;
+      useStore.getState().setActiveSession(sessionId);
+      // 权威运行态：running=true → 一亮到底（刷新后立刻显示运行中）；
+      // running=false → 由编排层判断是否需要尾部补齐后再收尾（避免误判「已完成」）
+      if (payload.running === true) {
+        useStore.getState().setGenerating(sessionId, true);
+      }
+      if (payload.liveDraft && payload.liveDraft.messageId) {
+        attachLiveDraft(payload.liveDraft);
+      }
+      emitSnapshot(sessionId, payload);
+      break;
+    }
+    case 'session-truncated': {
+      // 消息撤回已执行：删除 timestamp >= 截断起点的本地消息（含 1s 容差）
+      if (!sessionId) break;
+      const payload = (msg.payload ?? {}) as { messageTimestamp?: string };
+      if (!payload.messageTimestamp) break;
+      const cutoff = Date.parse(payload.messageTimestamp) - 1000;
+      const msgs = useStore.getState().messagesBySession[sessionId] ?? [];
+      const removed = msgs.filter((m) => Date.parse(m.timestamp) >= cutoff);
+      const kept = msgs.filter((m) => Date.parse(m.timestamp) < cutoff);
+      if (removed.length > 0) {
+        useStore.getState().setMessages(sessionId, kept);
+        useStore.getState().setTruncateBackup(sessionId, {
+          messageTimestamp: payload.messageTimestamp,
+          messages: removed,
+        });
+      }
+      // 服务端消息数组已变化 → 分页游标失效，交由编排层按末页整体重载
+      useStore.getState().resetHistory(sessionId);
+      emitHistoryInvalidated(sessionId);
+      break;
+    }
+    case 'session-restored': {
+      if (!sessionId) break;
+      const backup = useStore.getState().truncateBackups[sessionId];
+      if (backup) {
+        const msgs = useStore.getState().messagesBySession[sessionId] ?? [];
+        const cutoff = Date.parse(backup.messageTimestamp);
+        const before = msgs.filter((m) => Date.parse(m.timestamp) < cutoff);
+        const after = msgs.filter((m) => Date.parse(m.timestamp) >= cutoff);
+        useStore.getState().setMessages(sessionId, [...before, ...backup.messages, ...after]);
+        useStore.getState().setTruncateBackup(sessionId, undefined);
+      }
+      useStore.getState().resetHistory(sessionId);
+      emitHistoryInvalidated(sessionId);
+      break;
+    }
+    case 'tool.ask.accepted': {
+      const toolCallId = (msg as { toolCallId?: string }).toolCallId;
+      if (toolCallId) useStore.getState().removePendingAsk(toolCallId);
+      break;
+    }
+    case 'tool.confirm.accepted': {
+      const toolCallId = (msg as { toolCallId?: string }).toolCallId;
+      if (toolCallId) useStore.getState().removePendingConfirm(toolCallId);
+      break;
+    }
+
+    // ======================================================================
+    // todo / 上下文 / 文件
+    // ======================================================================
+    case 'todo-updated': {
+      if (!sessionId) break;
+      const payload = (msg.payload ?? {}) as { todos?: TodoItem[]; toolCallId?: string };
+      if (Array.isArray(payload.todos)) {
+        useStore.getState().setTodos(sessionId, payload.todos);
+        // 回填快照到发起这次 todo 调用的 message（快照仅首次写入，后续变更不覆盖）
+        if (payload.toolCallId) {
+          const msgs = useStore.getState().messagesBySession[sessionId] ?? [];
+          const target = msgs.find((m) => m.toolCalls?.some((tc) => tc.id === payload.toolCallId));
+          if (target && target.todoSnapshot === undefined) {
+            useStore.getState().updateMessage(sessionId, target.id, { todoSnapshot: payload.todos });
+          }
+        }
+      }
+      break;
+    }
+    case 'context-updated': {
+      if (!sessionId) break;
+      const payload = (msg.payload ?? {}) as {
+        files?: ContextFile[];
+        totalTokens?: number;
+        maxTokens?: number;
+      };
+      useStore.getState().setContext(sessionId, {
+        files: payload.files ?? [],
+        totalTokens: payload.totalTokens ?? 0,
+        maxTokens: payload.maxTokens ?? 0,
+      });
+      useStore.getState().bumpContextFileReadSeq(sessionId);
+      break;
+    }
+    case 'context-stats-updated': {
+      if (!sessionId) break;
+      // 字段级合并而非整体覆盖：部分形状 payload 不得破坏 store 中的完整对象
+      const payload = msg.payload as Partial<ContextStats> | undefined;
+      if (payload && typeof payload === 'object' && payload.breakdown) {
+        const cur = useStore.getState().contextStatsBySession[sessionId];
+        useStore.getState().setContextStats(sessionId, {
+          ...(cur ?? {}),
+          ...payload,
+          sessionId: payload.sessionId ?? sessionId,
+          model: payload.model ?? cur?.model ?? { id: '', name: '' },
+          breakdown: payload.breakdown ?? cur?.breakdown,
+          windowTokens: payload.windowTokens ?? cur?.windowTokens ?? 0,
+          usedPercent: payload.usedPercent ?? cur?.usedPercent ?? 0,
+          avgHitRate: payload.avgHitRate ?? cur?.avgHitRate ?? null,
+          lastUsage: payload.lastUsage ?? cur?.lastUsage ?? null,
+          compaction:
+            payload.compaction ??
+            cur?.compaction ?? {
+              enabled: false,
+              compactRatio: 0.8,
+              compactedMessages: 0,
+              activeSummaryTokens: 0,
+            },
+          systemSections: payload.systemSections ?? cur?.systemSections ?? [],
+          cacheHits: payload.cacheHits ?? cur?.cacheHits ?? [],
+        });
+      }
+      break;
+    }
+    case 'compaction-started': {
+      if (!sessionId) break;
+      const payload = (msg.payload ?? {}) as { trigger?: 'auto' | 'manual' };
+      toast.info(
+        payload.trigger === 'manual'
+          ? i18n.t('context.compactionStartedManual')
+          : i18n.t('context.compactionStartedAuto'),
+      );
+      break;
+    }
+    case 'compaction-completed': {
+      if (!sessionId) break;
+      const payload = (msg.payload ?? {}) as { compaction?: CompactionRecord };
+      const compaction = payload.compaction;
+      if (!compaction) break;
+      const cardMessage: TaskMessage = {
+        id: `compaction_${compaction.id}`,
+        role: 'assistant',
+        content: compaction.summary,
+        timestamp: compaction.at,
+        compaction,
+      };
+      const st = useStore.getState();
+      const existing = st.messagesBySession[sessionId] ?? [];
+      if (!existing.some((m) => m.id === cardMessage.id)) {
+        st.setMessages(sessionId, [...existing, cardMessage]);
+      }
+      toast.success(
+        i18n.t('context.compactionDone', {
+          count: compaction.compactedCount,
+          before: compaction.beforeTokens,
+          after: compaction.afterTokens,
+        }),
+      );
+      break;
+    }
+    case 'context-healed': {
+      if (!sessionId) break;
+      const payload = (msg.payload ?? {}) as {
+        toolCallId?: string;
+        healLog?: Array<{ kind: string; detail: string }>;
+      };
+      if (payload.healLog && payload.healLog.length > 0) {
+        toast.info(
+          i18n.t('context.healed', { details: payload.healLog.map((h) => h.detail).join('; ') }),
+        );
+      }
+      break;
+    }
+    case 'file-created': {
+      const payload = (msg.payload ?? {}) as { path?: string };
+      if (payload.path) toast.success(`已创建文件: ${payload.path}`);
+      break;
+    }
+    case 'file-edited': {
+      const payload = (msg.payload ?? {}) as { path?: string };
+      if (payload.path) toast.success(`已编辑文件: ${payload.path}`);
+      break;
+    }
+    case 'file-deleted': {
+      const payload = (msg.payload ?? {}) as { path?: string };
+      if (payload.path) toast.info(`已删除文件: ${payload.path}`);
+      break;
+    }
+    case 'file-moved': {
+      const payload = (msg.payload ?? {}) as { path?: string; destPath?: string };
+      if (payload.path && payload.destPath) {
+        toast.success(`已移动: ${payload.path} → ${payload.destPath}`);
+      }
+      break;
+    }
+    case 'shell-changed': {
+      const payload = (msg.payload ?? {}) as {
+        report?: { created?: string[]; modified?: string[]; deleted?: string[] };
+      };
+      const r = payload.report;
+      if (r) {
+        const count = (r.created?.length ?? 0) + (r.modified?.length ?? 0) + (r.deleted?.length ?? 0);
+        if (count > 0) toast.info(`shell 命令修改了 ${count} 个文件`);
+      }
+      break;
+    }
+
+    // ======================================================================
+    // 任务列表实时同步（后端广播：任意客户端的增删改都不需要刷新本端）
+    // ======================================================================
+    case 'task.created': {
+      const payload = (msg.payload ?? {}) as { task?: TaskItem; group?: TaskGroup };
+      if (payload.task) {
+        const st = useStore.getState();
+        const group = payload.group;
+        if (group && !st.taskGroups.some((g) => g.id === group.id)) st.addTaskGroup(group);
+        if (!st.tasks.some((tk) => tk.id === payload.task!.id)) st.addTask(payload.task);
+      }
+      break;
+    }
+    case 'task.updated': {
+      const payload = (msg.payload ?? {}) as { task?: TaskItem; taskId?: string; running?: boolean };
+      const st = useStore.getState();
+      if (typeof payload.running === 'boolean') {
+        const sid = payload.taskId ?? payload.task?.sessionId ?? payload.task?.id;
+        // 运行态是权威信号（后端 run 生命周期广播）：可升可降
+        if (sid) st.setGenerating(sid, payload.running);
+      }
+      if (payload.task) st.updateTask(payload.task.id, payload.task);
+      break;
+    }
+    case 'task.deleted': {
+      const payload = (msg.payload ?? {}) as { taskId?: string };
+      if (payload.taskId) useStore.getState().removeTask(payload.taskId);
+      break;
+    }
+    case 'tasks.reordered':
+    case 'tasks.changed': {
+      const payload = (msg.payload ?? {}) as { tasks?: TaskItem[]; groups?: TaskGroup[] };
+      const st = useStore.getState();
+      if (Array.isArray(payload.tasks)) st.setTasks(payload.tasks);
+      if (Array.isArray(payload.groups)) st.setTaskGroups(payload.groups);
+      break;
+    }
+    case 'task-groups.changed': {
+      const payload = (msg.payload ?? {}) as { groups?: TaskGroup[] };
+      if (Array.isArray(payload.groups)) useStore.getState().setTaskGroups(payload.groups);
+      break;
+    }
+
+    // ======================================================================
+    // 自动化 / 专家团
+    // ======================================================================
+    case 'automation.started': {
+      const payload = (msg.payload ?? {}) as {
+        automationId?: string;
+        runId?: string;
+        startedAt?: string;
+        taskId?: string;
+      };
+      if (!payload.automationId || !payload.runId || !payload.startedAt) break;
+      const st = useStore.getState();
+      st.addAutomationRun(payload.automationId, {
+        id: payload.runId,
+        automationId: payload.automationId,
+        taskId: payload.taskId,
+        startedAt: payload.startedAt,
+        status: 'running',
+      });
+      st.updateAutomation(payload.automationId, { lastRunAt: payload.startedAt });
+      if (payload.taskId) st.setGenerating(payload.taskId, true);
+      break;
+    }
+    case 'automation.finished': {
+      const payload = (msg.payload ?? {}) as {
+        automationId?: string;
+        runId?: string;
+        taskId?: string;
+        status?: AutomationRun['status'];
+        finishReason?: string;
+        finalText?: string;
+        error?: string;
+        finishedAt?: string;
+      };
+      if (!payload.automationId || !payload.runId) break;
+      const st = useStore.getState();
+      st.updateAutomationRun(payload.automationId, payload.runId, {
+        finishedAt: payload.finishedAt,
+        status: payload.status ?? 'success',
+        finishReason: payload.finishReason,
+        finalText: payload.finalText,
+        error: payload.error,
+      });
+      if (payload.finishedAt) st.updateAutomation(payload.automationId, { lastRunAt: payload.finishedAt });
+      if (payload.taskId) st.setGenerating(payload.taskId, false);
+      break;
+    }
+    case 'agenteam.member.event': {
+      const payload = (msg.payload ?? {}) as {
+        teamId?: string | null;
+        memberName?: string;
+        taskId?: string;
+      };
+      if (payload.taskId && payload.memberName) {
+        useStore.getState().bumpAgenteamEvent(payload.taskId, payload.teamId ?? null, payload.memberName);
+      }
+      break;
+    }
+    case 'config.changed': {
+      // 具体重拉由 useConfig hook 独立订阅 wsClient.onMessage 触发，此处不重复处理
+      break;
+    }
+
+    default:
+      // 未知消息类型忽略
+      break;
+  }
+}
+
+/** pending 丢失（流式中刷新）时回退：定位 store 中最后一条含该 toolCallId 的 assistant 消息 */
+function findMessageByToolCallId(sid: string, toolCallId: string): TaskMessage | null {
+  const msgs = useStore.getState().messagesBySession[sid] ?? [];
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const m = msgs[i];
+    if (m.role === 'assistant' && m.toolCalls?.some((tc) => tc.id === toolCallId)) return m;
+  }
+  return null;
+}
+
+/**
+ * 工具类事件的目标消息解析：
+ * - 服务端给了 messageId 且本地存在 → 直接命中（刷新恢复后的精确对齐）
+ * - 否则回落到当前 pending（同一轮）
+ * - 都没有 → 返回 null，由调用方的历史回退逻辑兜底
+ */
+function ensureStreamingMessage(sessionId: string, messageId?: string): TaskMessage | null {
+  const st = useStore.getState();
+  const msgs = st.messagesBySession[sessionId] ?? [];
+  if (messageId) {
+    const found = msgs.find((m) => m.id === messageId);
+    if (found) {
+      if (!found.streaming) st.updateMessage(sessionId, messageId, { streaming: true });
+      const revived: TaskMessage = { ...found, streaming: true };
+      pendingAssistant.set(sessionId, revived);
+      return revived;
+    }
+  }
+  const pending = pendingAssistant.get(sessionId);
+  if (pending) {
+    // 服务端消息 id 已推进到新一轮 → 旧 pending 定稿后另建
+    if (messageId && pending.serverMessageId !== messageId) {
+      st.updateMessage(sessionId, pending.id, { streaming: false, thinkingStreaming: false });
+      pendingAssistant.delete(sessionId);
+    } else {
+      return pending;
+    }
+  }
+  if (!messageId) return null;
+  const created: TaskMessage = {
+    id: messageId,
+    serverMessageId: messageId,
+    role: 'assistant',
+    content: '',
+    timestamp: new Date().toISOString(),
+    streaming: true,
+    thinkingStreaming: false,
+  };
+  st.addMessage(sessionId, created);
+  pendingAssistant.set(sessionId, created);
+  return created;
+}
+
+/**
+ * 尾部增量补齐（分页循环拉取 after 之后的全部消息）。
+ * 用途：一轮结束 / WS 重连后的「本地流式草稿 → 服务端正式消息」对齐。
+ * 循环上限兜底，避免异常游标导致死循环。
+ */
+export async function fetchTailPages(
+  sessionId: string,
+  after: number,
+  pageSize = 200,
+): Promise<{ messages: TaskMessage[]; newestIndex: number; total: number } | null> {
+  const collected: TaskMessage[] = [];
+  let cursor = after;
+  let total = after + 1;
+  for (let guard = 0; guard < 50; guard++) {
+    let resp: Awaited<ReturnType<typeof api.getSessionHistory>>;
+    try {
+      resp = await api.getSessionHistory(sessionId, { limit: pageSize, after: cursor });
+    } catch {
+      return collected.length > 0 ? { messages: collected, newestIndex: cursor, total } : null;
+    }
+    collected.push(...resp.messages);
+    if (!resp.page) return { messages: collected, newestIndex: cursor, total };
+    total = resp.page.total;
+    const next = resp.page.newestIndex;
+    if (next <= cursor || resp.messages.length < pageSize) {
+      return { messages: collected, newestIndex: next, total };
+    }
+    cursor = next;
+  }
+  return { messages: collected, newestIndex: cursor, total };
+}

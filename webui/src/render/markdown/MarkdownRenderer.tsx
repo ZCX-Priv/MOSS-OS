@@ -24,6 +24,8 @@ export interface MarkdownRendererProps {
   /** 流式光标（如旋转 spinner）：渲染进文本流末尾，与最后一行文字同行
    *  （markdown 路径依赖 .md-render > p:has(+ .md-cursor) 行内化；末块非段落时掉行为后备） */
   cursor?: ReactNode;
+  /** 渐进渲染：闭合长块首帧纯文本占位，帧预算内升级完整 markdown（历史/批量消息用） */
+  defer?: boolean;
 }
 
 export function MarkdownRenderer({
@@ -32,6 +34,7 @@ export function MarkdownRenderer({
   className,
   variant = 'normal',
   cursor,
+  defer = false,
 }: MarkdownRendererProps) {
   const settings = useRenderSettings();
   const blocks = useMemo(() => splitBlocks(text), [text]);
@@ -50,7 +53,12 @@ export function MarkdownRenderer({
   return (
     <div className={`md-render ${sizeClass} ${className ?? ''}`}>
       {blocks.map((block) => (
-        <MarkdownBlock key={block.index} raw={block.raw} closed={block.closed || !streaming} />
+        <MarkdownBlock
+          key={block.index}
+          raw={block.raw}
+          closed={block.closed || !streaming}
+          defer={defer}
+        />
       ))}
       {cursor !== undefined && <span className="md-cursor">{cursor}</span>}
     </div>

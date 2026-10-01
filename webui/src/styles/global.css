@@ -210,11 +210,8 @@ body {
   scrollbar-color: var(--border) transparent;
 }
 
-/* 消息项按需渲染：屏幕外跳过 layout/paint，长会话滚动性能 */
-.message-cv {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 120px;
-}
+/* 消息区「按需渲染」已由 react-virtuoso 虚拟列表接管（只挂载视口附近的消息），
+   原先的 content-visibility 兜底已移除：它与动态高度测量互相干扰。 */
 
 /* 等宽字体 */
 code,

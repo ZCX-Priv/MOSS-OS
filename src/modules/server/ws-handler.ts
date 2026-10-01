@@ -31,6 +31,12 @@ interface BatchedEvent {
   type: 'assistant-text' | 'assistant-thinking' | 'tool-call-delta';
   sessionId: string;
   runId?: string;
+  /** 本轮流式消息 id：合帧只能在「同一轮」内进行（跨轮 offset 空间重置，禁止合并） */
+  messageId?: string;
+  /** 合帧后首个分片的起始偏移（保持 offset 语义：合并块 = content[offset, total)） */
+  offset?: number;
+  /** 合帧后最后分片的累计长度 */
+  total?: number;
   /** assistant-text / assistant-thinking 拼接文本 */
   text?: string;
   /** tool-call-delta 专属 */
@@ -51,20 +57,25 @@ class EventBatcher {
     return type === 'assistant-text' || type === 'assistant-thinking' || type === 'tool-call-delta';
   }
 
-  /** 缓冲一条高频事件（同 key 拼接 text / argumentsDelta） */
+  /** 缓冲一条高频事件（同 key 且同轮拼接 text / argumentsDelta，保留首尾 offset） */
   push(msg: { type: string; sessionId: string; payload: Record<string, unknown> }): void {
     const p = msg.payload;
     const runId = typeof p.runId === 'string' ? p.runId : undefined;
+    const messageId = typeof p.messageId === 'string' ? p.messageId : undefined;
+    const offset = typeof p.offset === 'number' ? p.offset : undefined;
+    const total = typeof p.total === 'number' ? p.total : undefined;
     if (msg.type === 'tool-call-delta') {
       const toolCallId = String(p.toolCallId ?? '');
       const key = `${msg.sessionId}|d|${toolCallId}`;
       const delta = String(p.argumentsDelta ?? '');
       const existing = this.buffer.get(key);
-      if (existing && existing.runId === runId) {
+      if (existing && existing.runId === runId && existing.messageId === messageId) {
         existing.argumentsDelta = (existing.argumentsDelta ?? '') + delta;
+        if (total !== undefined) existing.total = total;
       } else {
         this.buffer.set(key, {
-          type: 'tool-call-delta', sessionId: msg.sessionId, runId, toolCallId, argumentsDelta: delta,
+          type: 'tool-call-delta', sessionId: msg.sessionId, runId, messageId, offset, total,
+          toolCallId, argumentsDelta: delta,
         });
       }
     } else {
@@ -73,10 +84,15 @@ class EventBatcher {
       const key = `${msg.sessionId}|${kind}`;
       const text = String(p.text ?? '');
       const existing = this.buffer.get(key);
-      if (existing && existing.runId === runId) {
+      // 合并条件必须含 messageId：同一 run 内跨轮（新一轮 offset 从 0 开始）不可合并，
+      // 否则前端会把它当成同一轮的延续，造成文本错位。
+      if (existing && existing.runId === runId && existing.messageId === messageId) {
         existing.text = (existing.text ?? '') + text;
+        if (total !== undefined) existing.total = total;
       } else {
-        this.buffer.set(key, { type: msg.type as BatchedEvent['type'], sessionId: msg.sessionId, runId, text });
+        this.buffer.set(key, {
+          type: msg.type as BatchedEvent['type'], sessionId: msg.sessionId, runId, messageId, offset, total, text,
+        });
       }
     }
 
@@ -107,6 +123,7 @@ class EventBatcher {
     this.buffer.clear();
     for (const e of events) {
       if (e.type === 'tool-call-delta') {
+        const delta = e.argumentsDelta ?? '';
         this.flushOut({
           type: 'tool-call-delta',
           sessionId: e.sessionId,
@@ -114,15 +131,27 @@ class EventBatcher {
             type: 'tool-call-delta',
             sessionId: e.sessionId,
             toolCallId: e.toolCallId,
-            argumentsDelta: e.argumentsDelta ?? '',
+            argumentsDelta: delta,
             runId: e.runId,
+            messageId: e.messageId,
+            offset: e.offset,
+            total: e.total ?? (e.offset !== undefined ? e.offset + delta.length : undefined),
           },
         });
       } else {
+        const text = e.text ?? '';
         this.flushOut({
           type: e.type,
           sessionId: e.sessionId,
-          payload: { type: e.type, sessionId: e.sessionId, text: e.text ?? '', runId: e.runId },
+          payload: {
+            type: e.type,
+            sessionId: e.sessionId,
+            text,
+            runId: e.runId,
+            messageId: e.messageId,
+            offset: e.offset,
+            total: e.total ?? (e.offset !== undefined ? e.offset + text.length : undefined),
+          },
         });
       }
     }
@@ -140,6 +169,8 @@ export class WsHandler {
    * 长程任务「回复/思考/工具调用卡死」的根因）；仅 task.abort 显式中断。
    */
   private readonly activeRuns = new Map<string, AbortController>();
+  /** 运行中的 runId（sessionId → runId）：session.subscribe 快照回复用（前端事件隔离对齐） */
+  private readonly activeRunIds = new Map<string, string>();
   /** 引导消息数组（可变引用，传给 engine.run；handleTaskGuide 在运行期间向其 push 消息） */
   private readonly guideMessageArrays = new Map<string, GuidanceMessage[]>();
   /** 引导消息对应的 runId 队列（前端为每条引导消息生成 runId，用于新 run 的事件隔离） */
@@ -236,21 +267,65 @@ export class WsHandler {
     this.sendToSubscribers(sessionId, message);
   }
 
+  /**
+   * 外部发起的 run（MCP 派发 / 自动化）转发 agent 事件到 session 订阅者。
+   * 与 handleTaskStream 的 sendEvent 同构：高频流式类型（assistant-text /
+   * assistant-thinking / tool-call-delta）自动进合帧缓冲，其余先冲刷再发（保序）。
+   * payload 形状与 task.stream 一致（{ ...event, runId }），前端 stream-buffer 可直接消费。
+   */
+  sendAgentEvent(sessionId: string, event: AgentEvent): void {
+    this.sendEvent(sessionId, {
+      type: event.type,
+      sessionId,
+      payload: { ...event, ...(event.runId ? { runId: event.runId } : {}) },
+    });
+  }
+
   /** 注册外部发起的活跃 run（automation 等不经 task.stream 的运行）：
    *  session.subscribe/task.switch 的 running 判定包含该 session；task.abort 可中断。
    *  若该 session 已有活跃 run，语义与 task.stream 的「打断发送」一致：旧 run 被 abort 后自行收尾 */
   registerExternalRun(sessionId: string, controller: AbortController): void {
     const prevController = this.activeRuns.get(sessionId);
+    const wasRunning = prevController !== undefined;
     this.activeRuns.set(sessionId, controller);
     if (prevController && prevController !== controller) {
       prevController.abort();
     }
+    // 运行态变化 → 广播（侧边栏实时转圈，刷新后也不丢）
+    if (!wasRunning) this.broadcastTaskRunning(sessionId, true);
   }
 
   /** 注销外部活跃 run（仅当注册的 controller 仍是当前活跃 run 时移除，防误删用户新 run） */
   unregisterExternalRun(sessionId: string, controller: AbortController): void {
     if (this.activeRuns.get(sessionId) === controller) {
       this.activeRuns.delete(sessionId);
+      this.activeRunIds.delete(sessionId);
+      this.broadcastTaskRunning(sessionId, false);
+    }
+  }
+
+  /** 该会话是否仍有任务在跑（权威运行态：含 task.stream 与外部注册的 run） */
+  isSessionRunning(sessionId: string): boolean {
+    return this.activeRuns.has(sessionId);
+  }
+
+  /**
+   * 广播任务运行态变化（task.updated）。
+   * 所有客户端（含新开的标签页）据此实时更新侧边栏转圈 / 空闲态，无需轮询或刷新。
+   * task 元信息由 agent 引擎补齐；隐藏会话（subagent 等）取不到时仅发 taskId + running。
+   */
+  private broadcastTaskRunning(sessionId: string, running: boolean): void {
+    try {
+      const agent = this.services.tryResolve<AgentEngine & { getTask?: (id: string) => unknown }>(
+        ServiceNames.AGENT_ENGINE,
+      );
+      const task = agent?.getTask?.(sessionId) ?? null;
+      this.broadcast({
+        type: 'task.updated',
+        payload: { taskId: sessionId, running, ...(task ? { task } : {}) },
+      });
+    } catch {
+      // 广播失败不影响任务
     }
   }
 
@@ -297,6 +372,8 @@ export class WsHandler {
       agentId?: string;
       /** 权限模式（前端 PermissionModeSelector 会话级传递）：ask/auto/skip；缺省=会话记忆/全局默认 */
       permissionMode?: 'ask' | 'auto' | 'skip';
+      /** 前端为这条消息生成的稳定 id（随用户消息持久化；前端据此与本地乐观副本对齐去重） */
+      clientMessageId?: string;
     };
 
     if (!payload.message) {
@@ -314,6 +391,8 @@ export class WsHandler {
     let currentMessage = payload.message;
     let currentAttachments = payload.attachments;
     let currentRunId = payload.runId;
+    // 本 run 对应的前端消息 id（引导续跑时由引导消息自带，保证每次 run 都写入正确身份）
+    let currentClientMessageId = payload.clientMessageId;
     let currentGuideMessages: GuidanceMessage[] = [];
     this.guideMessageArrays.set(sessionId, currentGuideMessages);
 
@@ -322,10 +401,14 @@ export class WsHandler {
       // 「打断发送」语义——旧 run 的残余事件由前端 runId 过滤丢弃
       const abortController = new AbortController();
       const prevController = this.activeRuns.get(sessionId);
+      const wasRunning = prevController !== undefined;
       this.activeRuns.set(sessionId, abortController);
+      if (currentRunId) this.activeRunIds.set(sessionId, currentRunId);
       if (prevController) {
         prevController.abort();
       }
+      // 首次进入运行态 → 广播（侧边栏实时转圈；引导续跑不重复广播）
+      if (!wasRunning) this.broadcastTaskRunning(sessionId, true);
 
       const onEvent = (event: AgentEvent) => {
         this.sendEvent(sessionId, {
@@ -346,6 +429,8 @@ export class WsHandler {
           onEvent,
           signal: abortController.signal,
           runId: currentRunId,
+          // 前端消息 id：随用户消息持久化，供前端与本地乐观副本按身份去重
+          clientMessageId: currentClientMessageId,
           // 权限模式透传（会话级；缺省时 engine 回退会话记忆/全局默认）
           permissionMode: payload.permissionMode,
           // 引导消息数组（可变引用，运行期间 handleTaskGuide 可向其 push）
@@ -354,7 +439,8 @@ export class WsHandler {
 
         // 引导中断：engine 在工具调用完成后检测到引导消息，主动中止并返回
         if (result.guideInterrupt && result.guideMessage) {
-          // 移除已被 engine 消费的消息（engine 取 guideMessages[0]）
+          // 移除已被 engine 消费的消息（engine 取 guideMessages[0]）——先取出其身份
+          const consumedGuide = currentGuideMessages[0];
           if (currentGuideMessages.length > 0) {
             currentGuideMessages.shift();
           }
@@ -372,6 +458,8 @@ export class WsHandler {
           }
           currentMessage = result.guideMessage;
           currentAttachments = result.guideAttachments;
+          // 新 run 的消息身份：取被消费的那条引导消息自带的 id（避免沿用上一条消息的 id）
+          currentClientMessageId = consumedGuide?.clientMessageId;
           // 复用同一 guideMessages 数组，剩余引导消息在新 run 中继续被检测
           continue;
         }
@@ -391,6 +479,7 @@ export class WsHandler {
           }
           currentMessage = guideMsg.message;
           currentAttachments = guideMsg.attachments;
+          currentClientMessageId = guideMsg.clientMessageId;
           continue;
         }
 
@@ -429,6 +518,10 @@ export class WsHandler {
       }
     }
 
+    // while 结束 = 本次运行收尾；若期间没有新 run 顶替则广播空闲态
+    // （放在循环外：引导续跑会 continue，避免每次续跑都抖动一次运行态广播）
+    this.broadcastTaskRunning(sessionId, this.activeRuns.has(sessionId));
+
     // 清理引导消息相关状态
     this.guideMessageArrays.delete(sessionId);
     this.guideRunIds.delete(sessionId);
@@ -443,12 +536,22 @@ export class WsHandler {
     const sessionId = msg.sessionId;
     if (!sessionId) return;
 
-    const payload = (msg.payload ?? {}) as { message?: string; runId?: string; attachments?: string[] };
+    const payload = (msg.payload ?? {}) as {
+      message?: string;
+      runId?: string;
+      attachments?: string[];
+      /** 前端为这条引导消息生成的稳定 id（续跑的 run 持久化时写入） */
+      clientMessageId?: string;
+    };
     if (!payload.message) return;
 
     const guideArr = this.guideMessageArrays.get(sessionId);
     if (guideArr !== undefined) {
-      guideArr.push({ message: payload.message, attachments: payload.attachments });
+      guideArr.push({
+        message: payload.message,
+        attachments: payload.attachments,
+        ...(payload.clientMessageId ? { clientMessageId: payload.clientMessageId } : {}),
+      });
       if (payload.runId) {
         const runIds = this.guideRunIds.get(sessionId) ?? [];
         runIds.push(payload.runId);
@@ -467,16 +570,56 @@ export class WsHandler {
     }
   }
 
+  /**
+   * 会话状态快照：订阅 / task.switch 的回复载荷（与 GET /api/session/:id/state 同构）。
+   * - running：权威运行态（含外部注册的 run：automation / MCP）
+   * - runId：当前 run（前端事件隔离对齐）
+   * - totalMessages / newestIndex：消息总数与最新游标（前端判断是否需要尾部补齐）
+   * - liveDraft：进行中的流式草稿（含 messageId + 内容长度，前端据此续接 offset）
+   */
+  private sessionSnapshot(sessionId: string): Record<string, unknown> {
+    const agent = this.services.tryResolve<
+      AgentEngine & {
+        getHistoryPage?: (id: string, opts?: { limit?: number }) => { total: number; newestIndex: number } | undefined;
+        getLiveDraft?: (id: string) => unknown;
+      }
+    >(ServiceNames.AGENT_ENGINE);
+    let total = 0;
+    let newestIndex = -1;
+    try {
+      const page = agent?.getHistoryPage?.(sessionId, { limit: 1 });
+      total = page?.total ?? 0;
+      newestIndex = page?.newestIndex ?? -1;
+    } catch {
+      // 会话不存在 / 引擎异常：返回空态
+    }
+    let liveDraft: unknown = null;
+    try {
+      liveDraft = agent?.getLiveDraft?.(sessionId) ?? null;
+    } catch {
+      liveDraft = null;
+    }
+    const runId = this.activeRunIds.get(sessionId);
+    return {
+      running: this.activeRuns.has(sessionId),
+      ...(runId ? { runId } : {}),
+      totalMessages: total,
+      newestIndex,
+      ...(liveDraft ? { liveDraft } : {}),
+    };
+  }
+
   private handleSessionSubscribe(state: ConnectionState, msg: WSMessage): void {
     if (msg.sessionId) {
       state.sessionId = msg.sessionId;
       state.subscribedSessions.add(msg.sessionId);
-      // running：该 session 是否仍有任务在跑（前端重连后据此校正 generating 状态——
-      // 任务与连接解耦后，断连期间任务可能已完成，最终消息需拉历史恢复）
+      // 状态快照先行（同步发送，先于后续任何合帧冲刷）：
+      // running 权威运行态 + 最新 index 游标 + 进行中的流式草稿。
+      // 前端据此恢复「运行中」标记与半截回复，并按 offset 无缝续接后续分片。
       state.conn.send({
         type: 'session.subscribed',
         sessionId: msg.sessionId,
-        payload: { running: this.activeRuns.has(msg.sessionId) },
+        payload: this.sessionSnapshot(msg.sessionId),
       });
 
       // WS 重连恢复 pending asks：查询该 session 的待答列表，逐条发送 ask 事件（携带完整提问载荷），
@@ -639,7 +782,7 @@ export class WsHandler {
     state.conn.send({
       type: 'session.subscribed',
       sessionId: taskId,
-      payload: { running: this.activeRuns.has(taskId) },
+      payload: this.sessionSnapshot(taskId),
     });
     this.logger.debug(t('server.wsTaskSwitched', { id: taskId }));
   }

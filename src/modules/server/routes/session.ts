@@ -1,10 +1,55 @@
 // src/modules/server/routes/session.ts
-// 会话管理路由：POST /api/session（创建）、GET /api/session（列出）、DELETE /api/session/:id
+// 会话管理路由：GET /api/session（列出）、GET /api/session/:id（历史，支持分页）、
+//                GET /api/session/:id/state（状态快照）、DELETE /api/session/:id
 
 import type { HttpRequest, HttpResponse, RouteHandler } from '../types';
 import type { ServiceRegistry } from '../../../core/types';
+import { ServiceNames } from '../../../core/types';
 import type { AgentEngine } from '../../contracts';
 import { ErrorCode } from '../../../core/error-codes';
+
+/** 引擎扩展面（可选能力；未实现时安全降级） */
+type AgentEngineExt = AgentEngine & {
+  getHistory?: (id: string) => unknown[];
+  getHistoryPage?: (
+    id: string,
+    opts?: { limit?: number; before?: number; after?: number },
+  ) => {
+    messages: unknown[];
+    total: number;
+    oldestIndex: number;
+    newestIndex: number;
+    hasMoreBefore: boolean;
+  };
+  getLiveDraft?: (id: string) => unknown;
+  getActiveSkill?: (id: string) => { name: string; mode: 'system' | 'message'; content: string } | undefined;
+  getPermissionMode?: (id: string) => 'ask' | 'auto' | 'skip' | undefined;
+  getLastRunStats?: (id: string) => unknown;
+  getPendingAsks?: (id: string) => Array<{
+    toolCallId: string;
+    sessionId: string;
+    payload: {
+      question: string;
+      answerType?: string;
+      options?: Array<{ value: string; label: string }>;
+      defaultAnswer?: string;
+      formSchema?: Record<string, unknown>;
+    };
+  }>;
+  getPendingConfirms?: (id: string) => Array<{
+    toolCallId: string;
+    sessionId: string;
+    question: string;
+    ruleSuggestion?: string;
+  }>;
+};
+
+/** 解析非负整数字符串（非法/缺省返回 undefined） */
+function toIndex(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw === '') return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : undefined;
+}
 
 export function createListSessionsHandler(services: ServiceRegistry): RouteHandler {
   return async (): Promise<HttpResponse> => {
@@ -28,24 +73,49 @@ export function createDeleteSessionHandler(services: ServiceRegistry): RouteHand
   };
 }
 
+/**
+ * 会话历史。
+ * - 无分页参数：全量返回（保持旧调用方零改动）
+ * - limit：最新 limit 条（首屏）
+ * - limit + before：index < before 的区间（上滑加载更早）
+ * - limit + after：index > after 的区间（断线/完成后的尾部补齐）
+ * 分页时每条消息附带绝对 index，并返回 page 元数据（total / 区间 / 是否还有更早）。
+ */
 export function createSessionHistoryHandler(services: ServiceRegistry): RouteHandler {
-  return async (_req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
+  return async (req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
     const sessionId = params?.id;
     if (!sessionId) {
       return { status: 400, body: { error: ErrorCode.SESSION_ID_REQUIRED } };
     }
-    const agent = services.tryResolve<
-      AgentEngine & {
-        getHistory?: (id: string) => unknown;
-        getActiveSkill?: (id: string) => { name: string; mode: 'system' | 'message'; content: string } | undefined;
-        getPermissionMode?: (id: string) => 'ask' | 'auto' | 'skip' | undefined;
-        getLastRunStats?: (id: string) => unknown;
-      }
-    >('agent.engine');
+    const agent = services.tryResolve<AgentEngineExt>('agent.engine');
     if (!agent?.getHistory) {
       return { status: 200, body: { sessionId, messages: [] } };
     }
-    const history = agent.getHistory(sessionId);
+
+    const limit = toIndex(req.query?.limit);
+    const before = toIndex(req.query?.before);
+    const after = toIndex(req.query?.after);
+    const paged = limit !== undefined || before !== undefined || after !== undefined;
+
+    let messages: unknown[];
+    let page: unknown;
+    if (paged && agent.getHistoryPage) {
+      const result = agent.getHistoryPage(sessionId, {
+        ...(limit !== undefined ? { limit: limit === 0 ? 1 : limit } : {}),
+        ...(before !== undefined ? { before } : {}),
+        ...(after !== undefined ? { after } : {}),
+      });
+      messages = result.messages;
+      page = {
+        total: result.total,
+        oldestIndex: result.oldestIndex,
+        newestIndex: result.newestIndex,
+        hasMoreBefore: result.hasMoreBefore,
+      };
+    } else {
+      messages = agent.getHistory(sessionId);
+    }
+
     // 当前激活的 skill 模式（前端刷新后恢复 Badge）
     const activeSkill = agent.getActiveSkill?.(sessionId) ?? undefined;
     // 会话级权限模式（前端刷新后恢复 PermissionModeSelector 徽章）
@@ -56,8 +126,86 @@ export function createSessionHistoryHandler(services: ServiceRegistry): RouteHan
       status: 200,
       body: {
         sessionId,
-        messages: history,
+        messages,
+        ...(page ? { page } : {}),
         ...(activeSkill ? { activeSkill } : {}),
+        ...(permissionMode ? { permissionMode } : {}),
+        ...(lastRunStats ? { lastRunStats } : {}),
+      },
+    };
+  };
+}
+
+/**
+ * 会话状态快照：刷新 / 重连后一次请求把「不丢状态」所需的信息全部取回。
+ * running 为后端权威运行态（含 automation / MCP 等外部注册的 run），
+ * liveDraft 为进行中的半截流式回复（含 messageId 与长度，前端据此续接 offset）。
+ * 与 WS `session.subscribed` 的 payload 同构，两条恢复路径语义一致。
+ */
+export function createSessionStateHandler(services: ServiceRegistry): RouteHandler {
+  return async (_req: HttpRequest, params?: Record<string, string>): Promise<HttpResponse> => {
+    const sessionId = params?.id;
+    if (!sessionId) {
+      return { status: 400, body: { error: ErrorCode.SESSION_ID_REQUIRED } };
+    }
+    const agent = services.tryResolve<AgentEngineExt>('agent.engine');
+
+    let running = false;
+    try {
+      const server = services.tryResolve<{ isSessionRunning?: (sid: string) => boolean }>(
+        ServiceNames.SERVER_INSTANCE,
+      );
+      running = server?.isSessionRunning?.(sessionId) ?? false;
+    } catch {
+      running = false;
+    }
+
+    let totalMessages = 0;
+    let newestIndex = -1;
+    try {
+      const page = agent?.getHistoryPage?.(sessionId, { limit: 1 });
+      totalMessages = page?.total ?? 0;
+      newestIndex = page?.newestIndex ?? -1;
+    } catch {
+      // 会话不存在：空态
+    }
+
+    let liveDraft: unknown = null;
+    try {
+      liveDraft = agent?.getLiveDraft?.(sessionId) ?? null;
+    } catch {
+      liveDraft = null;
+    }
+
+    const pendingAsks = (agent?.getPendingAsks?.(sessionId) ?? []).map((a) => ({
+      toolCallId: a.toolCallId,
+      sessionId: a.sessionId,
+      question: a.payload.question,
+      answerType: a.payload.answerType,
+      options: a.payload.options,
+      defaultAnswer: a.payload.defaultAnswer,
+      formSchema: a.payload.formSchema,
+    }));
+    const pendingConfirms = (agent?.getPendingConfirms?.(sessionId) ?? []).map((c) => ({
+      toolCallId: c.toolCallId,
+      sessionId: c.sessionId,
+      question: c.question,
+      ruleSuggestion: c.ruleSuggestion,
+    }));
+
+    const permissionMode = agent?.getPermissionMode?.(sessionId) ?? undefined;
+    const lastRunStats = agent?.getLastRunStats?.(sessionId) ?? undefined;
+
+    return {
+      status: 200,
+      body: {
+        sessionId,
+        running,
+        totalMessages,
+        newestIndex,
+        liveDraft,
+        pendingAsks,
+        pendingConfirms,
         ...(permissionMode ? { permissionMode } : {}),
         ...(lastRunStats ? { lastRunStats } : {}),
       },

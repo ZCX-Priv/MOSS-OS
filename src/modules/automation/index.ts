@@ -580,14 +580,26 @@ class AutomationServiceImpl implements AutomationService {
     };
     this.addHistory(item.id, run);
 
-    // 事件转发到 WS（可选：只转发到 server.broadcastWS）
+    /** 本次 run 的 sessionId（创建真实任务后回填；供事件转发到该 session 的订阅者） */
+    let runSessionId: string | undefined;
+
+    // 事件转发到 WS：
+    // - error/done → automation.event 广播（自动化页历史/通知）
+    // - 全量 → sendAgentEvent 到 session 订阅者（任务页实时消息流，与 webui 发送 / MCP 派发同构；
+    //   ask/confirm 转发后用户可在打开的会话页应答）
     const onEvent = (event: AgentEvent): void => {
-      // 仅转发错误与完成事件，避免刷屏
       if (event.type === 'error' || event.type === 'done') {
         server?.broadcastWS({
           type: 'automation.event',
           payload: { automationId: item.id, runId, event },
         });
+      }
+      if (runSessionId) {
+        try {
+          server?.sendAgentEvent(runSessionId, event);
+        } catch {
+          // 转发失败不影响运行
+        }
       }
     };
 
@@ -614,6 +626,7 @@ class AutomationServiceImpl implements AutomationService {
 
       const sessionId = task.sessionId ?? task.id;
       taskId = task.id;
+      runSessionId = sessionId;
       // 注册外部活跃 run：task.switch/session.subscribe 的 running 判定包含该 session，
       // 用户在该任务页点击停止（task.abort）可中断本次自动化运行
       server?.registerExternalRun(sessionId, controller);

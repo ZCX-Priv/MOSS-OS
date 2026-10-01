@@ -65,6 +65,8 @@ const PERSISTED_KEYS = [
   'moss-active-sidebar-tab',
   'moss-render-settings',
   'moss-animation-settings',
+  // 排队消息队列：刷新后队列不丢，任务结束后按序继续投递
+  'moss-message-queues',
 ] as const;
 
 /**
@@ -168,6 +170,10 @@ function buildPersistedState(data: Record<string, unknown>): PersistedState {
     animationSettings: isValidAnimationSettings(data['moss-animation-settings'])
       ? data['moss-animation-settings']
       : undefined,
+    messageQueues:
+      data['moss-message-queues'] && typeof data['moss-message-queues'] === 'object'
+        ? (data['moss-message-queues'] as PersistedState['messageQueues'])
+        : undefined,
   };
 }
 

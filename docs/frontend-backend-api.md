@@ -801,3 +801,104 @@ webui/src/
 | task.created / task.updated | 任务变更 | 🆕 新增 |
 | automation.started / finished | 自动化运行 | 🆕 新增 |
 | config.changed | 配置热重载 | 🆕 新增 |
+
+---
+
+## 十一、消息处理链路重构（分页 / 状态快照 / 续传协议 / 实时列表）
+
+> 本节是**当前实现的权威契约**，用于替代前文中关于「历史全量拉取」「running 只由 session.subscribe 回传」
+> 等历史描述。目标：超长会话毫秒级首屏、刷新/重连后半截流式回复可续接、运行态与列表实时且不丢。
+
+### 11.1 会话历史分页 —— `GET /api/session/:id`
+
+| 参数 | 含义 |
+|---|---|
+| （无） | 全量返回（**保持向后兼容**，旧调用方零改动） |
+| `limit=N` | 返回最新 N 条（首屏） |
+| `limit=N&before=<index>` | 返回 `index < before` 的靠后 N 条（上滑加载更早） |
+| `limit=N&after=<index>` | 返回 `index > after` 的 N 条（断线/完成后的尾部补齐） |
+
+- 游标 `index` = 「过滤软删除后的消息下标」。会话消息只在尾部追加，截断/恢复也只影响尾部，
+  因此头部下标天然稳定，分页与增量不会错位。
+- 分页响应额外返回 `page`：`{ total, oldestIndex, newestIndex, hasMoreBefore }`；
+  每条消息附带绝对 `index`。
+- 前端据此生成稳定消息 id `h<index>`（虚拟列表 key / 分页去重基准），并据此推进游标。
+
+### 11.2 会话状态快照 —— `GET /api/session/:id/state`
+
+```jsonc
+{
+  "sessionId": "...",
+  "running": true,              // 后端权威运行态（含 automation / MCP 等外部注册的 run）
+  "runId": "run_...",           // 当前 run（事件隔离对齐）
+  "totalMessages": 123,
+  "newestIndex": 122,           // 尾部游标（前端判断是否需要补拉）
+  "liveDraft": {                // 进行中的流式草稿（可为 null）
+    "messageId": "<sessionId>#<turn>",
+    "content": "...", "thinking": "...",
+    "toolCalls": [{ "id": "...", "name": "read", "arguments": "...", "status": "executing" }],
+    "contentLength": 567, "thinkingLength": 0,
+    "startedAt": "...", "updatedAt": "...",
+    "stale": false              // true = 进程重启残留（上次未完成的回复）
+  },
+  "pendingAsks": [...], "pendingConfirms": [...],
+  "permissionMode": "ask", "lastRunStats": { }
+}
+```
+
+`WS session.subscribed` 的 payload 与该结构同构（`running` / `runId` / `totalMessages` /
+`newestIndex` / `liveDraft`），因此「刷新恢复」与「订阅对齐」走同一套前端逻辑。
+
+**契约约束（前端不得违反）**：`running`（前端 `generatingBySession`）只能由以下权威信号写入，
+任何历史/快照拉取都**不得**把它置为 `false`：
+① 状态快照；② `session.subscribed`；③ `done` / `task.aborted` / `error` / `automation.finished`；
+④ 本地发送与主动中断。
+
+### 11.3 可续传流式协议（offset + messageId）
+
+后端为**每一轮**流式 assistant 消息分配稳定 id `messageId = "<sessionId>#<turnIndex>"`，
+并为每个高频分片附带偏移：
+
+| 事件 | 新增字段 | 含义 |
+|---|---|---|
+| `assistant-text` / `assistant-thinking` | `messageId`, `offset`, `total` | 分片在 content / thinking 中的起始下标与结束下标 |
+| `tool-call-delta` | `messageId`, `offset`, `total` | 分片在该工具 arguments 中的起始下标与结束下标 |
+| `tool-call-start` / `-executing` / `-end` | `messageId` | 让前端把工具卡片挂到同一轮的消息上 |
+
+- 合帧器（30ms）只在**同一 messageId** 内合并分片，并保留首分片 `offset` 与末分片 `total`
+  —— 跨轮（新一轮 offset 归零）绝不合并，否则会文本错位。
+- 前端 `nextChunkSlice(currentLength, offset, text)` 三态处理：
+  重复（`offset+len <= cur`）丢弃 / 缺口（`offset > cur`）触发 resync 对齐 / 正常续接（只取差额）。
+
+### 11.4 流式草稿持久化
+
+- 位置：`~/.moss/live/<sessionId>.json`（独立目录，避免被会话目录扫描误判为会话文件）。
+- 策略：内存态为权威（快照/WS 直接读内存），磁盘为进程重启兜底；
+  正文追加 ≥500ms 节流且长度未变不写盘（大文本自动降频到 2s），
+  工具生命周期变更（start/executing/end）强制立即写盘。
+- 生命周期：每轮开始 `begin()`（新 messageId）→ 轮次结束/run 结束 `clear()`（最终消息已由 session 落盘）。
+- 进程重启残留标 `stale`，前端渲染为「上次中断的回复」（不进 LLM 上下文）。
+
+### 11.5 列表实时化
+
+| 事件 | 触发时机 | 载荷 |
+|---|---|---|
+| `task.created` | `POST /api/tasks` 成功后 | `{ task }` |
+| `task.updated` | run 起止（含外部 run）、`PATCH /api/tasks/:id` | `{ taskId, running?, task? }` |
+| `task.deleted` | `DELETE /api/tasks/:id` | `{ taskId }` |
+| `tasks.reordered` | `PUT /api/tasks/reorder` | `{ tasks }`（完整可见列表） |
+| `tasks.changed` | 删除分组（组内任务批量迁移/删除） | `{ tasks, groups }` |
+| `task-groups.changed` | 分组增/改/删 | `{ groups }` |
+
+- `GET /api/tasks` 的每个 task 额外带 `running: boolean`（来源为 server 实例的 `activeRuns`）：
+  刷新后**首屏**即可渲染「运行中」；列表载荷只用于「置位」，清除运行态由权威信号负责
+  （避免「本地已发送、后端尚未注册 run」窗口内误灭转圈）。
+- 前端删除/移组后不再无条件全量重拉；仅在 WS 未连接（广播不可达）时兜底 `listTasks`。
+
+### 11.6 前端渲染：虚拟化 + 分页
+
+- `react-virtuoso`（`^4.18.16`）虚拟列表：无论会话多长，DOM 只挂载视口附近约 20 条消息。
+- `computeItemKey = message.id`（稳定 key）、`firstItemIndex` 随 prepend 递减（滚动锚定不跳动）。
+- `initialTopMostItemIndex` 配合「有数据才挂载列表」+ 首屏一次性定位，保证任何路径打开会话都落在最新消息。
+- `startReached` 触发加载更早一页时**校验 scrollTop**：Virtuoso 在 prepend 后可能重复触发，
+  不校验会在用户停留顶部时把整段历史级联加载（分页失效）。

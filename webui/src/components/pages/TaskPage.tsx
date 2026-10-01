@@ -39,6 +39,7 @@ import {
 } from '@/components/ui/dialog';
 import { resolveToolIcon } from '@/lib/tool-icons';
 import { FilePreviewPane, fileNameOf, MarkdownRenderer } from '../../render';
+import { subscribeDrained } from '../../render/core/hydration-scheduler';
 import type { OverlayType } from '../../types';
 import { cn } from '@/lib/utils';
 import { parseAttachmentBlock, stripAttachmentBlock } from '@/lib/attachment-block';
@@ -79,7 +80,9 @@ import { stripMentionTokens } from '../shared/mention-data';
 import { MessageAttachmentCards } from '../shared/AttachmentCards';
 import { FileTypeIcon } from '../shared/FileTypeIcon';
 import { ScrollToBottomButton } from '../shared/ScrollToBottomButton';
-import { useAutoScroll } from '../../hooks/useAutoScroll';
+import { ConnectionStatusTag } from '../shared/ConnectionStatusTag';
+import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
+import { useSessionHistory } from '../../hooks/useSessionHistory';
 import { TodoProgressCard, TodoRow } from '../shared/TodoProgressCard';
 import { AskPromptCard } from '../shared/AskPromptCard';
 import { ConfirmPromptCard } from '../shared/ConfirmPromptCard';
@@ -95,7 +98,6 @@ import { useStore } from '../../store';
 import { useTask } from '../../hooks/useTask';
 import { useFileIndex } from '../../hooks/useFileIndex';
 import { api } from '../../api/http';
-import { wsClient } from '../../api/ws';
 import type { TaskMessage, TodoItem, SidebarTab, CompactPreview, ContextStats } from '../../types/api';
 
 // 稳定引用的空数组，避免 useStore 选择器每次返回新 [] 触发 useSyncExternalStore 无限循环
@@ -138,6 +140,9 @@ const EMPTY_QUEUE: Array<{
 
 // 单条消息正文渲染上限：超长内容（如 base64/大文件摘录）截断渲染，防止一次性布局卡死滚动
 const MAX_RENDER_CHARS = 6000;
+
+/** 「新到达消息淡入」集合上限：避免长会话无限增长（仅影响动画范围，不影响数据） */
+const FRESH_ANIM_LIMIT = 50;
 
 // 用户消息附件：优先用后端结构化字段 message.attachments；老会话无该字段时回退
 // lib/attachment-block 的 parseAttachmentBlock（同时覆盖「只发附件不打字 → 块在消息开头」）。
@@ -346,9 +351,11 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
   // ===== 消息撤回（截断）状态机 =====
   /** 待确认的撤回目标（用户消息） */
   const [truncateTarget, setTruncateTarget] = useState<TaskMessage | null>(null);
-  // ===== 滚动控制 =====
-  /** 滚动容器 ref（.task-scroll-area）；跟随状态机见 useAutoScroll */
-  const scrollRef = useRef<HTMLDivElement>(null);
+  // ===== 滚动控制（Virtuoso 接管：followOutput 仅在「已在底部」时跟随）=====
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const [atBottom, setAtBottom] = useState(true);
+  /** 跟随态快照（供发送时读取最新值，不触发重渲染） */
+  const atBottomRef = useRef(true);
   /** 预览加载中 */
   const [truncateLoading, setTruncateLoading] = useState(false);
   /** 预览结果 */
@@ -417,113 +424,118 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
     };
   }, [taskId, task]);
 
-  // 挂载/切换会话时加载历史 + todos + context。
-  // 历史总是拉取（切回旧会话时同步后台新产生的消息）；仅当非流式生成中才整体替换，
-  // 防止覆盖流式 UI 状态。store 已有消息时先显示旧值，拉到后替换，无闪烁。
+  // 卸载时清理 todo 自动折叠定时器 + 防状态污染（不清 pendingAssistant：
+// 同会话重新挂载后仍需靠它继续接流）
   useEffect(() => {
-    if (!taskId) return; // 空 taskId 守卫：避免污染 store 的 activeSessionId/activeTaskId
-    // 滚动状态重置由 useAutoScroll 的 resetKey(taskId) 驱动
-    void api
-      .getSessionHistory(taskId)
-      .then((resp) => {
-        if (resp.messages && resp.messages.length > 0) {
-          if (!useStore.getState().generatingBySession[taskId]) {
-            useStore.getState().setMessages(taskId, resp.messages);
-          }
-        }
-        // 刷新后恢复会话级权限模式（PermissionModeSelector 徽章回显）
-        if (resp.permissionMode) {
-          useStore.getState().setPermissionMode(resp.permissionMode, taskId);
-        }
-        // 刷新后恢复最近一次 run 统计（中控岛指标栏）
-        useStore.getState().setRunStats(taskId, resp.lastRunStats);
-      })
-      .catch(() => {
-        // 后端未就绪或会话不存在，静默
-      });
-    // 加载 todos（刷新后侧边栏 todo 卡片恢复）
-    void api
-      .listTodos(taskId)
-      .then((resp) => {
-        if (resp.todos) {
-          useStore.getState().setTodos(taskId, resp.todos);
-        }
-      })
-      .catch(() => {});
-    // 加载上下文文件轨迹（刷新后右侧面板恢复）
-    void api
-      .getSessionContext(taskId)
-      .then((ctx) => {
-        useStore.getState().setContext(taskId, {
-          files: ctx.files,
-          totalTokens: ctx.totalTokens,
-          maxTokens: ctx.maxTokens,
-        });
-      })
-      .catch(() => {});
-    // 加载上下文引擎统计（token 构成/缓存命中/系统分段；右侧面板 + 后续 WS 增量更新）
-    void api
-      .getContextStats(taskId)
-      .then((stats) => {
-        useStore.getState().setContextStats(taskId, stats);
-      })
-      .catch(() => {
-        // 后端无 context 引擎或会话不存在：静默（Context Section 降级为文件列表）
-      });
-    // 加载压缩历史并恢复压缩卡片（刷新后消息流中的压缩卡片重现）
-    void api
-      .getCompactions(taskId)
-      .then(({ compactions }) => {
-        if (!Array.isArray(compactions) || compactions.length === 0) return;
-        const s = useStore.getState();
-        const existing = s.messagesBySession[taskId] ?? [];
-        const existingIds = new Set(existing.map((m) => m.id));
-        const cards: TaskMessage[] = compactions
-          .filter((c) => !existingIds.has(`compaction_${c.id}`))
-          .map((c) => ({
-            id: `compaction_${c.id}`,
-            role: 'assistant' as const,
-            content: c.summary,
-            timestamp: c.at,
-            compaction: c,
-          }));
-        if (cards.length > 0) {
-          // 按 timestamp 排序合并（卡片插入消息流的时间序列位置）
-          const merged = [...existing, ...cards].sort(
-            (a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp),
-          );
-          s.setMessages(taskId, merged);
-        }
-      })
-      .catch(() => {});
-    // 设置当前活跃 session
-    useStore.getState().setActiveSession(taskId);
-    useStore.getState().setActiveTaskId(taskId);
-    // 同步后端 ConnectionState，确保异步事件推送到正确连接
-    // （subscribeSession 会记住订阅关系：WS 断线重连后自动重订阅，防止事件丢失）
-    wsClient.subscribeSession(taskId);
-
     return () => {
-      // 卸载时若 activeSessionId 仍指向自己，清除之，防止 useWebSocket 误用旧 session。
-      // 注意：不停止后端 agent.run（任务可在后台继续），仅防状态污染。
-      clearTodoCollapseTimer(); // 清理待执行的 todo 自动折叠定时器
-      const cur = useStore.getState().activeSessionId;
-      if (cur === taskId) {
-        useStore.getState().setActiveSession(null);
-      }
+      clearTodoCollapseTimer();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [taskId]);
+  }, [clearTodoCollapseTimer]);
 
-  // ===== 自动滚动（状态机 hook）=====
-  // 发送后仅跟随态自动滚底（看历史时不拉回）；流式期间用户上滑（wheel/触摸/拖滚动条）
-  // 即时脱离跟随、绝不被拉回；滚回底部附近自动恢复跟随；切会话由 resetKey 重置并强滚底。
-  const lastMessage = messages[messages.length - 1];
-  const lastContentLength = lastMessage?.content.length ?? 0;
-  const { atBottom, isPinned, scrollToBottom } = useAutoScroll(scrollRef, {
-    resetKey: taskId,
-    scrollDeps: [messages.length, lastContentLength, isGenerating],
-  });
+  // ===== 会话编排（订阅 + 状态快照 + 分页 + 断线对齐 + 半截流式续接）=====
+  // 历史加载 / todos / 上下文 / 统计 / 压缩卡片 / 半截草稿恢复全部收敛在 hook 内，
+  // 组件只消费结果（分页游标、加载态、上滑加载更早）。
+  const {
+    loadOlder,
+    firstItemIndex,
+    hasMoreBefore,
+    loadingBefore,
+    loaded: historyLoaded,
+    reload: reloadHistory,
+  } = useSessionHistory(taskId);
+
+  // ===== 自动滚动（Virtuoso 接管）=====
+  // followOutput 仅在「已在底部」时跟随 → 用户上滑查看历史时绝不被拉回；
+  // atBottomStateChange 同步按钮显隐；scrollToBottom 走 Virtuoso 的 scrollToIndex(LAST)。
+  const scrollToBottom = useCallback((behavior: 'auto' | 'smooth' = 'smooth') => {
+    virtuosoRef.current?.scrollToIndex({ index: 'LAST', align: 'end', behavior });
+  }, []);
+  const handleAtBottomChange = useCallback((v: boolean) => {
+    atBottomRef.current = v;
+    setAtBottom(v);
+  }, []);
+
+  /** 滚动容器 DOM（用于判定「是否真的在顶部」，见 handleStartReached） */
+  const scrollerElRef = useRef<HTMLDivElement | null>(null);
+
+  /**
+   * 上滑到顶 → 加载更早的一页。
+   * 必须校验「当前是否真的在顶部」：Virtuoso 在 prepend 后仍可能再次触发 startReached，
+   * 不校验会把整段历史在用户停留顶部时级联全部加载（分页的意义被抵消）。
+   */
+  const handleStartReached = useCallback(() => {
+    const el = scrollerElRef.current;
+    if (el && el.scrollTop > 120) return;
+    loadOlder();
+  }, [loadOlder]);
+
+  /**
+   * 「缓缓出现」：仅对**运行时新到达**的消息播放淡入（纯 opacity，无 transform/slide）。
+   * - 首屏历史与上滑加载更早的一页都不入集合：打开会话是「秒开」而不是「一条条挤出来」；
+   * - 集合按 FIFO 限长，随卷动重挂载而重播动画的范围因此有界。
+   */
+  const knownIdsRef = useRef<Set<string>>(new Set());
+  const freshIdsRef = useRef<Set<string>>(new Set());
+  const freshPrimedRef = useRef<string | null>(null);
+  /** 新消息登记后触发一次重渲染，让动画类在本帧生效 */
+  const [, bumpFreshSeq] = useState(0);
+  useEffect(() => {
+    // 首屏数据未就绪时不登记基线（否则首屏那一批会被误判为「新到达」而全部播放动画）
+    if (!historyLoaded) return;
+    if (freshPrimedRef.current !== taskId) {
+      freshPrimedRef.current = taskId;
+      knownIdsRef.current = new Set(messages.map((m) => m.id));
+      freshIdsRef.current = new Set();
+      return;
+    }
+    const fresh = freshIdsRef.current;
+    let added = false;
+    for (const m of messages) {
+      if (knownIdsRef.current.has(m.id)) continue;
+      knownIdsRef.current.add(m.id);
+      fresh.add(m.id);
+      added = true;
+    }
+    if (!added) return;
+    if (fresh.size > FRESH_ANIM_LIMIT) {
+      freshIdsRef.current = new Set(Array.from(fresh).slice(-FRESH_ANIM_LIMIT));
+    }
+    bumpFreshSeq((v) => v + 1);
+  }, [messages, taskId, historyLoaded]);
+
+  /**
+   * 首屏 / 切回会话：末页到达后强制定位到最新消息（每会话一次）。
+   * 为什么需要：Virtuoso 的 initialTopMostItemIndex 只在「首次带数据的渲染」生效，
+   * 而切回会话时列表可能先用 store 里的旧缓存渲染、随后被末页替换；
+   * 显式定位一次可保证任何路径下「打开会话即看到最新消息」。
+   */
+  const tailAnchoredRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!taskId || messages.length === 0) return;
+    const meta = useStore.getState().historyMetaBySession[taskId];
+    if (!meta?.loaded) return;
+    if (tailAnchoredRef.current === taskId) return;
+    tailAnchoredRef.current = taskId;
+    requestAnimationFrame(() => {
+      virtuosoRef.current?.scrollToIndex({ index: 'LAST', align: 'end', behavior: 'auto' });
+      atBottomRef.current = true;
+      setAtBottom(true);
+    });
+  }, [taskId, messages.length]);
+
+  /**
+   * 渐进水合回锚：一批延迟渲染的块（hydration-scheduler）升级完成后，若视口仍在底部
+   * 则回锚最新消息一次——上方内容水合后高度变化会把底部顶出视口，这里拉回。
+   * rAF 再延迟一帧：等水合引发的重渲染/重排实际提交后再定位。
+   */
+  useEffect(() => {
+    return subscribeDrained(() => {
+      if (!atBottomRef.current) return;
+      requestAnimationFrame(() => {
+        virtuosoRef.current?.scrollToIndex({ index: 'LAST', align: 'end', behavior: 'auto' });
+      });
+    });
+  }, []);
 
   const contextFiles = context?.files ?? [];
   const totalTokens = context?.totalTokens ?? 0;
@@ -559,9 +571,8 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
   // 空状态：发送消息后创建任务并跳转；任务态：直接发送到当前 session
   const handleSend = useCallback(
     async (text: string, attachments?: string[]) => {
-      // 仅跟随态才自动滚底：用户上滑看历史时发送消息，视图停留在原位不被拉回底部；
-      // 已脱离跟随时 scrollDeps effect 同样不滚底（pinnedRef=false），后续消息追加自然不打扰
-      if (isPinned()) scrollToBottom('auto');
+      // 仅跟随态才自动滚底：用户上滑看历史时发送消息，视图停留在原位不被拉回底部
+      if (atBottomRef.current) scrollToBottom('auto');
       if (taskId) {
         sendMessage(text, { taskId, attachments });
       } else {
@@ -573,7 +584,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
         }
       }
     },
-    [taskId, sendMessage, navigate, isPinned, scrollToBottom],
+    [taskId, sendMessage, navigate, scrollToBottom],
   );
 
   // ===== 消息撤回流程 =====
@@ -616,13 +627,10 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
             try {
               const restoreResp = await api.restoreTruncate(taskId);
               // 防御性刷新：WS 断线重连期间 session-restored 事件可能丢失，
-              // 恢复成功后直接拉取历史刷新 UI（WS 正常时两者幂等一致）
+              // 恢复成功后直接按末页整体重载（WS 正常时两者幂等一致）
               if (restoreResp.restoredCount > 0) {
                 useStore.getState().setTruncateBackup(taskId, undefined);
-                const hist = await api.getSessionHistory(taskId);
-                if (hist.messages && hist.messages.length > 0 && !useStore.getState().generatingBySession[taskId]) {
-                  useStore.getState().setMessages(taskId, hist.messages);
-                }
+                await reloadHistory();
               }
             } catch {
               toast.error(t('task.truncateRestoreFailed'));
@@ -638,7 +646,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
       setTruncateTarget(null);
       setTruncatePreview(null);
     }
-  }, [taskId, truncateTarget, t]);
+  }, [taskId, truncateTarget, t, reloadHistory]);
 
   /** 复制消息文本 */
   const handleCopyMessage = useCallback((content: string) => {
@@ -986,20 +994,57 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
         {/* 文件索引构建进度（构建期间显示，全就绪时隐藏） */}
         <FileIndexProgressBar />
 
-        {/* Task Messages（relative wrapper：返回底部按钮悬浮于滚动区上方、不随内容滚动） */}
+        {/* Task Messages（Virtuoso 虚拟列表：无论会话多长，DOM 中只挂载视口附近的消息；
+            relative wrapper 让「返回底部」按钮悬浮于滚动区上方、不随内容滚动） */}
         <div className="relative min-h-0 flex-1">
-          <div ref={scrollRef} className="h-full overflow-y-auto task-scroll-area">
-            <div className="flex min-h-full flex-col gap-4 p-4">
-              {messages.length === 0 && !isGenerating && (
-                <div className="flex flex-1 flex-col items-center justify-center gap-3">
-                  <img src="/MOSS.png" alt="MOSS" className="size-18 object-cover" />
-                  <p className="text-xl font-semibold text-muted-foreground">
-                    {t(getGreetingKey())}{t('task.greeting.prompt')}
-                  </p>
+          {messages.length === 0 ? (
+            /* 空态：直接给欢迎页（不再用 loading 门控 + 骨架层）。
+               空白页、空会话、历史请求失败、会话已删 —— 一律立即呈现欢迎页；
+               运行中但尚未落盘半截消息时补一行「响应中…」，不做假等待。 */
+            <div className="anim-msg animate-in fade-in duration-200 flex h-full flex-col items-center justify-center gap-3">
+              <img src="/MOSS.png" alt="MOSS" className="size-18 object-cover" />
+              <p className="text-xl font-semibold text-muted-foreground">
+                {t(getGreetingKey())}{t('task.greeting.prompt')}
+              </p>
+              {isGenerating && (
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <Loader2 className="size-4 animate-spin" />
+                  <span className="text-sm">{t('task.thinking')}</span>
                 </div>
               )}
-              {messages.map((msg) => (
-                <div className="message-cv anim-msg animate-in fade-in slide-in-from-bottom-2 duration-200" key={msg.id}>
+            </div>
+          ) : (
+            /* 仅在已有消息时才挂载 Virtuoso：initialTopMostItemIndex=LAST 只在「首次带数据的渲染」
+               生效 —— 数据为空时先挂载会让列表停在顶部（切回会话/刷新后不显示最新消息）。
+               容器整体淡入一次（纯 opacity，不涉及 transform，与虚拟定位兼容）。 */
+            <div className="anim-msg animate-in fade-in duration-200 h-full">
+            <Virtuoso
+              ref={virtuosoRef}
+              className="h-full task-scroll-area"
+              data={messages}
+              // 稳定 key：分页 prepend 后同一消息的 key 不变（不会整列表重挂载）
+              computeItemKey={(_, m) => m.id}
+              // 上滑 prepend 时递减：Virtuoso 据此把视口锚定在原消息上（滚动不跳动）
+              firstItemIndex={firstItemIndex}
+              // 滚动容器句柄：startReached 需据 scrollTop 判定「是否真的在顶部」
+              scrollerRef={(el) => {
+                scrollerElRef.current = (el as HTMLDivElement | null) ?? null;
+              }}
+              startReached={handleStartReached}
+              initialTopMostItemIndex={{ index: 'LAST', align: 'end' }}
+              // 仅在「已在底部」时跟随追加：用户上滑看历史时绝不打扰
+              followOutput="auto"
+              atBottomThreshold={100}
+              atBottomStateChange={handleAtBottomChange}
+              increaseViewportBy={{ top: 600, bottom: 600 }}
+              itemContent={(_, msg) => (
+                <div
+                  className={cn(
+                    'px-4 pb-4',
+                    // 仅运行时新到达的消息淡入（纯 opacity）；首屏/上滑加载的历史不播放
+                    freshIdsRef.current.has(msg.id) && 'anim-msg animate-in fade-in duration-200',
+                  )}
+                >
                   <MessageBubble
                     message={msg}
                     todos={todos}
@@ -1012,17 +1057,36 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
                     onOpenAttachment={openAttachment}
                   />
                 </div>
-              ))}
-              {isGenerating && messages[messages.length - 1]?.role !== 'assistant' && (
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  <Loader2 className="size-4 animate-spin" />
-                  <span className="text-sm">{t('task.thinking')}</span>
-                </div>
               )}
-              {/* ask/confirm 卡片已迁移至任务输入框上方的中控岛（ControlHub 权限模块） */}
+              components={{
+                // 列表头：加载更早的指示（已到最早时不再显示任何提示）
+                Header: () =>
+                  messages.length === 0 ? null : (
+                    <div className="flex items-center justify-center py-2 text-xs text-muted-foreground">
+                      {loadingBefore ? (
+                        <span className="flex items-center gap-1.5">
+                          <Loader2 className="size-3.5 animate-spin" />
+                          {t('task.loadingEarlier')}
+                        </span>
+                      ) : hasMoreBefore ? (
+                        <span>{t('task.scrollUpForEarlier')}</span>
+                      ) : null}
+                    </div>
+                  ),
+                Footer: () =>
+                  isGenerating && messages[messages.length - 1]?.role !== 'assistant' ? (
+                    <div className="flex items-center gap-2 px-4 pb-4 text-muted-foreground">
+                      <Loader2 className="size-4 animate-spin" />
+                      <span className="text-sm">{t('task.thinking')}</span>
+                    </div>
+                  ) : (
+                    <div className="h-2" />
+                  ),
+              }}
+            />
             </div>
-          </div>
-          {/* 返回底部按钮：不在底部时显示；流式生成中显示顺时针跑马灯；点击滚底并恢复跟随 */}
+          )}
+          {/* 返回底部按钮：不在底部时显示；流式生成中显示顺时针跑马灯 */}
           <ScrollToBottomButton
             visible={!atBottom}
             streaming={isGenerating}
@@ -1203,9 +1267,11 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
           </DialogContent>
         </Dialog>
 
-        {/* 通用中控岛：独立于发送框的平级组件（todo / ask / 权限确认），默认折叠 */}
+        {/* 通用中控岛：独立于发送框的平级组件（todo / ask / 权限确认），默认折叠。
+            连接状态胶囊置于 chips 行最左（「空闲/运行中」状态的右边，替代原常驻状态条） */}
         <div className="shrink-0 px-3">
           <ControlHub
+            leading={<ConnectionStatusTag sessionId={taskId} />}
             status={
               isGenerating ? (
                 <>
@@ -1724,6 +1790,13 @@ const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap,
   // assistant 消息
   return (
     <div className="flex flex-col gap-2">
+      {/* 上次进程中断遗留的未完成回复：明确标注（避免被误认为完整回答） */}
+      {message.interrupted && (
+        <div className="flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400">
+          <CircleAlert className="size-3.5 shrink-0" />
+          <span>{t('task.interruptedReply')}</span>
+        </div>
+      )}
       {/* thinking 折叠区 */}
       {message.thinking && (
         <details className="group">
@@ -1737,7 +1810,12 @@ const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap,
             <span>{message.thinkingStreaming ? t('task.thinkingStreaming') : t('task.thinkingDone')}</span>
           </summary>
           <div className="mt-1">
-            <MarkdownRenderer text={message.thinking} streaming={!!message.thinkingStreaming} variant="compact" />
+            <MarkdownRenderer
+              text={message.thinking}
+              streaming={!!message.thinkingStreaming}
+              variant="compact"
+              defer={!message.thinkingStreaming}
+            />
           </div>
         </details>
       )}
@@ -1748,6 +1826,7 @@ const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap,
           <MarkdownRenderer
             text={displayContent}
             streaming={!!message.streaming}
+            defer={!message.streaming}
             cursor={message.streaming ? <Loader2 className="ml-1 inline size-3 animate-spin" /> : undefined}
           />
         </div>

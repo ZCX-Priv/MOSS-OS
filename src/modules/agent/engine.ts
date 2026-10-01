@@ -8,6 +8,8 @@ import { isAbsolute, resolve as resolvePath } from 'node:path';
 import { buildTools } from './context';
 import { SessionStore, type ContextFile, type Session, type ActiveSkill } from './session';
 import { TaskStore, type TaskItem, type TaskGroup } from './task-store';
+import { LiveDraftStore, type LiveDraft } from './live-draft';
+import { computeHistorySlice, describeSlice } from './history-page';
 import { LLMError, type UnifiedRequest, type UnifiedMessage } from '../llm/types';
 import type {
   AgentMessage,
@@ -80,6 +82,8 @@ function fileExistsAsFile(p: string, base: string): boolean {
 export class AgentEngineImpl implements AgentEngine {
   private readonly sessions: SessionStore;
   private readonly tasks: TaskStore;
+  /** 流式草稿（刷新/重连后恢复半截回复 + offset 续接的持久化载体） */
+  private readonly liveDraft: LiveDraftStore;
   private readonly services: ServiceRegistry;
   private readonly config: ConfigService;
   private readonly eventBus: EventBus;
@@ -125,6 +129,7 @@ export class AgentEngineImpl implements AgentEngine {
     this.sessions = new SessionStore(deps.env, deps.logger, {
       resolveSessionDir: (sid) => this.tasks.getDirOf(sid),
     });
+    this.liveDraft = new LiveDraftStore(deps.env, deps.logger);
 
     // 订阅 filesys 变更事件总线：file-created/edited/deleted/moved/shell-changed 统一转 WS，
     // delete/move/copy 的路径进 contextFiles（修复旧版无任何通知的割裂）。
@@ -220,6 +225,89 @@ export class AgentEngineImpl implements AgentEngine {
 
     this.logger.info(t('agent.runStart'), { sessionId, model });
 
+    /**
+     * 事件出口包装（offset 续传协议 + 流式草稿维护的唯一入口）：
+     * - assistant-text / assistant-thinking / tool-call-delta 附加 messageId + offset/total，
+     *   并把内容原地写入草稿（由 LiveDraftStore 节流落盘）→ 刷新/重连后可精确续接。
+     * - 工具生命周期事件（start/executing/end）同步草稿中的工具卡片状态，强制落盘。
+     * - 其余事件原样透传。
+     */
+    const emit = (event: AgentEvent): void => {
+      switch (event.type) {
+        case 'assistant-text': {
+          const d = this.liveDraft.get(event.sessionId);
+          const offset = d ? d.contentLength : 0;
+          onEvent({
+            type: 'assistant-text',
+            sessionId: event.sessionId,
+            text: event.text,
+            ...(event.runId ? { runId: event.runId } : {}),
+            ...(d ? { messageId: d.messageId } : {}),
+            offset,
+            total: offset + event.text.length,
+          });
+          this.liveDraft.appendContent(event.sessionId, event.text);
+          return;
+        }
+        case 'assistant-thinking': {
+          const d = this.liveDraft.get(event.sessionId);
+          const offset = d ? d.thinkingLength : 0;
+          onEvent({
+            type: 'assistant-thinking',
+            sessionId: event.sessionId,
+            text: event.text,
+            ...(event.runId ? { runId: event.runId } : {}),
+            ...(d ? { messageId: d.messageId } : {}),
+            offset,
+            total: offset + event.text.length,
+          });
+          this.liveDraft.appendThinking(event.sessionId, event.text);
+          return;
+        }
+        case 'tool-call-delta': {
+          const d = this.liveDraft.get(event.sessionId);
+          const offset = d?.toolCalls.find((tc) => tc.id === event.toolCallId)?.arguments.length ?? 0;
+          onEvent({
+            type: 'tool-call-delta',
+            sessionId: event.sessionId,
+            toolCallId: event.toolCallId,
+            argumentsDelta: event.argumentsDelta,
+            ...(event.runId ? { runId: event.runId } : {}),
+            ...(d ? { messageId: d.messageId } : {}),
+            offset,
+            total: offset + event.argumentsDelta.length,
+          });
+          this.liveDraft.appendToolArguments(event.sessionId, event.toolCallId, event.argumentsDelta);
+          return;
+        }
+        case 'tool-call-start': {
+          const d = this.liveDraft.get(event.sessionId);
+          this.liveDraft.upsertToolCall(event.sessionId, {
+            id: event.toolCallId,
+            name: event.toolName,
+            arguments: '',
+            status: 'generating',
+          });
+          onEvent({ ...event, ...(d ? { messageId: d.messageId } : {}) });
+          return;
+        }
+        case 'tool-call-executing': {
+          const d = this.liveDraft.get(event.sessionId);
+          this.liveDraft.setToolCallStatus(event.sessionId, event.toolCallId, 'executing');
+          onEvent({ ...event, ...(d ? { messageId: d.messageId } : {}) });
+          return;
+        }
+        case 'tool-call-end': {
+          const d = this.liveDraft.get(event.sessionId);
+          this.liveDraft.setToolCallStatus(event.sessionId, event.toolCallId, 'done');
+          onEvent({ ...event, ...(d ? { messageId: d.messageId } : {}) });
+          return;
+        }
+        default:
+          onEvent(event);
+      }
+    };
+
     // 解析依赖服务
     const llm = this.services.tryResolve<LLMRouter>(ServiceNames.LLM_ROUTER);
     if (!llm) {
@@ -276,7 +364,8 @@ export class AgentEngineImpl implements AgentEngine {
     const apiCfg = this.config.getApiConfig();
     const modelDisplayName = resolveModelDisplayName(apiCfg, model);
     const session = this.sessions.getOrCreate(sessionId);
-    this.sessions.addUserMessage(session, userMessage, input.attachments);
+    // clientMessageId 随消息持久化：前端本地乐观副本与历史副本据此同身份去重
+    this.sessions.addUserMessage(session, userMessage, input.attachments, input.clientMessageId);
     // 记录本次 run 的工作目录（上下文文件相对路径的存在性校验/归一化匹配基准）
     this.sessions.setLastCwd(session, cwd);
     // 活跃置顶：task.id 即 sessionId；无对应任务时静默返回 null
@@ -339,6 +428,10 @@ export class AgentEngineImpl implements AgentEngine {
         break;
       }
       turn++;
+
+      // 逐轮重建流式草稿：messageId 逐轮唯一（`<sessionId>#<turn>`），
+      // 每个 messageId 拥有独立 offset 空间 —— 前端据此判定「是否同一轮」并精确续接。
+      this.liveDraft.begin(sessionId, `${sessionId}#${turn}`, input.runId, turn);
 
       // 构建请求：context 引擎每轮流水线（env 保障 → 压缩决策 → 缓存对齐视图）
       // 服务不可用/异常时降级为纯函数 fallback（静态提示 + 视图构建，无压缩）
@@ -405,11 +498,11 @@ export class AgentEngineImpl implements AgentEngine {
           switch (delta.type) {
             case 'text':
               assistantText += delta.text;
-              onEvent({ type: 'assistant-text', sessionId, text: delta.text });
+              emit({ type: 'assistant-text', sessionId, text: delta.text });
               break;
             case 'thinking':
               assistantThinking += delta.text;
-              onEvent({ type: 'assistant-thinking', sessionId, text: delta.text });
+              emit({ type: 'assistant-thinking', sessionId, text: delta.text });
               break;
             case 'tool_call': {
               const wasNew = !toolCallAccumulators.has(delta.index);
@@ -425,7 +518,7 @@ export class AgentEngineImpl implements AgentEngine {
 
               // 首次收到该 index：推送 tool-call-start（LLM 开始生成工具调用）
               if (wasNew) {
-                onEvent({
+                emit({
                   type: 'tool-call-start',
                   sessionId,
                   toolName: existing.name,
@@ -435,7 +528,7 @@ export class AgentEngineImpl implements AgentEngine {
               }
               // 参数增量推送（toolCallId 已确定后才有意义）
               if (delta.argumentsDelta && existing.id) {
-                onEvent({
+                emit({
                   type: 'tool-call-delta',
                   sessionId,
                   toolCallId: existing.id,
@@ -562,7 +655,8 @@ export class AgentEngineImpl implements AgentEngine {
             sessionId,
             cwd,
             toolCallId: tc.id,
-            onEvent,
+            // 统一走 emit：工具生命周期事件同步草稿状态（刷新后工具卡片状态保真）
+            onEvent: emit,
             signal,
             permissionMode,
           });
@@ -605,6 +699,8 @@ export class AgentEngineImpl implements AgentEngine {
         }
         contextEngine?.markIdle(sessionId);
         this.cleanupPendingAsks();
+        // 本轮流式草稿作废：最终消息已由 addAssistantMessage 落盘
+        this.liveDraft.clear(sessionId);
         return {
           sessionId,
           finishReason: 'aborted',
@@ -675,6 +771,10 @@ export class AgentEngineImpl implements AgentEngine {
       }
     }
 
+    // 流式草稿作废：最终 assistant 消息已随各轮 addAssistantMessage 落盘，
+    // 草稿只承载「进行中」的中间态（清掉后前端经 after 增量补齐正式消息）
+    this.liveDraft.clear(sessionId);
+
     onEvent({ type: 'done', sessionId, finishReason });
 
     // 兜底清理未完成的 ask（正常流程下应已被 resolve/reject）
@@ -705,6 +805,34 @@ export class AgentEngineImpl implements AgentEngine {
   /** 获取会话历史（不含已撤回的软删除消息） */
   getHistory(sessionId: string): AgentMessage[] {
     return (this.sessions.get(sessionId)?.messages ?? []).filter(m => !m.deletedAt);
+  }
+
+  /**
+   * 会话历史分页视图：游标 = 「过滤软删除后的数组下标」。
+   * 会话消息只在尾部追加，截断/恢复也只影响尾部 —— 头部下标天然稳定，
+   * 因此 before/after 游标在分页、上滑加载、断线补齐下都不会错位。
+   * 每条消息附带绝对 index，供前端生成稳定 id（分页后不漂移）。
+   */
+  getHistoryPage(
+    sessionId: string,
+    opts?: { limit?: number; before?: number; after?: number },
+  ): {
+    messages: Array<AgentMessage & { index: number }>;
+    total: number;
+    oldestIndex: number;
+    newestIndex: number;
+    hasMoreBefore: boolean;
+  } {
+    const all = this.getHistory(sessionId);
+    const total = all.length;
+    const { start, end } = computeHistorySlice(total, opts);
+    const messages = all.slice(start, end).map((m, i) => ({ ...m, index: start + i }));
+    return { messages, total, ...describeSlice(total, { start, end }) };
+  }
+
+  /** 进行中的流式草稿（刷新/重连后恢复半截回复；进程重启残留附 stale 标记） */
+  getLiveDraft(sessionId: string): LiveDraft | null {
+    return this.liveDraft.snapshot(sessionId);
   }
 
   /** 获取会话权限模式（供 GET /api/session/:id 与 /api/tasks/:id 刷新恢复前端徽章） */

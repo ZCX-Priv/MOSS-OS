@@ -64,12 +64,10 @@ export function useTasks() {
       const sourceGroupId = useStore.getState().tasks.find((t) => t.id === id)?.groupId;
       const task = await api.updateTask(id, patch);
       useStore.getState().updateTask(id, task);
-      // 拖拽移组后，源组若为空文件夹分组则后端已自动销毁，刷新列表保持一致
+      // 移组后源组可能作为空文件夹分组被后端销毁：后端已广播最新分组列表，
+      // 广播不可用（WS 未连接）时才兜底重拉
       if (patch.groupId !== undefined && sourceGroupId && sourceGroupId !== task.groupId) {
-        const state = useStore.getState();
-        const sourceEmpty = state.tasks.every((t) => t.groupId !== sourceGroupId);
-        const sourceIsFolder = state.taskGroups.find((g) => g.id === sourceGroupId)?.source === 'folder';
-        if (sourceEmpty && sourceIsFolder) await load();
+        if (useStore.getState().wsStatus !== 'open') await load();
       }
       return task;
     } catch (err) {
@@ -82,8 +80,9 @@ export function useTasks() {
     try {
       await api.deleteTask(id);
       useStore.getState().removeTask(id);
-      // 删除后源组若为空文件夹分组则后端已自动销毁，刷新列表保持一致
-      await load();
+      // 后端已广播 task.deleted + task-groups.changed（含空分组自动销毁）→ 无需重拉；
+      // 仅在广播不可用（WS 未连接）时兜底刷新，避免列表与后端漂移
+      if (useStore.getState().wsStatus !== 'open') await load();
     } catch (err) {
       console.warn('deleteTask failed:', err);
     }
@@ -128,8 +127,8 @@ export function useTasks() {
     try {
       await api.deleteTaskGroup(id, moveTasksTo, deleteTasks);
       useStore.getState().removeTaskGroup(id);
-      // 重新加载以获取迁移/删除后的任务
-      await load();
+      // 组内任务可能被迁移/批量删除：后端已广播完整任务+分组快照；WS 不可用时兜底重拉
+      if (useStore.getState().wsStatus !== 'open') await load();
     } catch (err) {
       console.warn('deleteTaskGroup failed:', err);
     }

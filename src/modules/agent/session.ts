@@ -523,12 +523,22 @@ export class SessionStore {
     );
   }
 
-  /** 添加用户消息（attachments：附件绝对路径；为空/缺省时不写该字段，保持旧数据紧凑） */
-  addUserMessage(session: Session, content: string, attachments?: string[]): void {
+  /**
+   * 添加用户消息。
+   * @param attachments 附件绝对路径（为空/缺省时不写该字段，保持旧数据紧凑）
+   * @param clientMessageId 前端生成的消息 id（前端据此与本地乐观副本对齐去重；缺省不写）
+   */
+  addUserMessage(
+    session: Session,
+    content: string,
+    attachments?: string[],
+    clientMessageId?: string,
+  ): void {
     session.messages.push({
       role: 'user',
       content,
       ...(attachments && attachments.length > 0 ? { attachments } : {}),
+      ...(clientMessageId ? { clientMessageId } : {}),
       timestamp: new Date().toISOString(),
     });
     session.updatedAt = new Date().toISOString();

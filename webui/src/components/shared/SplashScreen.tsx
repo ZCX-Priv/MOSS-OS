@@ -82,8 +82,8 @@ export function SplashScreen() {
     // 挂载时信号可能已就绪（如 splash 晚于某个 hook 完成加载）
     checkState(useStore.getState());
     const unsubStore = useStore.subscribe(checkState);
-    const unsubWs = wsClient.onStatus((status) => {
-      if (status === 'open') bump(T_WS);
+    const unsubWs = wsClient.onStatus((info) => {
+      if (info.status === 'open') bump(T_WS);
     });
     // 兜底：后端未启动时强制放行，避免启动被阻塞
     const fallback = window.setTimeout(() => bump(T_READY), FALLBACK_MS);

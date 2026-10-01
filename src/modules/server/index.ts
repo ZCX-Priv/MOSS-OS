@@ -19,6 +19,7 @@ import {
   createListSessionsHandler,
   createDeleteSessionHandler,
   createSessionHistoryHandler,
+  createSessionStateHandler,
 } from './routes/session';
 import {
   createListMcpServersHandler,
@@ -170,6 +171,7 @@ import {
   createDistillMemoryHandler,
 } from './routes/memory';
 import { McpExpose } from '../mcp/expose';
+import type { AgentEvent } from '../contracts';
 
 interface BunServer {
   stop(closeActiveConnections?: boolean): void | Promise<void>;
@@ -225,8 +227,10 @@ class ServerModule implements Module {
       addRoute: (route: Route) => this.router.addRoute(route),
       broadcastWS: (msg: unknown) => this.wsHandler.broadcast(msg),
       sendToSession: (sid: string, msg: unknown) => this.wsHandler.sendToSession(sid, msg),
+      sendAgentEvent: (sid: string, event: AgentEvent) => this.wsHandler.sendAgentEvent(sid, event),
       registerExternalRun: (sid: string, c: AbortController) => this.wsHandler.registerExternalRun(sid, c),
       unregisterExternalRun: (sid: string, c: AbortController) => this.wsHandler.unregisterExternalRun(sid, c),
+      isSessionRunning: (sid: string) => this.wsHandler.isSessionRunning(sid),
       onWSMessage: (h: WSMessageHandler) => this.wsHandler.onWSMessage(h),
       setRequestGuard: (guard: RequestGuard) => { this.guard = guard; },
       rebind: (hostname: string) => this.rebind(hostname),
@@ -304,6 +308,8 @@ class ServerModule implements Module {
     this.router.addRoute({ method: 'GET', pattern: '/api/session', handler: createListSessionsHandler(services), auth: true });
     this.router.addRoute({ method: 'DELETE', pattern: '/api/session/:id', handler: createDeleteSessionHandler(services), auth: true });
     this.router.addRoute({ method: 'GET', pattern: '/api/session/:id', handler: createSessionHistoryHandler(services), auth: true });
+    // 会话状态快照（运行态 + 流式草稿 + 待答/待确认）：刷新/重连后「不丢状态」的唯一入口
+    this.router.addRoute({ method: 'GET', pattern: '/api/session/:id/state', handler: createSessionStateHandler(services), auth: true });
     this.router.addRoute({ method: 'GET', pattern: '/api/sessions/:id/context', handler: createSessionContextHandler(services, config), auth: true });
 
     // 消息撤回（截断）：预览 + 执行 + 恢复（redo）

@@ -29,6 +29,17 @@ export const en = {
     connect: 'Connecting',
     ready: 'Almost ready',
   },
+  // Connection status tag (leftmost chip in the control hub row): connecting / connected / reconnecting / restored / restoring
+  conn: {
+    connecting: 'Connecting…',
+    connected: 'Connected',
+    reconnecting: 'Reconnecting (attempt {{count}})…',
+    disconnected: 'Disconnected',
+    disconnectedRetry: 'Disconnected — reconnecting (attempt {{count}}, retry in ~{{seconds}}s)',
+    restored: 'Connection restored',
+    restoringSession: 'Restoring session state…',
+    retryNow: 'Retry now',
+  },
   sidebar: {
     newTask: 'New Task',
     pluginLibrary: 'Plugins',
@@ -809,6 +820,11 @@ export const en = {
     },
     thinking: 'Thinking...',
     backToBottom: 'Back to bottom',
+    // History pagination (virtualized list, load earlier on scroll up)
+    loadingEarlier: 'Loading earlier messages…',
+    scrollUpForEarlier: 'Scroll up to load earlier messages',
+    // Interrupted reply left by a previous process (stale live draft)
+    interruptedReply: 'Interrupted reply (incomplete)',
     noTodos: 'No todos',
     noContextFiles: 'No context files',
     fileRemovedFromContext: 'File removed from context',

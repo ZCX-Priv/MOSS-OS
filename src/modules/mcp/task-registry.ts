@@ -23,6 +23,7 @@ import type {
   LLMRouter,
   RunStats,
 } from '../contracts';
+import type { TaskGroup, TaskItem } from '../agent/task-store';
 import type { PermissionMode } from '../safety/types';
 import { flattenModels } from '../../core/provider-utils';
 import { resolveSummaryModel } from '../context/compressor';
@@ -153,10 +154,21 @@ type EngineWithExtras = AgentEngine & {
   getHistory?: (sessionId: string) => AgentMessage[];
 };
 
-interface ExternalRunHost {
+/** Server 实例能力（task.created 广播 / agent 事件转发 / 外部 run 注册）；不可用时全部静默降级 */
+interface ServerHost {
+  broadcastWS(message: unknown): void;
+  sendToSession(sessionId: string, message: unknown): void;
+  sendAgentEvent(sessionId: string, event: AgentEvent): void;
   registerExternalRun(sessionId: string, controller: AbortController): void;
   unregisterExternalRun(sessionId: string, controller: AbortController): void;
 }
+
+/**
+ * 不向 session 订阅者转发的 agent 事件类型：ask / confirm-required 在外部派发中没有
+ * 确认通道，onEvent 内已同步自动拒绝/取消，转发只会让前端闪现一张已被解决的卡片；
+ * ask-timeout 同理（超时即终结，无人工介入窗口）。
+ */
+const NON_FORWARDABLE_EVENTS = new Set(['ask', 'ask-timeout', 'confirm-required']);
 
 /** cwd 越权/不可用：属于参数类错误，派发阶段直接拒绝（不建任务） */
 export class CwdRejectedError extends Error {
@@ -356,7 +368,17 @@ export class McpTaskRegistry {
       }
       taskId = requestedSession;
     } else {
-      taskId = this.createVisibleTask(engine, title, cwd);
+      const created = this.createVisibleTask(engine, title, cwd);
+      taskId = created.task.id;
+      // 真实时同步：新任务立即广播（WebUI 侧边栏零刷新出现新行；与 automation / POST /api/tasks 同口径）
+      try {
+        this.resolveServer()?.broadcastWS({
+          type: 'task.created',
+          payload: { task: created.task, ...(created.group ? { group: created.group } : {}) },
+        });
+      } catch {
+        // 广播通道不可用：静默（前端仍可通过刷新拿到列表）
+      }
     }
 
     const record: McpTaskRecord = {
@@ -389,14 +411,16 @@ export class McpTaskRegistry {
    * 与前端发消息（useTask.ensureTaskGroup）/ 自动化（AutomationModule.run）同一规则——
    * 取 cwd 目录名（__system__ → 本机/System）作为 folder 分组名，按名大小写不敏感复用已有分组，
    * 不存在则新建 source='folder' 的分组（空组由 task-store 自动销毁）。
-   * 刻意不建专门的 "MCP" 分类。
+   * 刻意不建专门的 "MCP" 分类。返回 task + group（供 task.created 广播携带分组）。
    */
-  private createVisibleTask(engine: AgentEngine, title: string, cwd: string): string {
-    return engine.createTask(title, this.resolveFolderGroupId(engine, cwd)).id;
+  private createVisibleTask(engine: AgentEngine, title: string, cwd: string): { task: TaskItem; group?: TaskGroup } {
+    const group = this.resolveFolderGroup(engine, cwd);
+    const task = engine.createTask(title, group?.id);
+    return { task, ...(group ? { group } : {}) };
   }
 
-  /** 目录名 → folder 分组 id（失败返回 undefined，任务落默认分组，不阻断派发） */
-  private resolveFolderGroupId(engine: AgentEngine, cwd: string): string | undefined {
+  /** 目录名 → folder 分组对象（失败返回 undefined，任务落默认分组，不阻断派发） */
+  private resolveFolderGroup(engine: AgentEngine, cwd: string): TaskGroup | undefined {
     try {
       const isSystem = cwd === SYSTEM_SCOPE;
       const groupName = isSystem
@@ -406,8 +430,8 @@ export class McpTaskRegistry {
       const found = engine.listTaskGroups().find(
         g => g.name.toLowerCase() === groupName.toLowerCase(),
       );
-      if (found) return found.id;
-      return engine.createTaskGroup(groupName, 'folder').id;
+      if (found) return found;
+      return engine.createTaskGroup(groupName, 'folder');
     } catch (err) {
       this.logger.warn('mcp: task group resolve failed (task falls back to default group)', {
         cwd,
@@ -419,7 +443,7 @@ export class McpTaskRegistry {
 
   /** 后台执行：run 的完整生命周期 + 兜底落定（异常绝不外泄到 HTTP 层） */
   private async execute(record: McpTaskRecord, engine: AgentEngine): Promise<void> {
-    const host = this.services.tryResolve<ExternalRunHost>(ServiceNames.SERVER_INSTANCE);
+    const host = this.resolveServer();
     try {
       host?.registerExternalRun(record.sessionId, record.controller);
     } catch {
@@ -439,7 +463,23 @@ export class McpTaskRegistry {
       this.settleFromResult(record, result);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      this.settle(record, record.controller.signal.aborted ? 'aborted' : 'error', { error: message });
+      const aborted = record.controller.signal.aborted;
+      this.settle(record, aborted ? 'aborted' : 'error', { error: message });
+      // 终态转发：保证已打开该会话页的订阅者能 settle（收尾流式态 + 尾部补齐）。
+      // 正常完成经 onEvent 的 done 转发；此处覆盖 run 抛异常（error）与被取消（aborted）。
+      try {
+        if (aborted) {
+          host?.sendToSession(record.sessionId, {
+            type: 'task.aborted',
+            sessionId: record.sessionId,
+            payload: {},
+          });
+        } else {
+          host?.sendAgentEvent(record.sessionId, { type: 'error', sessionId: record.sessionId, message });
+        }
+      } catch {
+        // 转发失败不影响落定
+      }
       this.logger.warn('mcp: dispatched task failed', { taskId: record.taskId, error: message });
     } finally {
       try {
@@ -456,6 +496,11 @@ export class McpTaskRegistry {
   /** AgentEvent → 轨迹/状态（纯内存、无 I/O；任何异常都被吞掉，绝不影响 run） */
   private onEvent(record: McpTaskRecord, engine: AgentEngine, event: AgentEvent): void {
     try {
+      // 真实时同步：事件转发到 session 订阅者（与 webui task.stream 同构，高频类型由
+      // WsHandler 合帧）。已打开该任务页的客户端实时看到流式消息 / 工具卡片 / done 收尾。
+      if (!NON_FORWARDABLE_EVENTS.has(event.type)) {
+        this.resolveServer()?.sendAgentEvent(record.sessionId, event);
+      }
       record.lastActivityAt = Date.now();
       switch (event.type) {
         case 'assistant-text': {
@@ -945,6 +990,11 @@ export class McpTaskRegistry {
 
   private resolveEngine(): AgentEngine | null {
     return this.services.tryResolve<AgentEngine>(ServiceNames.AGENT_ENGINE);
+  }
+
+  /** Server 实例（WS 广播 / 事件转发 / 外部 run 注册）；模块加载顺序不定，按需惰性解析 */
+  private resolveServer(): ServerHost | null {
+    return this.services.tryResolve<ServerHost>(ServiceNames.SERVER_INSTANCE);
   }
 
   /** 默认工作目录（与 ws-handler 口径一致） */

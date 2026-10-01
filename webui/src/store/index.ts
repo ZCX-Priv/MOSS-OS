@@ -31,6 +31,7 @@ import type {
   PermissionMode,
   RunStats,
   ContextStats,
+  HistoryMeta,
 } from '../types/api';
 import { DEFAULT_RENDER_SETTINGS, isValidRenderSettings, type RenderSettings } from '../render/core/types';
 import { fileNameOf } from '../render/file/detector';
@@ -57,7 +58,12 @@ interface UIState {
   activeSessionId: string | null;
   sessions: Session[];
   messagesBySession: Record<string, TaskMessage[]>;
-  /** 是否正在生成（按 sessionId 索引；缺省视为 false） */
+  /**
+   * 历史分页元数据（按 sessionId 索引）：游标 = 服务端「过滤软删除后的消息下标」。
+   * 上滑加载更早用 oldestIndex 作 before，断线/完成后补齐用 newestIndex 作 after。
+   */
+  historyMetaBySession: Record<string, HistoryMeta | undefined>;
+  /** 是否正在生成（按 sessionId 索引；缺省视为 false）。写入只能来自权威信号（见 setRunning 注释） */
   generatingBySession: Record<string, boolean>;
   /** 最近一轮运行是否出错（按 sessionId 索引；缺省视为 false，新流开始自动清除） */
   errorBySession: Record<string, boolean>;
@@ -145,6 +151,14 @@ interface UIState {
 
   // --- WS ---
   wsStatus: 'connecting' | 'open' | 'closed' | 'error';
+  /** 当前重连尝试次数（>0 表示处于重连中，状态条显示「正在重连（第 N 次）」） */
+  wsReconnectAttempt: number;
+  /** 下一次重连的预计时间戳（ms；null = 无待执行的退避重连） */
+  wsNextRetryAt: number | null;
+  /** 连接恢复计数：每次「断开后重新连上」+1（状态条短暂提示「已恢复」） */
+  wsRestoredSeq: number;
+  /** 会话状态恢复中（订阅 + 拉快照 + 恢复草稿，状态条显示「正在恢复会话状态」） */
+  wsRestoringBySession: Record<string, boolean | undefined>;
 
   // --- 发送快捷键（归一化格式：'enter' / 'mod+enter' / 任意自定义组合） ---
   sendShortcut: string;
@@ -206,6 +220,11 @@ export interface PersistedState {
   activeSidebarTabId?: string;
   renderSettings?: RenderSettings;
   animationSettings?: AnimationSettings;
+  /** 排队消息队列（sessionId → 待发送消息）：刷新后不丢，按序继续投递 */
+  messageQueues?: Record<
+    string,
+    Array<{ id: string; content: string; timestamp: string; attachments?: string[] }>
+  >;
 }
 
 // ============================================================================
@@ -222,6 +241,25 @@ interface UIActions {
   // 消息
   setMessages: (sessionId: string, messages: TaskMessage[]) => void;
   addMessage: (sessionId: string, message: TaskMessage) => void;
+  /**
+   * 历史分页合并（去重按消息 id）：
+   * - 'tail'：权威替换（首屏 / 截断后重载），同时重置分页元数据
+   * - 'prepend'：向前并入更早的一页（保持已有消息）
+   * - 'catchup'：尾部增量补齐（并入后追加），并移除本地流式草稿（服务端已给出正式消息）
+   */
+  mergeHistory: (
+    sessionId: string,
+    messages: TaskMessage[],
+    mode: 'tail' | 'prepend' | 'catchup',
+    page?: { total: number; oldestIndex: number; newestIndex: number; hasMoreBefore: boolean },
+    opts?: { dropStreaming?: boolean },
+  ) => void;
+  /** 仅更新分页元数据（加载态 / 游标推进，不动消息） */
+  patchHistoryMeta: (sessionId: string, patch: Partial<HistoryMeta>) => void;
+  /** 清空分页元数据（截断/恢复后需重新按 tail 加载） */
+  resetHistory: (sessionId: string) => void;
+  /** 移除本地流式消息（服务端以正式历史消息重新给出时调用，避免重复渲染） */
+  dropStreamingMessages: (sessionId: string) => void;
   updateMessage: (sessionId: string, messageId: string, patch: Partial<TaskMessage>) => void;
   appendToMessage: (
     sessionId: string,
@@ -240,6 +278,7 @@ interface UIActions {
   clearMessages: (sessionId: string) => void;
 
   // 生成态
+  /** 写入权威运行态（历史拉取永不写 false；只由状态快照/WS 完成事件/本地发送-中断写） */
   setGenerating: (sessionId: string, v: boolean) => void;
   /** 标记/清除 session 的错误态（新流开始时由 setGenerating 自动清除） */
   setTaskError: (sessionId: string, v: boolean) => void;
@@ -338,6 +377,12 @@ interface UIActions {
 
   // WS
   setWsStatus: (s: UIState['wsStatus']) => void;
+  /** 连接状态详情（含重连次数与下次重试时间），状态条数据源 */
+  setWsConnection: (info: { status: UIState['wsStatus']; attempt: number; nextRetryAt: number | null }) => void;
+  /** 连接恢复计数 +1（断开后重新连上；状态条短暂提示「已恢复」） */
+  bumpWsRestored: () => void;
+  /** 会话状态恢复中标记 */
+  setWsRestoring: (sessionId: string, v: boolean) => void;
 
   // 发送快捷键
   setSendShortcut: (v: UIState['sendShortcut']) => void;
@@ -460,6 +505,7 @@ export const useStore = create<Store>((set, get) => ({
   activeSessionId: null,
   sessions: [],
   messagesBySession: {},
+  historyMetaBySession: {},
   generatingBySession: {},
   errorBySession: {},
   pendingAsks: [],
@@ -520,6 +566,10 @@ export const useStore = create<Store>((set, get) => ({
 
   // --- WS ---
   wsStatus: 'closed',
+  wsReconnectAttempt: 0,
+  wsNextRetryAt: null,
+  wsRestoredSeq: 0,
+  wsRestoringBySession: {},
 
   // --- 发送快捷键 ---
   sendShortcut: 'mod+enter',
@@ -571,6 +621,8 @@ export const useStore = create<Store>((set, get) => ({
   removeSession: (id) =>
     set((state) => {
       const { [id]: _omit, ...restMessages } = state.messagesBySession;
+      const { [id]: _omitMeta, ...restMeta } = state.historyMetaBySession;
+      const { [id]: _omitRestoring, ...restRestoring } = state.wsRestoringBySession;
       const { [id]: _omitGen, ...restGen } = state.generatingBySession;
       const { [id]: _omitTodos, ...restTodos } = state.todosBySession;
       const { [id]: _omitCtx, ...restCtx } = state.contextBySession;
@@ -583,6 +635,8 @@ export const useStore = create<Store>((set, get) => ({
       return {
         sessions: state.sessions.filter((s) => s.id !== id),
         messagesBySession: restMessages,
+        historyMetaBySession: restMeta,
+        wsRestoringBySession: restRestoring,
         generatingBySession: restGen,
         todosBySession: restTodos,
         contextBySession: restCtx,
@@ -608,6 +662,96 @@ export const useStore = create<Store>((set, get) => ({
         [sessionId]: [...(state.messagesBySession[sessionId] ?? []), message],
       },
     })),
+
+  mergeHistory: (sessionId, messages, mode, page, opts) =>
+    set((state) => {
+      const current = state.messagesBySession[sessionId] ?? [];
+      // 去重基准：本地已有消息 id（历史消息 id = `h<index>`，流式草稿 id = 服务端 messageId，
+      // 两者不会互相冲突，因此同一消息永不重复渲染）。
+      const seen = new Set(current.map((m) => m.id));
+      const incoming = messages.filter((m) => !seen.has(m.id));
+
+      let next: TaskMessage[];
+      if (mode === 'prepend') {
+        next = [...incoming, ...current];
+      } else if (mode === 'catchup') {
+        const base = opts?.dropStreaming
+          ? current.filter((m) => !m.streaming && !m.serverMessageId)
+          : current;
+        const baseIds = new Set(base.map((m) => m.id));
+        next = [...base, ...messages.filter((m) => !baseIds.has(m.id))];
+      } else {
+        // tail：权威替换（保留正在流式的草稿消息，避免打断在途输出；
+        // 也保留「上次中断的未完成回复」提示消息——它不在历史里，但信息真实）
+        const kept = current.filter((m) => m.streaming || m.interrupted);
+        const keptIds = new Set(kept.map((m) => m.id));
+        next = [...messages.filter((m) => !keptIds.has(m.id)), ...kept];
+      }
+
+      const prevMeta = state.historyMetaBySession[sessionId];
+      let meta: HistoryMeta;
+      if (mode === 'prepend' && !page && prevMeta) {
+        meta = {
+          ...prevMeta,
+          oldestIndex: Math.max(0, prevMeta.oldestIndex - incoming.length),
+          hasMoreBefore: prevMeta.oldestIndex - incoming.length > 0,
+          loadingBefore: false,
+        };
+      } else if (page) {
+        meta = {
+          total: page.total,
+          oldestIndex: mode === 'prepend' && prevMeta ? Math.min(prevMeta.oldestIndex, page.oldestIndex) : page.oldestIndex,
+          newestIndex: Math.max(page.newestIndex, mode === 'catchup' ? (prevMeta?.newestIndex ?? -1) : page.newestIndex),
+          hasMoreBefore: mode === 'prepend' && prevMeta ? page.hasMoreBefore || prevMeta.hasMoreBefore : page.hasMoreBefore,
+          loadingBefore: false,
+          loaded: true,
+        };
+      } else {
+        meta = prevMeta ?? {
+          total: next.length,
+          oldestIndex: 0,
+          newestIndex: next.length - 1,
+          hasMoreBefore: false,
+          loadingBefore: false,
+          loaded: true,
+        };
+      }
+
+      return {
+        messagesBySession: { ...state.messagesBySession, [sessionId]: next },
+        historyMetaBySession: { ...state.historyMetaBySession, [sessionId]: meta },
+      };
+    }),
+
+  patchHistoryMeta: (sessionId, patch) =>
+    set((state) => {
+      const prev = state.historyMetaBySession[sessionId];
+      const base: HistoryMeta = prev ?? {
+        total: 0,
+        oldestIndex: 0,
+        newestIndex: -1,
+        hasMoreBefore: false,
+        loadingBefore: false,
+        loaded: false,
+      };
+      return {
+        historyMetaBySession: { ...state.historyMetaBySession, [sessionId]: { ...base, ...patch } },
+      };
+    }),
+
+  resetHistory: (sessionId) =>
+    set((state) => {
+      const { [sessionId]: _omit, ...rest } = state.historyMetaBySession;
+      return { historyMetaBySession: rest };
+    }),
+
+  dropStreamingMessages: (sessionId) =>
+    set((state) => {
+      const current = state.messagesBySession[sessionId] ?? [];
+      const next = current.filter((m) => !m.streaming && m.serverMessageId === undefined);
+      if (next.length === current.length) return {};
+      return { messagesBySession: { ...state.messagesBySession, [sessionId]: next } };
+    }),
   updateMessage: (sessionId, messageId, patch) =>
     set((state) => ({
       messagesBySession: {
@@ -693,7 +837,26 @@ export const useStore = create<Store>((set, get) => ({
   setCurrentAgent: (currentAgent) => set({ currentAgent }),
 
   // --- Actions: 任务 + 分组 ---
-  setTasks: (tasks) => set({ tasks }),
+  setTasks: (tasks) =>
+    set((state) => {
+      // 列表载荷自带后端权威运行态（running）。此处只「置位」不「清除」：
+      // 列表请求可能在「本地已发送、后端尚未注册 run」的窗口内到达，
+      // 若允许降位会瞬间熄灭刚点亮的转圈。清除由状态快照 / 完成事件（权威源）负责。
+      let generating = state.generatingBySession;
+      let changed = false;
+      for (const tk of tasks) {
+        if (tk.running !== true) continue;
+        const sid = tk.sessionId ?? tk.id;
+        if (!generating[sid]) {
+          if (!changed) {
+            generating = { ...generating };
+            changed = true;
+          }
+          generating[sid] = true;
+        }
+      }
+      return { tasks, ...(changed ? { generatingBySession: generating } : {}) };
+    }),
   setTaskGroups: (taskGroups) => set({ taskGroups }),
   addTask: (task) => set((state) => ({ tasks: [task, ...state.tasks] })),
   // 活跃置顶（乐观更新）：移到该分组第一个任务之前（tasks 为跨分组扁平数组，Sidebar 按组保序渲染）
@@ -906,6 +1069,13 @@ export const useStore = create<Store>((set, get) => ({
 
   // --- Actions: WS ---
   setWsStatus: (wsStatus) => set({ wsStatus }),
+  setWsConnection: ({ status, attempt, nextRetryAt }) =>
+    set({ wsStatus: status, wsReconnectAttempt: attempt, wsNextRetryAt: nextRetryAt }),
+  bumpWsRestored: () => set((state) => ({ wsRestoredSeq: state.wsRestoredSeq + 1 })),
+  setWsRestoring: (sessionId, v) =>
+    set((state) => ({
+      wsRestoringBySession: { ...state.wsRestoringBySession, [sessionId]: v },
+    })),
 
   // --- Actions: 发送快捷键 ---
   setSendShortcut: (sendShortcut) => {
@@ -920,25 +1090,29 @@ export const useStore = create<Store>((set, get) => ({
     set({ followUpBehavior });
   },
   addToMessageQueue: (sessionId, message) =>
-    set((state) => ({
-      messageQueueBySession: {
+    set((state) => {
+      const messageQueueBySession = {
         ...state.messageQueueBySession,
         [sessionId]: [...(state.messageQueueBySession[sessionId] ?? []), message],
-      },
-    })),
+      };
+      // 队列是客户端行为（何时续发由本端决定），持久化到 IndexedDB 保证刷新后不丢
+      void idbSet('moss-message-queues', messageQueueBySession);
+      return { messageQueueBySession };
+    }),
   removeFromMessageQueue: (sessionId, messageId) =>
     set((state) => {
       const queue = state.messageQueueBySession[sessionId] ?? [];
-      return {
-        messageQueueBySession: {
-          ...state.messageQueueBySession,
-          [sessionId]: queue.filter((m) => m.id !== messageId),
-        },
+      const messageQueueBySession = {
+        ...state.messageQueueBySession,
+        [sessionId]: queue.filter((m) => m.id !== messageId),
       };
+      void idbSet('moss-message-queues', messageQueueBySession);
+      return { messageQueueBySession };
     }),
   clearMessageQueue: (sessionId) =>
     set((state) => {
       const { [sessionId]: _, ...rest } = state.messageQueueBySession;
+      void idbSet('moss-message-queues', rest);
       return { messageQueueBySession: rest };
     }),
 
@@ -1156,6 +1330,21 @@ export const useStore = create<Store>((set, get) => ({
       }
       if (isValidAnimationSettings(patch.animationSettings)) {
         next.animationSettings = patch.animationSettings;
+      }
+      if (patch.messageQueues && typeof patch.messageQueues === 'object') {
+        const queues: Record<
+          string,
+          Array<{ id: string; content: string; timestamp: string; attachments?: string[] }>
+        > = {};
+        for (const [sid, list] of Object.entries(patch.messageQueues)) {
+          if (!Array.isArray(list)) continue;
+          const items = list.filter(
+            (m): m is { id: string; content: string; timestamp: string; attachments?: string[] } =>
+              !!m && typeof m.id === 'string' && typeof m.content === 'string',
+          );
+          if (items.length > 0) queues[sid] = items;
+        }
+        next.messageQueueBySession = queues;
       }
       return next;
     }),
