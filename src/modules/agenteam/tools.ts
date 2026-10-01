@@ -2,7 +2,7 @@
 // 单一 agent 工具：mode 区分 subagent（一次性子代理）与 agenteam（专家团编排），
 // action 区分 agenteam 的具体操作。注册到 ToolRegistry（agenteam 模块 initialize 时），
 // 随系统提示词暴露给主会话模型。
-// 语义参考多智能体编排范式适配 MOSS（captain = ctx.sessionId）。
+// 语义：主 agent（当前会话）就是队长，团队成员是队友；成员之间可互相发消息。
 
 import { ServiceNames } from '../../core/types';
 import type { ServiceRegistry, Logger } from '../../core/types';
@@ -10,86 +10,106 @@ import type { Tool, ToolResult, ToolContext } from '../tools/types';
 import { textResult, errorResult } from '../tools/types';
 import type { ToolRegistry } from '../contracts';
 import type { AgentRegistry } from './index';
-import type { TeamOrchestrator } from './orchestrator';
+import type { TeamOrchestrator, EditPlanInput } from './orchestrator';
 import type { MemberSpec, TaskSpec, TeamTask, TaskKind } from './types';
 import { TASK_KINDS } from './types';
 
-/** agenteam 模式的操作枚举（与此前团队编排工具能力一一对应，不新增能力） */
-const AGENTEAM_ACTIONS = [
-  'create',
-  'edit_plan',
-  'approve',
-  'add_member',
-  'remove_member',
-  'create_task',
-  'update_task',
-  'reassign_task',
-  'claim_task',
-  'send_message',
-  'status',
-  'resume',
-  'delete',
-] as const;
+/** agenteam 模式的操作枚举（7 个，覆盖全部编排能力） */
+const AGENTEAM_ACTIONS = ['create', 'approve', 'edit', 'task', 'message', 'status', 'control'] as const;
 
 type AgenteamAction = (typeof AGENTEAM_ACTIONS)[number];
 
-/** 工具使用协议（中文注入 description，英文注入 descriptionEn；指导 captain 编排行为） */
+/** 协议文案（中文注入 description，英文注入 descriptionEn） */
 const USAGE_PROTOCOL_ZH = `通过单一 "agent" 工具完成多智能体编排，由 mode 选择模式。
 
-mode="subagent"：运行一次性子代理（template + task）。发出即忘；子代理在自己的会话中运行并返回最终报告。适用于无需持久团队的单项委派任务。
-mode="agenteam"：你（当前会话）成为持久多智能体团队的队长。流程：action="create"（规划成员 + 任务 DAG；approval=true 时等待用户在专家团面板审核）→ 用户批准（action="approve"）→ 队长收到通知，调度器自动把任务派发给成员（每个成员以自己的 agentId 配置作为独立 agent 会话运行）→ 每个任务完成/失败后队长收到成员报告轮次并决定下一步（action="create_task" / "reassign_task" / "send_message"，或仅确认）→ 所有任务到达终态后队长产出面向用户的最终总结，并保存为团队总结。质量门禁：review/requirements 任务仅在 verdict=pass 时完成；失败自动生成修复后续任务；普通任务自动重试至多 2 次。成员也可以给你发消息（to=captain）——请回复决策。
+mode="subagent"：运行一次性子代理（template + task）。发出即忘；子代理在自己的会话中运行并返回最终报告。
+mode="agenteam"：你（当前会话）就是该团队的队长。流程：action="create" 建队（成员 + 任务 DAG；approval=true 默认送审）→ 用户批准（action="approve"）→ 调度器自动派发 → 你收到成员报告后决定下一步（action="task"/"edit"/"message"，或简短确认）→ 全部任务终态时你输出面向用户的最终总结。成员也能给你或队友发消息，请回复决策。
 
-agenteam 可用 action：create | edit_plan | approve | add_member | remove_member | create_task | update_task | reassign_task | claim_task | send_message | status | resume | delete。
-仅在用户明确确认后才调用 action="approve" 与 action="delete"。`;
+agenteam 可用 action（7 个）：
+- create：建队。name + members[] + tasks[]（+ description/approval/cwd）
+- approve：批准待审计划。teamId
+- edit：修订计划（增删成员/任务）。teamId + plan
+- task：单个任务操作（上报产出 / 重派 / 认领）。teamId + taskId + patch|assignee|claim
+- message：团队消息。teamId + to（成员名或 captain）+ content
+- status：查询团队状态。teamId（省略则列出全部）
+- control：恢复或删除团队。teamId + op（resume|delete）
 
-/** 英文版使用协议（en locale 下随 descriptionEn 暴露） */
+注意：kind="review" 的任务必须同时给出 reviewedTaskId（审查对象任务 id）；kind="repair" 必须给出 sourceTaskId。
+仅在用户明确确认后才调用 action="approve" 与 action="control"（op=delete）。`;
+
 const USAGE_PROTOCOL_EN = `Multi-agent orchestration via a single "agent" tool, selected by mode.
 
-mode="subagent": run a one-off subagent (template + task). Fire-and-forget; the subagent runs in its own session and returns its final report. Use for single delegated tasks that don't need a persistent team.
-mode="agenteam": you (the current session) become the captain of a persistent multi-agent team. Workflow: action="create" (plan members + task DAG; approval=true waits for user review in the Agenteam panel) → user approves (action="approve") → the captain gets notified and the scheduler auto-dispatches tasks to members (each member runs as its own agent session with its agentId config) → after each task completes/fails the captain receives a member report turn and decides the next step (action="create_task" / "reassign_task" / "send_message", or simply acknowledge) → when all tasks reach terminal states the captain produces a final user-facing summary that is saved as the team summary. Quality gates: review/requirements tasks complete only with verdict=pass; failures auto-generate repair follow-ups; plain tasks auto-retry up to 2 attempts. Members can also message you (to=captain) — respond with decisions.
+mode="subagent": run a one-off subagent (template + task). Fire-and-forget; it runs in its own session and returns a final report.
+mode="agenteam": you (the current session) are the captain of that team. Workflow: action="create" (members + task DAG; approval=true stages the plan) → user approves (action="approve") → the scheduler dispatches → after each member report you decide the next step (action="task"/"edit"/"message", or simply acknowledge) → when all tasks are terminal you produce the final user-facing summary. Members may also message you or each other.
 
-agenteam actions: create | edit_plan | approve | add_member | remove_member | create_task | update_task | reassign_task | claim_task | send_message | status | resume | delete.
-Call action="approve" and action="delete" only after explicit user confirmation.`;
+agenteam actions (7):
+- create: name + members[] + tasks[] (+ description/approval/cwd)
+- approve: teamId
+- edit: teamId + plan
+- task: teamId + taskId + patch|assignee|claim
+- message: teamId + to (member name or captain) + content
+- status: teamId (omit to list all)
+- control: teamId + op (resume|delete)
+
+Note: a kind="review" task MUST include reviewedTaskId; a kind="repair" task MUST include sourceTaskId.
+Call action="approve" and action="control" (op=delete) only after explicit user confirmation.`;
 
 // ============================================================================
-// 参数结构（扁平：mode + action 分派）
+// 参数结构（扁平：mode + action 分派；同类参数收进 plan/patch）
 // ============================================================================
+
+interface MemberSpecInput {
+  name?: string;
+  role?: string;
+  agentId?: string;
+  inlinePrompt?: string;
+  executionPrompt?: string;
+}
+
+interface TaskSpecInput {
+  subject?: string;
+  description?: string;
+  kind?: string;
+  dependencies?: string[];
+  assignee?: string;
+  /** kind=review 必填：被审查的任务 id */
+  reviewedTaskId?: string;
+  /** kind=repair 必填：修复来源任务 id */
+  sourceTaskId?: string;
+}
 
 interface AgentToolParams {
   mode?: 'subagent' | 'agenteam';
   action?: string;
-  /** subagent：模板 agent id（如 agent_explorer） */
+
+  // --- subagent ---
+  /** 注册表 agent id（如 agent_explorer） */
   template?: string;
-  /** subagent：完整自包含的任务描述（子代理只看得到它） */
+  /** 完整自包含的任务描述（子代理只看得到它） */
   task?: string;
+
   cwd?: string;
 
-  // --- agenteam create ---
-  name?: string;
-  description?: string;
-  members?: Array<{ name?: string; role?: string; agentId?: string; inlinePrompt?: string; executionPrompt?: string }>;
-  tasks?: Array<{ subject?: string; description?: string; kind?: string; dependencies?: string[]; assignee?: string }>;
-  approval?: boolean;
-
-  // --- agenteam 通用定位 ---
+  // --- agenteam：定位 ---
   teamId?: string;
 
-  // --- edit_plan ---
-  addMembers?: Array<{ name?: string; role?: string; agentId?: string; inlinePrompt?: string; executionPrompt?: string }>;
-  removeMembers?: string[];
-  addTasks?: Array<{ subject?: string; description?: string; kind?: string; dependencies?: string[]; assignee?: string }>;
-  removeTasks?: string[];
-  newDescription?: string;
+  // --- create ---
+  name?: string;
+  description?: string;
+  members?: MemberSpecInput[];
+  tasks?: TaskSpecInput[];
+  approval?: boolean;
 
-  // --- add_member ---
-  member?: { name?: string; role?: string; agentId?: string; inlinePrompt?: string; executionPrompt?: string };
-  // --- remove_member ---
-  memberName?: string;
+  // --- edit ---
+  plan?: {
+    description?: string;
+    addMembers?: MemberSpecInput[];
+    removeMembers?: string[];
+    addTasks?: TaskSpecInput[];
+    removeTasks?: string[];
+  };
 
-  // --- create_task ---
-  newTask?: { subject?: string; description?: string; kind?: string; dependencies?: string[]; assignee?: string };
-
-  // --- update_task ---
+  // --- task ---
   taskId?: string;
   attemptId?: string;
   patch?: {
@@ -100,13 +120,17 @@ interface AgentToolParams {
     acceptanceResults?: Array<{ criterion?: string; status?: string; evidence?: string }>;
     commandsRun?: Array<{ command?: string; status?: string; exitCode?: number; evidence?: string }>;
   };
-
-  // --- reassign_task ---
+  /** 重派：成员名（空字符串=取消指派） */
   assignee?: string;
+  /** 认领：仅 pending 任务可认领 */
+  claim?: boolean;
 
-  // --- send_message ---
+  // --- message ---
   to?: string;
   content?: string;
+
+  // --- control ---
+  op?: 'resume' | 'delete';
 }
 
 // ============================================================================
@@ -118,10 +142,7 @@ function resolveRegistry(services: ServiceRegistry): AgentRegistry | null {
 }
 
 /** 校验成员规格（agentId 存在性 + inlinePrompt 兜底） */
-function normalizeMembers(
-  raw: AgentToolParams['members'],
-  registry: AgentRegistry | null,
-): MemberSpec[] {
+function normalizeMembers(raw: MemberSpecInput[] | undefined, registry: AgentRegistry | null): MemberSpec[] {
   if (!raw || raw.length === 0) throw new Error('members：至少需要一个成员');
   return raw.map((m, i) => {
     const name = (m.name ?? '').trim();
@@ -142,24 +163,35 @@ function normalizeMembers(
   });
 }
 
-function normalizeTasks(raw: AgentToolParams['tasks']): TaskSpec[] {
-  if (!raw || raw.length === 0) throw new Error('tasks：至少需要一个任务');
-  return raw.map((t, i) => {
-    const subject = (t.subject ?? '').trim();
-    if (!subject) throw new Error(`tasks[${i}].subject 为必填项`);
-    const kind = t.kind && (TASK_KINDS as readonly string[]).includes(t.kind) ? (t.kind as TaskKind) : undefined;
-    return {
-      subject,
-      description: t.description,
-      kind,
-      dependencies: t.dependencies ?? [],
-      assignee: t.assignee,
-    };
-  });
-}
-
 function normalizeKind(kind: string | undefined): TaskKind | undefined {
   return kind && (TASK_KINDS as readonly string[]).includes(kind) ? (kind as TaskKind) : undefined;
+}
+
+/** 任务规格规范化（含 review/repair 的必填指向字段） */
+function normalizeTaskSpec(t: TaskSpecInput, index: number): TaskSpec & { reviewedTaskId?: string; sourceTaskId?: string } {
+  const subject = (t.subject ?? '').trim();
+  if (!subject) throw new Error(`tasks[${index}].subject 为必填项`);
+  const kind = normalizeKind(t.kind);
+  if (kind === 'review' && !t.reviewedTaskId?.trim()) {
+    throw new Error(`任务 "${subject}"：kind=review 时必须提供 reviewedTaskId（被审查的任务 id）`);
+  }
+  if (kind === 'repair' && !t.sourceTaskId?.trim()) {
+    throw new Error(`任务 "${subject}"：kind=repair 时必须提供 sourceTaskId（修复来源任务 id）`);
+  }
+  return {
+    subject,
+    description: t.description,
+    kind,
+    dependencies: t.dependencies ?? [],
+    assignee: t.assignee,
+    reviewedTaskId: t.reviewedTaskId,
+    sourceTaskId: t.sourceTaskId,
+  };
+}
+
+function normalizeTasks(raw: TaskSpecInput[] | undefined): Array<TaskSpec & { reviewedTaskId?: string; sourceTaskId?: string }> {
+  if (!raw || raw.length === 0) throw new Error('tasks：至少需要一个任务');
+  return raw.map((t, i) => normalizeTaskSpec(t, i));
 }
 
 /** updateTask patch 规范化（枚举字符串 → 具体类型；无效值丢弃） */
@@ -255,7 +287,7 @@ async function runSubagentMode(
   }
 }
 
-/** mode=agenteam：按 action 分派（与此前团队编排工具逐条对应） */
+/** mode=agenteam：按 action 分派 */
 async function runAgenteamMode(
   orch: TeamOrchestrator,
   p: AgentToolParams,
@@ -265,6 +297,11 @@ async function runAgenteamMode(
   if (!action || !(AGENTEAM_ACTIONS as readonly string[]).includes(action)) {
     return errorResult(`agenteam 模式：action 必须为以下之一：${AGENTEAM_ACTIONS.join(', ')}`);
   }
+  // 调用方身份：成员会话 → 成员名；否则为主会话（队长）
+  const actor = orch.resolveActor(ctx.sessionId);
+  /** 成员调用时 teamId 可省略（自动定位到自己的团队） */
+  const teamId = p.teamId ?? actor?.teamId;
+
   try {
     switch (action) {
       case 'create': {
@@ -288,151 +325,76 @@ async function runAgenteamMode(
         );
       }
 
-      case 'edit_plan': {
-        const team = orch.get(p.teamId ?? '');
-        if (!team) return errorResult('未找到该团队');
-        if (team.phase !== 'staged') return errorResult(`团队当前阶段为 ${team.phase}，非 staged`);
-        const registry = resolveRegistry(ctx.services);
-        if (p.newDescription) team.description = p.newDescription;
-        for (const name of p.removeMembers ?? []) {
-          team.members = team.members.filter((m) => m.name !== name);
-        }
-        if (p.addMembers?.length) {
-          for (const m of normalizeMembers(p.addMembers, registry)) {
-            if (team.members.some((x) => x.name === m.name)) throw new Error(`成员 "${m.name}" 已存在`);
-            team.members.push({
-              id: `m${team.members.length + 1}`,
-              name: m.name,
-              role: m.role,
-              agentId: m.agentId,
-              inlinePrompt: m.inlinePrompt,
-              sessionId: '',
-              executionPrompt: m.executionPrompt,
-              joinedAt: Date.now(),
-              status: 'idle',
-            });
-          }
-        }
-        for (const id of p.removeTasks ?? []) {
-          team.tasks = team.tasks.filter((t) => t.id !== id);
-        }
-        for (const t of p.addTasks ?? []) {
-          if (!t.subject?.trim()) continue;
-          team.taskSeq += 1;
-          const now = Date.now();
-          team.tasks.push({
-            id: `t${team.taskSeq}`,
-            subject: t.subject,
-            description: t.description,
-            status: 'pending',
-            assignee: t.assignee,
-            dependencies: t.dependencies ?? [],
-            kind: normalizeKind(t.kind),
-            createdAt: now,
-            updatedAt: now,
-          });
-        }
-        orch.saveTeam(team);
-        return textResult(`计划已更新。成员：${team.members.map((m) => m.name).join(', ')}；任务：${team.tasks.map((t) => t.id).join(', ')}`);
-      }
-
       case 'approve': {
-        if (!p.teamId) return errorResult('approve：teamId 为必填项');
-        const team = orch.approvePlan(p.teamId);
+        if (!teamId) return errorResult('approve：teamId 为必填项');
+        const team = orch.approvePlan(teamId);
         return textResult(`团队已批准并开始运行。phase=${team.phase}`);
       }
 
-      case 'add_member': {
-        if (!p.teamId) return errorResult('add_member：teamId 为必填项');
+      case 'edit': {
+        if (!teamId) return errorResult('edit：teamId 为必填项');
+        if (!p.plan) return errorResult('edit：plan 为必填项');
         const registry = resolveRegistry(ctx.services);
-        const m = p.member;
-        if (!m?.name) return errorResult('add_member：member.name 为必填项');
-        if (!m.agentId && !m.inlinePrompt) return errorResult('add_member：member.agentId 或 member.inlinePrompt 为必填项');
-        if (m.agentId && registry && !registry.get(m.agentId)) {
-          return errorResult(`注册表中未找到 agentId "${m.agentId}"`);
+        const plan: EditPlanInput = {
+          description: p.plan.description,
+          removeMembers: p.plan.removeMembers,
+          removeTasks: p.plan.removeTasks,
+        };
+        if (p.plan.addMembers?.length) plan.addMembers = normalizeMembers(p.plan.addMembers, registry);
+        if (p.plan.addTasks?.length) plan.addTasks = p.plan.addTasks.map((t, i) => normalizeTaskSpec(t, i));
+        const team = orch.editTeam(teamId, plan);
+        return textResult(
+          `计划已更新。成员：${team.members.filter((m) => m.status !== 'removed').map((m) => m.name).join(', ') || '(无)'}；任务：${team.tasks.map((t) => t.id).join(', ') || '(无)'}`,
+        );
+      }
+
+      case 'task': {
+        if (!teamId || !p.taskId) return errorResult('task：teamId 与 taskId 为必填项');
+        if (p.claim === true) {
+          const team = orch.claimTask(teamId, p.taskId);
+          return textResult(`任务已认领。phase=${team.phase}`);
         }
-        const team = orch.addMember(p.teamId, {
-          name: m.name,
-          role: m.role,
-          agentId: m.agentId,
-          inlinePrompt: m.inlinePrompt,
-        });
-        return textResult(`已添加成员 "${m.name}"。当前成员：${team.members.map((x) => x.name).join(', ')}`);
+        if (p.assignee !== undefined) {
+          orch.reassignTask(teamId, p.taskId, p.assignee.trim() || undefined);
+          return textResult(`任务 ${p.taskId} 已${p.assignee.trim() ? `重新指派给 ${p.assignee.trim()}` : '取消指派'}。`);
+        }
+        if (p.patch) {
+          const team = orch.updateTask(teamId, p.taskId, normalizeTaskPatch(p.patch), p.attemptId);
+          return textResult(`任务已更新。团队 phase=${team.phase}`);
+        }
+        return errorResult('task：需要 patch（上报产出）、assignee（重派）或 claim=true（认领）之一');
       }
 
-      case 'remove_member': {
-        if (!p.teamId || !p.memberName) return errorResult('remove_member：teamId 与 memberName 为必填项');
-        const team = orch.removeMember(p.teamId, p.memberName);
-        return textResult(`已移除成员 "${p.memberName}"。当前成员：${team.members.filter((m) => m.status !== 'removed').map((x) => x.name).join(', ')}`);
-      }
-
-      case 'create_task': {
-        if (!p.teamId) return errorResult('create_task：teamId 为必填项');
-        const t = p.newTask;
-        if (!t?.subject) return errorResult('create_task：newTask.subject 为必填项');
-        const team = orch.createTask(p.teamId, {
-          subject: t.subject,
-          description: t.description,
-          kind: normalizeKind(t.kind),
-          dependencies: t.dependencies,
-          assignee: t.assignee,
-        });
-        const created = team.tasks[team.tasks.length - 1];
-        return textResult(`已创建任务：[${created.id}] ${created.subject}`);
-      }
-
-      case 'update_task': {
-        if (!p.teamId || !p.taskId) return errorResult('update_task：teamId 与 taskId 为必填项');
-        const patch = normalizeTaskPatch(p.patch);
-        const team = orch.updateTask(p.teamId, p.taskId, patch, p.attemptId);
-        return textResult(`任务已更新。团队 phase=${team.phase}`);
-      }
-
-      case 'reassign_task': {
-        if (!p.teamId || !p.taskId) return errorResult('reassign_task：teamId 与 taskId 为必填项');
-        orch.reassignTask(p.teamId, p.taskId, p.assignee);
-        return textResult(`任务 ${p.taskId} 已${p.assignee ? `重新指派给 ${p.assignee}` : '取消指派'}。`);
-      }
-
-      case 'claim_task': {
-        if (!p.teamId || !p.taskId) return errorResult('claim_task：teamId 与 taskId 为必填项');
-        // 手动认领：成员视角从 captain 会话不可得，等价于置 in_progress 由调度器接管
-        const team = orch.get(p.teamId);
-        if (!team) return errorResult('未找到该团队');
-        const task = team.tasks.find((t) => t.id === p.taskId);
-        if (!task) return errorResult(`未找到任务 "${p.taskId}"`);
-        if (task.status !== 'pending') return errorResult(`任务状态为 ${task.status}，非 pending`);
-        const updated = orch.updateTask(p.teamId, p.taskId, { status: 'in_progress' });
-        return textResult(`任务已认领。phase=${updated.phase}`);
-      }
-
-      case 'send_message': {
-        if (!p.teamId || !p.to || !p.content) return errorResult('send_message：teamId、to 与 content 为必填项');
-        orch.sendMessage(p.teamId, 'captain', p.to, p.content);
+      case 'message': {
+        if (!p.to || !p.content) return errorResult('message：to 与 content 为必填项');
+        if (!teamId) return errorResult('message：teamId 为必填项（主会话调用时必填）');
+        const from = actor?.memberName ?? 'captain';
+        orch.sendMessage(teamId, from, p.to, p.content);
         return textResult(`消息已发送给 ${p.to}。`);
       }
 
       case 'status': {
-        if (!p.teamId) {
+        if (!teamId) {
           const summaries = orch.summaries();
           if (summaries.length === 0) return textResult('暂无团队。');
           return textResult(summaries.map((s) => `团队 ${s.id}「${s.name}」phase=${s.phase} 任务=${s.taskCompleted}/${s.taskTotal}`).join('\n'));
         }
-        const team = orch.get(p.teamId);
-        if (!team) return errorResult(`未找到团队 "${p.teamId}"`);
+        const team = orch.get(teamId);
+        if (!team) return errorResult(`未找到团队 "${teamId}"`);
         return textResult(formatTeamStatus(team));
       }
 
-      case 'resume': {
-        if (!p.teamId) return errorResult('resume：teamId 为必填项');
-        const team = orch.resume(p.teamId);
-        return textResult(`团队已恢复运行。phase=${team.phase}`);
-      }
-
-      case 'delete': {
-        if (!p.teamId) return errorResult('delete：teamId 为必填项');
-        const ok = orch.deleteTeam(p.teamId);
-        return ok ? textResult('团队已删除。') : errorResult('未找到该团队');
+      case 'control': {
+        if (!teamId) return errorResult('control：teamId 为必填项');
+        if (p.op === 'resume') {
+          const team = orch.resume(teamId);
+          return textResult(`团队已恢复运行。phase=${team.phase}`);
+        }
+        if (p.op === 'delete') {
+          const ok = orch.deleteTeam(teamId);
+          return ok ? textResult('团队已删除。') : errorResult('未找到该团队');
+        }
+        return errorResult("control：op 必须为 'resume' 或 'delete'");
       }
     }
   } catch (err) {
@@ -443,6 +405,43 @@ async function runAgenteamMode(
 // ============================================================================
 // 工具定义
 // ============================================================================
+
+/** 任务项 schema（create.tasks 与 edit.plan.addTasks 复用） */
+const TASK_ITEM_SCHEMA = {
+  type: 'object',
+  properties: {
+    subject: { type: 'string', description: '任务标题', description_en: 'Task title' },
+    description: { type: 'string', description: '需要完成的内容', description_en: 'What needs to be done' },
+    kind: {
+      type: 'string',
+      description: `质量门禁类型（${TASK_KINDS.join('/')}）；review 必须带 reviewedTaskId，repair 必须带 sourceTaskId`,
+      description_en: `Quality-gate kind (${TASK_KINDS.join('/')}); review requires reviewedTaskId, repair requires sourceTaskId`,
+      enum: [...TASK_KINDS],
+    },
+    dependencies: {
+      type: 'array',
+      items: { type: 'string' },
+      description: '必须先完成的任务 id（t1、t2……）',
+      description_en: 'Task ids that must complete first (t1, t2...)',
+    },
+    assignee: { type: 'string', description: '成员名；省略表示任意成员可认领', description_en: 'Member name; omit for any-member claim' },
+    reviewedTaskId: { type: 'string', description: 'kind=review 必填：被审查的任务 id', description_en: 'Required when kind=review: the task id being reviewed' },
+    sourceTaskId: { type: 'string', description: 'kind=repair 必填：修复来源任务 id', description_en: 'Required when kind=repair: the source task id' },
+  },
+  required: ['subject'],
+};
+
+const MEMBER_ITEM_SCHEMA = {
+  type: 'object',
+  properties: {
+    name: { type: 'string', description: '团队内唯一的成员名', description_en: 'Unique member name in team' },
+    role: { type: 'string', description: '角色，如 researcher/engineer/reviewer', description_en: 'Role, e.g. researcher/engineer/reviewer' },
+    agentId: { type: 'string', description: '注册表 agent id（优先使用）', description_en: 'Registry agent id (preferred)' },
+    inlinePrompt: { type: 'string', description: '动态成员的内联 system prompt（无注册表条目时使用）', description_en: 'Inline system prompt for dynamic member (no registry entry)' },
+    executionPrompt: { type: 'string', description: '附加到该成员任务票据上的额外提示词', description_en: 'Extra prompt appended to this member task tickets' },
+  },
+  required: ['name'],
+};
 
 function createAgentTool(orch: TeamOrchestrator): Tool {
   return {
@@ -460,68 +459,38 @@ function createAgentTool(orch: TeamOrchestrator): Tool {
         template: { type: 'string', description: 'subagent 模式：注册表 agent id，如 agent_explorer / agent_planner / agent_coder / agent_reviewer', description_en: 'subagent mode: registry agent id, e.g. agent_explorer / agent_planner / agent_coder / agent_reviewer' },
         task: { type: 'string', description: 'subagent 模式：完整自包含的任务描述（子代理只能看到这段内容）', description_en: 'subagent mode: complete self-contained task description (the subagent sees only this)' },
 
-        // agenteam create
-        name: { type: 'string', description: 'create：团队名称', description_en: 'create: team name' },
-        description: { type: 'string', description: 'create：团队目标/用途', description_en: 'create: team goal/purpose' },
-        members: {
-          type: 'array',
-          description: 'create：团队成员',
-          description_en: 'create: team members',
-          items: {
-            type: 'object',
-            properties: {
-              name: { type: 'string', description: '团队内唯一的成员名', description_en: 'Unique member name in team' },
-              role: { type: 'string', description: '角色，如 researcher/engineer/reviewer', description_en: 'Role, e.g. researcher/engineer/reviewer' },
-              agentId: { type: 'string', description: '注册表 agent id（优先使用）', description_en: 'Registry agent id (preferred)' },
-              inlinePrompt: { type: 'string', description: '动态成员的内联 system prompt（无注册表条目时使用）', description_en: 'Inline system prompt for dynamic member (no registry entry)' },
-              executionPrompt: { type: 'string', description: '附加到该成员任务票据上的额外提示词', description_en: 'Extra prompt appended to this member task tickets' },
-            },
-            required: ['name'],
-          },
-        },
-        tasks: {
-          type: 'array',
-          description: 'create：任务 DAG；每个任务可声明 dependencies（任务 id 即数组顺序 1..N，如 t1、t2……）',
-          description_en: 'create: task DAG; each task may list dependencies (ids are the array order 1..N, i.e. t1, t2, ...)',
-          items: {
-            type: 'object',
-            properties: {
-              subject: { type: 'string', description: '任务标题', description_en: 'Task title' },
-              description: { type: 'string', description: '需要完成的内容', description_en: 'What needs to be done' },
-              kind: { type: 'string', description: '质量门禁类型：requirements/implementation/verification/review/repair/integration/work', description_en: 'Quality-gate kind: requirements/implementation/verification/review/repair/integration/work', enum: [...TASK_KINDS] },
-              dependencies: { type: 'array', items: { type: 'string' }, description: '必须先完成的任务 id（t1、t2……）', description_en: 'Task ids that must complete first (t1, t2...)' },
-              assignee: { type: 'string', description: '成员名；省略表示任意成员可认领', description_en: 'Member name; omit for any-member claim' },
-            },
-            required: ['subject'],
-          },
-        },
-        approval: { type: 'boolean', description: 'create：true（默认）= 计划暂存并等待用户在专家团面板批准；false = 立即开始', description_en: 'create: true (default) = staged plan awaiting user approval in the Agenteam panel; false = start immediately' },
-
-        // agenteam 通用
-        teamId: { type: 'string', description: 'agenteam：目标团队 id（多数 action 需要）', description_en: 'agenteam: target team id (most actions)' },
+        // 通用定位
+        teamId: { type: 'string', description: 'agenteam：目标团队 id（成员会话调用可省略，自动定位到自己的团队）', description_en: 'agenteam: target team id (member sessions may omit it)' },
         cwd: { type: 'string', description: '工作目录（默认当前会话 cwd）', description_en: 'Working directory (defaults to current session cwd)' },
 
-        // edit_plan
-        addMembers: { type: 'array', description: 'edit_plan：要添加的成员', description_en: 'edit_plan: members to add', items: { type: 'object', properties: { name: { type: 'string' }, role: { type: 'string' }, agentId: { type: 'string' }, inlinePrompt: { type: 'string' } }, required: ['name'] } },
-        removeMembers: { type: 'array', items: { type: 'string' }, description: 'edit_plan：要移除的成员名', description_en: 'edit_plan: member names to remove' },
-        addTasks: { type: 'array', description: 'edit_plan：要添加的任务', description_en: 'edit_plan: tasks to add', items: { type: 'object', properties: { subject: { type: 'string' }, description: { type: 'string' }, kind: { type: 'string' }, dependencies: { type: 'array', items: { type: 'string' } }, assignee: { type: 'string' } }, required: ['subject'] } },
-        removeTasks: { type: 'array', items: { type: 'string' }, description: 'edit_plan：要移除的任务 id', description_en: 'edit_plan: task ids to remove' },
-        newDescription: { type: 'string', description: 'edit_plan：替换团队描述', description_en: 'edit_plan: replace team description' },
+        // create
+        name: { type: 'string', description: 'create：团队名称', description_en: 'create: team name' },
+        description: { type: 'string', description: 'create：团队目标/用途', description_en: 'create: team goal/purpose' },
+        members: { type: 'array', description: 'create：团队成员', description_en: 'create: team members', items: MEMBER_ITEM_SCHEMA },
+        tasks: { type: 'array', description: 'create：任务 DAG（id 即数组顺序 1..N，如 t1、t2……）', description_en: 'create: task DAG (ids are the array order 1..N, i.e. t1, t2, ...)', items: TASK_ITEM_SCHEMA },
+        approval: { type: 'boolean', description: 'create：true（默认）= 计划暂存并等待用户在专家团面板批准；false = 立即开始', description_en: 'create: true (default) = staged plan awaiting user approval; false = start immediately' },
 
-        // add_member / remove_member
-        member: { type: 'object', description: 'add_member：成员规格', description_en: 'add_member: member spec', properties: { name: { type: 'string' }, role: { type: 'string' }, agentId: { type: 'string' }, inlinePrompt: { type: 'string' } }, required: ['name'] },
-        memberName: { type: 'string', description: 'remove_member：成员名', description_en: 'remove_member: member name' },
+        // edit
+        plan: {
+          type: 'object',
+          description: 'edit：要施加的修订（可同时增删成员与任务）',
+          description_en: 'edit: revisions to apply (members and tasks may be changed together)',
+          properties: {
+            description: { type: 'string', description: '替换团队描述', description_en: 'Replace team description' },
+            addMembers: { type: 'array', items: MEMBER_ITEM_SCHEMA, description: '要添加的成员', description_en: 'Members to add' },
+            removeMembers: { type: 'array', items: { type: 'string' }, description: '要移除的成员名', description_en: 'Member names to remove' },
+            addTasks: { type: 'array', items: TASK_ITEM_SCHEMA, description: '要添加的任务', description_en: 'Tasks to add' },
+            removeTasks: { type: 'array', items: { type: 'string' }, description: '要移除的任务 id', description_en: 'Task ids to remove' },
+          },
+        },
 
-        // create_task
-        newTask: { type: 'object', description: 'create_task：任务规格（支持 dependencies，可构建/扩展任务 DAG）', description_en: 'create_task: task spec (supports dependencies, forming/extending the DAG)', properties: { subject: { type: 'string' }, description: { type: 'string' }, kind: { type: 'string', enum: [...TASK_KINDS] }, dependencies: { type: 'array', items: { type: 'string' } }, assignee: { type: 'string' } }, required: ['subject'] },
-
-        // update_task
-        taskId: { type: 'string', description: 'update_task/reassign_task/claim_task：任务 id（t1、t2……）', description_en: 'update_task/reassign_task/claim_task: task id (t1, t2...)' },
-        attemptId: { type: 'string', description: 'update_task：派发票据中的 attempt id（用于拒绝过期报告）', description_en: 'update_task: the attempt id from the dispatch ticket (rejects stale reports)' },
+        // task
+        taskId: { type: 'string', description: 'task：任务 id（t1、t2……）', description_en: 'task: task id (t1, t2...)' },
+        attemptId: { type: 'string', description: 'task：派发票据中的 attempt id（用于拒绝过期上报）', description_en: 'task: the attempt id from the dispatch ticket (rejects stale reports)' },
         patch: {
           type: 'object',
-          description: 'update_task：要修补的字段',
-          description_en: 'update_task: fields to patch',
+          description: 'task：上报任务产出/状态（成员自报必用）',
+          description_en: 'task: report task output/status (members must use this)',
           properties: {
             status: { type: 'string', enum: ['pending', 'claimed', 'in_progress', 'completed', 'failed', 'cancelled'] },
             output: { type: 'string' },
@@ -559,13 +528,15 @@ function createAgentTool(orch: TeamOrchestrator): Tool {
             },
           },
         },
+        assignee: { type: 'string', description: 'task：重派给该成员名（空字符串 = 取消指派）', description_en: 'task: reassign to this member (empty string = unassign)' },
+        claim: { type: 'boolean', description: 'task：true = 认领该 pending 任务', description_en: 'task: true = claim this pending task' },
 
-        // reassign_task
-        assignee: { type: 'string', description: 'reassign_task：成员名（省略即取消指派）', description_en: 'reassign_task: member name (unassign when omitted)' },
+        // message
+        to: { type: 'string', description: 'message：收件人（成员名或 captain）', description_en: 'message: recipient (member name or captain)' },
+        content: { type: 'string', description: 'message：消息正文', description_en: 'message: message body' },
 
-        // send_message
-        to: { type: 'string', description: 'send_message：收件人（成员名或 captain）', description_en: 'send_message: recipient (member name or captain)' },
-        content: { type: 'string', description: 'send_message：消息正文', description_en: 'send_message: message body' },
+        // control
+        op: { type: 'string', enum: ['resume', 'delete'], description: 'control：resume（恢复）或 delete（删除）', description_en: 'control: resume or delete' },
       },
       required: ['mode'],
     },

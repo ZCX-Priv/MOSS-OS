@@ -58,6 +58,23 @@ export interface CreateTeamInput {
   reviewPolicy?: TeamState['reviewPolicy'];
 }
 
+/** 计划修订输入（action=edit） */
+export interface EditPlanInput {
+  /** 替换团队描述 */
+  description?: string;
+  addMembers?: MemberSpec[];
+  removeMembers?: string[];
+  addTasks?: TaskSpec[];
+  removeTasks?: string[];
+}
+
+/** 调用方身份解析结果（成员会话 → 成员；否则主会话=队长） */
+export interface TeamActor {
+  teamId: string;
+  /** 成员名；主会话为 undefined（即队长） */
+  memberName?: string;
+}
+
 /** 临时 subagent 运行输入 */
 export interface SubagentRunInput {
   /** 模板 agent id（或注册表任意 agent id） */
@@ -159,7 +176,7 @@ export class TeamOrchestrator {
     return this.store.get(teamId);
   }
 
-  /** 保存外部获取并修改的团队引用（captain 工具 edit_plan 等） */
+  /** 保存外部获取并修改的团队引用（工具 edit 等） */
   saveTeam(team: TeamState): void {
     this.store.save(team);
     this.notifyChanged(team.id);
@@ -167,6 +184,21 @@ export class TeamOrchestrator {
 
   getMessages(teamId: string, since?: number): TeamMessage[] {
     return this.store.listMessages(teamId, since);
+  }
+
+  /**
+   * 解析调用方身份：sessionId 是某个团队的成员会话 → 返回该团队与该成员名；
+   * 否则视为队长（创建团队的主会话），返回其创建的团队（若有）。
+   * 用于工具层统一“成员 vs 队长”的身份判定与 teamId 缺省。
+   */
+  resolveActor(sessionId: string): TeamActor | null {
+    if (!sessionId) return null;
+    for (const team of this.store.list()) {
+      const member = team.members.find((m) => m.sessionId === sessionId && m.status !== 'removed');
+      if (member) return { teamId: team.id, memberName: member.name };
+    }
+    const asCaptain = this.store.list().find((t) => t.captainSessionId === sessionId);
+    return asCaptain ? { teamId: asCaptain.id } : null;
   }
 
   createTeam(input: CreateTeamInput): TeamState {
@@ -203,6 +235,8 @@ export class TeamOrchestrator {
         assignee: t.assignee,
         dependencies: t.dependencies ?? [],
         kind: t.kind,
+        reviewedTaskId: t.reviewedTaskId,
+        sourceTaskId: t.sourceTaskId,
         createdAt: now,
         updatedAt: now,
       })),
@@ -216,12 +250,6 @@ export class TeamOrchestrator {
     for (const task of team.tasks) {
       const validation = validateCreateTask(task, team);
       if (!validation.ok) throw new Error(validation.reason ?? 'invalid task');
-    }
-
-    // UI 建队（无 captain 会话）：仅标记为自动队长；队长专属持久会话延迟到首次运行
-    // （审批通过 / 首次派发 / 最终汇报）时创建，保证 agenteam 目录"跑过才建"。
-    if (!team.captainSessionId) {
-      team.captainIsAuto = true;
     }
 
     this.store.save(team);
@@ -483,7 +511,7 @@ export class TeamOrchestrator {
         const freshMember = fresh.members.find((m) => m.name === member.name);
         if (!freshTask || !freshMember) return;
 
-        // 成员已在 run 中通过 agent(mode=agenteam, action=update_task) 自我报告（任务已终态且产出已写）：
+        // 成员已在 run 中通过 agent(mode=agenteam, action=task) 自我报告（任务已终态且产出已写）：
         // 只重置成员状态并推进调度，不重复处理/重复报告
         if (TERMINAL_TASK_STATUSES.includes(freshTask.status) && freshTask.output !== undefined) {
           if (freshMember.status === 'working') {
@@ -512,7 +540,7 @@ export class TeamOrchestrator {
             freshTask.status = 'pending';
             freshTask.updatedAt = completeTime;
             reportStatus = 'pending';
-            const gateMsg = `质量门禁未通过：${evaluation.reason}。请继续完善（可在完成时调用 agent(mode=agenteam, action=update_task) 补充 verdict/acceptanceResults）。`;
+            const gateMsg = `质量门禁未通过：${evaluation.reason}。请继续完善（可在完成时调用 agent(mode=agenteam, action=task, patch={...}) 补充 verdict/acceptanceResults）。`;
             this.appendMessage(fresh, {
               from: 'captain',
               to: member.name,
@@ -668,8 +696,8 @@ export class TeamOrchestrator {
     const failed = team.tasks.filter((t) => t.status === 'failed');
     const cancelled = team.tasks.filter((t) => t.status === 'cancelled');
 
-    // 无可用队长（既无既有会话又非自动队长，工具建队异常）→ 自动拼 summary 并置终态
-    if (!team.captainSessionId && !team.captainIsAuto) {
+    // 无队长会话（历史脏数据/异常建队）→ 自动拼 summary 并置终态
+    if (!team.captainSessionId) {
       this.finalizeTeam(team, completed, failed, cancelled, this.buildFallbackSummary(team, completed));
       return;
     }
@@ -824,7 +852,7 @@ export class TeamOrchestrator {
     return team;
   }
 
-  /** 运行期创建任务（captain 工具） */
+  /** 运行期创建任务（队长/成员工具） */
   createTask(
     teamId: string,
     spec: TaskSpec & { dependencies?: string[] },
@@ -840,6 +868,8 @@ export class TeamOrchestrator {
       assignee: spec.assignee,
       dependencies: spec.dependencies ?? [],
       kind: spec.kind,
+      reviewedTaskId: spec.reviewedTaskId,
+      sourceTaskId: spec.sourceTaskId,
       createdAt: now,
       updatedAt: now,
     };
@@ -850,6 +880,97 @@ export class TeamOrchestrator {
     this.notifyChanged(teamId);
     void this.kick(teamId);
     return team;
+  }
+
+  /**
+   * 计划修订（action=edit）：在一个事务内增删成员与任务。
+   * staged / running 阶段可用；终态（completed/failed/halted）拒绝。
+   */
+  editTeam(teamId: string, plan: EditPlanInput): TeamState {
+    const team = this.mustGet(teamId);
+    if (team.phase !== 'staged' && team.phase !== 'running') {
+      throw new Error(`team phase is ${team.phase}, plan cannot be edited`);
+    }
+    const now = Date.now();
+
+    if (plan.description !== undefined) team.description = plan.description;
+
+    for (const name of plan.removeMembers ?? []) {
+      const member = team.members.find((m) => m.name === name && m.status !== 'removed');
+      if (!member) continue;
+      member.status = 'removed';
+      const controller = this.activeMemberRuns.get(member.sessionId);
+      if (controller) controller.abort();
+      for (const task of team.tasks) {
+        if (task.assignee === name && !TERMINAL_TASK_STATUSES.includes(task.status)) {
+          task.status = 'pending';
+          task.assignee = undefined;
+          task.reassigning = false;
+          task.updatedAt = now;
+        }
+      }
+    }
+
+    for (const spec of plan.addMembers ?? []) {
+      if (team.members.some((m) => m.name === spec.name && m.status !== 'removed')) {
+        throw new Error(`member name "${spec.name}" already exists`);
+      }
+      team.members.push({
+        id: `m${team.members.length + 1}`,
+        name: spec.name,
+        role: spec.role,
+        agentId: spec.agentId,
+        inlinePrompt: spec.inlinePrompt,
+        sessionId: '',
+        executionPrompt: spec.executionPrompt,
+        joinedAt: now,
+        status: 'idle',
+      });
+    }
+
+    for (const id of plan.removeTasks ?? []) {
+      const task = team.tasks.find((t) => t.id === id);
+      if (!task) continue;
+      const controller = task.assignee
+        ? this.activeMemberRuns.get(team.members.find((m) => m.name === task.assignee)?.sessionId ?? '')
+        : undefined;
+      if (controller) controller.abort();
+      team.tasks = team.tasks.filter((t) => t.id !== id);
+    }
+
+    for (const spec of plan.addTasks ?? []) {
+      team.taskSeq += 1;
+      const task: TeamTask = {
+        id: `t${team.taskSeq}`,
+        subject: spec.subject,
+        description: spec.description,
+        status: 'pending',
+        assignee: spec.assignee,
+        dependencies: spec.dependencies ?? [],
+        kind: spec.kind,
+        reviewedTaskId: spec.reviewedTaskId,
+        sourceTaskId: spec.sourceTaskId,
+        createdAt: now,
+        updatedAt: now,
+      };
+      const validation = validateCreateTask(task, team);
+      if (!validation.ok) throw new Error(validation.reason ?? 'invalid task');
+      team.tasks.push(task);
+    }
+
+    this.store.save(team);
+    this.notifyChanged(teamId);
+    void this.kick(teamId);
+    return team;
+  }
+
+  /** 认领 pending 任务（等价置 in_progress，交由调度器按指派/认领规则接管） */
+  claimTask(teamId: string, taskId: string): TeamState {
+    const team = this.mustGet(teamId);
+    const task = team.tasks.find((t) => t.id === taskId);
+    if (!task) throw new Error(`task "${taskId}" not found`);
+    if (task.status !== 'pending') throw new Error(`task status is ${task.status}, not pending`);
+    return this.updateTask(teamId, taskId, { status: 'in_progress' });
   }
 
   /** 任务更新（captain 工具；需 attemptId 防旧报告） */
@@ -978,26 +1099,17 @@ export class TeamOrchestrator {
   }
 
   /**
-   * 自动队长持久会话（UI 建队）：延迟创建（首次运行/审批时才建），保证 agenteam 目录"跑过才建"。
-   * 工具建队（captainIsAuto=false）时 captain = 用户自身会话，不新建，返回 null。
+   * 队长会话 id：队长恒为“创建团队的主会话”（主 agent 自身），不另建队长会话。
+   * 无队长会话（历史脏数据）时返回 null，调用方走兜底汇总。
    */
   private ensureCaptainTask(team: TeamState): string | null {
-    if (team.captainSessionId) return team.captainSessionId;
-    if (!team.captainIsAuto) return null;
-    const group = this.ensureTeamGroup(team);
-    const task = this.engine.createTask(`${team.name} / Captain`, group.id);
-    team.captainSessionId = task.id;
-    this.store.save(team);
-    this.notifyChanged(team.id);
-    return task.id;
+    return team.captainSessionId || null;
   }
 
   /**
-   * 队长决策入队：把内容作为新 turn 注入 captain 会话（串行队列防同 session 并发 run）。
-   * UI 建队 → agent_captain 模板；工具建队 → 用户会话自身（不传 agentId）。
+   * 队长决策入队：把内容作为新 turn 注入队长（主）会话（串行队列防同 session 并发 run）。
    */
   private enqueueCaptainRun(team: TeamState, content: string, opts?: { isFinalReport?: boolean }): void {
-    // 自动队长（UI 建队）：此处为"首次运行"，按需创建队长持久会话（跑过才建）
     if (!this.ensureCaptainTask(team)) return;
     const teamId = team.id;
     const previous = this.captainRuns.get(teamId) ?? Promise.resolve();
@@ -1031,8 +1143,8 @@ export class TeamOrchestrator {
     try {
       const result = await this.engine.run({
         sessionId: captainSessionId,
-        // UI 建队的队长使用 agent_captain 模板；工具建队的队长=用户会话（用户自身配置）
-        agentId: team.captainIsAuto ? 'agent_captain' : undefined,
+        // 队长即主会话本身：沿用其既有 agent 配置（不传 agentId）
+        agentId: undefined,
         userMessage: content,
         permissionMode: team.permissionMode ?? 'auto',
         cwd: team.cwd,
@@ -1104,7 +1216,7 @@ export class TeamOrchestrator {
       '[Agenteam] 你收到团队消息：',
       ...messages.map((m) => `- ${m}`),
       '',
-      '请阅读并按消息内容行事（若需要回复，可用 agent(mode=agenteam, action=send_message)，to=captain 或队友名；若无实际行动需要，简短确认即可）。',
+      '请阅读并按消息内容行事（若需要回复，可用 agent(mode=agenteam, action=message)，to=captain 或队友名；若无实际行动需要，简短确认即可）。',
     ].join('\n');
 
     const controller = new AbortController();

@@ -5,9 +5,10 @@
 // 用户修改过的文件保留不动（内容哈希不匹配任何已知播种指纹）。
 // 指纹记录：~/.moss/agent/.seed-manifest.json（path → 上次播种内容 sha256）。
 // 失败不阻断启动（静默降级，调用方各自处理目录缺失场景）。
+// 附带清理历史遗留：早期版本误放入 main/ 子目录的提示词与已移除的 spec 目录（见 DEPRECATED_SEED_PATHS）。
 
 import { createHash } from 'node:crypto';
-import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import type { Environment } from '../../../core/types';
 
@@ -21,12 +22,26 @@ let seeded = false;
  */
 const LEGACY_SEED_HASHES: Readonly<Record<string, ReadonlyArray<string>>> = {
   'prompts/main/system.md': ['61a92fc6c815da130d26a3f17ebe0d87d954bb897f9eda175b6fd901659d64f0'],
-  'prompts/main/rule/rules.md': ['ac01d2b902dc70a0d00c742063b9e306a38363095a8c3873ee306b8aa9d0f924'],
-  'prompts/main/base/identity.md': ['a12eb8c73af051a90f1ee09c4b9c5730e255ac10a1fbc697b17872e668af2f0c'],
+  'prompts/main/rules.md': [
+    '9a80c5af645cf3feffacf6cfe936349424c19085fa0cfff09c1659c799b91928',
+    'afecb8d831bd60b5c9254def1e9baac7974989fa3481079c1d2e8c2114d8e48a',
+  ],
 };
 
 /** manifest 文件名（~/.moss/agent/ 下） */
 const MANIFEST_FILE = '.seed-manifest.json';
+
+/**
+ * 已废弃的种子路径（relpath，相对 ~/.moss/agent/）。
+ * 系统提示词加载器只读 main/*.md，早期版本误放进 main/ 子目录的提示词从未生效；
+ * spec 功能已整体移除，其目录也不再需要。启动播种时从用户目录清理残留（幂等）。
+ */
+const DEPRECATED_SEED_PATHS: ReadonlyArray<string> = [
+  'prompts/main/system',
+  'prompts/main/base',
+  'prompts/main/rule',
+  'prompts/main/spec',
+];
 
 interface SeedManifest {
   version: 1;
@@ -86,6 +101,18 @@ function writeManifest(manifestPath: string, manifest: SeedManifest): void {
   }
 }
 
+/** 清理用户目录中已废弃的种子路径（幂等；单项失败不阻断，下次启动重试） */
+function cleanupDeprecatedSeedPaths(dest: string): void {
+  for (const rel of DEPRECATED_SEED_PATHS) {
+    const target = join(dest, ...rel.split('/'));
+    try {
+      if (existsSync(target)) rmSync(target, { recursive: true, force: true });
+    } catch {
+      // 单项失败忽略
+    }
+  }
+}
+
 /**
  * 播种内置 agent 提示词到 ~/.moss/agent/（带内容指纹自动迁移）。
  * 失败不阻断启动（静默降级，调用方各自处理目录缺失场景）。
@@ -103,6 +130,8 @@ export function seedBuiltinAgentPrompts(env: Environment): boolean {
     if (!existsSync(dest)) {
       // 首次初始化：全量复制 + 记录 manifest
       cpSync(src, dest, { recursive: true });
+      // 复制源可能是历史构建产物，仍需清理废弃路径
+      cleanupDeprecatedSeedPaths(dest);
       const files: Record<string, string> = {};
       for (const file of listFilesRecursive(src)) {
         const rel = relative(src, file).split(sep).join('/');
@@ -113,7 +142,8 @@ export function seedBuiltinAgentPrompts(env: Environment): boolean {
       return true;
     }
 
-    // 已初始化：逐文件内容指纹同步
+    // 已初始化：先清理历史遗留的废弃路径，再做逐文件内容指纹同步
+    cleanupDeprecatedSeedPaths(dest);
     const manifestPath = join(dest, MANIFEST_FILE);
     const oldManifest = readManifest(manifestPath);
     const newFiles: Record<string, string> = {};

@@ -165,7 +165,7 @@ export function AgenteamPanel() {
           </div>
         ) : (
           <div className="space-y-3 p-3">
-            {/* 队长卡片（captain 持久会话；点击跳转查看/干预队长决策） */}
+            {/* 队长卡片（队长 = 创建团队的主会话；点击跳转查看/干预队长决策） */}
             {detail.captainSessionId && (
               <div className="flex items-center gap-2.5 rounded-lg border border-primary/40 bg-primary/5 px-2.5 py-2">
                 <HumationAvatar seed={detail.captainSessionId} size={32} />
@@ -176,8 +176,8 @@ export function AgenteamPanel() {
                       {t(`agenteam.phase.${detail.phase}`)}
                     </span>
                   </div>
-                  <div className="mt-0.5 text-[11px] text-muted-foreground">
-                    {detail.captainIsAuto ? 'Captain' : t('agenteam.captainUserSession')}
+                  <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                    {t('agenteam.captainUserSession')}
                   </div>
                 </div>
                 <Button

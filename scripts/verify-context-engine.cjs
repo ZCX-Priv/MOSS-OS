@@ -62,6 +62,16 @@ function file(name, rel) {
     console.error(`FAIL ${name} —— 缺文件: ${rel}`);
   }
 }
+/** 路径不存在断言（负向：废弃文件/目录已清理） */
+function absent(name, rel) {
+  if (!exists(rel)) {
+    passed++;
+    console.log(`PASS ${name}`);
+  } else {
+    failed++;
+    console.error(`FAIL ${name} —— 仍存在: ${rel}`);
+  }
+}
 
 console.log('===== A. context 模块文件（24 个） =====');
 const moduleFiles = [
@@ -211,26 +221,30 @@ gone('engine.ts 旧三连已替换', 'src/modules/agent/engine.ts', [
 ]);
 
 console.log('\n===== D. 提示词文件（外部化 + 播种源） =====');
-file('存在 agent/prompts/main/system/soul.md', 'agent/prompts/main/system/soul.md');
-file('存在 agent/prompts/main/base/identity.md', 'agent/prompts/main/base/identity.md');
-file('存在 agent/prompts/main/rule/rules.md', 'agent/prompts/main/rule/rules.md');
+// main/ 下直接放扁平 .md（加载器只读 main/*.md，子目录内容不会生效）
+file('存在 agent/prompts/main/system.md', 'agent/prompts/main/system.md');
+file('存在 agent/prompts/main/base.md', 'agent/prompts/main/base.md');
+file('存在 agent/prompts/main/rules.md', 'agent/prompts/main/rules.md');
 file('存在 agent/prompts/compact/compaction.md', 'agent/prompts/compact/compaction.md');
 file('存在 agent/prompts/heal/tool-error.md', 'agent/prompts/heal/tool-error.md');
-ok('soul.md 内容特征（第一性原理/工具纪律）', 'agent/prompts/main/system/soul.md', [
-  '# 工作哲学',
+absent('废弃子目录 main/system 已删除', 'agent/prompts/main/system');
+absent('废弃子目录 main/base 已删除', 'agent/prompts/main/base');
+absent('废弃子目录 main/rule 已删除', 'agent/prompts/main/rule');
+absent('已移除功能目录 main/spec 已删除', 'agent/prompts/main/spec');
+ok('system.md 内容特征（运行环境变量）', 'agent/prompts/main/system.md', [
+  '# 运行环境',
+  '{{PLATFORM}}',
+  '{{CWD}}',
+]);
+ok('base.md 内容特征（身份/核心能力）', 'agent/prompts/main/base.md', [
+  '# 身份',
+  '核心能力',
+  '知识边界',
+]);
+ok('rules.md 内容特征（核心原则/待办进度保留）', 'agent/prompts/main/rules.md', [
+  '# 核心原则',
   '第一性原理',
-  '必须先用工具核实',
-  '任务焦点',
-]);
-ok('identity.md 内容特征（压缩摘要语义）', 'agent/prompts/main/base/identity.md', [
-  '# 身份认知',
-  '<compaction-summary>',
-  '[环境上下文]',
-]);
-ok('rules.md 内容特征（积极调用工具）', 'agent/prompts/main/rule/rules.md', [
-  '# 行为规则',
-  '积极调用工具',
-  '工具选择',
+  '保留 completed 状态',
 ]);
 ok('compact/compaction.md 七段式 + FOCUS 变量', 'agent/prompts/compact/compaction.md', [
   '## 持续事实与约束',
@@ -248,12 +262,20 @@ ok('heal/tool-error.md 模板变量', 'agent/prompts/heal/tool-error.md', [
   '{{USAGE}}',
   '{{CANDIDATES}}',
 ]);
-ok('prompt-loader 播种清单（compact/heal/main 三件套）', 'src/modules/context/prompt-loader.ts', [
+ok('prompt-loader 播种清单（compact/heal）', 'src/modules/context/prompt-loader.ts', [
   "'compact/compaction.md'",
   "'heal/tool-error.md'",
+]);
+gone('prompt-loader 已移除嵌套 main/ 播种路径', 'src/modules/context/prompt-loader.ts', [
   "'main/system/soul.md'",
   "'main/base/identity.md'",
   "'main/rule/rules.md'",
+]);
+ok('agent-seed 废弃路径清理清单 + rules.md 旧版指纹', 'src/modules/tools/shared/agent-seed.ts', [
+  'DEPRECATED_SEED_PATHS',
+  "'prompts/main/spec'",
+  '9a80c5af645cf3feffacf6cfe936349424c19085fa0cfff09c1659c799b91928',
+  'cleanupDeprecatedSeedPaths',
 ]);
 
 console.log('\n===== E. 配置文件 =====');

@@ -202,7 +202,7 @@ export function buildTaskTicket(
   lines.push('1. 完成任务时：你的最终回复将被记录为任务产出，请以完整、自包含的工作报告形式给出。');
   lines.push('2. 若无法完成：如实说明原因与已尝试的路径，系统将标记 failed。');
   lines.push('3. 你收到的团队消息（上方「你收到的团队消息」段）是重要指导，按其行事。');
-  lines.push('4. 需要向队长汇报或与队友沟通时，调用 agent(mode=agenteam, action=send_message)（to=captain 或队友名）。');
+  lines.push('4. 完成/自报产出时调用 agent(mode=agenteam, action=task, patch={...}) 上报（带 attempt_id）；需要向队长或队友沟通时调用 agent(mode=agenteam, action=message)（to=captain 或队友名）。');
   lines.push('5. 审查类任务（review/requirements）完成时 verdict 必须为 pass，否则会被打回重做。');
   lines.push('6. 你是团队成员，专注于当前任务；不要干预其他成员的任务。');
   if (member.executionPrompt) {

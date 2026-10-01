@@ -204,6 +204,10 @@ export interface TaskSpec {
   kind?: TaskKind;
   dependencies?: string[];
   assignee?: string;
+  /** kind=review 必填：被审查的任务 id */
+  reviewedTaskId?: string;
+  /** kind=repair 必填：修复来源任务 id */
+  sourceTaskId?: string;
 }
 
 /** 团队模板快照 */
@@ -227,10 +231,8 @@ export interface TeamState {
   description?: string;
   /** 命名团队模板快照（从模板创建时） */
   profile?: TeamProfileSnapshot;
-  /** captain（创建团队的主会话）session id */
+  /** 队长（= 创建团队的主会话）session id；成员仅队友 */
   captainSessionId: string;
-  /** UI 建队时自动创建的队长会话标记（true 时队长 run 使用 agent_captain 模板） */
-  captainIsAuto?: boolean;
   /** 工作目录 */
   cwd: string;
   /** 团队级权限模式（缺省 auto） */

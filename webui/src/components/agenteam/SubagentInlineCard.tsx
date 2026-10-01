@@ -1,16 +1,16 @@
 // webui/src/components/agenteam/SubagentInlineCard.tsx
-// 对话流内 Subagent 卡片（参考 Max/TeamUI/Subagent.png 设计）：
-// 头像图标 + 角色名 + 状态徽章 + 树形任务描述 + 运行中"已处理 N 条事件"实时计数
-// + 完成后可展开最终报告（Markdown 渲染）。
+// 对话流内 Subagent 卡片：头像图标 + 角色名 + 状态徽章 + 树形任务描述 + 运行中"已处理 N 条事件"实时计数。
+// 可手动展开：展开后内联展示该 subagent 的「微缩任务流」（AgentTaskFlow）+ 最终报告 + 跳转完整任务页。
 // 事件计数数据源：store.agenteamEvents（useWebSocket 消费 agenteam.member.event 聚合）。
 
-import { memo, useMemo } from 'react';
+import { memo, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Bot, ChevronRight, CircleCheck, CircleX, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useStore } from '../../store';
 import type { AgenteamEventEntry } from '../../store';
 import { MarkdownRenderer } from '../../render';
+import { AgentTaskFlow } from './AgentTaskFlow';
 import type { ToolCall } from '../../types/api';
 
 interface SubagentInlineCardProps {
@@ -26,8 +26,10 @@ interface SubagentInlineCardProps {
   isError?: boolean;
 }
 
-/** agent(mode=subagent) 结果文本固定前缀（tools.ts 拼装），剥离后为最终报告正文 */
-const SUBAGENT_PREFIX = /^子代理已完成 \(finishReason=[^,]+, session=[^)]+\):\n*/;
+/** agent(mode=subagent) 结果文本固定前缀（中/英文构建都兼容），剥离后为最终报告正文 */
+const SUBAGENT_PREFIX = /^(?:子代理已完成|Subagent finished) \([^)]*\):\n*/;
+/** 结果文本中的子代理会话 id（用于展开微缩任务流） */
+const SUBAGENT_SESSION = /session=([0-9a-zA-Z_-]+)/;
 
 export const SubagentInlineCard = memo(function SubagentInlineCard({
   template,
@@ -37,6 +39,7 @@ export const SubagentInlineCard = memo(function SubagentInlineCard({
   isError,
 }: SubagentInlineCardProps) {
   const { t } = useTranslation();
+  const [expanded, setExpanded] = useState(false);
   const running = status === 'generating' || status === 'executing';
 
   // 注册表显示名（如"探索专家"），查不到回落模板 id
@@ -55,13 +58,19 @@ export const SubagentInlineCard = memo(function SubagentInlineCard({
   }, [events, template]);
 
   const report = resultText?.replace(SUBAGENT_PREFIX, '') ?? '';
+  const subagentSessionId = resultText?.match(SUBAGENT_SESSION)?.[1] ?? null;
   // 缺参兜底：模板/任务缺失时仍渲染占位（名称回落 'subagent'），保证工具调用处不丢卡
   const displayName = agentName || template || 'subagent';
 
   return (
     <div className="flex flex-col gap-2 rounded-xl border border-border bg-card p-3 shadow-sm">
-      {/* 行1：头像图标 + 角色名 + 状态徽章 */}
-      <div className="flex min-w-0 items-center gap-2">
+      {/* 行1：展开按钮（头像图标 + 角色名 + 状态徽章） */}
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        aria-expanded={expanded}
+        className="flex min-w-0 items-center gap-2 text-left"
+      >
         <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-muted">
           {isError && !running ? (
             <Bot className="size-4 text-red-500" />
@@ -92,7 +101,13 @@ export const SubagentInlineCard = memo(function SubagentInlineCard({
             {t('agenteam.taskStatus.completed')}
           </span>
         )}
-      </div>
+        <ChevronRight
+          className={cn(
+            'size-3.5 shrink-0 text-muted-foreground transition-transform',
+            expanded && 'rotate-90',
+          )}
+        />
+      </button>
 
       {/* 行2：树形任务描述 */}
       {task && (
@@ -116,23 +131,25 @@ export const SubagentInlineCard = memo(function SubagentInlineCard({
         </div>
       )}
 
-      {/* 完成后：最终报告可展开（Markdown 渲染） */}
-      {!running && report && (
-        <details className="group border-t border-border/60 pt-2">
-          <summary className="flex cursor-pointer items-center gap-1.5 text-[11px] text-muted-foreground">
-            <ChevronRight className="size-3 transition-transform group-open:rotate-90" />
-            <span className={cn(isError && 'text-destructive')}>
-              {isError ? t('task.errorResult') : t('agenteam.card.report')}
-            </span>
-          </summary>
-          <div className="mt-1 max-h-[300px] overflow-auto no-scrollbar text-xs">
-            {isError ? (
-              <pre className="mono whitespace-pre-wrap break-all text-destructive">{report}</pre>
-            ) : (
-              <MarkdownRenderer text={report} />
-            )}
-          </div>
-        </details>
+      {/* 展开：微缩任务流 + 最终报告 */}
+      {expanded && (
+        <div className="flex flex-col gap-2 border-t border-border/60 pt-2">
+          <AgentTaskFlow sessionId={subagentSessionId} />
+          {!running && report && (
+            <div className="flex flex-col gap-1">
+              <span className={cn('text-[11px] text-muted-foreground', isError && 'text-destructive')}>
+                {isError ? t('task.errorResult') : t('agenteam.card.report')}
+              </span>
+              <div className="max-h-[300px] overflow-auto no-scrollbar text-xs">
+                {isError ? (
+                  <pre className="mono whitespace-pre-wrap break-all text-destructive">{report}</pre>
+                ) : (
+                  <MarkdownRenderer text={report} />
+                )}
+              </div>
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

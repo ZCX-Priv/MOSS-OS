@@ -4,11 +4,12 @@
 //        + 任务行（成员头像 + 成员名 + 序号 + 树形任务描述 + 状态图标）。
 // 数据：工具参数静态计划立即渲染；result 解析出 teamId 后经 useTeamLive 实时刷新。
 
-import { memo } from 'react';
+import { memo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Bot, CircleCheck, CircleDashed, CircleX, Loader2, TriangleAlert } from 'lucide-react';
+import { Bot, ChevronRight, CircleCheck, CircleDashed, CircleX, Loader2, TriangleAlert } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { HumationAvatar } from './HumationAvatar';
+import { AgentTaskFlow } from './AgentTaskFlow';
 import { useTeamLive } from '../../hooks/useTeamLive';
 import type { TeamPhase, TeamTaskStatus } from '../../types/api';
 
@@ -75,6 +76,8 @@ export const AgenteamInlineCard = memo(function AgenteamInlineCard({
 }: AgenteamInlineCardProps) {
   const { t } = useTranslation();
   const live = useTeamLive(teamId);
+  /** 展开的任务行 key（同一时刻只展开一行，避免卡片过长） */
+  const [expandedRow, setExpandedRow] = useState<string | null>(null);
 
   // 缺参兜底：plan/teamId 皆无时也渲染占位卡（名称回落 agenteam.title），保证工具调用处不丢卡
 
@@ -136,15 +139,22 @@ export const AgenteamInlineCard = memo(function AgenteamInlineCard({
         </div>
       </div>
 
-      {/* 任务行列表 */}
+      {/* 任务行列表（每行可展开该成员自己的微缩任务流） */}
       <div className="flex flex-col gap-1.5">
         {rows.map((task, i) => {
           const member = task.assignee ? memberByName.get(task.assignee) : undefined;
           const seed = member?.agentId || member?.name || task.id || `t${i + 1}`;
           const memberLabel = task.assignee || t('agenteam.card.unassigned');
+          const rowKey = task.id ?? `plan-${i}`;
+          const isOpen = expandedRow === rowKey;
           return (
-            <div key={task.id ?? i} className="rounded-lg bg-muted/50 px-2.5 py-2">
-              <div className="flex min-w-0 items-center gap-2">
+            <div key={rowKey} className="rounded-lg bg-muted/50 px-2.5 py-2">
+              <button
+                type="button"
+                onClick={() => setExpandedRow((v) => (v === rowKey ? null : rowKey))}
+                aria-expanded={isOpen}
+                className="flex w-full min-w-0 items-center gap-2 text-left"
+              >
                 <HumationAvatar seed={seed} size={24} />
                 <span className="min-w-0 truncate text-xs font-medium text-foreground">
                   {memberLabel}
@@ -152,7 +162,13 @@ export const AgenteamInlineCard = memo(function AgenteamInlineCard({
                 <span className="ml-auto shrink-0 font-mono text-xs text-muted-foreground">
                   {String(i + 1).padStart(2, '0')}
                 </span>
-              </div>
+                <ChevronRight
+                  className={cn(
+                    'size-3 shrink-0 text-muted-foreground transition-transform',
+                    isOpen && 'rotate-90',
+                  )}
+                />
+              </button>
               <div className="mt-1 flex min-w-0 items-center gap-1.5">
                 <span className="shrink-0 select-none text-muted-foreground/50">└</span>
                 <span className="min-w-0 flex-1 truncate text-xs text-foreground" title={task.subject}>
@@ -160,6 +176,17 @@ export const AgenteamInlineCard = memo(function AgenteamInlineCard({
                 </span>
                 <TaskStatusIcon status={task.status} />
               </div>
+              {isOpen && (
+                <div className="mt-2">
+                  <AgentTaskFlow
+                    sessionId={
+                      (task.assignee
+                        ? live?.members.find((m) => m.name === task.assignee)?.sessionId
+                        : undefined) ?? null
+                    }
+                  />
+                </div>
+              )}
             </div>
           );
         })}

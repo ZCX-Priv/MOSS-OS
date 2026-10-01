@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, memo, useRef } from 'react';
+import { useState, useEffect, useCallback, memo, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -90,6 +90,8 @@ import { TerminalView } from '../shared/TerminalView';
 import { AgenteamPanel } from '../agenteam/AgenteamPanel';
 import { AgenteamInlineCard, type InlineTeamPlan } from '../agenteam/AgenteamInlineCard';
 import { SubagentInlineCard } from '../agenteam/SubagentInlineCard';
+import { isAgentCall, parseAgentArgs, buildToolResultIndex, type ToolResultEntry } from '../agenteam/agent-calls';
+import { MessageErrorBoundary } from '../shared/MessageErrorBoundary';
 import { ControlHub } from '../shared/ControlHub';
 import { StatsBar } from '../shared/StatsBar';
 import { CompactionCard } from '../shared/CompactionCard';
@@ -196,6 +198,12 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
   };
 
   const messages = useStore((s) => s.messagesBySession[taskId] ?? EMPTY_MESSAGES);
+  /**
+   * 工具结果全局索引（toolCallId → 结果文本/错误标记）。
+   * 长耗时工具（subagent / 建队）的结果消息不保证紧邻其 assistant 消息，
+   * 卡片必须跨整条消息列表取结果，否则刷新后报告与 teamId 全丢。
+   */
+  const toolResultIndex = useMemo(() => buildToolResultIndex(messages), [messages]);
   /** token 名单：队列预览 / 标题剥离用（与气泡渲染同口径） */
   const lookups = useMentionLookups();
   const isGenerating = useStore((s) => s.generatingBySession[taskId] ?? false);
@@ -1045,17 +1053,20 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
                     freshIdsRef.current.has(msg.id) && 'anim-msg animate-in fade-in duration-200',
                   )}
                 >
-                  <MessageBubble
-                    message={msg}
-                    todos={todos}
-                    toolIconMap={toolIconMap}
-                    truncateDisabled={isGenerating}
-                    onTruncate={handleTruncateClick}
-                    onCopy={handleCopyMessage}
-                    onContinue={() => void handleSend(t('task.maxTurnsContinue'))}
-                    continueDisabled={isGenerating}
-                    onOpenAttachment={openAttachment}
-                  />
+                  <MessageErrorBoundary>
+                    <MessageBubble
+                      message={msg}
+                      todos={todos}
+                      toolIconMap={toolIconMap}
+                      toolResults={toolResultIndex}
+                      truncateDisabled={isGenerating}
+                      onTruncate={handleTruncateClick}
+                      onCopy={handleCopyMessage}
+                      onContinue={() => void handleSend(t('task.maxTurnsContinue'))}
+                      continueDisabled={isGenerating}
+                      onOpenAttachment={openAttachment}
+                    />
+                  </MessageErrorBoundary>
                 </div>
               )}
               components={{
@@ -1671,6 +1682,8 @@ interface MessageBubbleProps {
   message: TaskMessage;
   todos: TodoItem[];
   toolIconMap: Record<string, string>;
+  /** 工具结果全局索引（跨消息匹配；见页面内的 buildToolResultIndex） */
+  toolResults: Map<string, ToolResultEntry>;
   /** 流式生成中禁用撤回（防竞态） */
   truncateDisabled?: boolean;
   onTruncate?: (message: TaskMessage) => void;
@@ -1682,7 +1695,7 @@ interface MessageBubbleProps {
   /** 点击用户消息附件卡片：在右侧边栏打开该文件预览标签页 */
   onOpenAttachment?: (path: string) => void;
 }
-const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap, truncateDisabled, onTruncate, onCopy, onContinue, continueDisabled, onOpenAttachment }: MessageBubbleProps) {
+const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap, toolResults, truncateDisabled, onTruncate, onCopy, onContinue, continueDisabled, onOpenAttachment }: MessageBubbleProps) {
   const { t } = useTranslation();
   // 超长正文截断渲染（防止单条巨型文本布局卡死）；展开后完整渲染。
   // 流式生成中超限时显示尾部（正在生成的内容在末尾），结束后恢复头部截断。
@@ -1787,6 +1800,13 @@ const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap,
     );
   }
 
+  // 工具调用分流：agent 调用走专属卡片，其余走通用折叠卡（todo/ask 另有专属渲染）
+  const agentCalls = message.toolCalls?.filter((tc) => isAgentCall(tc)) ?? [];
+  const otherCalls =
+    message.toolCalls?.filter(
+      (tc) => tc.name !== 'todo' && tc.name !== 'ask' && !isAgentCall(tc),
+    ) ?? [];
+
   // assistant 消息
   return (
     <div className="flex flex-col gap-2">
@@ -1842,30 +1862,27 @@ const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap,
         </button>
       )}
       {/* agent 工具调用 → 按 mode 分派专属卡片（统一机器人图标 Bot）：
-          mode=subagent → Subagent 卡片（角色名 + 状态徽章 + 树形任务 + 运行中事件计数 + 完成后报告）
-          mode=agenteam → 专家团卡片（团队名 + 任务数 + 进度点阵 + 阶段徽章 + 成员头像任务行） */}
-      {message.toolCalls?.filter((tc) => tc.name === 'agent').map((tc) => {
-        const matched = message.toolResults?.find((tr) => tr.toolCallId === tc.id);
-        const resultText = matched?.result.content
-          .filter((c) => c.type === 'text')
-          .map((c) => (c.type === 'text' ? c.text : ''))
-          .join('\n');
-        let args: {
-          mode?: string;
-          template?: string;
-          task?: string;
-          name?: string;
-          members?: InlineTeamPlan['members'];
-          tasks?: InlineTeamPlan['tasks'];
-        } = {};
-        try {
-          args = JSON.parse(tc.arguments || '{}') as typeof args;
-        } catch {
-          // 非 JSON 参数：留空由卡片内部渲染最小占位
-        }
+          mode=subagent → Subagent 卡片（角色名 + 状态徽章 + 树形任务 + 运行中事件计数 + 可展开微缩任务流/报告）
+          mode=agenteam → 专家团卡片（团队名 + 任务数 + 进度点阵 + 阶段徽章 + 成员头像任务行，行可展开）
+          结果统一从全局索引取（长耗时工具的结果消息未必紧邻本消息） */}
+      {agentCalls.map((tc) => {
+        const matched = toolResults.get(tc.id);
+        const resultText = matched?.text;
+        const args = parseAgentArgs(tc) ?? {};
         if (args.mode === 'agenteam') {
           const plan: InlineTeamPlan | null = args.name
-            ? { name: args.name, members: args.members ?? [], tasks: args.tasks ?? [] }
+            ? {
+                name: args.name,
+                members: (args.members ?? []).map((m) => ({
+                  name: m.name ?? '',
+                  role: m.role,
+                  agentId: m.agentId,
+                })),
+                tasks: (args.tasks ?? []).map((t) => ({
+                  subject: t.subject ?? '',
+                  assignee: t.assignee,
+                })),
+              }
             : null;
           // 从结果文本 "团队已创建：id=<teamId> phase=..." 提取团队 id 绑定实时数据
           const teamId = resultText?.match(/id=([A-Za-z0-9_-]+)/)?.[1] ?? null;
@@ -1879,7 +1896,7 @@ const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap,
             task={args.task ?? ''}
             status={tc.status}
             resultText={resultText}
-            isError={matched?.result.isError}
+            isError={matched?.isError}
           />
         );
       })}
@@ -1932,15 +1949,19 @@ const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap,
       })}
       {/* 非 todo/ask/agent 工具调用（可折叠：展开显示参数与结果）。
           agent 工具已由上方专属卡片渲染。 */}
-      {message.toolCalls && message.toolCalls.filter((tc) => tc.name !== 'todo' && tc.name !== 'ask' && tc.name !== 'agent').length > 0 && (
+      {otherCalls.length > 0 && (
         <div className="flex flex-col gap-1">
-          {message.toolCalls.filter((tc) => tc.name !== 'todo' && tc.name !== 'ask' && tc.name !== 'agent').map((tc) => {
+          {otherCalls.map((tc) => {
             const matchedResult = message.toolResults?.find((tr) => tr.toolCallId === tc.id);
-            const resultText = matchedResult?.result.content
-              .filter((c) => c.type === 'text')
-              .map((c) => (c.type === 'text' ? c.text : ''))
-              .join('\n');
-            const isError = matchedResult?.result.isError;
+            // 结果文本/错误标记回退到全局索引：长耗时工具的结果消息可能不紧邻本消息
+            const indexed = toolResults.get(tc.id);
+            const resultText = matchedResult
+              ? matchedResult.result.content
+                  .filter((c) => c.type === 'text')
+                  .map((c) => (c.type === 'text' ? c.text : ''))
+                  .join('\n')
+              : indexed?.text;
+            const isError = matchedResult?.result.isError ?? indexed?.isError;
             // MCP 扩展：structuredContent（结构化输出）/ resources（资源引用）
             const structured = matchedResult?.result.metadata?.structuredContent;
             const resources = matchedResult?.result.metadata?.resources;

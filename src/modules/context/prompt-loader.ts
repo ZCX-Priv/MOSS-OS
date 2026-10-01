@@ -45,17 +45,15 @@ export function loadPromptFile(env: Environment, relativePath: string, fallback:
 }
 
 /**
- * 补充播种上下文引擎提示词（compact/ heal/ + main/ 三件套）：
+ * 补充播种上下文引擎提示词（compact/ 与 heal/）：
  * seedBuiltinAgentPrompts 只在 ~/.moss/agent 不存在时整体复制，
  * 已初始化用户需要按文件级幂等补充（目标已存在则跳过，不覆盖用户修改）。
+ * main/ 下的系统提示词由 seedBuiltinAgentPrompts 的指纹同步统一维护，此处不再重复播种。
  */
 export function ensureContextPrompts(env: Environment): void {
   const relatives = [
     'compact/compaction.md',
     'heal/tool-error.md',
-    'main/system/soul.md',
-    'main/base/identity.md',
-    'main/rule/rules.md',
   ];
   for (const rel of relatives) {
     const dest = join(env.dataDir, 'agent', 'prompts', rel);

@@ -42,14 +42,18 @@ const DEFAULT_TASKS: CreateAgenteamInput['tasks'] = [
   { subject: '探索代码库结构与相关模块', kind: 'work', dependencies: [], assignee: 'explorer' },
   { subject: '梳理需求与实现方案', kind: 'requirements', dependencies: ['t1'], assignee: 'planner' },
   { subject: '按方案实现改动', kind: 'implementation', dependencies: ['t2'], assignee: 'coder' },
-  { subject: '对抗性审查实现', kind: 'review', dependencies: ['t3'], assignee: 'reviewer' },
+  { subject: '对抗性审查实现', kind: 'review', dependencies: ['t3'], assignee: 'reviewer', reviewedTaskId: 't3' },
 ];
 
 export function CreateTeamDialog({ open, onOpenChange, onCreated }: CreateTeamDialogProps) {
   const { t } = useTranslation();
   const workingDirectory = useStore((s) => s.workingDirectory);
+  const activeTaskId = useStore((s) => s.activeTaskId);
   const [agents, setAgents] = useState<AgentItem[]>([]);
   const [profiles, setProfiles] = useState<AgenteamProfile[]>([]);
+  /** 可选队长会话（主 agent 即队长，人工建队必须绑定一个真实会话） */
+  const [sessions, setSessions] = useState<Array<{ id: string; title: string }>>([]);
+  const [captainSessionId, setCaptainSessionId] = useState('');
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [permissionMode, setPermissionMode] = useState<'ask' | 'auto' | 'skip'>('auto');
@@ -75,6 +79,22 @@ export function CreateTeamDialog({ open, onOpenChange, onCreated }: CreateTeamDi
       }
     })();
   }, [open]);
+
+  // 加载可选队长会话（默认绑定当前活跃会话）
+  useEffect(() => {
+    if (!open) return;
+    void api
+      .listTasks()
+      .then((resp) => {
+        const list = (resp.tasks ?? []).map((tk) => ({ id: tk.id, title: tk.title }));
+        setSessions(list);
+        setCaptainSessionId(activeTaskId && list.some((s) => s.id === activeTaskId) ? activeTaskId : '');
+      })
+      .catch(() => {
+        setSessions([]);
+        setCaptainSessionId('');
+      });
+  }, [open, activeTaskId]);
 
   // 默认成员：四件套模板
   useEffect(() => {
@@ -137,6 +157,10 @@ export function CreateTeamDialog({ open, onOpenChange, onCreated }: CreateTeamDi
       toast.error(t('agenteam.addMember'));
       return;
     }
+    if (!captainSessionId) {
+      toast.error(t('agenteam.captainSessionRequired'));
+      return;
+    }
     setSubmitting(true);
     try {
       const team = await api.createAgenteam({
@@ -144,6 +168,7 @@ export function CreateTeamDialog({ open, onOpenChange, onCreated }: CreateTeamDi
         description: description.trim() || undefined,
         cwd: workingDirectory,
         permissionMode,
+        captainSessionId,
         members: validMembers.map((m) => ({
           name: m.name.trim(),
           role: m.role?.trim() || undefined,
@@ -191,6 +216,28 @@ export function CreateTeamDialog({ open, onOpenChange, onCreated }: CreateTeamDi
               rows={2}
               placeholder={t('agenteam.teamGoal')}
             />
+          </div>
+
+          {/* 队长会话：主 agent 即队长，人工建队必须绑定一个真实会话 */}
+          <div className="space-y-1.5">
+            <Label>{t('agenteam.captainSessionLabel')}</Label>
+            <Select value={captainSessionId} onValueChange={setCaptainSessionId}>
+              <SelectTrigger>
+                <SelectValue placeholder={t('agenteam.captainSessionPlaceholder')} />
+              </SelectTrigger>
+              <SelectContent>
+                {sessions.map((s) => (
+                  <SelectItem key={s.id} value={s.id}>
+                    {s.title || s.id}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {!captainSessionId && (
+              <p className="text-[11px] text-amber-600 dark:text-amber-500">
+                {t('agenteam.captainSessionRequired')}
+              </p>
+            )}
           </div>
 
           {/* 团队模板 */}
@@ -314,7 +361,7 @@ export function CreateTeamDialog({ open, onOpenChange, onCreated }: CreateTeamDi
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={submit} disabled={submitting}>
+          <Button onClick={submit} disabled={submitting || !captainSessionId}>
             {submitting && <Loader2 className="size-4 animate-spin" />}
             {submitting ? t('agenteam.creating') : t('agenteam.create')}
           </Button>

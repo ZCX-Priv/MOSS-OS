@@ -17,8 +17,9 @@
 import type { HttpRequest, HttpResponse, RouteHandler } from '../types';
 import type { ServiceRegistry } from '../../../core/types';
 import { ErrorCode } from '../../../core/error-codes';
+import type { AgentEngine } from '../../contracts';
 import type { TeamOrchestrator } from '../../agenteam/orchestrator';
-import type { TeamProfileConfig } from '../../agenteam/types';
+import type { TaskKind, TeamProfileConfig } from '../../agenteam/types';
 import type { PermissionMode } from '../../safety/types';
 
 function resolveOrchestrator(services: ServiceRegistry): TeamOrchestrator | null {
@@ -93,8 +94,9 @@ export function createCreateAgenteamHandler(services: ServiceRegistry): RouteHan
       description?: string;
       cwd?: string;
       permissionMode?: string;
+      captainSessionId?: string;
       members?: Array<{ name?: string; role?: string; agentId?: string; inlinePrompt?: string }>;
-      tasks?: Array<{ subject?: string; description?: string; kind?: string; dependencies?: string[]; assignee?: string }>;
+      tasks?: Array<{ subject?: string; description?: string; kind?: string; dependencies?: string[]; assignee?: string; reviewedTaskId?: string; sourceTaskId?: string }>;
       approval?: boolean;
     };
     if (!body.name?.trim()) {
@@ -106,14 +108,22 @@ export function createCreateAgenteamHandler(services: ServiceRegistry): RouteHan
     if (!body.cwd?.trim()) {
       return { status: 400, body: { error: ErrorCode.INVALID_BODY } };
     }
+    // 队长恒为某个真实存在的会话（主 agent 即队长）：UI 建队必须显式绑定
+    const captainSessionId = body.captainSessionId?.trim() ?? '';
+    if (!captainSessionId) {
+      return { status: 400, body: { error: ErrorCode.AGENTEAM_INVALID_STATE, message: 'captainSessionId is required' } };
+    }
+    const agent = services.tryResolve<AgentEngine & { getSessionForContext?: (id: string) => unknown }>('agent.engine');
+    if (agent?.getSessionForContext && !agent.getSessionForContext(captainSessionId)) {
+      return { status: 400, body: { error: ErrorCode.AGENTEAM_INVALID_STATE, message: `captain session "${captainSessionId}" not found` } };
+    }
     try {
       const team = orch.createTeam({
         name: body.name,
         description: body.description,
         cwd: body.cwd,
         permissionMode: toPermissionMode(body.permissionMode),
-        // UI 创建无 captain 会话（空标记；后续主对话仍可接管）
-        captainSessionId: '',
+        captainSessionId,
         members: body.members.map((m) => ({
           name: m.name ?? '',
           role: m.role,
@@ -123,8 +133,11 @@ export function createCreateAgenteamHandler(services: ServiceRegistry): RouteHan
         tasks: (body.tasks ?? []).map((t) => ({
           subject: t.subject ?? '',
           description: t.description,
+          kind: t.kind as TaskKind | undefined,
           dependencies: t.dependencies ?? [],
           assignee: t.assignee,
+          reviewedTaskId: t.reviewedTaskId,
+          sourceTaskId: t.sourceTaskId,
         })),
         approval: body.approval !== false,
       });

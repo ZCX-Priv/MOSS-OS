@@ -963,9 +963,8 @@ export interface Agenteam {
     protocol?: string;
     taskPlanning?: 'captain' | 'seed';
   };
+  /** 队长（= 创建团队的主会话）session id */
   captainSessionId: string;
-  /** UI 建队时自动创建的队长会话标记（true 时队长 run 使用 agent_captain 模板） */
-  captainIsAuto?: boolean;
   cwd: string;
   permissionMode?: string;
   createdAt: number;
@@ -1019,8 +1018,20 @@ export interface CreateAgenteamInput {
   description?: string;
   cwd: string;
   permissionMode?: 'ask' | 'auto' | 'skip';
+  /** 队长会话（主 agent 即队长）：必填，服务端校验会话存在 */
+  captainSessionId: string;
   members: Array<{ name: string; role?: string; agentId?: string; inlinePrompt?: string }>;
-  tasks: Array<{ subject: string; description?: string; kind?: TeamTaskKind; dependencies?: string[]; assignee?: string }>;
+  tasks: Array<{
+    subject: string;
+    description?: string;
+    kind?: TeamTaskKind;
+    dependencies?: string[];
+    assignee?: string;
+    /** kind=review 必填 */
+    reviewedTaskId?: string;
+    /** kind=repair 必填 */
+    sourceTaskId?: string;
+  }>;
   approval?: boolean;
 }
 

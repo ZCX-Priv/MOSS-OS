@@ -10,6 +10,7 @@ import type {
   Session,
   TaskMessage,
   MessageRole,
+  ToolResult,
   TaskItem,
   TaskGroup,
   ProviderItem,
@@ -119,6 +120,14 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 function adaptAgentMessages(raw: unknown[]): TaskMessage[] {
   const result: TaskMessage[] = [];
   const list = Array.isArray(raw) ? raw : [];
+  /**
+   * 未能就近合并的工具结果（前一条不是 assistant）。
+   * 典型场景：用户在长耗时工具（subagent / 建队）执行中又发了消息，
+   * 结果消息的「前一条」变成 user —— 旧实现会直接丢弃它，
+   * 导致刷新后卡片拿不到报告/teamId。这里先挂起，循环结束后按 toolCallId
+   * 回填到真正发起该调用的 assistant 消息上。
+   */
+  const orphanToolResults: Array<{ toolCallId: string; result: ToolResult }> = [];
   for (let i = 0; i < list.length; i++) {
     const m = list[i] as {
       role?: string;
@@ -172,18 +181,21 @@ function adaptAgentMessages(raw: unknown[]): TaskMessage[] {
       continue;
     }
     if (m.role === 'tool') {
-      // 合并到前一条 assistant 的 toolResults；孤立 tool 消息（前一条非 assistant）丢弃
+      const entry = {
+        toolCallId: m.toolCallId ?? '',
+        result: {
+          content: [{ type: 'text' as const, text: m.content ?? '' }],
+          ...(m.isError ? { isError: true } : {}),
+          ...(m.metadata ? { metadata: m.metadata } : {}),
+        },
+      };
+      // 优先就近合并到前一条 assistant；前一条不是 assistant 时挂起，稍后按 toolCallId 回填
       const prev = result[result.length - 1];
       if (prev && prev.role === 'assistant') {
         prev.toolResults = prev.toolResults ?? [];
-        prev.toolResults.push({
-          toolCallId: m.toolCallId ?? '',
-          result: {
-            content: [{ type: 'text', text: m.content ?? '' }],
-            ...(m.isError ? { isError: true } : {}),
-            ...(m.metadata ? { metadata: m.metadata } : {}),
-          },
-        });
+        prev.toolResults.push(entry);
+      } else {
+        orphanToolResults.push(entry);
       }
       continue;
     }
@@ -208,6 +220,15 @@ function adaptAgentMessages(raw: unknown[]): TaskMessage[] {
       ...(m.isError ? { isError: true } : {}),
       timestamp: m.timestamp ?? new Date().toISOString(),
     });
+  }
+  // 回填挂起的工具结果：按 toolCallId 找到真正发起该调用的 assistant 消息
+  for (const entry of orphanToolResults) {
+    const owner = result.find(
+      (msg) => msg.role === 'assistant' && msg.toolCalls?.some((tc) => tc.id === entry.toolCallId),
+    );
+    if (!owner) continue; // 无归属（如已被截断）：丢弃，避免污染其他消息
+    owner.toolResults = owner.toolResults ?? [];
+    owner.toolResults.push(entry);
   }
   return result;
 }
