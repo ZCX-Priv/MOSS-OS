@@ -635,10 +635,11 @@ class ServerModule implements Module {
         return handleHttp(req, router, logger);
       },
       websocket: {
-        // 空闲超时（秒）：远大于前端 15s 应用层心跳 → 正常连接永不触发；
-        // 兼做僵尸连接兜底清理（静默消失的客户端 60s 后回收）。
+        // 空闲超时（秒）。三层防御的第二层（前端心跳 Worker 15s 为第一层，页面可见性回补
+        // 为第三层）：Chrome 后台标签页会把主线程 timer 节流到 1 分钟一次，即使某次心跳
+        // 间隔被拉到 60s 也必须远小于本值，空闲挂后台才不会断连。
         // 注意：必须放在 websocket 块内，顶层放置会被 Bun 静默忽略
-        idleTimeout: 60,
+        idleTimeout: 300,
         // 禁用 Bun 自动协议层 ping：与 idleTimeout 协同存在 bug
         // （oven-sh/bun#26554：ping 超时导致非优雅关闭 → 代理层 ECONNRESET）。
         // 探活由前端应用层心跳（15s ping / 30s timeout）全权负责

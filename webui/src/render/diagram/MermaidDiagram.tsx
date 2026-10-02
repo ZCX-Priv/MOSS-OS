@@ -12,13 +12,28 @@ export interface MermaidDiagramProps {
   code: string;
 }
 
+/**
+ * 成图结果缓存（key = `${dark}\u0000${code}`）：
+ * 再次进入同一会话时首帧即拿到 SVG（useState 初值），不再先出 loading 占位再替换。
+ */
+const svgCache = new Map<string, string>();
+function svgKey(code: string, dark: boolean): string {
+  return `${dark ? '1' : '0'}\u0000${code}`;
+}
+
 export function MermaidDiagram({ code }: MermaidDiagramProps) {
   const reactId = useId().replace(/[^a-zA-Z0-9]/g, '');
-  const [svg, setSvg] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const dark = useDarkMode();
+  // 结果连同「来源 code/dark」一起存：块内容或主题变化时旧结果自动失效
+  const [rendered, setRendered] = useState<{ code: string; dark: boolean; svg: string } | null>(() => {
+    const cached = svgCache.get(svgKey(code, dark));
+    return cached !== undefined ? { code, dark, svg: cached } : null;
+  });
+  const [error, setError] = useState<string | null>(null);
+  const svg = rendered && rendered.code === code && rendered.dark === dark ? rendered.svg : null;
 
   useEffect(() => {
+    if (svg !== null) return; // 缓存命中：首帧即成图，无需再渲染
     let cancelled = false;
     setError(null);
     import('mermaid')
@@ -29,19 +44,22 @@ export function MermaidDiagram({ code }: MermaidDiagramProps) {
           securityLevel: 'strict',
           theme: dark ? 'dark' : 'default',
         });
-        const { svg: rendered } = await mermaid.default.render(`mmd-${reactId}`, code);
-        if (!cancelled) setSvg(rendered);
+        const { svg: out } = await mermaid.default.render(`mmd-${reactId}`, code);
+        if (!cancelled) {
+          svgCache.set(svgKey(code, dark), out);
+          setRendered({ code, dark, svg: out });
+        }
       })
       .catch((err: unknown) => {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : String(err));
-          setSvg(null);
+          setRendered(null);
         }
       });
     return () => {
       cancelled = true;
     };
-  }, [code, reactId, dark]);
+  }, [code, reactId, dark, svg]);
 
   if (error !== null) {
     return (

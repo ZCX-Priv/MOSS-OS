@@ -15,6 +15,7 @@
 
 import { useStore } from '../store';
 import { pendingAssistant } from './pending-assistant';
+import { diag, diagCount } from './diag';
 import type { TaskMessage } from '../types/api';
 
 /** 纯函数：依据服务端 offset 计算「本次应追加的片段」 */
@@ -66,8 +67,18 @@ const lengthCache = new Map<string, number>();
 /** resync 请求回调（由会话编排 hook 注册：触发一次尾部增量拉取） */
 type ResyncHandler = (sessionId: string) => void;
 const resyncHandlers = new Set<ResyncHandler>();
-/** 已请求过 resync 的会话（同一轮内合并为一次请求） */
+/** 已请求过 resync 的会话（attachLiveDraft 完成对齐后清除，同一 run 内允许再次触发） */
 const resyncRequested = new Set<string>();
+/**
+ * 缺口分片暂存（key 同 lengthKey）：gap 触发 resync 时把分片存起来，
+ * 对齐完成（attachLiveDraft 全量覆盖 + 重播种长度）后重放——按新长度自然去重，
+ * 修复「二次缺口永久静默丢弃 → 回复终止」。
+ */
+const pendingAfterResync = new Map<string, PendingText>();
+/** 缺口重放的每字段重试计数（防止草稿持续滞后时无限循环） */
+const resyncReplayRetries = new Map<string, number>();
+/** 重放次数上限：超过即放弃该分片（服务端正式消息会在 done 后整体覆盖对齐） */
+const MAX_REPLAY_RETRIES = 3;
 
 export function onStreamResyncNeeded(handler: ResyncHandler): () => void {
   resyncHandlers.add(handler);
@@ -78,12 +89,53 @@ function requestResync(sessionId: string): void {
   const key = `${sessionId}|${pendingAssistant.get(sessionId)?.serverMessageId ?? ''}`;
   if (resyncRequested.has(key)) return;
   resyncRequested.add(key);
+  diagCount('gap-resync-requested', { sessionId });
   for (const h of resyncHandlers) {
     try {
       h(sessionId);
     } catch {
       // 单个处理器异常不影响其他
     }
+  }
+}
+
+/**
+ * resync 完成对齐后调用（由 attachLiveDraft 触发）：清除「已请求」标记，
+ * 使同一 run 内后续缺口仍能再次触发对齐——否则一次性标记会让第二次缺口
+ * 起的所有分片被永久按重复丢弃（回复终止的根因之一）。
+ */
+export function clearResyncMark(sessionId: string): void {
+  for (const key of Array.from(resyncRequested.keys())) {
+    if (key.startsWith(`${sessionId}|`)) resyncRequested.delete(key);
+  }
+}
+
+/**
+ * 重放暂存的缺口分片：在 attachLiveDraft 全量覆盖消息并重播种长度之后调用。
+ * 按新长度走 nextChunkSlice 天然去重（快照已含的部分被丢弃，超出部分正常追加）。
+ * 若分片仍超前于新长度（再次 gap）会重新暂存并再次请求 resync，重试计数上限保护。
+ */
+export function replayPendingAfterResync(sessionId: string): void {
+  const keys: string[] = [];
+  for (const key of pendingAfterResync.keys()) {
+    if (key.startsWith(`${sessionId}|`)) keys.push(key);
+  }
+  if (keys.length === 0) return;
+  const ops: PendingText[] = [];
+  for (const key of keys) {
+    const op = pendingAfterResync.get(key);
+    if (op) ops.push(op);
+    pendingAfterResync.delete(key);
+  }
+  for (const op of ops) {
+    const retryKey = lengthKey(op.sessionId, op.messageId, op.field);
+    const retries = (resyncReplayRetries.get(retryKey) ?? 0) + 1;
+    if (retries > MAX_REPLAY_RETRIES) {
+      diag('resync-replay-giveup', { sessionId, messageId: op.messageId, field: op.field });
+      continue;
+    }
+    resyncReplayRetries.set(retryKey, retries);
+    applyText(op);
   }
 }
 
@@ -106,12 +158,20 @@ export function resetStreamBuffer(sessionId?: string): void {
     for (const key of Array.from(resyncRequested)) {
       if (key.startsWith(`${sessionId}|`)) resyncRequested.delete(key);
     }
+    for (const key of Array.from(pendingAfterResync.keys())) {
+      if (key.startsWith(`${sessionId}|`)) pendingAfterResync.delete(key);
+    }
+    for (const key of Array.from(resyncReplayRetries.keys())) {
+      if (key.startsWith(`${sessionId}|`)) resyncReplayRetries.delete(key);
+    }
     return;
   }
   lengthCache.clear();
   pendingTextMap.clear();
   pendingToolArgsMap.clear();
   resyncRequested.clear();
+  pendingAfterResync.clear();
+  resyncReplayRetries.clear();
 }
 
 /** 用服务端草稿/历史恢复出的长度回填缓存（刷新恢复后接流的关键一步） */
@@ -135,6 +195,7 @@ function adoptOrCreateStreamingMessage(sessionId: string, messageId: string): Ta
   const pending = pendingAssistant.get(sessionId);
   if (pending && pending.serverMessageId !== messageId) {
     // 上一轮已结束（新的 messageId）：把旧消息定稿，避免 spinner 常转
+    diagCount('adopt-finalize-prev', { sessionId, prev: pending.id, next: messageId });
     st.updateMessage(sessionId, pending.id, { streaming: false, thinkingStreaming: false });
     pendingAssistant.delete(sessionId);
   }
@@ -146,6 +207,7 @@ function adoptOrCreateStreamingMessage(sessionId: string, messageId: string): Ta
     return existing;
   }
 
+  diagCount('adopt-create', { sessionId, messageId });
   const msg: TaskMessage = {
     id: messageId,
     serverMessageId: messageId,
@@ -279,10 +341,15 @@ function applyText(op: PendingText): void {
   const { slice, resync } = nextChunkSlice(known ?? 0, op.offset, op.text);
   if (resync) {
     resetLengthCacheForMessage(op.sessionId, op.messageId);
+    // 暂存缺口分片：对齐完成后重放（按新长度自然去重），不再永久静默丢弃
+    pendingAfterResync.set(lengthKey(op.sessionId, op.messageId, op.field), op);
     requestResync(op.sessionId);
     return;
   }
-  if (!slice) return;
+  if (!slice) {
+    diagCount('apply-text-duplicate-drop', { messageId: op.messageId, field: op.field });
+    return;
+  }
   const msg = adoptOrCreateStreamingMessage(op.sessionId, op.messageId);
   if (!msg) return;
   st.appendTextAndMarkThinking(op.sessionId, op.messageId, op.field, slice, op.thinkingStreaming);

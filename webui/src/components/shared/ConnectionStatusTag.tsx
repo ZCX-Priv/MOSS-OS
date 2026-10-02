@@ -32,6 +32,8 @@ export function ConnectionStatusTag({ sessionId }: ConnectionStatusTagProps) {
   const nextRetryAt = useStore((s) => s.wsNextRetryAt);
   const restoredSeq = useStore((s) => s.wsRestoredSeq);
   const restoring = useStore((s) => s.wsRestoringBySession[sessionId] ?? false);
+  /** 尾部同步中（catchUpTail：一轮结束 / 重连对齐拉取服务端正式消息） */
+  const syncing = useStore((s) => s.syncingBySession[sessionId] ?? false);
 
   /** 重连倒计时（本地 tick，仅在需要时运行） */
   const [now, setNow] = useState(() => Date.now());
@@ -69,6 +71,12 @@ export function ConnectionStatusTag({ sessionId }: ConnectionStatusTagProps) {
     icon = <Loader2 className="size-3.5 shrink-0 animate-spin" />;
     text = t('conn.restoringSession');
     detail = text;
+  } else if (syncing) {
+    // 尾部补齐中（一轮结束 / 重连对齐）：本地草稿 → 服务端正式消息的同步过程
+    tone = 'busy';
+    icon = <Loader2 className="size-3.5 shrink-0 animate-spin" />;
+    text = t('conn.syncing');
+    detail = text;
   } else if (status === 'open') {
     if (restoredUntil > now) {
       tone = 'ok';
@@ -99,7 +107,7 @@ export function ConnectionStatusTag({ sessionId }: ConnectionStatusTagProps) {
         : text;
   }
 
-  const showRetry = status !== 'open' && !restoring;
+  const showRetry = status !== 'open' && !restoring && !syncing;
 
   return (
     <div

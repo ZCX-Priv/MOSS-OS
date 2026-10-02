@@ -1,21 +1,31 @@
 // UI/src/hooks/useTasks.ts
-// 任务 hook：阶段3.4 后端 tasks 路由已就绪，直接使用 api.listTasks()。
+// 任务 hook：分页首载 + 滚动追加；WS 广播实时同步（后端 task.created/updated/deleted）。
+// 重连后的兜底刷新由 useWebSocket 负责（restored 时全量重拉）。
 
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useRef, useState } from 'react';
 import { useStore } from '../store';
 import { api } from '../api/http';
 import type { TaskItem } from '../types/api';
 
+/** 列表每页条数：首载与滚动追加共用（百级内首屏秒开，超出滚动加载） */
+const TASKS_PAGE_SIZE = 100;
+
 export function useTasks() {
   const setTasks = useStore((s) => s.setTasks);
   const setTaskGroups = useStore((s) => s.setTaskGroups);
+  /** 分页状态（hasMore：服务端还有更早的任务页） */
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  /** loadMore 防重入（读取最新值用 ref，避免闭包过期） */
+  const loadingMoreRef = useRef(false);
 
   const load = useCallback(async () => {
-    // 优先尝试 api.listTasks()（阶段3.4 后端就绪后）
+    // 优先分页首载（首页 TASKS_PAGE_SIZE 条；WS 广播与全量调用方不受影响）
     try {
-      const { groups, tasks } = await api.listTasks();
+      const { groups, tasks, page } = await api.listTasks({ limit: TASKS_PAGE_SIZE });
       setTaskGroups(groups);
       setTasks(tasks);
+      setHasMore(page?.hasMore ?? false);
       return;
     } catch {
       // 后端 tasks 路由未就绪，降级到 session 适配
@@ -33,6 +43,7 @@ export function useTasks() {
         sessionId: s.id,
       }));
       setTasks(tasks);
+      setHasMore(false);
       // 默认分组
       setTaskGroups([{ id: 'default', name: '默认', expanded: true }]);
     } catch (err) {
@@ -44,6 +55,27 @@ export function useTasks() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  /** 滚动到底部附近时追加下一页（按 id 去重合并：与 WS 全量广播交错时安全） */
+  const loadMore = useCallback(async () => {
+    if (loadingMoreRef.current || !hasMore) return;
+    loadingMoreRef.current = true;
+    setLoadingMore(true);
+    try {
+      const offset = useStore.getState().tasks.length;
+      const { tasks, page } = await api.listTasks({ limit: TASKS_PAGE_SIZE, offset });
+      const st = useStore.getState();
+      const existing = new Set(st.tasks.map((t) => t.id));
+      const merged = [...st.tasks, ...tasks.filter((t) => !existing.has(t.id))];
+      st.setTasks(merged);
+      setHasMore(page?.hasMore ?? false);
+    } catch {
+      // 追加失败保持现状，用户再滚动会重试
+    } finally {
+      loadingMoreRef.current = false;
+      setLoadingMore(false);
+    }
+  }, [hasMore]);
 
   const createTask = useCallback(
     async (title: string, groupId?: string) => {
@@ -139,6 +171,12 @@ export function useTasks() {
     taskGroups: useStore((s) => s.taskGroups),
     activeTaskId: useStore((s) => s.activeTaskId),
     reload: load,
+    /** 滚动追加下一页（Sidebar 距底 <300px 时调用） */
+    loadMore,
+    /** 服务端还有未加载的任务页 */
+    hasMore,
+    /** 正在追加下一页 */
+    loadingMore,
     createTask,
     updateTask,
     deleteTask,

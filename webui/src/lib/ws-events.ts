@@ -15,11 +15,14 @@ import { useStore } from '../store';
 import { api } from '../api/http';
 import { pendingAssistant, pendingRunId } from './pending-assistant';
 import {
+  clearResyncMark,
   enqueueTextChunk,
   enqueueToolArgsChunk,
   flushPending,
+  replayPendingAfterResync,
   seedStreamLength,
 } from './stream-buffer';
+import { diag } from './diag';
 import i18n from '../i18n';
 import type {
   AgentEvent,
@@ -140,7 +143,7 @@ export function attachLiveDraft(draft: LiveDraftPayload): void {
     serverMessageId: draft.messageId,
     role: 'assistant',
     content: draft.content,
-    ...(draft.thinking ? { thinking: draft.thinking } : {}),
+    thinking: draft.thinking,
     ...(draft.toolCalls.length > 0
       ? {
           toolCalls: draft.toolCalls.map<ToolCall>((tc) => ({
@@ -159,20 +162,26 @@ export function attachLiveDraft(draft: LiveDraftPayload): void {
 
   if (existing) {
     // 已有同 id 消息（重连二次恢复 / 分片先行创建）：以服务端内容为准整体覆盖
+    diag('live-draft-overwrite', { sessionId, messageId: draft.messageId, existed: true });
     st.updateMessage(sessionId, draft.messageId, {
       content: draft.content,
-      thinking: draft.thinking || undefined,
+      thinking: draft.thinking,
       toolCalls: msg.toolCalls,
       streaming,
       thinkingStreaming: false,
       ...(draft.stale ? { interrupted: true } : {}),
     });
   } else {
+    diag('live-draft-attach', { sessionId, messageId: draft.messageId, contentLen: draft.content.length });
     st.addMessage(sessionId, msg);
   }
 
   seedStreamLength(sessionId, draft.messageId, 'content', draft.contentLength);
   seedStreamLength(sessionId, draft.messageId, 'thinking', draft.thinkingLength);
+  // 对齐完成：清除 resync 一次性标记（后续缺口可再次触发对齐），
+  // 并重放暂存的缺口分片（按新长度自然去重，超出部分正常续接）
+  clearResyncMark(sessionId);
+  replayPendingAfterResync(sessionId);
   if (streaming) pendingAssistant.set(sessionId, { ...msg, streaming: true });
 }
 
@@ -397,6 +406,8 @@ export function applyWsMessage(msg: WSMessage): void {
         s.setGenerating(sessionId, false);
         s.setTaskError(sessionId, true);
         pendingAssistant.delete(sessionId);
+        // 防御：终态同步清理 runId，防残留值误杀未来带 runId 的外部 run 事件
+        pendingRunId.delete(sessionId);
         emitSettled(sessionId, 'error');
       }
       toast.error(localizedMessage);
@@ -419,6 +430,7 @@ export function applyWsMessage(msg: WSMessage): void {
           });
           pendingAssistant.delete(sessionId);
         }
+        pendingRunId.delete(sessionId);
         s.setGenerating(sessionId, false);
         useStore.getState().clearPendingAsksBySession(sessionId);
         useStore.getState().clearPendingConfirmsBySession(sessionId);
@@ -458,6 +470,7 @@ export function applyWsMessage(msg: WSMessage): void {
           });
           pendingAssistant.delete(sessionId);
         }
+        pendingRunId.delete(sessionId);
         s.setGenerating(sessionId, false);
         emitSettled(sessionId, 'done');
       }
@@ -481,6 +494,7 @@ export function applyWsMessage(msg: WSMessage): void {
           });
           pendingAssistant.delete(sessionId);
         }
+        pendingRunId.delete(sessionId);
         emitSettled(sessionId, 'aborted');
       }
       break;
@@ -649,6 +663,10 @@ export function applyWsMessage(msg: WSMessage): void {
           after: compaction.afterTokens,
         }),
       );
+      // 压缩物理折叠了中段消息：分页游标（绝对下标）整体失效 → 按末页整体重载。
+      // 不重载的话，旧 h<index> 会与压缩后新页的 h<index> 撞 id（错位/丢消息）。
+      useStore.getState().resetHistory(sessionId);
+      emitHistoryInvalidated(sessionId);
       break;
     }
     case 'context-healed': {

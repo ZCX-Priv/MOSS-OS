@@ -5,7 +5,7 @@
 
 import { useEffect, useState } from 'react';
 import { Check, Copy } from 'lucide-react';
-import { highlightCode } from './shiki';
+import { getCachedHighlight, highlightCode } from './shiki';
 import { MermaidDiagram } from '../diagram/MermaidDiagram';
 import { SmilesDiagram } from '../chem/SmilesDiagram';
 import { useRenderSettings } from '../core/settings';
@@ -20,21 +20,31 @@ export interface CodeBlockProps {
 
 export function CodeBlock({ code, lang, closed }: CodeBlockProps) {
   const settings = useRenderSettings();
-  const [html, setHtml] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
-
   const normalizedLang = lang.trim().toLowerCase();
+  // 高亮结果连同「来源 code/lang」一起存：块内容变化（同 key 复用组件）时旧结果自动失效，
+  // 不会把上一段代码的高亮错贴到新代码上。
+  const [highlight, setHighlight] = useState<{ code: string; lang: string; html: string } | null>(() => {
+    const cached = getCachedHighlight(code, normalizedLang);
+    return cached !== null ? { code, lang: normalizedLang, html: cached } : null;
+  });
+  const [copied, setCopied] = useState(false);
+  // 仅当缓存/已算结果与当前 code/lang 完全一致时才算命中终态
+  const cachedHtml =
+    highlight && highlight.code === code && highlight.lang === normalizedLang ? highlight.html : null;
 
   useEffect(() => {
     if (!closed || !settings.codeHighlightEnabled || !normalizedLang) return;
+    if (cachedHtml !== null) return; // 缓存命中：首帧即终态，无需再高亮
     let cancelled = false;
     void highlightCode(code, normalizedLang).then((result) => {
-      if (!cancelled && result) setHtml(result);
+      if (!cancelled && result) setHighlight({ code, lang: normalizedLang, html: result });
     });
     return () => {
       cancelled = true;
     };
-  }, [code, normalizedLang, closed, settings.codeHighlightEnabled]);
+  }, [code, normalizedLang, closed, settings.codeHighlightEnabled, cachedHtml]);
+
+  const html = cachedHtml;
 
   // mermaid 分流（仅在块闭合后成图，流式中显示源码 —— 无闪烁）
   if (normalizedLang === 'mermaid' && closed && settings.mermaidEnabled) {

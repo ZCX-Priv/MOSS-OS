@@ -36,6 +36,7 @@ import type {
 import { DEFAULT_RENDER_SETTINGS, isValidRenderSettings, type RenderSettings } from '../render/core/types';
 import { fileNameOf } from '../render/file/detector';
 import { DEFAULT_ANIMATION_SETTINGS, isValidAnimationSettings, type AnimationSettings } from '../types/animation';
+import { diag } from '../lib/diag';
 
 // ============================================================================
 // State
@@ -159,6 +160,8 @@ interface UIState {
   wsRestoredSeq: number;
   /** 会话状态恢复中（订阅 + 拉快照 + 恢复草稿，状态条显示「正在恢复会话状态」） */
   wsRestoringBySession: Record<string, boolean | undefined>;
+  /** 尾部同步中（catchUpTail 拉取服务端正式消息，状态胶囊显示「正在同步最新消息」） */
+  syncingBySession: Record<string, boolean | undefined>;
 
   // --- 发送快捷键（归一化格式：'enter' / 'mod+enter' / 任意自定义组合） ---
   sendShortcut: string;
@@ -242,10 +245,11 @@ interface UIActions {
   setMessages: (sessionId: string, messages: TaskMessage[]) => void;
   addMessage: (sessionId: string, message: TaskMessage) => void;
   /**
-   * 历史分页合并（去重按消息 id）：
+   * 历史分页合并（按消息 id 归并）：
    * - 'tail'：权威替换（首屏 / 截断后重载），同时重置分页元数据
    * - 'prepend'：向前并入更早的一页（保持已有消息）
-   * - 'catchup'：尾部增量补齐（并入后追加），并移除本地流式草稿（服务端已给出正式消息）
+   * - 'catchup'：尾部增量补齐（并入后追加），本地与服务端同 id 的消息原位 patch
+   *   （流式草稿 → 正式内容，key 不漂移零重挂载）；dropStreaming 时移除服务端未确认的草稿
    */
   mergeHistory: (
     sessionId: string,
@@ -383,6 +387,8 @@ interface UIActions {
   bumpWsRestored: () => void;
   /** 会话状态恢复中标记 */
   setWsRestoring: (sessionId: string, v: boolean) => void;
+  /** 尾部同步中标记（catchUpTail 拉取服务端正式消息） */
+  setSyncing: (sessionId: string, v: boolean) => void;
 
   // 发送快捷键
   setSendShortcut: (v: UIState['sendShortcut']) => void;
@@ -570,6 +576,7 @@ export const useStore = create<Store>((set, get) => ({
   wsNextRetryAt: null,
   wsRestoredSeq: 0,
   wsRestoringBySession: {},
+  syncingBySession: {},
 
   // --- 发送快捷键 ---
   sendShortcut: 'mod+enter',
@@ -623,6 +630,7 @@ export const useStore = create<Store>((set, get) => ({
       const { [id]: _omit, ...restMessages } = state.messagesBySession;
       const { [id]: _omitMeta, ...restMeta } = state.historyMetaBySession;
       const { [id]: _omitRestoring, ...restRestoring } = state.wsRestoringBySession;
+      const { [id]: _omitSyncing, ...restSyncing } = state.syncingBySession;
       const { [id]: _omitGen, ...restGen } = state.generatingBySession;
       const { [id]: _omitTodos, ...restTodos } = state.todosBySession;
       const { [id]: _omitCtx, ...restCtx } = state.contextBySession;
@@ -637,6 +645,7 @@ export const useStore = create<Store>((set, get) => ({
         messagesBySession: restMessages,
         historyMetaBySession: restMeta,
         wsRestoringBySession: restRestoring,
+        syncingBySession: restSyncing,
         generatingBySession: restGen,
         todosBySession: restTodos,
         contextBySession: restCtx,
@@ -666,26 +675,89 @@ export const useStore = create<Store>((set, get) => ({
   mergeHistory: (sessionId, messages, mode, page, opts) =>
     set((state) => {
       const current = state.messagesBySession[sessionId] ?? [];
-      // 去重基准：本地已有消息 id（历史消息 id = `h<index>`，流式草稿 id = 服务端 messageId，
-      // 两者不会互相冲突，因此同一消息永不重复渲染）。
-      const seen = new Set(current.map((m) => m.id));
-      const incoming = messages.filter((m) => !seen.has(m.id));
+
+      // —— 第零步：id 冲突防御（旧格式脏数据兜底闸门）——
+      // 旧版本 messageId `<sessionId>#<turn>` 每 run 从 1 计数，跨 run 已在历史中留下
+      // 重复 id。若不做校验直接按 id patch，「新消息内容覆盖旧消息槽位」就是
+      // 「MCP 消息错位替换第一条消息」的根因。同 id 但角色不同 / 时间戳大幅倒退 →
+      // 判定冲突：该服务端消息改用 dup 后缀 id 走 rest 追加，绝不在旧槽位原位替换。
+      const currentById = new Map(current.map((m) => [m.id, m]));
+      let dupSeq = 0;
+      const resolved = messages.map((m) => {
+        const local = currentById.get(m.id);
+        if (
+          local &&
+          (local.role !== m.role ||
+            Date.parse(m.timestamp) < Date.parse(local.timestamp) - 60_000)
+        ) {
+          const renamed: TaskMessage = { ...m, id: `${m.id}#dup${++dupSeq}` };
+          diag('merge-id-collision', {
+            sessionId,
+            id: m.id,
+            localRole: local.role,
+            incomingRole: m.role,
+            localTs: local.timestamp,
+            incomingTs: m.timestamp,
+          });
+          return renamed;
+        }
+        return m;
+      });
+
+      // —— 第一步：同 id 归并（「流式草稿 ↔ 服务端正式副本」同一身份）——
+      // 历史路径的 assistant 消息 id = 服务端 messageId（与本地流式草稿同 id）。
+      // 本地消息在 incoming 中存在同 id 副本时，以服务端内容原位 patch：
+      // 数组槽位与 React key 保持稳定 → 虚拟列表不卸载重挂载、MarkdownBlock
+      // memo 冻结生效 → 尾部补齐（done / 重连对齐）零闪烁。
+      const incomingById = new Map(resolved.map((m) => [m.id, m]));
+      const patchedIds = new Set<string>();
+      const base = current.map((m) => {
+        const server = incomingById.get(m.id);
+        if (!server) return m;
+        patchedIds.add(m.id);
+        return { ...server, streaming: false, thinkingStreaming: false };
+      });
+      // 未与本地消息同 id 的部分（更早的历史页 / 服务端新增消息）
+      const rest = resolved.filter((m) => !patchedIds.has(m.id));
 
       let next: TaskMessage[];
       if (mode === 'prepend') {
-        next = [...incoming, ...current];
+        next = [...rest, ...base];
       } else if (mode === 'catchup') {
-        const base = opts?.dropStreaming
-          ? current.filter((m) => !m.streaming && !m.serverMessageId)
-          : current;
-        const baseIds = new Set(base.map((m) => m.id));
-        next = [...base, ...messages.filter((m) => !baseIds.has(m.id))];
+        if (opts?.dropStreaming) {
+          // 一轮正常结束：服务端未确认的本地草稿（未命中 patch 且仍 streaming）移除，
+          // 防止残留 spinner；已 patch 的消息 streaming 已置 false，天然保留。
+          next = [...base.filter((m) => !m.streaming), ...rest];
+        } else {
+          // 重连对齐：保留本地草稿（若服务端有正式副本则已被 patch 收尾）
+          next = [...base, ...rest];
+        }
       } else {
-        // tail：权威替换（保留正在流式的草稿消息，避免打断在途输出；
-        // 也保留「上次中断的未完成回复」提示消息——它不在历史里，但信息真实）
-        const kept = current.filter((m) => m.streaming || m.interrupted);
-        const keptIds = new Set(kept.map((m) => m.id));
-        next = [...messages.filter((m) => !keptIds.has(m.id)), ...kept];
+        // tail：权威替换（服务端末页为骨架；同 id 已 patch 的本地草稿与服务端正式副本
+        // 内容等价，直接采用服务端序列即可）。本地独有的流式草稿（服务端尚未落盘）与
+        // 「上次中断的未完成回复」提示消息保底保留，避免打断在途输出 / 丢失真实信息。
+        // 另保留**本地乐观 user 消息**：新任务发送后首屏 fetch 可能先于后端持久化到达
+        // （返回空/滞后页），不清空会让消息区闪空、用户消息消失（「黑一下」根因）。
+        const serverClientIds = new Set(
+          resolved.filter((m) => m.clientMessageId).map((m) => m.clientMessageId as string),
+        );
+        const localOnly = base.filter(
+          (m) =>
+            !patchedIds.has(m.id) &&
+            ((m.streaming || m.interrupted || m.compaction) ||
+              (m.role === 'user' &&
+                !m.serverMessageId &&
+                m.clientMessageId !== undefined &&
+                !serverClientIds.has(m.clientMessageId))),
+        );
+        if (localOnly.length > 0) {
+          diag('tail-optimistic-kept', {
+            sessionId,
+            kept: localOnly.map((m) => m.id),
+            serverCount: resolved.length,
+          });
+        }
+        next = [...resolved, ...localOnly];
       }
 
       const prevMeta = state.historyMetaBySession[sessionId];
@@ -693,8 +765,8 @@ export const useStore = create<Store>((set, get) => ({
       if (mode === 'prepend' && !page && prevMeta) {
         meta = {
           ...prevMeta,
-          oldestIndex: Math.max(0, prevMeta.oldestIndex - incoming.length),
-          hasMoreBefore: prevMeta.oldestIndex - incoming.length > 0,
+          oldestIndex: Math.max(0, prevMeta.oldestIndex - rest.length),
+          hasMoreBefore: prevMeta.oldestIndex - rest.length > 0,
           loadingBefore: false,
         };
       } else if (page) {
@@ -776,7 +848,7 @@ export const useStore = create<Store>((set, get) => ({
         ...state.messagesBySession,
         [sessionId]: (state.messagesBySession[sessionId] ?? []).map((m) =>
           m.id === messageId
-            ? { ...m, [field]: (m[field] ?? '') + text, thinkingStreaming: m.streaming ? thinkingStreaming : false }
+            ? { ...m, [field]: (m[field] ?? '') + text, thinkingStreaming }
             : m,
         ),
       },
@@ -1075,6 +1147,10 @@ export const useStore = create<Store>((set, get) => ({
   setWsRestoring: (sessionId, v) =>
     set((state) => ({
       wsRestoringBySession: { ...state.wsRestoringBySession, [sessionId]: v },
+    })),
+  setSyncing: (sessionId, v) =>
+    set((state) => ({
+      syncingBySession: { ...state.syncingBySession, [sessionId]: v },
     })),
 
   // --- Actions: 发送快捷键 ---

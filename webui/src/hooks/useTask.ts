@@ -35,22 +35,11 @@ function genRunId(): string {
 }
 
 /**
- * 目录→分组：按名查找（大小写不敏感，兼容 Windows 目录）已有分组，无则自动创建。
- * 查服务端而非 store.taskGroups——避免列表未加载时误建重复组。
- * 失败返回 undefined（任务落默认分组，不阻断发消息）。
+ * 目录→分组名：按当前工作目录派生（文件夹名 / 本机模式 → "本机"组）。
+ * 分组的查/建由后端 createTask(deriveGroupName) 一次完成（前端免 2 次串行往返）。
  */
-async function ensureTaskGroup(name: string): Promise<string | undefined> {
-  try {
-    const { groups } = await api.listTaskGroups();
-    const found = groups.find((g) => g.name.toLowerCase() === name.toLowerCase());
-    if (found) return found.id;
-    // 文件夹来源分组：空时由后端自动销毁
-    const created = await api.createTaskGroup(name, 'folder');
-    useStore.getState().addTaskGroup(created);
-    return created.id;
-  } catch {
-    return undefined;
-  }
+function deriveGroupName(workingDirectory: string): string {
+  return resolveWorkingDirectoryName(workingDirectory) ?? i18n.t('directoryPicker.system');
 }
 
 export function useTask() {
@@ -85,22 +74,25 @@ export function useTask() {
           const existingTask = state.tasks.find((t) => t.id === taskId);
           sessionId = existingTask?.sessionId ?? existingTask?.id ?? taskId;
         } else {
-          // 新任务：先创建 task，获取 task.id 作为 sessionId
-          // 目标分组按当前工作目录派生：文件夹名（D:\test → test）/ 本机模式 → "本机"组；不存在自动创建
-          const groupName =
-            resolveWorkingDirectoryName(state.workingDirectory) ?? i18n.t('directoryPicker.system');
-          const groupId = await ensureTaskGroup(groupName);
+          // 新任务：先创建 task，获取 task.id 作为 sessionId。
+          // 分组派生交给后端（deriveGroupName 一次往返内完成「查组/建组/归类」），
+          // 此前前端串行 listTaskGroups+createTaskGroup+createTask 共 2-3 次往返，
+          // 用户点击发送到看到「响应中」之间出现明显空白延迟。
+          // 标题取「剥离附件块 + 命令注入块 + 内联 token 后的正文」（只发附件/只引文件时不显示路径）；
+          // 用户正文为空（如只发 /命令）时回退：附件文件名 → 模板正文 → 可见文本（永不回退到含哨兵的原文）
+          const lookups = buildMentionLookups(state.commands, state.skills, state.agents);
+          const visible = stripInjectBlock(stripAttachmentBlock(content));
+          const title =
+            stripMentionTokens(visible, lookups) ||
+            (attachments?.[0] ? fileNameOf(attachments[0]) : '') ||
+            stripMentionTokens(stripInjectBlock(content), lookups) ||
+            visible;
           try {
-            // 标题取「剥离附件块 + 命令注入块 + 内联 token 后的正文」（只发附件/只引文件时不显示路径）；
-            // 用户正文为空（如只发 /命令）时回退：附件文件名 → 模板正文 → 可见文本（永不回退到含哨兵的原文）
-            const lookups = buildMentionLookups(state.commands, state.skills, state.agents);
-            const visible = stripInjectBlock(stripAttachmentBlock(content));
-            const title =
-              stripMentionTokens(visible, lookups) ||
-              (attachments?.[0] ? fileNameOf(attachments[0]) : '') ||
-              stripMentionTokens(stripInjectBlock(content), lookups) ||
-              visible;
-            const task = await api.createTask(title.slice(0, 50), groupId);
+            const task = await api.createTask(
+              title.slice(0, 50),
+              undefined,
+              deriveGroupName(state.workingDirectory),
+            );
             addTask(task);
             taskId = task.id;
             sessionId = task.sessionId ?? task.id;

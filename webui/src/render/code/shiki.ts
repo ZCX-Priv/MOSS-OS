@@ -90,6 +90,24 @@ let highlighterPromise: Promise<Highlighter> | null = null;
 const loadedLangs = new Set<string>();
 
 /**
+ * 高亮结果缓存（key = `${lang}\u0000${code}`）：
+ * 让「再次进入同一会话」时 CodeBlock 能在**首帧**就拿到高亮 HTML（useState 初值），
+ * 而不是先渲染无高亮 <pre>、等异步完成后再替换（用户看到的「先粗后精」闪动）。
+ * 会话级内存缓存，不淘汰（与 fetcher 的 objectUrlCache 同策略，规模受会话内容限制）。
+ */
+const htmlCache = new Map<string, string>();
+
+function cacheKey(code: string, lang: string): string {
+  // 语言名在 key 内统一归一（trim + 小写），保证写入端（highlightCode 的调用方）与读取端口径一致
+  return `${lang.trim().toLowerCase()}\u0000${code}`;
+}
+
+/** 同步读取已缓存的高亮 HTML（未命中返回 null → 调用方走异步升级） */
+export function getCachedHighlight(code: string, lang: string): string | null {
+  return htmlCache.get(cacheKey(code, lang)) ?? null;
+}
+
+/**
  * 从文件路径推断 Shiki 语言候选 id（别名已归一；未知返回扩展名本身）。
  * 返回值仍需经 resolveLang 校验是否在 bundledLanguages 内；不在则调用方回退纯文本。
  */
@@ -139,10 +157,13 @@ export async function highlightCode(code: string, lang: string): Promise<string 
       await highlighter.loadLanguage(resolved as Parameters<Highlighter['loadLanguage']>[0]);
       loadedLangs.add(resolved);
     }
-    return highlighter.codeToHtml(code, {
+    const html = highlighter.codeToHtml(code, {
       lang: resolved,
       themes: { light: 'github-light', dark: 'github-dark' },
     });
+    // 写缓存：同一 (lang, code) 再次出现时可由 getCachedHighlight 同步命中（首帧即高亮）
+    htmlCache.set(cacheKey(code, lang), html);
+    return html;
   } catch {
     return null;
   }

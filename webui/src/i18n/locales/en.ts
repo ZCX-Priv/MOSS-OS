@@ -38,6 +38,7 @@ export const en = {
     disconnectedRetry: 'Disconnected — reconnecting (attempt {{count}}, retry in ~{{seconds}}s)',
     restored: 'Connection restored',
     restoringSession: 'Restoring session state…',
+    syncing: 'Syncing latest messages…',
     retryNow: 'Retry now',
   },
   sidebar: {

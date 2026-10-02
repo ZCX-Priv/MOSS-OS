@@ -314,7 +314,8 @@ export interface RunStats {
 
 /**
  * 流式事件携带的续传信息（offset 协议）：
- * - messageId：本轮流式 assistant 消息的稳定 id（`<sessionId>#<turnIndex>`），
+ * - messageId：本轮流式 assistant 消息的稳定 id（`<sessionId>#<msgSeq + turn>`，
+ *   msgSeq 为会话级单调序号，每 run 消耗一个），
  *   逐轮唯一 → 每个 messageId 拥有独立的 offset 空间，前端据此判断「是否同一轮」。
  * - offset：该分片在其所属字段（content / thinking / 工具 arguments）中的起始字符下标。
  * - total：该分片结束后的累计长度（前端自检用）。
@@ -369,6 +370,12 @@ export interface GuidanceMessage {
 export interface AgentMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
+  /**
+   * 本轮流式 assistant 消息的稳定身份（`<sessionId>#<turn>`，逐轮唯一）。
+   * 落盘时从 liveDraft 写入；前端历史回放据此把「服务端正式消息」与「本地流式草稿」
+   * 对齐为同一实体（同 id 原位 patch 而非删旧插新），消除回复结束时的重挂载闪烁。
+   */
+  messageId?: string;
   /** 用户消息附带的附件绝对路径（role=user；纯路径引用，供前端渲染附件卡片） */
   attachments?: string[];
   /**

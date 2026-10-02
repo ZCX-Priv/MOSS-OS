@@ -119,7 +119,7 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { pathname } = useLocation();
-  const { tasks, taskGroups, updateTask, deleteTask, reorderTasks, createTaskGroup, updateTaskGroup, deleteTaskGroup, reload } = useTasks();
+  const { tasks, taskGroups, updateTask, deleteTask, reorderTasks, createTaskGroup, updateTaskGroup, deleteTaskGroup, reload, loadMore, hasMore, loadingMore } = useTasks();
   const isSettingsRoute = pathname.startsWith('/settings');
   const [settingsSearch, setSettingsSearch] = useState('');
   const { isMobile, setOpenMobile } = useSidebar();
@@ -189,7 +189,7 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
     if (useStore.getState().tasks.some((t) => t.id === activeIdBefore)) return;
     useStore.getState().setActiveSession(null);
     useStore.getState().setActiveTaskId(null);
-    navigate('/');
+    navigate('/task');
   };
 
   const handleDeleteGroup = async () => {
@@ -494,7 +494,7 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
             <SidebarMenuItem>
               <SidebarMenuButton
                 tooltip={t('settings.backToApp')}
-                onClick={() => { closeMobile(); navigate('/'); }}
+                onClick={() => { closeMobile(); navigate('/task'); }}
               >
                 <ArrowLeft className="size-4" />
                 <span>{t('settings.backToApp')}</span>
@@ -594,7 +594,7 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
                       if (item.action === 'new-task') {
                         useStore.getState().setActiveTaskId(null);
                         useStore.getState().setActiveSession(null);
-                        navigate('/');
+                        navigate('/task');
                       } else {
                         navigate(`/${item.page}`);
                       }
@@ -776,6 +776,11 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
                 {activeDragTask ? <TaskDragCard task={activeDragTask} /> : null}
               </DragOverlay>
               </DndContext>
+              {/* 滚动加载哨兵：任务超过首页 100 条（hasMore）时，滚到底部附近自动追加下一页。
+                  IntersectionObserver 不依赖具体滚动容器（shadcn 内层），rootMargin 提前触发 */}
+              {hasMore && (
+                <ListLoadMoreSentinel onVisible={() => void loadMore()} loading={loadingMore} />
+              )}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
@@ -1115,6 +1120,32 @@ function GroupHeaderDrop({ groupId, children }: { groupId: string; children: Rea
   return (
     <div ref={setNodeRef} className={cn('rounded-md transition-colors', isOver && 'bg-primary-strong/10')}>
       {children}
+    </div>
+  );
+}
+
+/**
+ * 滚动加载哨兵：进入视口（列表滚到底部附近）即触发追加下一页。
+ * IntersectionObserver 不依赖具体滚动容器（滚动发生在 shadcn Sidebar 内层）；
+ * rootMargin 提前 300px 触发，滚动到底前页面已在加载。
+ */
+function ListLoadMoreSentinel({ onVisible, loading }: { onVisible: () => void; loading: boolean }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting) && !loading) onVisible();
+      },
+      { rootMargin: '300px' },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [onVisible, loading]);
+  return (
+    <div ref={ref} className="flex items-center justify-center py-2 text-xs text-muted-foreground">
+      <Loader2 className="size-3.5 animate-spin" />
     </div>
   );
 }

@@ -29,8 +29,10 @@ export class WSClient {
   private pendingMessages: WSMessage[] = [];
   /** 当前订阅的 session（重连后自动重订阅，防止 sendToSession 事件丢失） */
   private subscribedSessionId: string | null = null;
-  /** 心跳定时器 */
+  /** 心跳定时器（主线程回退方案；首选 Web Worker，见 heartbeatWorker） */
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  /** 心跳 Worker（不受 Chrome 后台标签页 timer 节流影响） */
+  private heartbeatWorker: Worker | null = null;
   private lastPong = 0;
   /** 退避重连定时器（retryNow 需要能取消它） */
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -52,10 +54,47 @@ export class WSClient {
       const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       this.url = `${proto}//${window.location.host}/ws`;
     }
+    // 页面回前台/窗口聚焦：立即补一次探活与重连（后台时退避 setTimeout 同样被节流，
+    // 可能延迟数分钟；回前台主动补连把恢复时间拉回秒级）
+    this.onVisibilityChange = this.onVisibilityChange.bind(this);
+    document.addEventListener('visibilitychange', this.onVisibilityChange);
+    window.addEventListener('focus', this.onVisibilityChange);
+  }
+
+  /** 页面可见/聚焦兜底：连接存活则刷新探活基准；在等退避重连则立即重试 */
+  private onVisibilityChange(): void {
+    if (document.visibilityState !== 'visible') return;
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.lastPong = Date.now();
+      try {
+        this.ws.send(JSON.stringify({ type: 'ping' }));
+      } catch {
+        // 发送失败由心跳超时路径兜底
+      }
+      return;
+    }
+    if (this.shouldReconnect) this.retryNow();
   }
 
   connect(): void {
+    // 每次显式 connect 都重置重连意愿：disconnect() 会将其置 false（React StrictMode
+    // dev 双挂载、组件重挂载都会走 disconnect→connect），不重置会导致后续断开永不重连
+    this.shouldReconnect = true;
     if (this.ws?.readyState === WebSocket.OPEN) return;
+    // 清理旧实例的事件回调：旧连接 close 握手的迟到 onclose 会污染新连接的状态
+    // （误报 closed / 误停新连接的心跳）
+    if (this.ws) {
+      const old = this.ws;
+      old.onopen = null;
+      old.onmessage = null;
+      old.onerror = null;
+      old.onclose = null;
+      try {
+        old.close();
+      } catch {
+        // 已关闭则忽略
+      }
+    }
     this.notifyStatus('connecting');
 
     try {
@@ -120,6 +159,8 @@ export class WSClient {
     this.shouldReconnect = false;
     this.stopHeartbeat();
     this.clearReconnectTimer();
+    document.removeEventListener('visibilitychange', this.onVisibilityChange);
+    window.removeEventListener('focus', this.onVisibilityChange);
     this.ws?.close();
     this.ws = null;
   }
@@ -164,26 +205,48 @@ export class WSClient {
     return () => this.statusHandlers.delete(handler);
   }
 
-  /** 心跳：周期性发 ping，超过超时未收到任何数据则判定连接僵死并主动断开触发重连 */
+  /** 心跳：首选 Web Worker 定时（主线程 timer 在后台标签页被 Chrome 对齐到 1 分钟一次，
+   *  会踩穿后端 idleTimeout；Worker 定时器不参与标签页节流）。单次 tick 的逻辑不变：
+   *  周期发 ping，超过超时未收到任何数据则判定连接僵死并主动断开触发重连 */
   private startHeartbeat(): void {
     this.stopHeartbeat();
     this.lastPong = Date.now();
-    this.heartbeatTimer = setInterval(() => {
-      if (this.ws?.readyState === WebSocket.OPEN) {
-        try {
-          this.ws.send(JSON.stringify({ type: 'ping' }));
-        } catch {
-          // 发送失败视为断开
-        }
-        if (Date.now() - this.lastPong > WSClient.HEARTBEAT_TIMEOUT) {
-          // 僵死连接：主动关闭以触发 onclose → 重连
-          this.ws.close();
-        }
+    try {
+      this.heartbeatWorker = new Worker(
+        new URL('./heartbeat-worker.ts', import.meta.url),
+        { type: 'module' },
+      );
+      this.heartbeatWorker.onmessage = () => this.heartbeatTick();
+      this.heartbeatWorker.postMessage('start');
+      return;
+    } catch {
+      // Worker 创建失败（极老环境）：回退主线程定时
+      this.heartbeatWorker = null;
+    }
+    this.heartbeatTimer = setInterval(() => this.heartbeatTick(), WSClient.HEARTBEAT_INTERVAL);
+  }
+
+  /** 单次心跳动作（Worker tick 与主线程回退共用） */
+  private heartbeatTick(): void {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      try {
+        this.ws.send(JSON.stringify({ type: 'ping' }));
+      } catch {
+        // 发送失败视为断开
       }
-    }, WSClient.HEARTBEAT_INTERVAL);
+      if (Date.now() - this.lastPong > WSClient.HEARTBEAT_TIMEOUT) {
+        // 僵死连接：主动关闭以触发 onclose → 重连
+        this.ws.close();
+      }
+    }
   }
 
   private stopHeartbeat(): void {
+    if (this.heartbeatWorker) {
+      this.heartbeatWorker.postMessage('stop');
+      this.heartbeatWorker.terminate();
+      this.heartbeatWorker = null;
+    }
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;

@@ -44,6 +44,15 @@ export async function fetchFileBuffer(path: string): Promise<ArrayBuffer> {
   return buffer;
 }
 
+/**
+ * 同步读取已缓存的 objectURL（未命中返回 null）。
+ * 组件用它做 useState 初值 → 再次进入会话时缩略图首帧即在位，
+ * 不再「先类型图标 → 异步拉到后再换图片」。
+ */
+export function getCachedObjectUrl(path: string): string | null {
+  return objectUrlCache.get(path) ?? null;
+}
+
 /** 获取文件 objectURL（图片/3D 模型加载器用；mime 用于 Blob 类型） */
 export async function fetchFileObjectUrl(path: string, mime: string): Promise<string> {
   const cached = objectUrlCache.get(path);

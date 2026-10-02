@@ -19,7 +19,7 @@ import {
   Video,
 } from 'lucide-react';
 import { detectFileKind, fileNameOf } from './detector';
-import { fetchFileObjectUrl, mimeOfPath } from './fetcher';
+import { fetchFileObjectUrl, getCachedObjectUrl, mimeOfPath } from './fetcher';
 import { FilePreviewDialog } from './FilePreviewDialog';
 import { useRenderSettings } from '../core/settings';
 import type { RendererKind } from '../core/types';
@@ -93,13 +93,21 @@ export function FilePreviewCard({ path }: FilePreviewCardProps) {
   const kind = detectFileKind(path);
   const name = fileNameOf(path);
   const [open, setOpen] = useState(false);
-  const [thumbUrl, setThumbUrl] = useState<string | null>(null);
+  // 初值取 objectURL 缓存：同一图片已加载过（再次进入会话）时首帧即缩略图，不再先图标后图片
+  const [thumbUrl, setThumbUrl] = useState<string | null>(() =>
+    kind === 'image' ? getCachedObjectUrl(path) : null,
+  );
 
   const supported = kind !== 'unknown' && kind !== 'text';
 
-  // 图片：卡片内直接加载缩略
+  // 图片：卡片内直接加载缩略（命中缓存则跳过请求）
   useEffect(() => {
     if (kind !== 'image') return;
+    const cached = getCachedObjectUrl(path);
+    if (cached !== null) {
+      setThumbUrl(cached);
+      return;
+    }
     let cancelled = false;
     void fetchFileObjectUrl(path, mimeOfPath(path))
       .then((url) => {

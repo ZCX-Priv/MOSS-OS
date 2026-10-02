@@ -74,6 +74,13 @@ export interface Session {
   lastRunStats?: RunStats;
   /** 消息撤回（截断）恢复窗口栈（尾部为最近窗口；支持连续撤回后按栈序逐层恢复） */
   lastTruncations?: TruncationInfo[];
+  /**
+   * 会话级消息序号（单调递增；每 run 消耗一个作为 messageId 基数 `<sessionId>#<msgSeq + turn>`）。
+   * 刻意独立于 messages.length：压缩折叠 / 撤回恢复 / healDanglingToolCalls 都会中部
+   * splice 使 length 回落，用它派生 id 会与历史已落盘的 id 相撞（前端错位替换的根因）。
+   * 首次访问时由 nextMsgSeq 按历史最大 # 后缀惰性初始化。
+   */
+  msgSeq?: number;
 }
 
 /** 消息撤回（截断）恢复窗口：栈式存储，支持连续撤回多条消息后逐层恢复 */
@@ -357,6 +364,9 @@ export class SessionStore {
               // 旧单对象格式兼容：包装为单元素数组（栈）
               ? { lastTruncations: [parsed.lastTruncation] }
               : {}),
+          ...(typeof parsed.msgSeq === 'number' && Number.isFinite(parsed.msgSeq)
+            ? { msgSeq: parsed.msgSeq }
+            : {}),
         };
         // 崩溃自愈：防抖落盘窗口内进程崩溃可能丢尾部 tool 结果——补错误结果
         // 恢复 tool_use/tool_result 配对（否则 session 复用时 provider 报 HTTP 400）
@@ -558,18 +568,41 @@ export class SessionStore {
     session.lastRunStats = stats;
   }
 
-  /** 添加 assistant 消息（含可能的 tool_calls） */
+  /**
+   * 消耗并返回下一个会话级消息序号（engine 把它作为 messageId 基数）。
+   * 首次调用时做旧数据初始化：取「当前消息数」与「历史 messageId 的最大 # 后缀」的较大值，
+   * 保证旧会话（`#<turn>` 每 run 从 1 计数留下的重复 id / `#<length+turn>` 时代的 id）
+   * 之后的新 id 严格大于一切已存在的 id，永不回撞。
+   */
+  nextMsgSeq(session: Session): number {
+    if (typeof session.msgSeq !== 'number' || !Number.isFinite(session.msgSeq) || session.msgSeq < 0) {
+      let max = session.messages.length;
+      for (const m of session.messages) {
+        if (typeof m.messageId !== 'string') continue;
+        const suffix = Number(m.messageId.split('#').pop());
+        if (Number.isFinite(suffix) && suffix > max) max = suffix;
+      }
+      session.msgSeq = max;
+    }
+    session.msgSeq += 1;
+    this.markDirty(session);
+    return session.msgSeq;
+  }
+
+  /** 添加 assistant 消息（含可能的 tool_calls）；messageId = 本轮流式身份（`<sessionId>#<msgSeq + turn>`） */
   addAssistantMessage(
     session: Session,
     content: string,
     toolCalls?: AgentMessage['toolCalls'],
     thinking?: string,
+    messageId?: string,
   ): void {
     session.messages.push({
       role: 'assistant',
       content,
       toolCalls,
       thinking,
+      messageId,
       timestamp: new Date().toISOString(),
     });
     session.updatedAt = new Date().toISOString();

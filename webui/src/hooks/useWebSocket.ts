@@ -10,6 +10,7 @@
 import { useEffect } from 'react';
 import { useStore } from '../store';
 import { wsClient } from '../api/ws';
+import { api } from '../api/http';
 import { applyWsMessage, onStreamSettled } from '../lib/ws-events';
 import { pendingRunId } from '../lib/pending-assistant';
 
@@ -68,7 +69,22 @@ export function useWebSocket(): void {
         nextRetryAt: info.nextRetryAt,
       });
       // 断开后重新连上：记录一次「已恢复」（状态条短暂提示，随后自动淡出）
-      if (info.status === 'open' && info.restored) st.bumpWsRestored();
+      if (info.status === 'open' && info.restored) {
+        st.bumpWsRestored();
+        // 断连期间错过的任务增删/运行态广播不可重放（WS 无送达保证），
+        // 重连成功即全量重拉一次任务列表，恢复「实时广播 + 最终一致」的模型。
+        // setTasks 内置 running 置位逻辑，MCP/自动化/其它端触发的运行态一并恢复。
+        void api
+          .listTasks()
+          .then(({ groups, tasks }) => {
+            const s = useStore.getState();
+            s.setTaskGroups(groups);
+            s.setTasks(tasks);
+          })
+          .catch(() => {
+            // 列表拉取失败不影响连接状态
+          });
+      }
     });
 
     // 2. 消息分发（单一入口；异常不打断后续消息处理）

@@ -244,15 +244,22 @@ export default function App() {
               </div>
             </header>
           )}
-          {/* 路由切换入场动画：按顶层路由段 remount 重播（/task/a→/task/b 同路由参数变化不重播；设置内部分区切换由各 Outlet 容器负责）。
+          {/* 路由切换入场动画：按顶层路由段 remount 重播（设置内部分区切换由各 Outlet 容器负责）。
+              欢迎页与任务页**刻意同 key（'task'）**：`/`（重定向前）与 `/task`、`/task/xxx` 都归
+              'task' 段——发送消息时是同 key 参数切换，页面容器不重挂、不重播动画。
+              **只做位移、不做 opacity 淡入**：淡入起点为透明度 0，暗色主题下整页就是「闪一片黑」，
+              故移除 fade-in，仅保留 4px 上移（纯 transform，无黑帧）。
               flex flex-col：保持父级（SidebarInset）到页面根元素的 flex 纵向链路，页面 flex-1 撑满（缺失会导致页面高度塌陷） */}
           <div
-            key={pathname.split('/')[1] ?? 'home'}
-            className="anim-route animate-in fade-in slide-in-from-bottom-1 duration-200 flex min-h-0 flex-1 flex-col"
+            key={pathname === '/' ? 'task' : (pathname.split('/')[1] ?? 'task')}
+            className="anim-route animate-in slide-in-from-bottom-1 duration-200 flex min-h-0 flex-1 flex-col"
           >
             <Routes>
-            <Route path="/" element={<TaskPage />} />
-            <Route path="/task/:taskId" element={<TaskPage />} />
+            {/* 欢迎页与任务页同一条路由（可选段）：`/` 重定向到 `/task`；发送消息后
+                URL 从 /task → /task/xxx 是**同一路由内参数切换，TaskPage 不卸载重挂**——
+                根治「发送后任务页整页重挂 + 浮出动画起点黑帧」；刷新/前进后退保持任务页 */}
+            <Route path="/" element={<Navigate to="/task" replace />} />
+            <Route path="/task/:taskId?" element={<TaskPage />} />
             <Route path="/plugins" element={<PluginMarketPage />}>
               <Route index element={<Navigate to="skills" replace />} />
               <Route path="skills" element={<SkillsTab />} />
@@ -300,7 +307,7 @@ export default function App() {
               <Route path="memory" element={<Navigate to="/settings/context/memory" replace />} />
               <Route path="*" element={<Navigate to="general" replace />} />
             </Route>
-            <Route path="*" element={<Navigate to="/" replace />} />
+            <Route path="*" element={<Navigate to="/task" replace />} />
             </Routes>
           </div>
         </SidebarInset>

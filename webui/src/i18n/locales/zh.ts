@@ -38,6 +38,7 @@ export const zh = {
     disconnectedRetry: '连接已断开，正在重连（第 {{count}} 次，约 {{seconds}} 秒后重试）',
     restored: '连接已恢复',
     restoringSession: '正在恢复会话状态…',
+    syncing: '正在同步最新消息…',
     retryNow: '立即重试',
   },
   sidebar: {

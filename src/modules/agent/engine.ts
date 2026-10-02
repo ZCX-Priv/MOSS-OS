@@ -236,13 +236,16 @@ export class AgentEngineImpl implements AgentEngine {
       switch (event.type) {
         case 'assistant-text': {
           const d = this.liveDraft.get(event.sessionId);
-          const offset = d ? d.contentLength : 0;
+          // 草稿缺失 = run 已结束（clear 后的迟到分片 / 打断竞态）：
+          // 发出 offset=0 的无 messageId 分片只会让前端把它当「从头开始的新内容」错位拼接 → 直接丢弃。
+          if (!d) return;
+          const offset = d.contentLength;
           onEvent({
             type: 'assistant-text',
             sessionId: event.sessionId,
             text: event.text,
             ...(event.runId ? { runId: event.runId } : {}),
-            ...(d ? { messageId: d.messageId } : {}),
+            messageId: d.messageId,
             offset,
             total: offset + event.text.length,
           });
@@ -251,13 +254,14 @@ export class AgentEngineImpl implements AgentEngine {
         }
         case 'assistant-thinking': {
           const d = this.liveDraft.get(event.sessionId);
-          const offset = d ? d.thinkingLength : 0;
+          if (!d) return; // 同上：run 已结束，错位分片不如不发
+          const offset = d.thinkingLength;
           onEvent({
             type: 'assistant-thinking',
             sessionId: event.sessionId,
             text: event.text,
             ...(event.runId ? { runId: event.runId } : {}),
-            ...(d ? { messageId: d.messageId } : {}),
+            messageId: d.messageId,
             offset,
             total: offset + event.text.length,
           });
@@ -266,14 +270,15 @@ export class AgentEngineImpl implements AgentEngine {
         }
         case 'tool-call-delta': {
           const d = this.liveDraft.get(event.sessionId);
-          const offset = d?.toolCalls.find((tc) => tc.id === event.toolCallId)?.arguments.length ?? 0;
+          if (!d) return; // 同上
+          const offset = d.toolCalls.find((tc) => tc.id === event.toolCallId)?.arguments.length ?? 0;
           onEvent({
             type: 'tool-call-delta',
             sessionId: event.sessionId,
             toolCallId: event.toolCallId,
             argumentsDelta: event.argumentsDelta,
             ...(event.runId ? { runId: event.runId } : {}),
-            ...(d ? { messageId: d.messageId } : {}),
+            messageId: d.messageId,
             offset,
             total: offset + event.argumentsDelta.length,
           });
@@ -366,6 +371,12 @@ export class AgentEngineImpl implements AgentEngine {
     const session = this.sessions.getOrCreate(sessionId);
     // clientMessageId 随消息持久化：前端本地乐观副本与历史副本据此同身份去重
     this.sessions.addUserMessage(session, userMessage, input.attachments, input.clientMessageId);
+    // messageId 基数：会话级单调序号（每 run 消耗一个，持久化在 session.msgSeq）。
+    // messageId = `<sessionId>#<msgIdBase + turn>` —— 严格递增且不受 messages.length 波动
+    // （压缩折叠 / 撤回恢复 / healDanglingToolCalls 都会中部 splice 使 length 回落，
+    // 旧方案的「#<length+turn>」在长会话压缩后会与历史已落盘的 id 相撞 →
+    // 前端流式分片 attach 到旧消息 / 增量合并原位覆盖旧消息 = 「新消息替换第一条消息」错位）。
+    const msgIdBase = this.sessions.nextMsgSeq(session);
     // 记录本次 run 的工作目录（上下文文件相对路径的存在性校验/归一化匹配基准）
     this.sessions.setLastCwd(session, cwd);
     // 活跃置顶：task.id 即 sessionId；无对应任务时静默返回 null
@@ -429,9 +440,13 @@ export class AgentEngineImpl implements AgentEngine {
       }
       turn++;
 
-      // 逐轮重建流式草稿：messageId 逐轮唯一（`<sessionId>#<turn>`），
-      // 每个 messageId 拥有独立 offset 空间 —— 前端据此判定「是否同一轮」并精确续接。
-      this.liveDraft.begin(sessionId, `${sessionId}#${turn}`, input.runId, turn);
+      // 逐轮重建流式草稿：messageId 含 run 基数（`<sessionId>#<msgIdBase + turn>`），
+      // 跨 run 唯一；每个 messageId 拥有独立 offset 空间 —— 前端据此判定「是否同一轮」
+      // 并精确续接，且永不误命中更早轮次的历史消息。
+      // turnMessageId 轮内快照：落盘时一律用它（而非回读 liveDraft —— 打断竞态下新 run
+      // 的 begin() 可能已替换草稿，回读会让旧 run 的半截消息写上新 run 的身份 → 重复 id）。
+      const turnMessageId = `${sessionId}#${msgIdBase + turn}`;
+      this.liveDraft.begin(sessionId, turnMessageId, input.runId, turn);
 
       // 构建请求：context 引擎每轮流水线（env 保障 → 压缩决策 → 缓存对齐视图）
       // 服务不可用/异常时降级为纯函数 fallback（静态提示 + 视图构建，无压缩）
@@ -561,7 +576,13 @@ export class AgentEngineImpl implements AgentEngine {
           finishReason = 'aborted';
           finalText = assistantText;
           if (finalText || assistantThinking) {
-            this.sessions.addAssistantMessage(session, finalText, undefined, assistantThinking || undefined);
+            this.sessions.addAssistantMessage(
+              session,
+              finalText,
+              undefined,
+              assistantThinking || undefined,
+              turnMessageId,
+            );
           }
           break;
         }
@@ -571,7 +592,13 @@ export class AgentEngineImpl implements AgentEngine {
         finishReason = 'error';
         // 把已收集的文本作为最终输出
         finalText = assistantText || `Error: ${msg}`;
-        this.sessions.addAssistantMessage(session, finalText, undefined, assistantThinking || undefined);
+        this.sessions.addAssistantMessage(
+          session,
+          finalText,
+          undefined,
+          assistantThinking || undefined,
+          turnMessageId,
+        );
         break;
       } finally {
         // 轮统计（正常/中断/异常路径统一在此结算；finally 先于 break 生效）
@@ -620,6 +647,7 @@ export class AgentEngineImpl implements AgentEngine {
         assistantText,
         toolCalls.length > 0 ? toolCalls : undefined,
         assistantThinking || undefined,
+        turnMessageId,
       );
 
       // 无工具调用：本轮结束

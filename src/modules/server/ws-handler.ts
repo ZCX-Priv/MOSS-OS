@@ -73,6 +73,10 @@ class EventBatcher {
         existing.argumentsDelta = (existing.argumentsDelta ?? '') + delta;
         if (total !== undefined) existing.total = total;
       } else {
+        // 同 key 但轮次/run 不同（打断竞态 / 跨轮 30ms 窗口）：
+        // 先冲刷旧条目再缓冲新条目——直接 set 覆盖会把旧分片**静默丢弃**，
+        // 前端出现缺口后所有后续分片被按重复丢弃（回复终止的传输侧根因）。
+        if (existing) this.flush();
         this.buffer.set(key, {
           type: 'tool-call-delta', sessionId: msg.sessionId, runId, messageId, offset, total,
           toolCallId, argumentsDelta: delta,
@@ -90,6 +94,8 @@ class EventBatcher {
         existing.text = (existing.text ?? '') + text;
         if (total !== undefined) existing.total = total;
       } else {
+        // 同 key 但轮次/run 不同：先冲刷旧条目再缓冲，绝不覆盖丢片（理由同上）
+        if (existing) this.flush();
         this.buffer.set(key, {
           type: msg.type as BatchedEvent['type'], sessionId: msg.sessionId, runId, messageId, offset, total, text,
         });
@@ -512,6 +518,9 @@ export class WsHandler {
         // 仅当当前记录的仍是自己时才清除，避免误清新流的 controller
         if (this.activeRuns.get(sessionId) === abortController) {
           this.activeRuns.delete(sessionId);
+          // 同步清 runId：否则 run 正常结束后 sessionSnapshot 仍向重连客户端
+          // 返回已结束的旧 runId（前端事件隔离对齐被污染）
+          this.activeRunIds.delete(sessionId);
         }
         // 冲净残余缓冲（保序收尾）
         this.batcher.flush();

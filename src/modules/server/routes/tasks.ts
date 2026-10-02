@@ -143,7 +143,7 @@ function hiddenGroupIds(engine: AgentEngineWithTasks): Set<string> {
 }
 
 export function createListTasksHandler(services: ServiceRegistry): RouteHandler {
-  return (): HttpResponse => {
+  return (req): HttpResponse => {
     const engine = resolveEngine(services);
     if (!engine) {
       return { status: 200, body: { groups: [], tasks: [] } };
@@ -153,12 +153,48 @@ export function createListTasksHandler(services: ServiceRegistry): RouteHandler 
     const server = services.tryResolve<{ isSessionRunning?: (sid: string) => boolean }>(
       ServiceNames.SERVER_INSTANCE,
     );
-    const tasks = visibleTasks(engine).map((tk) => ({
+    const all = visibleTasks(engine).map((tk) => ({
       ...tk,
       running: server?.isSessionRunning?.(tk.sessionId ?? tk.id) ?? false,
     }));
-    return { status: 200, body: { groups: visibleGroups(engine), tasks } };
+    // 分页（可选）：?limit=N&offset=M。排序口径与引擎一致（order asc → createdAt 倒序），
+    // 切片稳定 → 前端滚动加载可安全 concat。不传 limit 时保持全量（兼容既有调用方）。
+    const limit = Number(req.query?.limit);
+    const offset = Number(req.query?.offset);
+    if (Number.isInteger(limit) && limit > 0) {
+      const start = Number.isInteger(offset) && offset > 0 ? offset : 0;
+      const tasks = all.slice(start, start + limit);
+      return {
+        status: 200,
+        body: {
+          groups: visibleGroups(engine),
+          tasks,
+          page: { total: all.length, limit, offset: start, hasMore: start + tasks.length < all.length },
+        },
+      };
+    }
+    return { status: 200, body: { groups: visibleGroups(engine), tasks: all } };
   };
+}
+
+/**
+ * 目录名 → folder 分组（与前端发消息 / MCP 派发同一规则）：
+ * 按名大小写不敏感复用已有分组，不存在则新建 source='folder'（空组由 task-store 自动销毁）。
+ */
+function resolveFolderGroup(
+  engine: AgentEngineWithTasks,
+  groupName: string,
+): { id: string; name: string; source?: 'folder' | 'manual' } | undefined {
+  try {
+    const found = engine.listTaskGroups?.().find(
+      (g) => g.name.toLowerCase() === groupName.toLowerCase(),
+    );
+    if (found) return found;
+    return engine.createTaskGroup?.(groupName, 'folder');
+  } catch {
+    // 分组解析失败：任务落默认分组，不阻断创建
+    return undefined;
+  }
 }
 
 export function createCreateTaskHandler(services: ServiceRegistry): RouteHandler {
@@ -167,13 +203,24 @@ export function createCreateTaskHandler(services: ServiceRegistry): RouteHandler
     if (!engine?.createTask) {
       return { status: 503, body: { error: ErrorCode.AGENT_ENGINE_UNAVAILABLE } };
     }
-    const body = (req.body ?? {}) as { title?: string; groupId?: string };
+    const body = (req.body ?? {}) as { title?: string; groupId?: string; deriveGroupName?: string };
     if (!body.title) {
       return { status: 400, body: { error: ErrorCode.TASK_TITLE_REQUIRED } };
     }
-    const task = engine.createTask(body.title, body.groupId);
-    broadcastWS(services, { type: 'task.created', payload: { task } });
-    return { status: 201, body: task };
+    // deriveGroupName：工作目录名 → 服务端按目录归类建组（前端免一次「查组/建组」串行往返，
+    // 发送新任务从 2-3 次请求降到 1 次）。groupId 显式指定优先。
+    let groupId = body.groupId;
+    let group: { id: string; name: string; source?: 'folder' | 'manual' } | undefined;
+    if (!groupId && typeof body.deriveGroupName === 'string' && body.deriveGroupName.trim()) {
+      group = resolveFolderGroup(engine, body.deriveGroupName.trim());
+      groupId = group?.id;
+    }
+    const task = engine.createTask(body.title, groupId);
+    broadcastWS(services, {
+      type: 'task.created',
+      payload: { task, ...(group ? { group } : {}) },
+    });
+    return { status: 201, body: { task, ...(group ? { group } : {}) } };
   };
 }
 

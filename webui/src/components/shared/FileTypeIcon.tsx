@@ -8,7 +8,7 @@ import { useEffect, useMemo, useState, type ComponentType } from 'react';
 import { getFileIcon, getIconSvg, MaterialIcon } from 'react-material-icon-theme';
 import { Paperclip } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { fetchFileObjectUrl, mimeOfPath } from '../../render/file/fetcher';
+import { fetchFileObjectUrl, getCachedObjectUrl, mimeOfPath } from '../../render/file/fetcher';
 import { fileExtension } from '../../render/file/detector';
 import { useDarkMode } from '../../render/core/use-dark-mode';
 
@@ -77,10 +77,17 @@ export function fileTypeIconComponent(
  * 返回 null 表示未就绪或加载失败（调用方回退类型图标 / spinner）。
  */
 export function useFileThumbnail(path: string, enabled: boolean): string | null {
-  const [url, setUrl] = useState<string | null>(null);
+  // 初值取 objectURL 缓存：同一路径已加载过（再次进入会话）时首帧即缩略图，
+  // 不再「先类型图标 → 异步拉到后再换图片」（消除「先粗后精」闪动）。
+  const [url, setUrl] = useState<string | null>(() => (enabled ? getCachedObjectUrl(path) : null));
   useEffect(() => {
     if (!enabled) {
       setUrl(null);
+      return;
+    }
+    const cached = getCachedObjectUrl(path);
+    if (cached !== null) {
+      setUrl(cached);
       return;
     }
     let cancelled = false;

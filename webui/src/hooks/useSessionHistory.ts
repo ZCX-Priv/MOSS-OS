@@ -3,14 +3,17 @@
 //
 // 契约（根治「任务在后台跑、刷新后却显示已完成」）：
 // - running（= 前端 generatingBySession）只由权威信号写入：
-//     ① 状态快照 GET /api/session/:id/state
+//     ① 状态快照 GET /api/session/:id/state（**只升不降**：false 竞态不熄灭本地刚点亮的转圈）
 //     ② WS session.subscribed 快照（含后端 activeRuns 实况）
 //     ③ 完成类事件（done / task.aborted / error / automation.finished）
 //     ④ 本地发送与主动中断
-//   **历史/快照的任何拉取都不得把 running 置 false**（除快照明确 running=false 且经尾部补齐收尾）。
+//   **历史/快照的任何拉取都不得把 running 置 false**（降级只走完成事件与快照兜底分支）。
 // - 半截回复恢复：快照 liveDraft → 落成本地消息（id = 服务端 messageId）→ 后续分片按 offset 续接。
+// - 打开已有会话：store 有缓存时**直渲染**（stale-while-revalidate），仅做尾部增量对齐，
+//   不再闪骨架屏；无缓存才走首屏分页 + 骨架屏。
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { RefObject } from 'react';
 import { api } from '../api/http';
 import { wsClient } from '../api/ws';
 import { useStore } from '../store';
@@ -23,18 +26,16 @@ import {
   onSessionSnapshot,
   onStreamSettled,
 } from '../lib/ws-events';
+import { diag } from '../lib/diag';
+import type { VirtualListApi } from '../lib/virtual-list/VirtualList';
 import type { SessionState, TaskMessage } from '../types/api';
 
 /** 首屏与每页条数：30 条约占一屏多，JSON 体积可控（超长会话首屏不再传全量） */
 export const HISTORY_PAGE_SIZE = 30;
-/** Virtuoso firstItemIndex 起始值：向前 prepend 时递减，保证滚动位置不跳 */
-const INITIAL_FIRST_ITEM_INDEX = 1_000_000;
 
 export interface UseSessionHistoryResult {
-  /** 加载更早的一页（Virtuoso startReached 回调） */
+  /** 加载更早的一页（列表到达顶部时回调） */
   loadOlder: () => void;
-  /** Virtuoso firstItemIndex（prepend 时递减以保持视口锚定） */
-  firstItemIndex: number;
   /** 是否还有更早的消息 */
   hasMoreBefore: boolean;
   /** 是否正在加载更早的一页 */
@@ -45,8 +46,13 @@ export interface UseSessionHistoryResult {
   reload: () => Promise<void>;
 }
 
-export function useSessionHistory(taskId: string): UseSessionHistoryResult {
-  const [firstItemIndex, setFirstItemIndex] = useState(INITIAL_FIRST_ITEM_INDEX);
+/** 首屏空结果重试间隔：等待后端把 task.stream 的 user 消息持久化到内存会话 */
+const FIRST_PAGE_RETRY_DELAY_MS = 250;
+
+export function useSessionHistory(
+  taskId: string,
+  apiRef?: RefObject<VirtualListApi | null>,
+): UseSessionHistoryResult {
   /** 已请求过首屏的会话（避免重复拉取；切换会话时重置） */
   const loadedRef = useRef<string | null>(null);
   /** 会话级「尾部补齐」串行化：同一时刻只允许一次，避免并发覆盖游标 */
@@ -67,6 +73,8 @@ export function useSessionHistory(taskId: string): UseSessionHistoryResult {
     async (sessionId: string, dropStreaming: boolean) => {
       if (catchupBusyRef.current) return;
       catchupBusyRef.current = true;
+      // 状态胶囊提示「正在同步最新消息…」（一轮结束 / 重连对齐期间可见）
+      useStore.getState().setSyncing(sessionId, true);
       try {
         flushPending();
         const meta = useStore.getState().historyMetaBySession[sessionId];
@@ -87,6 +95,7 @@ export function useSessionHistory(taskId: string): UseSessionHistoryResult {
           { dropStreaming },
         );
       } finally {
+        useStore.getState().setSyncing(sessionId, false);
         catchupBusyRef.current = false;
       }
     },
@@ -133,8 +142,10 @@ export function useSessionHistory(taskId: string): UseSessionHistoryResult {
     // 会话已切换：丢弃过期结果（避免污染新会话）
     if (st.activeSessionId && st.activeSessionId !== sessionId) return;
 
-    // ① 权威运行态（可升可降）：这是「刷新后仍显示运行中」的唯一依据
-    st.setGenerating(sessionId, state.running);
+    // ① 权威运行态（只升不降）：true 直接点亮；false **不降级**——
+    //    「本地已发送、后端尚未注册 run」窗口内的 /state 竞态会瞬间熄灭刚点亮的「响应中」。
+    //    降级由完成类事件（done/error/aborted）与 session.subscribed running=false 兜底分支负责。
+    if (state.running) st.setGenerating(sessionId, true);
 
     // ② 半截流式草稿（含 stale 的历史残留）
     if (state.liveDraft && state.liveDraft.messageId) {
@@ -178,8 +189,21 @@ export function useSessionHistory(taskId: string): UseSessionHistoryResult {
     }
   }, [catchUpTail]);
 
+  /** 首屏历史（空结果重试版）：新任务发送后 fetch 可能先于 user 消息持久化到达 → 返回空 */
+  const fetchFirstPage = useCallback(async (sid: string) => {
+    const localCount = () => useStore.getState().messagesBySession[sid]?.length ?? 0;
+    let resp = await api.getSessionHistory(sid, { limit: HISTORY_PAGE_SIZE });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (!((resp.page?.total ?? resp.messages.length) === 0 && localCount() > 0)) break;
+      diag('first-page-empty-retry', { sid, attempt });
+      await new Promise<void>((resolve) => setTimeout(resolve, FIRST_PAGE_RETRY_DELAY_MS));
+      resp = await api.getSessionHistory(sid, { limit: HISTORY_PAGE_SIZE });
+    }
+    return resp;
+  }, []);
+
   // ==========================================================================
-  // 挂载 / 切换会话：订阅 + 首屏分页 + 并行加载附属数据
+  // 挂载 / 切换会话：订阅 + 首屏（缓存直渲染 or 分页）+ 并行加载附属数据
   // ==========================================================================
   // 注意：本 effect 内的异步续体**不使用 alive 守卫**——所有写入都是「会话键控的幂等
   // 写入」（mergeHistory 按消息 id 去重、setTodos/setContext/setContextStats 全量替换、
@@ -197,37 +221,69 @@ export function useSessionHistory(taskId: string): UseSessionHistoryResult {
     st0.setActiveTaskId(taskId);
 
     const isFirstLoad = loadedRef.current !== taskId;
+    // 缓存直渲染判定：store 里已有该会话的消息且游标有效（切回会话 / 刚发过消息）
+    const hasCache =
+      (st0.messagesBySession[taskId]?.length ?? 0) > 0 &&
+      (st0.historyMetaBySession[taskId]?.loaded ?? false);
+
     if (isFirstLoad) {
       loadedRef.current = taskId;
       resetStreamBuffer(taskId);
-      setFirstItemIndex(INITIAL_FIRST_ITEM_INDEX);
       st0.setWsRestoring(taskId, true);
-      st0.patchHistoryMeta(taskId, { loaded: false, loadingBefore: false });
-    }
 
-    // ① 首屏历史（分页，仅末页）
-    if (isFirstLoad) {
-      void api
-        .getSessionHistory(taskId, { limit: HISTORY_PAGE_SIZE })
-        .then((resp) => {
-          useStore.getState().mergeHistory(
-            taskId,
-            resp.messages,
-            'tail',
-            resp.page ?? {
-              total: resp.messages.length,
-              oldestIndex: 0,
-              newestIndex: resp.messages.length - 1,
-              hasMoreBefore: false,
-            },
-          );
-          if (resp.permissionMode) useStore.getState().setPermissionMode(resp.permissionMode, taskId);
-          if (resp.lastRunStats) useStore.getState().setRunStats(taskId, resp.lastRunStats);
-        })
-        .catch(() => {
-          // 后端未就绪 / 会话不存在：静默（保持空态）
-          useStore.getState().patchHistoryMeta(taskId, { loaded: true });
-        });
+      if (hasCache) {
+        // 缓存直渲染（stale-while-revalidate）：保留已加载消息与游标（不闪骨架屏，
+        // 消息直接向上浮出），仅做尾部增量对齐补齐断线期间的新消息。
+        void catchUpTail(taskId, false)
+          .catch(() => {})
+          .finally(() => {
+            useStore.getState().setWsRestoring(taskId, false);
+          });
+      } else {
+        st0.patchHistoryMeta(taskId, { loaded: false, loadingBefore: false });
+        // ① 首屏历史（分页，仅末页；空结果重试等待持久化可见）+ 压缩卡：
+        //    两者并行拉取后**合并为一次 store 写入**。压缩卡原先走独立异步链，会在记录
+        //    渲染完成之后才插入并整体重排（用户看到的「卡片迟到 / 移位」），且 tail 合并的
+        //    localOnly 会把卡片追加到末尾再由 sort 纠正（二次位移）。合并写入后首帧即含卡片。
+        void Promise.all([
+          fetchFirstPage(taskId),
+          api.getCompactions(taskId).catch(() => null),
+        ])
+          .then(([resp, compactions]) => {
+            const serverIds = new Set(resp.messages.map((m) => m.id));
+            const cards: TaskMessage[] = (compactions?.compactions ?? [])
+              .filter((c) => !serverIds.has(`compaction_${c.id}`))
+              .map((c) => ({
+                id: `compaction_${c.id}`,
+                role: 'assistant' as const,
+                content: c.summary,
+                timestamp: c.at,
+                compaction: c,
+              }));
+            // 按时间序合并：mergeHistory('tail') 保留传入顺序（resolved 原序），
+            // 故卡片首帧就落在正确位置，不再有第二次插入 / 整体重排。
+            const merged = [...resp.messages, ...cards].sort(
+              (a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp),
+            );
+            useStore.getState().mergeHistory(
+              taskId,
+              merged,
+              'tail',
+              resp.page ?? {
+                total: resp.messages.length,
+                oldestIndex: 0,
+                newestIndex: resp.messages.length - 1,
+                hasMoreBefore: false,
+              },
+            );
+            if (resp.permissionMode) useStore.getState().setPermissionMode(resp.permissionMode, taskId);
+            if (resp.lastRunStats) useStore.getState().setRunStats(taskId, resp.lastRunStats);
+          })
+          .catch(() => {
+            // 后端未就绪 / 会话不存在：静默（保持空态）
+            useStore.getState().patchHistoryMeta(taskId, { loaded: true });
+          });
+      }
     }
 
     // ② 权威状态快照（运行态 + 半截草稿 + 待答 / 待确认）
@@ -260,31 +316,6 @@ export function useSessionHistory(taskId: string): UseSessionHistoryResult {
         useStore.getState().setContextStats(taskId, stats);
       })
       .catch(() => {});
-    void api
-      .getCompactions(taskId)
-      .then(({ compactions }) => {
-        if (!Array.isArray(compactions) || compactions.length === 0) return;
-        const s = useStore.getState();
-        const existing = s.messagesBySession[taskId] ?? [];
-        const existingIds = new Set(existing.map((m) => m.id));
-        const cards: TaskMessage[] = compactions
-          .filter((c) => !existingIds.has(`compaction_${c.id}`))
-          .map((c) => ({
-            id: `compaction_${c.id}`,
-            role: 'assistant' as const,
-            content: c.summary,
-            timestamp: c.at,
-            compaction: c,
-          }));
-        if (cards.length > 0) {
-          // 就地并入（按时间序）而非整体替换：分页窗口内的消息不被冲掉
-          const merged = [...existing, ...cards].sort(
-            (a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp),
-          );
-          s.setMessages(taskId, merged);
-        }
-      })
-      .catch(() => {});
 
     return () => {
       // 卸载时若 activeSessionId 仍指向自己则清除（防 useWebSocket 误用旧 session）。
@@ -293,7 +324,7 @@ export function useSessionHistory(taskId: string): UseSessionHistoryResult {
       const cur = useStore.getState().activeSessionId;
       if (cur === taskId) useStore.getState().setActiveSession(null);
     };
-  }, [taskId, reconcileFromState]);
+  }, [taskId, reconcileFromState, catchUpTail, fetchFirstPage]);
 
   // ==========================================================================
   // 编排信号：快照对齐 / 一轮结束补齐 / offset 缺口自愈
@@ -340,7 +371,7 @@ export function useSessionHistory(taskId: string): UseSessionHistoryResult {
 
     const unsubInvalidated = onHistoryInvalidated((sessionId) => {
       if (sessionId !== taskId) return;
-      // 撤回 / 恢复：消息下标已变化 → 整体重载末页
+      // 撤回 / 恢复 / 压缩折叠：消息下标已变化 → 整体重载末页
       void reload();
     });
 
@@ -386,15 +417,19 @@ export function useSessionHistory(taskId: string): UseSessionHistoryResult {
           cur.patchHistoryMeta(taskId, { loadingBefore: false, hasMoreBefore: false });
           return;
         }
-        const added = resp.messages.length;
+        if (resp.messages.length === 0) {
+          cur.patchHistoryMeta(taskId, { loadingBefore: false, hasMoreBefore: false });
+          return;
+        }
+        // prepend 锚定：合入前捕获 scrollHeight，合入提交后按增量修正 scrollTop（视口不跳动）
+        const anchor = apiRef?.current?.anchorPrepend();
         cur.mergeHistory(taskId, resp.messages, 'prepend', resp.page);
-        // Virtuoso：prepend 时递减 firstItemIndex，视口锚定在原来的消息上（不跳动）
-        if (added > 0) setFirstItemIndex((v) => v - added);
+        anchor?.apply();
       })
       .catch(() => {
         useStore.getState().patchHistoryMeta(taskId, { loadingBefore: false });
       });
-  }, [taskId]);
+  }, [taskId, apiRef]);
 
-  return { loadOlder, firstItemIndex, hasMoreBefore, loadingBefore, loaded, reload };
+  return { loadOlder, hasMoreBefore, loadingBefore, loaded, reload };
 }
