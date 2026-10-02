@@ -41,6 +41,7 @@ import context from '../modules/context';
 import rules from '../modules/rules';
 import hooks from '../modules/hooks';
 import memory from '../modules/memory';
+import voice from '../modules/voice';
 
 const MODULE_INIT_TIMEOUT_MS = 30_000;
 const MODULE_DESTROY_TIMEOUT_MS = 10_000;
@@ -77,6 +78,7 @@ const MODULE_FACTORIES: Array<{ name: string; create: () => Module }> = [
   { name: 'rules', create: rules },
   { name: 'hooks', create: hooks },
   { name: 'memory', create: memory },
+  { name: 'voice', create: voice },
   { name: 'context', create: context },
   { name: 'agent', create: agent },
   { name: 'agenteam', create: agenteam },

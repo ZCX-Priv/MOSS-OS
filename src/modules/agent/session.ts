@@ -615,8 +615,9 @@ export class SessionStore {
     toolCallId: string,
     content: string,
     name?: string,
-    extra?: { isError?: boolean; metadata?: Record<string, unknown> },
+    extra?: { isError?: boolean; metadata?: Record<string, unknown>; images?: string[] },
   ): void {
+    const images = extra?.images;
     session.messages.push({
       role: 'tool',
       content,
@@ -624,6 +625,7 @@ export class SessionStore {
       name,
       isError: extra?.isError,
       metadata: extra?.metadata,
+      ...(images && images.length > 0 ? { images } : {}),
       timestamp: new Date().toISOString(),
     });
     session.updatedAt = new Date().toISOString();

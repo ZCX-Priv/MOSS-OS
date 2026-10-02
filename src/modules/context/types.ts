@@ -163,6 +163,10 @@ export const DEFAULT_CONTEXT_CONFIG: ContextEngineConfig = {
 export interface ContextMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
+  /** 用户消息附带的附件绝对路径（role=user；view-builder 据此读盘编码图片） */
+  attachments?: string[];
+  /** 工具结果附带的图片绝对路径（role=tool；view-builder 据此读盘编码图片） */
+  images?: string[];
   toolCalls?: Array<{
     id: string;
     name: string;

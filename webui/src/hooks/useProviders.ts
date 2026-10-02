@@ -101,9 +101,11 @@ export function useProviders() {
   const createProvider = useCallback(
     async (data: {
       name: string;
-      kind?: 'model' | 'search';
+      kind?: 'model' | 'search' | 'voice';
       format?: ProviderItem['format'];
       searchEngine?: 'zhipu' | 'bocha' | 'tavily';
+      voiceEngine?: 'openai-transcriptions';
+      voiceModel?: string;
       endpoint: string;
       apiKey: string;
       balanceUrl?: string;

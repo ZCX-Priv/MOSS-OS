@@ -7,6 +7,7 @@ import type {
   ModelConfig,
   ProviderFormat,
   StreamDelta,
+  UnifiedImage,
   UnifiedMessage,
   UnifiedRequest,
   UnifiedResponse,
@@ -20,7 +21,7 @@ export class OpenAIResponsesProvider implements LLMProvider {
 
   transformRequest(req: UnifiedRequest, cfg: ModelConfig): unknown {
     // Responses API 用 input 数组替代 messages
-    const input = req.messages.map(toResponsesInput);
+    const input = toResponsesInputs(req.messages);
 
     const body: Record<string, unknown> = {
       model: req.model,
@@ -209,6 +210,21 @@ export function toOpenAIResponsesThinking(t: ThinkingConfig): Record<string, unk
 // 内部 helper
 // ============================================================================
 
+/**
+ * 统一消息 → Responses API input 数组。
+ * function_call_output 只支持字符串 output，图片改由紧随其后的 user message 承载。
+ */
+function toResponsesInputs(msgs: UnifiedMessage[]): unknown[] {
+  const out: unknown[] = [];
+  for (const msg of msgs) {
+    out.push(toResponsesInput(msg));
+    if (msg.role === 'tool' && msg.images && msg.images.length > 0) {
+      out.push({ type: 'message', role: 'user', content: contentWithImages('[图片]', msg.images) });
+    }
+  }
+  return out;
+}
+
 function toResponsesInput(msg: UnifiedMessage): unknown {
   // system 消息在 Responses API 中用 instructions 字段，或作为 input 中的 system 项
   if (msg.role === 'system') {
@@ -222,12 +238,29 @@ function toResponsesInput(msg: UnifiedMessage): unknown {
       output: msg.content,
     };
   }
+  // user 带图片：多模态内容块
+  if (msg.role === 'user' && msg.images && msg.images.length > 0) {
+    return { type: 'message', role: 'user', content: contentWithImages(msg.content, msg.images) };
+  }
   // user / assistant
   return {
     type: 'message',
     role: msg.role,
     content: msg.content,
   };
+}
+
+/** 文本 + 图片 → Responses API 输入内容块（input_text / input_image） */
+function contentWithImages(text: string, images: UnifiedImage[]): unknown[] {
+  const parts: unknown[] = [];
+  if (text) parts.push({ type: 'input_text', text });
+  for (const img of images) {
+    parts.push({
+      type: 'input_image',
+      image_url: `data:${img.mimeType};base64,${img.data}`,
+    });
+  }
+  return parts;
 }
 
 function mapStatus(s: string | undefined): 'stop' | 'tool_use' | 'length' | 'error' {

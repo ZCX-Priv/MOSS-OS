@@ -28,7 +28,7 @@ export async function readImage(path: string): Promise<ToolResult> {
   const base64 = buf.toString('base64');
 
   return {
-    content: [{ type: 'image', source: { data: base64, mimeType: mime } }],
+    content: [{ type: 'image', source: { data: base64, mimeType: mime }, path }],
     metadata: {
       type: 'image',
       mimeType: mime,

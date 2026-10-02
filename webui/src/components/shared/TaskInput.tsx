@@ -40,12 +40,13 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import {
   resolveWorkingDirectoryName,
   getAttachmentKind,
-  cn,
   type AttachmentKind,
 } from '@/lib/utils';
 import { resolveSkillIcon } from '@/lib/skill-icons';
 import { api } from '../../api/http';
 import { MentionMenu } from './MentionMenu';
+import { VoiceWaveform } from './VoiceWaveform';
+import { useVoiceInput, useVoiceStatus } from '../../hooks/useVoiceInput';
 import { MentionEditor, type MentionEditorHandle } from './MentionEditor';
 import { SendAttachmentCard } from './AttachmentCard';
 import { fileTypeIconComponent } from './FileTypeIcon';
@@ -75,6 +76,26 @@ interface AttachmentItem {
   name: string;
   size: number;
   kind: AttachmentKind;
+}
+
+/** 剪贴板图片扩展名推断（clipboard File 常无有效 name，用 mime 兜底） */
+function extFromMime(mime: string): string {
+  const sub = mime.split('/')[1] ?? '';
+  return /^[A-Za-z0-9]{1,5}$/.test(sub) ? sub.toLowerCase() : 'png';
+}
+
+/** File → base64（去掉 dataURL 前缀；后端按 base64 解码落盘） */
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === 'string' ? reader.result : '';
+      const comma = result.indexOf(',');
+      resolve(comma >= 0 ? result.slice(comma + 1) : result);
+    };
+    reader.onerror = () => reject(reader.error ?? new Error('read failed'));
+    reader.readAsDataURL(file);
+  });
 }
 
 /** command → / 菜单项 */
@@ -114,6 +135,8 @@ interface TaskInputProps {
   /** 仅首屏空白（会话无消息且未生成）时显示工作目录 Badge */
   showDirectoryBadge?: boolean;
   onAbort?: () => void;
+  /** 点击附件卡片：在右侧边栏打开该文件预览（未提供时卡片不可点） */
+  onOpenAttachment?: (path: string) => void;
 }
 
 export function TaskInput({
@@ -123,6 +146,7 @@ export function TaskInput({
   isGenerating = false,
   showDirectoryBadge = true,
   onAbort,
+  onOpenAttachment,
 }: TaskInputProps) {
   const { t } = useTranslation();
   const workingDirectory = useStore((s) => s.workingDirectory);
@@ -170,7 +194,31 @@ export function TaskInput({
     setAttachments((prev) => prev.filter((a) => a.id !== id));
   };
 
-  // 附件单行横向滚动：溢出时显示左右箭头（不溢出则 invisible，保持布局不跳动）
+  /** 粘贴图片 → 落盘为附件（不占用输入框）：base64 提交后端写入 ~/.moss/agent/attachments */
+  const handlePasteImages = async (files: File[]) => {
+    const saved: AttachmentItem[] = [];
+    for (const file of files) {
+      try {
+        const dataBase64 = await fileToBase64(file);
+        const name = file.name || `image-${Date.now()}.${extFromMime(file.type)}`;
+        const { file: picked } = await api.saveAttachment({ name, dataBase64 });
+        saved.push({
+          id: `${Date.now()}-${picked.path}`,
+          path: picked.path,
+          name: picked.name,
+          size: picked.size,
+          kind: getAttachmentKind(picked.name, ''),
+        });
+      } catch {
+        toast.error(t('taskInput.pasteImageFailed'));
+      }
+    }
+    if (saved.length > 0) {
+      setAttachments((prev) => [...prev, ...saved]);
+    }
+  };
+
+  // 附件单行横向滚动：哪边还有未滚动到内容，才渲染哪边的箭头（不占位，避免多余空白）
   const attachmentsScrollRef = useRef<HTMLDivElement>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
@@ -412,6 +460,24 @@ export function TaskInput({
     editorRef.current?.clear();
   };
 
+  // ==========================================================================
+  // 语音输入（默认关闭；仅在 设置>服务商>语音 开启且后端可用时显示麦克风按钮）
+  // ==========================================================================
+  const { status: voiceStatus } = useVoiceStatus();
+  const voiceEnabled = Boolean(voiceStatus?.available && voiceStatus.enabled);
+
+  const voice = useVoiceInput({
+    onPartial: (text) => editorRef.current?.setVoiceDraft(text),
+    onFinal: (text) => {
+      const trimmed = text.trim();
+      if (!trimmed) return;
+      // 定型：写入最终文本并固化（下一句从新光标继续）
+      editorRef.current?.setVoiceDraft(`${trimmed} `);
+      editorRef.current?.commitVoice();
+    },
+    onError: (message) => toast.error(t('taskInput.voiceFailed'), { description: message }),
+  });
+
   const canSend = Boolean(input.trim()) || attachments.length > 0;
 
   const folderLabel =
@@ -460,17 +526,16 @@ export function TaskInput({
       )}
       {attachments.length > 0 && (
         <div className="flex items-center gap-1 px-1 pt-1">
-          <button
-            type="button"
-            onClick={() => scrollAttachments(-1)}
-            title={t('taskInput.scrollAttachmentsLeft')}
-            className={cn(
-              'flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground',
-              !canScrollLeft && 'invisible',
-            )}
-          >
-            <ChevronLeft className="size-4" />
-          </button>
+          {canScrollLeft && (
+            <button
+              type="button"
+              onClick={() => scrollAttachments(-1)}
+              title={t('taskInput.scrollAttachmentsLeft')}
+              className="flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <ChevronLeft className="size-4" />
+            </button>
+          )}
           <div
             ref={attachmentsScrollRef}
             onScroll={updateAttachmentArrows}
@@ -483,20 +548,20 @@ export function TaskInput({
                 name={a.name}
                 size={a.size}
                 onRemove={() => removeAttachment(a.id)}
+                onOpen={onOpenAttachment ? () => onOpenAttachment(a.path) : undefined}
               />
             ))}
           </div>
-          <button
-            type="button"
-            onClick={() => scrollAttachments(1)}
-            title={t('taskInput.scrollAttachmentsRight')}
-            className={cn(
-              'flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground',
-              !canScrollRight && 'invisible',
-            )}
-          >
-            <ChevronRight className="size-4" />
-          </button>
+          {canScrollRight && (
+            <button
+              type="button"
+              onClick={() => scrollAttachments(1)}
+              title={t('taskInput.scrollAttachmentsRight')}
+              className="flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <ChevronRight className="size-4" />
+            </button>
+          )}
         </div>
       )}
       <div className="flex flex-wrap items-start gap-1">
@@ -517,6 +582,7 @@ export function TaskInput({
           onDuplicateFile={(path) =>
             toast.info(t('taskInput.fileAlreadyReferenced', { name: fileNameOf(path) }))
           }
+          onPasteImages={handlePasteImages}
           lookups={lookups}
           sendShortcut={sendShortcut}
           onSend={handleSend}
@@ -656,9 +722,23 @@ export function TaskInput({
         </div>
         <div className="flex min-w-0 items-center gap-1.5">
           <ModelSelector />
-          <Button variant="ghost" size="icon-sm" title={t('common.voiceInput')}>
-            <Mic />
-          </Button>
+          {voiceEnabled && (
+            <Button
+              variant={voice.recording ? 'destructive' : 'ghost'}
+              size="icon-sm"
+              title={voice.recording ? t('taskInput.voiceStop') : t('common.voiceInput')}
+              onClick={voice.toggle}
+              disabled={voice.busy && !voice.recording}
+            >
+              {voice.recording ? (
+                <VoiceWaveform level={voice.level} />
+              ) : voice.busy ? (
+                <Loader2 className="animate-spin" />
+              ) : (
+                <Mic />
+              )}
+            </Button>
+          )}
           {isGenerating && !canSend ? (
             <Button
               size="icon-sm"

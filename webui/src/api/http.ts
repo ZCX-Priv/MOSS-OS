@@ -64,6 +64,8 @@ import type {
   RemoteToggleResult,
   HistoryPageMeta,
   SessionState,
+  VoiceStatus,
+  VoiceModelStatus,
 } from '../types/api';
 import i18n from '../i18n';
 
@@ -348,11 +350,15 @@ export const api = {
     }),
   createProvider: (data: {
     name: string;
-    /** 服务商类型：model（缺省）= 模型服务商；search = 搜索服务商 */
-    kind?: 'model' | 'search';
+    /** 服务商类型：model（缺省）= 模型服务商；search = 搜索服务商；voice = 语音服务商 */
+    kind?: 'model' | 'search' | 'voice';
     format?: ProviderItem['format'];
     /** 搜索引擎（kind='search' 必填）：zhipu / bocha / tavily */
     searchEngine?: 'zhipu' | 'bocha' | 'tavily';
+    /** 语音引擎（kind='voice' 必填）：openai-transcriptions */
+    voiceEngine?: 'openai-transcriptions';
+    /** 语音模型名（kind='voice' 可选） */
+    voiceModel?: string;
     endpoint: string;
     apiKey: string;
     balanceUrl?: string;
@@ -633,6 +639,13 @@ export const api = {
   /** 原生多文件选择对话框（附件"纯路径引用"数据源；后端自动授权父目录进 filesys roots） */
   pickFiles: () =>
     request<{ files: PickedFile[]; grantedRoots?: string[] }>('POST', '/api/filesystem/pick-file'),
+  /** 粘贴图片落盘：base64 → 本地附件文件，返回绝对路径（后端自动授权 ~/.moss/agent/attachments） */
+  saveAttachment: (payload: { name: string; dataBase64: string }) =>
+    request<{ file: PickedFile; grantedRoots?: string[] }>(
+      'POST',
+      '/api/filesystem/save-attachment',
+      payload,
+    ),
   resolveDirectory: (folderName: string, hint?: string) =>
     request<ResolveDirectoryResult>('POST', '/api/filesystem/resolve-directory', {
       folderName,
@@ -645,4 +658,22 @@ export const api = {
       'GET',
       `/api/filesystem/search-files?dir=${encodeURIComponent(dir)}&q=${encodeURIComponent(q)}`,
     ),
+
+  // ==========================================================================
+  // 语音识别（voice：本地引擎 sherpa-onnx + 在线语音服务商）
+  // ==========================================================================
+  getVoiceStatus: () => request<VoiceStatus>('GET', '/api/voice/status'),
+  listVoiceModels: () => request<{ models: VoiceModelStatus[] }>('GET', '/api/voice/models'),
+  setVoiceEnabled: (enabled: boolean) =>
+    request<VoiceStatus>('POST', '/api/voice/enable', { enabled }),
+  setVoiceDefaultModel: (id: string) =>
+    request<VoiceStatus>('POST', '/api/voice/default-model', { id }),
+  /** providerId 空串 = 内置本地引擎 */
+  setVoiceProvider: (providerId: string) =>
+    request<VoiceStatus>('PUT', '/api/voice/provider', { providerId }),
+  /** 启动后台下载安装（长耗时，轮询 listVoiceModels 看 progress） */
+  installVoiceModel: (id: string) =>
+    request<{ started: boolean }>('POST', `/api/voice/models/${encodeURIComponent(id)}/install`),
+  uninstallVoiceModel: (id: string) =>
+    request<{ ok: boolean }>('DELETE', `/api/voice/models/${encodeURIComponent(id)}`),
 };

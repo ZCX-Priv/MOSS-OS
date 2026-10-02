@@ -125,7 +125,12 @@ export type ToolEvent =
 
 export type ToolResultContent =
   | { type: 'text'; text: string }
-  | { type: 'image'; source: { data: string; mimeType: string } };
+  | {
+      type: 'image';
+      source: { data: string; mimeType: string };
+      /** 图片文件绝对路径（base64 不落库，会话仅记录路径，发送时按路径读盘编码） */
+      path?: string;
+    };
 
 export interface ToolResult {
   content: ToolResultContent[];

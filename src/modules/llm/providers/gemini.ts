@@ -10,6 +10,7 @@ import type {
   ModelConfig,
   ProviderFormat,
   StreamDelta,
+  UnifiedImage,
   UnifiedMessage,
   UnifiedRequest,
   UnifiedResponse,
@@ -231,7 +232,7 @@ function toGeminiContent(msg: UnifiedMessage): unknown {
   // Gemini：role 只支持 user / model
   const role = msg.role === 'assistant' ? 'model' : msg.role === 'tool' ? 'user' : msg.role;
 
-  // tool 结果：functionResponse part
+  // tool 结果：functionResponse part（图片追加为 inlineData part，同 content 多 part）
   if (msg.role === 'tool') {
     let responseObj: unknown;
     try {
@@ -239,17 +240,16 @@ function toGeminiContent(msg: UnifiedMessage): unknown {
     } catch {
       responseObj = { result: msg.content };
     }
-    return {
-      role: 'user',
-      parts: [
-        {
-          functionResponse: {
-            name: msg.name ?? 'tool',
-            response: responseObj,
-          },
+    const parts: unknown[] = [
+      {
+        functionResponse: {
+          name: msg.name ?? 'tool',
+          response: responseObj,
         },
-      ],
-    };
+      },
+    ];
+    for (const img of msg.images ?? []) parts.push(toGeminiInlineData(img));
+    return { role: 'user', parts };
   }
 
   // assistant 含 tool_calls：functionCall parts
@@ -272,8 +272,15 @@ function toGeminiContent(msg: UnifiedMessage): unknown {
     return { role: 'model', parts };
   }
 
-  // 普通消息
-  return { role, parts: [{ text: msg.content }] };
+  // 普通消息（user 带图片时追加 inlineData part）
+  const parts: unknown[] = [{ text: msg.content }];
+  for (const img of msg.images ?? []) parts.push(toGeminiInlineData(img));
+  return { role, parts };
+}
+
+/** 图片 → Gemini inlineData part */
+function toGeminiInlineData(img: UnifiedImage): unknown {
+  return { inlineData: { mimeType: img.mimeType, data: img.data } };
 }
 
 function mapFinishReason(r: string | undefined): 'stop' | 'tool_use' | 'length' | 'error' {

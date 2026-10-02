@@ -783,11 +783,15 @@ export interface ProviderItem {
   id: string;
   /** 显示名，如 "OpenAI" */
   name: string;
-  /** 服务商类型：model（缺省）= 模型服务商；search = 搜索服务商（web 工具消费） */
-  kind?: 'model' | 'search';
-  format: 'openai-chat' | 'openai-responses' | 'anthropic' | 'gemini' | 'search';
+  /** 服务商类型：model（缺省）= 模型服务商；search = 搜索服务商；voice = 语音服务商 */
+  kind?: 'model' | 'search' | 'voice';
+  format: 'openai-chat' | 'openai-responses' | 'anthropic' | 'gemini' | 'search' | 'voice';
   /** 搜索引擎类型（kind='search' 时存在）：zhipu / bocha / tavily */
   searchEngine?: 'zhipu' | 'bocha' | 'tavily';
+  /** 语音引擎类型（kind='voice' 时存在）：openai-transcriptions（OpenAI 兼容整段转写） */
+  voiceEngine?: 'openai-transcriptions';
+  /** 语音模型名（kind='voice' 时使用，如 whisper-1） */
+  voiceModel?: string;
   endpoint: string;
   apiKey: string;
   /** 自定义余额查询地址（OpenAI 兼容 subscription 接口完整 URL；空 = 不提供余额查询） */
@@ -799,6 +803,42 @@ export interface ProviderItem {
   /** 附加服务（文件存储等） */
   services?: ProviderServiceItem[];
   models: ProviderModelItem[];
+}
+
+/** 本地语音引擎类别（均由 sherpa-onnx 承载不同模型架构） */
+export type VoiceLocalEngine = 'zipformer' | 'sensevoice' | 'whisper';
+
+/** 语音能力总览（GET /api/voice/status） */
+export interface VoiceStatus {
+  /** 后端 voice 模块是否存在 */
+  available?: boolean;
+  /** 总开关（默认关闭；关闭时输入框麦克风按钮隐藏） */
+  enabled: boolean;
+  /** 运行时是否可用（sherpa-onnx 原生模块已加载） */
+  runtimeAvailable: boolean;
+  runtimeVersion?: string;
+  /** 当前默认本地模型 id */
+  defaultModel: string;
+  /** 已安装模型 id 列表 */
+  installed: string[];
+  /** 当前语音服务商 id（空串 = 内置本地引擎） */
+  providerId: string;
+}
+
+/** 语音模型（内置目录项 + 本地安装状态；GET /api/voice/models） */
+export interface VoiceModelStatus {
+  id: string;
+  engine: VoiceLocalEngine;
+  mode: 'streaming' | 'offline';
+  name: string;
+  description: string;
+  sizeBytes: number;
+  languages: string[];
+  recommended: boolean;
+  state: 'not-installed' | 'downloading' | 'installed' | 'error';
+  progress?: number;
+  installedBytes?: number;
+  error?: string;
 }
 
 /** 服务商下的模型：名称 + 模型 id + 模型级高级配置 */

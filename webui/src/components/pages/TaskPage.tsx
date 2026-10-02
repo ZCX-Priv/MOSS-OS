@@ -1470,6 +1470,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
             onAbort={() => abort(taskId)}
             onOpenOverlay={onOpenOverlay}
             onSend={handleSend}
+            onOpenAttachment={openAttachment}
           />
           {/* 运行指标栏（轮/步/耗时累计 + 引擎实时 token/命中） */}
           <StatsBar stats={runStats} contextStats={contextStats} />

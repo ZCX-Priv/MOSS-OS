@@ -14,7 +14,7 @@
 import type { HttpRequest, HttpResponse, RouteHandler } from '../types';
 import type { ConfigService, Environment, ServiceRegistry } from '../../../core/types';
 import { ServiceNames } from '../../../core/types';
-import { readdirSync, existsSync, statSync, openSync, readSync, closeSync, type Dirent } from 'node:fs';
+import { readdirSync, existsSync, statSync, openSync, readSync, closeSync, mkdirSync, writeFileSync, type Dirent } from 'node:fs';
 import { isAbsolute, join, normalize, extname } from 'node:path';
 import * as nfd from 'nativefiledialog-for-bun';
 import { ErrorCode } from '../../../core/error-codes';
@@ -410,6 +410,92 @@ function basenameOf(p: string): string {
 function dirnameOf(p: string): string {
   const idx = Math.max(p.lastIndexOf('\\'), p.lastIndexOf('/'));
   return idx > 0 ? p.slice(0, idx) : p;
+}
+
+// ============================================================================
+// POST /api/filesystem/save-attachment
+// 粘贴图片落盘：前端把剪贴板图片读成 base64（dataURL 去前缀）提交，后端写入
+// ~/.moss/agent/attachments/ 并返回真实绝对路径。
+// 与 nativefiledialog pick-file 并列，是附件「纯路径引用」体系的另一个数据源：
+// 图片本体落盘，消息只引用路径，agent 经 filesys 工具读取。
+// 目录选择 ~/.moss/agent/attachments 的原因：.moss 白名单仅放行 agent/mcps/skills，
+// 该目录天然可被 agent 读取，无需放宽安全规则。
+// 自动授权：把 attachments 目录合并进 config.filesys.roots（去重），保证目录外也可读。
+// ============================================================================
+
+interface SaveAttachmentBody {
+  name?: string;
+  dataBase64?: string;
+}
+
+/** 文件名安全化：去掉路径分隔符与 Windows 非法字符，限长；清洗后为空则回退 fallback */
+function sanitizeAttachmentName(raw: string, fallback: string): string {
+  const cleaned = raw
+    .replace(/[\\/]/g, '')
+    // eslint-disable-next-line no-control-regex
+    .replace(/[<>:"|?*\u0000-\u001F]/g, '')
+    .trim()
+    .slice(0, 60);
+  return cleaned || fallback;
+}
+
+/** 扩展名归一：仅保留 1-5 位字母数字，非法（缺失/过长）回退 png */
+function safeAttachmentExt(name: string): string {
+  const ext = extname(name).replace(/^\./, '');
+  return /^[A-Za-z0-9]{1,5}$/.test(ext) ? ext.toLowerCase() : 'png';
+}
+
+export function createSaveAttachmentHandler(
+  env: Environment,
+  config: ConfigService,
+): RouteHandler {
+  return async (req: HttpRequest): Promise<HttpResponse> => {
+    const body = (req.body ?? {}) as SaveAttachmentBody;
+    const dataBase64 = body.dataBase64?.trim();
+    if (!dataBase64) {
+      return { status: 400, body: { error: ErrorCode.FS_ATTACHMENT_DATA_REQUIRED } };
+    }
+
+    const dir = join(env.dataDir, 'agent', 'attachments');
+    try {
+      mkdirSync(dir, { recursive: true });
+    } catch {
+      return { status: 500, body: { error: ErrorCode.FS_ATTACHMENT_SAVE_FAILED } };
+    }
+
+    // 文件名：<清洗后的原名>-<时间戳>-<随机>.<归一扩展名>，既保留可读性又避免覆盖
+    const safeName = sanitizeAttachmentName(body.name ?? '', `image-${Date.now()}.png`);
+    const ext = safeAttachmentExt(safeName);
+    const stem = sanitizeAttachmentName(safeName.replace(/\.[^.]*$/, ''), 'image').slice(0, 40);
+    const fileName = `${stem}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+    const absPath = join(dir, fileName);
+
+    let size = 0;
+    try {
+      const buf = Buffer.from(dataBase64, 'base64');
+      writeFileSync(absPath, buf);
+      size = buf.length;
+    } catch {
+      return { status: 500, body: { error: ErrorCode.FS_ATTACHMENT_SAVE_FAILED } };
+    }
+
+    // 自动授权：attachments 目录并入 filesys roots（去重；已存在的跳过），与 pick-file 一致
+    const grantedRoots: string[] = [];
+    try {
+      const cfg = config.getAppConfig();
+      const existing: string[] = Array.isArray(cfg.filesys?.roots) ? cfg.filesys.roots : [];
+      const known = new Set(existing.map((r) => (env.isWindows ? r.toLowerCase() : r)));
+      const key = env.isWindows ? dir.toLowerCase() : dir;
+      if (!known.has(key)) {
+        await config.updateAppConfig({ filesys: { roots: [...existing, normalize(dir)] } } as never);
+        grantedRoots.push(dir);
+      }
+    } catch {
+      // 授权失败不阻断落盘结果（读取时由权限体系兜底提示）
+    }
+
+    return { status: 200, body: { file: { path: absPath, name: fileName, size }, grantedRoots } };
+  };
 }
 
 // ============================================================================

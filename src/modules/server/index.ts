@@ -129,6 +129,7 @@ import {
   createSuggestPathsHandler,
   createPickDirectoryHandler,
   createPickFileHandler,
+  createSaveAttachmentHandler,
   createSearchFilesHandler,
   createGetRootsHandler,
   createUpdateRootsHandler,
@@ -170,6 +171,15 @@ import {
   createDeleteMemoryHandler,
   createDistillMemoryHandler,
 } from './routes/memory';
+import {
+  createVoiceStatusHandler,
+  createVoiceModelsHandler,
+  createVoiceEnableHandler,
+  createVoiceSetDefaultModelHandler,
+  createVoiceSetProviderHandler,
+  createVoiceInstallHandler,
+  createVoiceUninstallHandler,
+} from './routes/voice';
 import { McpExpose } from '../mcp/expose';
 import type { AgentEvent } from '../contracts';
 
@@ -425,6 +435,8 @@ class ServerModule implements Module {
     // filesystem（浏览器端文件夹选择：后端原生对话框拿真实绝对路径 + 搜索回退）
     this.router.addRoute({ method: 'POST', pattern: '/api/filesystem/pick-directory', handler: createPickDirectoryHandler(env), auth: true });
     this.router.addRoute({ method: 'POST', pattern: '/api/filesystem/pick-file', handler: createPickFileHandler(env, config), auth: true });
+    // 粘贴图片落盘：base64 → ~/.moss/agent/attachments/<file>，返回绝对路径（附件路径引用）
+    this.router.addRoute({ method: 'POST', pattern: '/api/filesystem/save-attachment', handler: createSaveAttachmentHandler(env, config), auth: true });
     this.router.addRoute({ method: 'POST', pattern: '/api/filesystem/resolve-directory', handler: createResolveDirectoryHandler(env), auth: true });
     this.router.addRoute({ method: 'GET', pattern: '/api/filesystem/suggest-paths', handler: createSuggestPathsHandler(env), auth: true });
     // # 文件提及菜单：工作目录递归文件名搜索
@@ -478,6 +490,15 @@ class ServerModule implements Module {
     this.router.addRoute({ method: 'GET', pattern: '/api/memory/:id', handler: createGetMemoryHandler(services), auth: true });
     this.router.addRoute({ method: 'PATCH', pattern: '/api/memory/:id', handler: createUpdateMemoryHandler(services), auth: true });
     this.router.addRoute({ method: 'DELETE', pattern: '/api/memory/:id', handler: createDeleteMemoryHandler(services), auth: true });
+
+    // voice（语音识别：总览 / 模型目录 / 开关 / 默认模型 / 安装 / 卸载）
+    this.router.addRoute({ method: 'GET', pattern: '/api/voice/status', handler: createVoiceStatusHandler(services), auth: true });
+    this.router.addRoute({ method: 'GET', pattern: '/api/voice/models', handler: createVoiceModelsHandler(services), auth: true });
+    this.router.addRoute({ method: 'POST', pattern: '/api/voice/enable', handler: createVoiceEnableHandler(services), auth: true });
+    this.router.addRoute({ method: 'POST', pattern: '/api/voice/default-model', handler: createVoiceSetDefaultModelHandler(services), auth: true });
+    this.router.addRoute({ method: 'PUT', pattern: '/api/voice/provider', handler: createVoiceSetProviderHandler(services, config), auth: true });
+    this.router.addRoute({ method: 'POST', pattern: '/api/voice/models/:id/install', handler: createVoiceInstallHandler(services, this.ctx.logger), auth: true });
+    this.router.addRoute({ method: 'DELETE', pattern: '/api/voice/models/:id', handler: createVoiceUninstallHandler(services), auth: true });
   }
 
   private async startServer(): Promise<void> {
@@ -670,8 +691,8 @@ class ServerModule implements Module {
         message(ws: BunWebSocket & { data: { connId: string } }, message: string | Buffer) {
           const id = ws.__id ?? ws.data?.connId;
           if (!id) return;
-          const text = typeof message === 'string' ? message : new TextDecoder().decode(message);
-          wsHandler.handleMessage(id, text).catch(err => {
+          // 原样传递：string = JSON 指令；Buffer = 语音二进制音频帧（PCM int16）
+          wsHandler.handleMessage(id, message).catch(err => {
             logger.error(t('server.wsMessageFailed'), {
               error: err instanceof Error ? err.message : String(err),
             });

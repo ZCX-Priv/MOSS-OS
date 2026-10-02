@@ -278,6 +278,17 @@ export interface AppConfig {
     /** 默认搜索服务商 id；空串 = 本地免费引擎（bing/baidu/sogou 回退链） */
     searchProviderId: string;
   };
+  /** 语音输入配置（由 voice 模块消费；Zod schema 全 default 自愈） */
+  voice?: {
+    /** 总开关（默认关闭；关闭时输入框麦克风按钮隐藏） */
+    enabled: boolean;
+    /** 语音服务商 id；空串 = 内置本地引擎（sherpa-onnx 承载三类模型） */
+    providerId: string;
+    /** 本地模型 id；空串 = 使用推荐默认模型 */
+    localModel: string;
+    /** 识别语言提示（'auto' | 'zh' | 'en' 等） */
+    language: string;
+  };
 }
 
 export type ApiConfig = {
@@ -296,10 +307,17 @@ export interface ProviderConfig {
    * 服务商类型：model=模型服务商（默认，缺省等同）、search=搜索服务商。
    * search 服务商 format 固定为 'search'，由 searchEngine 决定引擎，models 恒为空。
    */
-  kind?: 'model' | 'search';
-  format: 'openai-chat' | 'openai-responses' | 'anthropic' | 'gemini' | 'search';
+  kind?: 'model' | 'search' | 'voice';
+  format: 'openai-chat' | 'openai-responses' | 'anthropic' | 'gemini' | 'search' | 'voice';
   /** 搜索引擎类型（kind='search' 时必填）：zhipu=智谱 search_pro、bocha=博查、tavily=Tavily */
   searchEngine?: 'zhipu' | 'bocha' | 'tavily';
+  /**
+   * 语音引擎类型（kind='voice' 时必填）：openai-transcriptions = OpenAI 兼容
+   * /audio/transcriptions 整段转写接口。本地引擎不占用服务商条目（providerId 空串即本地）。
+   */
+  voiceEngine?: 'openai-transcriptions';
+  /** 语音模型名（kind='voice' 时使用，如 'whisper-1'；本地引擎忽略此字段） */
+  voiceModel?: string;
   endpoint: string;
   apiKey: string;
   /** 自定义余额查询地址（OpenAI 兼容 subscription 接口完整 URL；空 = 不提供余额查询） */
@@ -518,4 +536,6 @@ export const ServiceNames = {
    * 外部 Agent 经 /mcp 或 `moss mcp` 派发的异步任务状态（进度/轨迹/结果）。
    */
   MCP_TASK_REGISTRY: 'mcp.task.registry',
+  /** 语音识别服务（由 voice 模块注册：本地引擎 sherpa-onnx 承载 zipformer/SenseVoice/Whisper + 在线服务商） */
+  VOICE_SERVICE: 'voice.service',
 } as const;

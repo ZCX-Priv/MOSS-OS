@@ -5,7 +5,7 @@
 import { Loader2, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { formatFileSize, getAttachmentKind } from '@/lib/utils';
+import { cn, formatFileSize, getAttachmentKind } from '@/lib/utils';
 import { FileTypeIcon, useFileThumbnail } from './FileTypeIcon';
 
 /** 卡片副标题用的大写扩展名（无扩展名显示 FILE） */
@@ -21,9 +21,11 @@ export interface SendAttachmentCardProps {
   name: string;
   size: number;
   onRemove: () => void;
+  /** 点击卡片在右侧边栏预览该文件；未提供时卡片不可点 */
+  onOpen?: () => void;
 }
 
-export function SendAttachmentCard({ path, name, size, onRemove }: SendAttachmentCardProps) {
+export function SendAttachmentCard({ path, name, size, onRemove, onOpen }: SendAttachmentCardProps) {
   const { t } = useTranslation();
   const isImage = getAttachmentKind(name, '') === 'image';
   const thumb = useFileThumbnail(path, isImage);
@@ -31,7 +33,27 @@ export function SendAttachmentCard({ path, name, size, onRemove }: SendAttachmen
   return (
     <Tooltip delayDuration={400}>
       <TooltipTrigger asChild>
-        <div className="group relative flex h-14 w-60 shrink-0 items-center gap-2.5 rounded-xl border border-border bg-muted/40 py-2 pl-1.5 pr-3 transition-colors duration-150 hover:border-foreground/20">
+        {/* 根元素保持 div：卡片内有「移除」按钮，button 不能嵌套 button；
+            onOpen 存在时补 role/tabIndex/键盘处理，获得等价的点击与键盘可达性 */}
+        <div
+          onClick={onOpen}
+          role={onOpen ? 'button' : undefined}
+          tabIndex={onOpen ? 0 : undefined}
+          onKeyDown={
+            onOpen
+              ? (e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    onOpen();
+                  }
+                }
+              : undefined
+          }
+          className={cn(
+            'group relative flex h-14 w-60 shrink-0 items-center gap-2.5 rounded-xl border border-border bg-muted/40 py-2 pl-1.5 pr-3 transition-colors duration-150 hover:border-foreground/20',
+            onOpen && 'cursor-pointer',
+          )}
+        >
           <div className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-background/80">
             {isImage ? (
               thumb !== null ? (
@@ -51,7 +73,11 @@ export function SendAttachmentCard({ path, name, size, onRemove }: SendAttachmen
           </div>
           <button
             type="button"
-            onClick={onRemove}
+            onClick={(e) => {
+              // 阻止冒泡：点「移除」不应顺带触发卡片的「打开预览」
+              e.stopPropagation();
+              onRemove();
+            }}
             className="absolute -right-1.5 -top-1.5 flex size-[18px] cursor-pointer items-center justify-center rounded-full border border-border bg-popover text-muted-foreground shadow-sm transition-colors duration-150 hover:text-foreground"
             title={t('taskInput.removeAttachment')}
           >

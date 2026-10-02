@@ -306,6 +306,33 @@ function insertNodesAtCaret(root: HTMLElement, nodes: Node[]): void {
   }
 }
 
+/**
+ * 在光标处插入换行。
+ *
+ * 必须交给浏览器原生 `insertLineBreak`：手动插入单个 `<br>` 或 `'\n'` 时，
+ * Chrome 会把末尾的光标规范化回上一行文本末尾（实测：`abc<br>` 后继续输入得到
+ * `abcdef<br>`），表现为「按 Enter 无效 / 要按两次」。
+ * 原生命令会额外保留一个「占位换行」来让光标稳定落在新行，该占位在用户继续输入时
+ * 自动被消费；序列化对外文本时由 wireValue 剥离（见下）。
+ * 命令不可用时回退为手动插入 `<br>`（至少保证换行节点存在）。
+ */
+function insertLineBreakAtCaret(root: HTMLElement): void {
+  if (typeof document !== 'undefined' && document.execCommand('insertLineBreak')) return;
+  insertNodesAtCaret(root, [document.createElement('br')]);
+}
+
+/**
+ * 对外线格式文本：剥离末尾的「占位换行」。
+ * 原生换行会在容器末尾保留 1 个换行用于定位光标（DOM 层），它不是用户输入的内容，
+ * 因此所有对外出口（getValue / onChange / isEmpty）必须剥离，避免消息末尾凭空多出空行。
+ * 注意：仅用于「对外的完整文本」，内部 offset 计算仍走 serializeRoot（含占位，
+ * 必须与 DOM 严格同口径）。
+ */
+function wireValue(root: HTMLElement): string {
+  const s = serializeRoot(root, 'wire');
+  return s.endsWith('\n') ? s.slice(0, -1) : s;
+}
+
 // ============================================================================
 // 组件
 // ============================================================================
@@ -320,6 +347,10 @@ export interface MentionEditorHandle {
   insertToken(token: ComposerToken): void;
   /** 选中菜单项：删除触发词并以 token 替换（菜单点击 / 键盘 Enter 共用） */
   commitMention(item: MentionItem): void;
+  /** 语音输入：写入/覆盖草稿（首次调用记录当前光标为锚点） */
+  setVoiceDraft(text: string): void;
+  /** 语音输入：固化草稿（内容保留，清空草稿态） */
+  commitVoice(): void;
 }
 
 interface MentionEditorProps {
@@ -338,6 +369,8 @@ interface MentionEditorProps {
   onItemSelected: (item: MentionItem) => void;
   /** 同一文件被重复引用（父层 toast 提示） */
   onDuplicateFile: (path: string) => void;
+  /** 剪贴板图片（父层落盘为附件，不进入输入框） */
+  onPasteImages?: (files: File[]) => void;
   /** 线格式反解析名单（粘贴还原用） */
   lookups: MentionLookups;
   sendShortcut: string;
@@ -357,6 +390,7 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
     onMenuClose,
     onItemSelected,
     onDuplicateFile,
+    onPasteImages,
     lookups,
     sendShortcut,
     onSend,
@@ -366,12 +400,17 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
 ) {
   const rootRef = useRef<HTMLDivElement>(null);
   const isComposingRef = useRef(false);
+  /** 语音草稿锚点（wire offset；null = 未处于语音输入草稿态） */
+  const voiceAnchorRef = useRef<number | null>(null);
+  /** 当前语音草稿占用的字符数（写入新草稿前先删除该区间） */
+  const voiceDraftLenRef = useRef(0);
   /** Esc 关闭后抑制同一 token 再次弹出（token 变化或消失后解除） */
   const suppressedTokenRef = useRef<number | null>(null);
   const onChangeRef = useRef(onChange);
   const onTriggerChangeRef = useRef(onTriggerChange);
   const onMenuCloseRef = useRef(onMenuClose);
   const onDuplicateRef = useRef(onDuplicateFile);
+  const onPasteImagesRef = useRef(onPasteImages);
   const lookupsRef = useRef(lookups);
   const menuOpenRef = useRef(false);
   const itemsRef = useRef(items);
@@ -384,6 +423,7 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
   onTriggerChangeRef.current = onTriggerChange;
   onMenuCloseRef.current = onMenuClose;
   onDuplicateRef.current = onDuplicateFile;
+  onPasteImagesRef.current = onPasteImages;
   lookupsRef.current = lookups;
   menuOpenRef.current = Boolean(trigger);
   itemsRef.current = items;
@@ -427,7 +467,12 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
   const refreshEmptyFlag = useCallback(() => {
     const root = rootRef.current;
     if (!root) return;
-    const empty = serializeRoot(root, 'wire').trim().length === 0;
+    // 空 = 剥离「末尾占位换行」后无内容（wireValue）。
+    // Enter 会留下「真实换行 + 末尾占位」（实测空编辑器按一次 Enter → ["\n","\n"]），
+    // 剥掉占位后仍剩真实换行 → 非空（占位符消失）；
+    // contenteditable 被删空后仅残留 1 个占位 <br>（序列化 '\n'）→ 剥离后为空（占位符恢复）；
+    // 空格不在末尾换行之列，不会被剥离 → 非空（保持「空格算内容」）。
+    const empty = wireValue(root).length === 0;
     root.setAttribute('data-empty', empty ? 'true' : 'false');
   }, []);
 
@@ -495,7 +540,7 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
     refreshEmptyFlag();
     autosize();
     syncIconHosts();
-    onChangeRef.current(serializeRoot(root, 'wire'));
+    onChangeRef.current(wireValue(root));
     recomputeTrigger();
   }, [autosize, refreshEmptyFlag, relabelFileChips, syncIconHosts, recomputeTrigger]);
 
@@ -589,16 +634,69 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
     [replaceRangeWithToken],
   );
 
+  /**
+   * 语音草稿写入：在锚点处用最新识别文本替换上一次草稿（partial 覆盖语义）。
+   * 首次调用记录当前光标为锚点（「光标在哪就从哪开始输入」）。
+   * 换行按 <br> 插入，保证 wire 口径长度与文本长度一致（可精确回算光标）。
+   */
+  const setVoiceDraft = useCallback(
+    (text: string) => {
+      const root = rootRef.current;
+      if (!root) return;
+      if (voiceAnchorRef.current === null) {
+        root.focus();
+        voiceAnchorRef.current = caretOffset(root, 'wire') ?? serializeRoot(root, 'wire').length;
+        voiceDraftLenRef.current = 0;
+      }
+      const anchor = voiceAnchorRef.current;
+      const range = offsetToRange(root, anchor, anchor + voiceDraftLenRef.current, 'wire');
+      range.deleteContents();
+
+      const nodes: Node[] = [];
+      const parts = text.split('\n');
+      parts.forEach((part, i) => {
+        if (i > 0) nodes.push(document.createElement('br'));
+        if (part) nodes.push(document.createTextNode(part));
+      });
+      const frag = document.createDocumentFragment();
+      nodes.forEach((n) => frag.appendChild(n));
+      const insertAt = document.createRange();
+      insertAt.setStart(range.startContainer, range.startOffset);
+      insertAt.collapse(true);
+      insertAt.insertNode(frag);
+
+      // 光标落到草稿末尾（按 wire 口径重算，避免插入后旧 range 失效）
+      const end = offsetToRange(root, anchor + text.length, anchor + text.length, 'wire');
+      const sel = window.getSelection();
+      if (sel) {
+        const after = document.createRange();
+        after.setStart(end.startContainer, end.startOffset);
+        after.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(after);
+      }
+      voiceDraftLenRef.current = text.length;
+      syncFromDom();
+    },
+    [syncFromDom],
+  );
+
+  /** 固化语音草稿：内容保留，仅清空草稿态（下次语音从新光标开始） */
+  const commitVoice = useCallback(() => {
+    voiceAnchorRef.current = null;
+    voiceDraftLenRef.current = 0;
+  }, []);
+
   useImperativeHandle(
     ref,
     () => ({
       getValue: () => {
         const root = rootRef.current;
-        return root ? serializeRoot(root, 'wire') : '';
+        return root ? wireValue(root) : '';
       },
       isEmpty: () => {
         const root = rootRef.current;
-        return !root || serializeRoot(root, 'wire').trim().length === 0;
+        return !root || wireValue(root).trim().length === 0;
       },
       clear: () => {
         const root = rootRef.current;
@@ -610,8 +708,10 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
       focus: () => rootRef.current?.focus(),
       insertToken: insertTokenAtCaret,
       commitMention,
+      setVoiceDraft,
+      commitVoice,
     }),
-    [syncFromDom, insertTokenAtCaret, commitMention],
+    [syncFromDom, insertTokenAtCaret, commitMention, setVoiceDraft, commitVoice],
   );
 
   // 初始占位符状态 + 初始高度
@@ -634,6 +734,9 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
 
   const handleInput = () => {
     if (isComposingRef.current) return;
+    // 用户手动编辑：语音草稿锚点失效并重置（下次语音从当前光标重新开始）
+    voiceAnchorRef.current = null;
+    voiceDraftLenRef.current = 0;
     syncFromDom();
   };
 
@@ -736,7 +839,7 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
     if (e.key === 'Enter') {
       e.preventDefault();
       const root = rootRef.current;
-      if (root) insertNodesAtCaret(root, [document.createTextNode('\n')]);
+      if (root) insertLineBreakAtCaret(root);
       syncFromDom();
     }
   };
@@ -754,13 +857,30 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
       e.preventDefault();
       if (type !== 'insertFromDrop') {
         const root = rootRef.current;
-        if (root) insertNodesAtCaret(root, [document.createTextNode('\n')]);
+        if (root) insertLineBreakAtCaret(root);
         syncFromDom();
       }
     }
   };
 
   const handlePaste = (e: ClipboardEvent<HTMLDivElement>) => {
+    // 剪贴板图片 → 交给父层落盘为附件。必须在此 preventDefault，
+    // 否则浏览器默认行为会把图片作为 <img>/blob 直接插入 contenteditable（占用输入框）。
+    const dt = e.clipboardData;
+    const fromFiles = Array.from(dt.files).filter((f) => f.type.startsWith('image/'));
+    const imageFiles =
+      fromFiles.length > 0
+        ? fromFiles
+        : Array.from(dt.items)
+            .filter((it) => it.kind === 'file' && it.type.startsWith('image/'))
+            .map((it) => it.getAsFile())
+            .filter((f): f is File => f !== null);
+    if (imageFiles.length > 0) {
+      e.preventDefault();
+      onPasteImagesRef.current?.(imageFiles);
+      return;
+    }
+
     const text = e.clipboardData.getData('text/plain');
     if (!text) return;
     e.preventDefault();

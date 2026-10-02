@@ -8,6 +8,7 @@ import type {
   ModelConfig,
   ProviderFormat,
   StreamDelta,
+  UnifiedImage,
   UnifiedMessage,
   UnifiedRequest,
   UnifiedResponse,
@@ -22,7 +23,7 @@ export class OpenAIChatProvider implements LLMProvider {
   transformRequest(req: UnifiedRequest, cfg: ModelConfig): unknown {
     const body: Record<string, unknown> = {
       model: req.model,
-      messages: req.messages.map(toOpenAIMessage),
+      messages: toOpenAIMessages(req.messages),
       stream: req.stream,
     };
     // 流式时显式请求 usage chunk（OpenAI 兼容 API 默认不在流中返回 usage；
@@ -174,8 +175,27 @@ function normalizeUsage(u: OpenAIChatUsage): UnifiedUsage {
   };
 }
 
+/**
+ * 统一消息 → OpenAI Chat 消息数组。
+ * tool 消息的 content 只支持字符串，图片改由紧随其后的 user 消息承载。
+ */
+function toOpenAIMessages(msgs: UnifiedMessage[]): unknown[] {
+  const out: unknown[] = [];
+  for (const msg of msgs) {
+    out.push(toOpenAIMessage(msg));
+    if (msg.role === 'tool' && msg.images && msg.images.length > 0) {
+      out.push({ role: 'user', content: contentWithImages('[图片]', msg.images) });
+    }
+  }
+  return out;
+}
+
 function toOpenAIMessage(msg: UnifiedMessage): unknown {
-  const out: Record<string, unknown> = { role: msg.role, content: msg.content };
+  const hasImages = !!msg.images && msg.images.length > 0;
+  // 图片承载为多模态 content 数组；tool 消息除外（其 content 必须为字符串）
+  const content =
+    hasImages && msg.role !== 'tool' ? contentWithImages(msg.content, msg.images!) : msg.content;
+  const out: Record<string, unknown> = { role: msg.role, content };
   if (msg.name) out.name = msg.name;
   if (msg.toolCallId) out.tool_call_id = msg.toolCallId;
   if (msg.toolCalls) {
@@ -189,6 +209,19 @@ function toOpenAIMessage(msg: UnifiedMessage): unknown {
     }));
   }
   return out;
+}
+
+/** 文本 + 图片 → OpenAI Chat 多模态 content parts（图片用 data URI） */
+function contentWithImages(text: string, images: UnifiedImage[]): unknown[] {
+  const parts: unknown[] = [];
+  if (text) parts.push({ type: 'text', text });
+  for (const img of images) {
+    parts.push({
+      type: 'image_url',
+      image_url: { url: `data:${img.mimeType};base64,${img.data}` },
+    });
+  }
+  return parts;
 }
 
 function mapFinishReason(r: string | undefined): 'stop' | 'tool_use' | 'length' | 'error' {

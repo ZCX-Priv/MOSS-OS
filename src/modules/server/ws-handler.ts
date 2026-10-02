@@ -8,6 +8,13 @@ import type { WSMessage, WSMessageHandler, WSConnection } from './types';
 import type { AgentEngine, AgentEvent, GuidanceMessage } from '../contracts';
 import type { AutomationService } from '../automation';
 import { ErrorCode } from '../../core/error-codes';
+import { VoiceSessionHost } from './voice-session-host';
+
+/** 从语音指令 payload 读取可选 modelId（缺省用服务端默认模型） */
+function readVoiceModelId(msg: WSMessage): string | undefined {
+  const payload = (msg as { payload?: { modelId?: unknown } }).payload;
+  return typeof payload?.modelId === 'string' && payload.modelId ? payload.modelId : undefined;
+}
 
 interface ConnectionState {
   conn: WSConnection;
@@ -182,6 +189,8 @@ export class WsHandler {
   /** 引导消息对应的 runId 队列（前端为每条引导消息生成 runId，用于新 run 的事件隔离） */
   private readonly guideRunIds = new Map<string, string[]>();
   private readonly batcher: EventBatcher;
+  /** 语音会话宿主（每条连接一个流式识别会话） */
+  private readonly voiceHost: VoiceSessionHost;
 
   constructor(services: ServiceRegistry, logger: Logger) {
     this.services = services;
@@ -189,6 +198,7 @@ export class WsHandler {
     this.batcher = new EventBatcher((msg) => {
       this.sendToSubscribers(String(msg.sessionId), msg);
     });
+    this.voiceHost = new VoiceSessionHost(services, logger);
   }
 
   onWSMessage(handler: WSMessageHandler): void {
@@ -203,14 +213,21 @@ export class WsHandler {
 
   /** 移除连接：只清订阅，不中止任务（任务与连接解耦，断连后继续跑，重连可恢复） */
   unregisterConnection(id: string): void {
+    this.voiceHost.dispose(id);
     this.states.delete(id);
     this.logger.debug(t('server.wsDisconnected', { id }));
   }
 
-  /** 处理来自客户端的消息 */
-  async handleMessage(connId: string, raw: string): Promise<void> {
+  /** 处理来自客户端的消息（string = JSON 指令；Buffer = 语音二进制音频帧） */
+  async handleMessage(connId: string, raw: string | Buffer): Promise<void> {
     const state = this.states.get(connId);
     if (!state) return;
+
+    // 二进制帧：语音音频流（PCM int16 LE @16kHz）
+    if (typeof raw !== 'string') {
+      this.voiceHost.acceptBinary(connId, raw);
+      return;
+    }
 
     let msg: WSMessage;
     try {
@@ -251,6 +268,10 @@ export class WsHandler {
         return this.handleTaskSwitch(state, msg);
       case 'automation.run':
         return this.handleAutomationRun(state, msg);
+      case 'voice.start':
+        return this.voiceHost.start(connId, (m) => state.conn.send(m), readVoiceModelId(msg));
+      case 'voice.stop':
+        return this.voiceHost.stop(connId);
       case 'ping':
         // 前端心跳探活，回 pong 确认连接存活
         state.conn.send({ type: 'pong' });

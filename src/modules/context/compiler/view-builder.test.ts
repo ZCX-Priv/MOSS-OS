@@ -3,6 +3,9 @@
 // breakdown 的 rules/memory 构成统计。
 
 import { describe, test, expect } from 'vitest';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { buildRequestView, ACTIVE_RULES_MSG_NAME, MEMORY_L1_MSG_NAME, MEMORY_RECALL_MSG_NAME } from './view-builder';
 import type { ContextMessage, ContextSessionLike } from '../types';
 import { DEFAULT_TOOL_PRUNING_CONFIG } from '../types';
@@ -67,5 +70,36 @@ describe('view-builder（ephemeral + breakdown 扩展）', () => {
     });
     expect(view.breakdown.rules).toBe(0);
     expect(view.breakdown.memory).toBe(0);
+  });
+
+  test('多模态：tool 消息的图片路径被实时读盘编码，且不落 session', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'moss-view-img-'));
+    try {
+      const p = join(dir, 'a.png');
+      writeFileSync(p, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]));
+      const session = mkSession([
+        { role: 'assistant', content: '', toolCalls: [{ id: 'tc1', name: 'read', arguments: '{"path":"a.png"}' }] },
+        { role: 'tool', toolCallId: 'tc1', name: 'read', content: '[image: image/png]', images: [p] },
+      ]);
+      const view = buildRequestView(session, 'SYSTEM', { toolPruning: DEFAULT_TOOL_PRUNING_CONFIG });
+      const toolMsg = view.messages.find(m => m.role === 'tool');
+      expect(toolMsg?.images).toHaveLength(1);
+      expect(toolMsg?.images?.[0].mimeType).toBe('image/png');
+      expect(toolMsg?.images?.[0].path).toBe(p);
+      expect(toolMsg?.images?.[0].data.length).toBeGreaterThan(0);
+      // session 原文不含 base64（仅路径引用）
+      expect(session.messages[1].images).toEqual([p]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('多模态：非图片附件与不可读路径被静默跳过', () => {
+    const session = mkSession([
+      { role: 'user', content: '看这个', attachments: ['D:\\nonexist\\x.mp4', 'D:\\nonexist\\y.png'] },
+    ]);
+    const view = buildRequestView(session, 'SYSTEM', { toolPruning: DEFAULT_TOOL_PRUNING_CONFIG });
+    const userMsg = view.messages.find(m => m.role === 'user' && m.content === '看这个');
+    expect(userMsg?.images).toBeUndefined();
   });
 });

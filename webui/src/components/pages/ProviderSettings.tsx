@@ -26,6 +26,8 @@ import {
   Server,
   X,
   Check,
+  Mic,
+  Download,
 } from 'lucide-react';
 import {
   DndContext,
@@ -68,7 +70,12 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { Switch } from '@/components/ui/switch';
+import { Progress } from '@/components/ui/progress';
 import { useProviders, type UseProvidersResult } from '../../hooks/useProviders';
+import { useVoiceStatus, useVoiceModels } from '../../hooks/useVoiceInput';
+import { api } from '../../api/http';
 import { useStore } from '../../store';
 import { ConfirmDialog } from '../shared/ConfirmDialog';
 import { parseLegacyWindow, DEFAULT_LEVELS, generateLevelId } from '../../lib/model-utils';
@@ -144,6 +151,10 @@ export function ProviderSettings() {
     deleteProvider,
     fetchProviderModels,
   } = useProviders();
+  // 类别胶囊导航：模型 / 搜索 / 语音（与「上下文」区分区同款 TabsList 胶囊样式）
+  const [category, setCategory] = useState<'model' | 'search' | 'voice'>('model');
+  const { status: voiceStatus, refresh: refreshVoiceStatus } = useVoiceStatus();
+  const { models: voiceModels, refresh: refreshVoiceModels } = useVoiceModels();
   const [providerDialogOpen, setProviderDialogOpen] = useState(false);
   const [editingProvider, setEditingProvider] = useState<ProviderItem | null>(null);
   const [pickProvider, setPickProvider] = useState<ProviderItem | null>(null);
@@ -223,6 +234,54 @@ export function ProviderSettings() {
     setPickProvider(provider);
   };
 
+  // ===== 语音类别操作（开关 / 默认服务商 / 本地模型安装） =====
+  const toggleVoiceEnabled = async (enabled: boolean) => {
+    try {
+      await api.setVoiceEnabled(enabled);
+      await refreshVoiceStatus();
+    } catch {
+      toast.error(t('settings.provider.voiceToggleFailed'));
+    }
+  };
+
+  const selectVoiceProvider = async (providerId: string) => {
+    try {
+      await api.setVoiceProvider(providerId);
+      await refreshVoiceStatus();
+    } catch {
+      toast.error(t('settings.provider.voiceProviderFailed'));
+    }
+  };
+
+  const setDefaultVoiceModel = async (id: string) => {
+    try {
+      await api.setVoiceDefaultModel(id);
+      await refreshVoiceStatus();
+    } catch {
+      toast.error(t('settings.provider.voiceModelFailed'));
+    }
+  };
+
+  const installVoiceModel = async (id: string) => {
+    try {
+      await api.installVoiceModel(id);
+      toast.info(t('settings.provider.voiceDownloading'));
+      await refreshVoiceModels();
+    } catch {
+      toast.error(t('settings.provider.voiceInstallFailed'));
+    }
+  };
+
+  const uninstallVoiceModel = async (id: string) => {
+    try {
+      await api.uninstallVoiceModel(id);
+      await refreshVoiceModels();
+      await refreshVoiceStatus();
+    } catch {
+      toast.error(t('settings.provider.voiceUninstallFailed'));
+    }
+  };
+
   const handleDelete = () => {
     if (!deleteConfirmProvider) return;
     const provider = deleteConfirmProvider;
@@ -250,9 +309,14 @@ export function ProviderSettings() {
     void reorderProviders(newOrder);
   };
 
+  // 类别归属：voice / search 为独立类别；其余归模型
+  const kindOf = (p: ProviderItem): 'model' | 'search' | 'voice' =>
+    p.kind === 'voice' ? 'voice' : p.kind === 'search' ? 'search' : 'model';
+
   // 搜索（服务商名/地址/旗下模型名或 id）+ API 格式筛选（实时本地过滤）
   const q = query.trim().toLowerCase();
   const visibleProviders = providers.filter((p) => {
+    if (kindOf(p) !== category) return false;
     const matchQ =
       !q ||
       p.name.toLowerCase().includes(q) ||
@@ -274,6 +338,18 @@ export function ProviderSettings() {
           </h1>
           <p className="text-xs text-muted-foreground">{t('settings.provider.subtitle')}</p>
         </div>
+
+        {/* 类别胶囊导航：模型 / 搜索 / 语音（同「上下文」区 TabsList 胶囊样式） */}
+        <Tabs
+          value={category}
+          onValueChange={(v) => setCategory(v as 'model' | 'search' | 'voice')}
+        >
+          <TabsList>
+            <TabsTrigger value="model">{t('settings.provider.categoryModel')}</TabsTrigger>
+            <TabsTrigger value="search">{t('settings.provider.categorySearch')}</TabsTrigger>
+            <TabsTrigger value="voice">{t('settings.provider.categoryVoice')}</TabsTrigger>
+          </TabsList>
+        </Tabs>
 
         {/* 移动端搜索展开行：header 搜索按钮触发，出现在筛选上方 */}
         {searchOpen && (
@@ -306,7 +382,8 @@ export function ProviderSettings() {
 
         {/* 筛选 + 搜索 + 添加同一组靠右（移动端筛选独占一行，搜索/添加收纳进全局 header 按钮） */}
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
-          {/* 默认搜索引擎（web 工具消费：本地免费引擎 / 各搜索服务商） */}
+          {/* 默认搜索引擎（仅搜索类别；web 工具消费：本地免费引擎 / 各搜索服务商） */}
+          {category === 'search' && (
           <Select
             value={currentSearchProvider || '__local__'}
             onValueChange={(v) => {
@@ -329,6 +406,8 @@ export function ProviderSettings() {
                 ))}
             </SelectContent>
           </Select>
+          )}
+          {category !== 'voice' && (
           <Select
             value={formatFilter}
             onValueChange={(v) => setFormatFilter(v as 'all' | ProviderItem['format'])}
@@ -345,6 +424,7 @@ export function ProviderSettings() {
               ))}
             </SelectContent>
           </Select>
+          )}
           {/* 桌面端搜索框 + 添加按钮（移动端由 header 按钮替代） */}
           <div className="hidden items-center gap-2 sm:flex">
             <div className="relative w-full sm:w-64 sm:shrink-0">
@@ -365,14 +445,169 @@ export function ProviderSettings() {
         </div>
       </div>
 
-      {/* 服务商卡片列表 */}
-      {providers.length === 0 ? (
-        <div className="flex items-center justify-center rounded-xl border border-dashed border-border p-8 text-sm text-muted-foreground">
-          {t('settings.provider.empty')}
+      {/* 语音类别：能力开关 + 默认服务商 + 本地模型管理 */}
+      {category === 'voice' && (
+        <div className="flex flex-col gap-4">
+          {/* 总开关（默认关闭；关闭时输入框麦克风按钮隐藏） */}
+          <div className="flex items-start justify-between gap-4 rounded-xl border border-border p-4">
+            <div className="flex flex-col gap-0.5">
+              <span className="text-sm font-medium text-foreground">
+                {t('settings.provider.voiceEnable')}
+              </span>
+              <span className="text-xs text-muted-foreground">
+                {t('settings.provider.voiceEnableDesc')}
+              </span>
+              {voiceStatus && !voiceStatus.runtimeAvailable && (
+                <span className="mt-1 text-xs text-destructive">
+                  {t('settings.provider.voiceRuntimeUnavailable')}
+                </span>
+              )}
+            </div>
+            <Switch
+              checked={Boolean(voiceStatus?.enabled)}
+              onCheckedChange={(v) => void toggleVoiceEnabled(v)}
+            />
+          </div>
+
+          {/* 默认语音服务商（本地引擎 / 在线服务商） */}
+          <div className="flex flex-col gap-2 rounded-xl border border-border p-4">
+            <div className="flex flex-col gap-0.5">
+              <span className="text-sm font-medium text-foreground">
+                {t('settings.provider.voiceProvider')}
+              </span>
+              <span className="text-xs text-muted-foreground">
+                {t('settings.provider.voiceProviderDesc')}
+              </span>
+            </div>
+            <Select
+              value={voiceStatus?.providerId || '__local__'}
+              onValueChange={(v) => void selectVoiceProvider(v === '__local__' ? '' : v)}
+            >
+              <SelectTrigger className="w-full sm:w-72">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__local__">
+                  {t('settings.provider.voiceLocalEngine')}
+                </SelectItem>
+                {providers
+                  .filter((p) => p.kind === 'voice')
+                  .map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name}
+                    </SelectItem>
+                  ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* 本地模型：三类引擎（Zipformer / SenseVoice / Whisper）模型管理 */}
+          <div className="flex flex-col gap-3 rounded-xl border border-border p-4">
+            <div className="flex flex-col gap-0.5">
+              <span className="text-sm font-medium text-foreground">
+                {t('settings.provider.voiceLocalModels')}
+              </span>
+              <span className="text-xs text-muted-foreground">
+                {t('settings.provider.voiceLocalModelsDesc')}
+              </span>
+            </div>
+            <div className="flex flex-col gap-2">
+              {voiceModels.map((m) => {
+                const isDefault = voiceStatus?.defaultModel === m.id;
+                return (
+                  <div
+                    key={m.id}
+                    className="flex flex-col gap-2 rounded-lg border border-border/60 p-3"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex min-w-0 flex-col gap-0.5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="truncate text-sm font-medium">{m.name}</span>
+                          {m.recommended && (
+                            <Badge variant="secondary" className="shrink-0 text-[10px]">
+                              {t('settings.provider.voiceRecommended')}
+                            </Badge>
+                          )}
+                          {isDefault && m.state === 'installed' && (
+                            <Badge variant="secondary" className="shrink-0 text-[10px]">
+                              {t('settings.provider.voiceDefault')}
+                            </Badge>
+                          )}
+                        </div>
+                        <span className="text-xs text-muted-foreground">{m.description}</span>
+                        <span className="text-[11px] text-muted-foreground">
+                          {(m.sizeBytes / 1024 / 1024).toFixed(0)} MB · {m.languages.join(' / ')}
+                        </span>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1">
+                        {m.state === 'installed' ? (
+                          <>
+                            {!isDefault && (
+                              <Button
+                                variant="ghost"
+                                size="icon-sm"
+                                title={t('settings.provider.voiceSetDefault')}
+                                onClick={() => void setDefaultVoiceModel(m.id)}
+                              >
+                                <Check className="size-4" />
+                              </Button>
+                            )}
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              title={t('settings.provider.voiceUninstall')}
+                              onClick={() => void uninstallVoiceModel(m.id)}
+                            >
+                              <Trash2 className="size-4" />
+                            </Button>
+                          </>
+                        ) : m.state === 'downloading' ? (
+                          <span className="text-xs text-muted-foreground">
+                            {Math.round((m.progress ?? 0) * 100)}%
+                          </span>
+                        ) : (
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            className="gap-1.5"
+                            onClick={() => void installVoiceModel(m.id)}
+                          >
+                            <Download className="size-3.5" />
+                            {t('settings.provider.voiceDownload')}
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                    {m.state === 'downloading' && (
+                      <Progress value={(m.progress ?? 0) * 100} className="h-1" />
+                    )}
+                    {m.state === 'error' && m.error && (
+                      <span className="text-xs text-destructive">{m.error}</span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* 在线语音服务商列表标题 */}
+          <div className="flex flex-col gap-0.5">
+            <span className="text-sm font-medium text-foreground">
+              {t('settings.provider.voiceOnlineProviders')}
+            </span>
+            <span className="text-xs text-muted-foreground">
+              {t('settings.provider.voiceOnlineProvidersDesc')}
+            </span>
+          </div>
         </div>
-      ) : visibleProviders.length === 0 ? (
+      )}
+
+      {/* 服务商卡片列表（按类别过滤） */}
+      {visibleProviders.length === 0 ? (
         <div className="flex items-center justify-center rounded-xl border border-dashed border-border p-8 text-sm text-muted-foreground">
-          {t('settings.provider.noMatch')}
+          {providers.filter((p) => kindOf(p) === category).length === 0
+            ? t('settings.provider.empty')
+            : t('settings.provider.noMatch')}
         </div>
       ) : (
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
@@ -843,10 +1078,11 @@ function AddProviderDialog({
   const isEdit = !!editingProvider;
   const { createProvider, updateProvider } = useProviders();
 
-  const [kind, setKind] = useState<'model' | 'search'>('model');
+  const [kind, setKind] = useState<'model' | 'search' | 'voice'>('model');
   const [name, setName] = useState('');
   const [format, setFormat] = useState<ProviderItem['format']>('openai-chat');
   const [searchEngine, setSearchEngine] = useState<'zhipu' | 'bocha' | 'tavily'>('zhipu');
+  const [voiceModel, setVoiceModel] = useState('');
   const [endpoint, setEndpoint] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [balanceUrl, setBalanceUrl] = useState('');
@@ -859,9 +1095,16 @@ function AddProviderDialog({
     if (!open) return;
     if (editingProvider) {
       setName(editingProvider.name);
-      setKind(editingProvider.kind === 'search' ? 'search' : 'model');
+      setKind(
+        editingProvider.kind === 'voice'
+          ? 'voice'
+          : editingProvider.kind === 'search'
+            ? 'search'
+            : 'model',
+      );
       setFormat(editingProvider.format);
       setSearchEngine(editingProvider.searchEngine ?? 'zhipu');
+      setVoiceModel(editingProvider.voiceModel ?? '');
       setEndpoint(editingProvider.endpoint);
       setApiKey(''); // 留空 = 不修改
       setBalanceUrl(editingProvider.balanceUrl ?? '');
@@ -872,6 +1115,7 @@ function AddProviderDialog({
       setKind('model');
       setFormat('openai-chat');
       setSearchEngine('zhipu');
+      setVoiceModel('');
       setEndpoint('');
       setApiKey('');
       setBalanceUrl('');
@@ -881,16 +1125,34 @@ function AddProviderDialog({
   }, [open, editingProvider]);
 
   const isSearch = kind === 'search';
+  const isVoice = kind === 'voice';
 
   const handleSubmit = async () => {
-    // 搜索服务商：名称 + 引擎必填，endpoint 可选；模型服务商：名称 + endpoint 必填
-    if (!name.trim() || (!isSearch && !endpoint.trim())) {
+    // 搜索 / 语音服务商：名称 + 引擎必填，endpoint 可选；模型服务商：名称 + endpoint 必填
+    if (!name.trim() || (!isSearch && !isVoice && !endpoint.trim())) {
       toast.error(t('settings.provider.fieldsRequired'));
       return;
     }
     setSubmitting(true);
     try {
-      if (isSearch) {
+      if (isVoice) {
+        const payload = {
+          kind: 'voice' as const,
+          name: name.trim(),
+          voiceEngine: 'openai-transcriptions' as const,
+          ...(voiceModel.trim() ? { voiceModel: voiceModel.trim() } : {}),
+          endpoint: endpoint.trim(),
+          apiKey: apiKey.trim(),
+          ...(icon ? { icon } : {}),
+        };
+        if (isEdit && editingProvider) {
+          await updateProvider(editingProvider.id, payload);
+          toast.success(t('settings.provider.updateSuccess'));
+        } else {
+          await createProvider(payload);
+          toast.success(t('settings.provider.createSuccess'));
+        }
+      } else if (isSearch) {
         const payload = {
           kind: 'search' as const,
           name: name.trim(),
@@ -951,7 +1213,7 @@ function AddProviderDialog({
             <Label>{t('settings.provider.providerKind')}</Label>
             <Select
               value={kind}
-              onValueChange={(v) => setKind(v as 'model' | 'search')}
+              onValueChange={(v) => setKind(v as 'model' | 'search' | 'voice')}
               disabled={isEdit}
             >
               <SelectTrigger>
@@ -960,6 +1222,7 @@ function AddProviderDialog({
               <SelectContent>
                 <SelectItem value="model">{t('settings.provider.kindModel')}</SelectItem>
                 <SelectItem value="search">{t('settings.provider.kindSearch')}</SelectItem>
+                <SelectItem value="voice">{t('settings.provider.kindVoice')}</SelectItem>
               </SelectContent>
             </Select>
             {isEdit && (
@@ -984,7 +1247,59 @@ function AddProviderDialog({
             />
           </div>
 
-          {isSearch ? (
+          {isVoice ? (
+            <>
+              {/* 语音引擎（当前仅 OpenAI 兼容整段转写） */}
+              <div className="flex flex-col gap-1.5">
+                <Label>{t('settings.provider.voiceEngine')}</Label>
+                <Input value="openai-transcriptions" readOnly className="text-muted-foreground" />
+                <span className="text-xs text-muted-foreground">
+                  {t('settings.provider.voiceEngineHint')}
+                </span>
+              </div>
+              {/* 语音模型名 */}
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="provider-voice-model">{t('settings.provider.voiceModelName')}</Label>
+                <Input
+                  id="provider-voice-model"
+                  value={voiceModel}
+                  onChange={(e) => setVoiceModel(e.target.value)}
+                  placeholder={t('settings.provider.voiceModelNamePlaceholder')}
+                />
+              </div>
+              {/* API Key */}
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="provider-voice-apikey">{t('settings.provider.apiKey')}</Label>
+                <Input
+                  id="provider-voice-apikey"
+                  type="password"
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder={isEdit ? t('settings.provider.apiKeyKeep') : 'sk-...'}
+                />
+              </div>
+              {/* 高级设置：转写端点（留空 = 官方端点） */}
+              <Collapsible defaultOpen={false}>
+                <CollapsibleTrigger className="group flex w-full items-center gap-1 rounded-md py-1 text-sm text-muted-foreground transition-colors hover:text-foreground data-[state=open]:text-foreground">
+                  <ChevronRight className="size-3.5 transition-transform group-data-[state=open]:rotate-90" />
+                  <span>{t('settings.provider.advancedConfig')}</span>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <div className="flex flex-col gap-1.5 pt-1">
+                    <Label htmlFor="provider-voice-endpoint">
+                      {t('settings.provider.endpoint')}
+                    </Label>
+                    <Input
+                      id="provider-voice-endpoint"
+                      value={endpoint}
+                      onChange={(e) => setEndpoint(e.target.value)}
+                      placeholder="https://api.openai.com/v1/audio/transcriptions"
+                    />
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
+            </>
+          ) : isSearch ? (
             <>
               {/* 搜索引擎 */}
               <div className="flex flex-col gap-1.5">

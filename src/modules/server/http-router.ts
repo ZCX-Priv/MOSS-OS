@@ -91,7 +91,8 @@ export class HttpRouter {
     rawBody: string,
   ): Promise<{ status: number; headers: Record<string, string>; body: unknown }> {
     // 请求体大小上限，防止内存耗尽（DoS）
-    const MAX_BODY_BYTES = 2 * 1024 * 1024;
+    // 16MB：为「粘贴图片转附件」的 base64 载荷留出空间（原图上限约 12MB）
+    const MAX_BODY_BYTES = 16 * 1024 * 1024;
     if (rawBody.length > MAX_BODY_BYTES) {
       return {
         status: 413,

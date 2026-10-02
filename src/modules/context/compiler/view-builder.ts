@@ -7,7 +7,9 @@
 // ephemeral 消息（L2 记忆召回）：仅本次请求视图、不持久化；插在消息流末尾——
 // 保住 system+env+history 的前缀缓存命中，且近因注意力聚焦召回内容（规避 lost-in-the-middle）。
 
-import type { UnifiedMessage } from '../../llm/types';
+import { readFileSync } from 'node:fs';
+import { extname } from 'node:path';
+import type { UnifiedImage, UnifiedMessage } from '../../llm/types';
 import type {
   ContextBreakdown,
   ContextMessage,
@@ -31,6 +33,50 @@ export const ACTIVE_RULES_MSG_NAME = 'active-rules';
 export const MEMORY_L1_MSG_NAME = 'memory-l1';
 /** L2 记忆召回临时消息 name（ephemeral；仅本次请求视图） */
 export const MEMORY_RECALL_MSG_NAME = 'memory-recall';
+
+/** 单张图片大小上限（与主流 provider 限制对齐；超出跳过，避免单张巨图导致整轮请求失败） */
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
+/**
+ * 扩展名 → MIME（仅主流视觉模型支持的格式）。
+ * 不含 svg：主流视觉模型不支持 image/svg+xml，SVG 仍按文本处理。
+ */
+const IMAGE_MIME: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.bmp': 'image/bmp',
+};
+
+/** 是否为可发送给模型的图片路径 */
+function isImagePath(p: string): boolean {
+  return Object.prototype.hasOwnProperty.call(IMAGE_MIME, extname(p).toLowerCase());
+}
+
+/**
+ * 按路径实时读盘编码为多模态图片（base64；不落库，仅存在于本次请求视图）。
+ * 过大的图片跳过并记入 skipped（调用方追加文本提示）；读盘失败静默跳过，不阻断整轮请求。
+ */
+function readImages(paths: readonly string[]): { images: UnifiedImage[]; skipped: string[] } {
+  const images: UnifiedImage[] = [];
+  const skipped: string[] = [];
+  for (const p of paths) {
+    if (!isImagePath(p)) continue;
+    try {
+      const buf = readFileSync(p);
+      if (buf.length > MAX_IMAGE_BYTES) {
+        skipped.push(p);
+        continue;
+      }
+      images.push({ data: buf.toString('base64'), mimeType: IMAGE_MIME[extname(p).toLowerCase()], path: p });
+    } catch {
+      // 文件缺失/不可读：跳过该图
+    }
+  }
+  return { images, skipped };
+}
 
 export interface BuildViewOptions {
   toolPruning: ToolPruningConfig;
@@ -138,17 +184,26 @@ export function buildRequestView(
   const full = [...sanitized.messages, ...ephemeral];
 
   // ===== 5. 转 UnifiedMessage =====
-  const conversation: UnifiedMessage[] = full.map(m => ({
-    role: m.role,
-    content: m.content,
-    toolCallId: m.toolCallId,
-    toolCalls: m.toolCalls?.map(tc => ({
-      id: tc.id,
-      type: 'function' as const,
-      function: { name: tc.name, arguments: tc.arguments },
-    })),
-    name: m.name,
-  }));
+  // 多模态图片在此实时读盘编码（base64 不落库，仅存在于本次请求视图）；
+  // user 消息取附件路径，tool 消息取工具结果携带的图片路径。
+  const conversation: UnifiedMessage[] = full.map(m => {
+    const paths = m.role === 'user' ? m.attachments ?? [] : m.role === 'tool' ? m.images ?? [] : [];
+    const { images, skipped } = readImages(paths);
+    const content =
+      skipped.length > 0 ? `${m.content}\n\n[图片过大已跳过: ${skipped.join(', ')}]` : m.content;
+    return {
+      role: m.role,
+      content,
+      ...(images.length > 0 ? { images } : {}),
+      toolCallId: m.toolCallId,
+      toolCalls: m.toolCalls?.map(tc => ({
+        id: tc.id,
+        type: 'function' as const,
+        function: { name: tc.name, arguments: tc.arguments },
+      })),
+      name: m.name,
+    };
+  });
 
   // ===== 6. token 构成分解 =====
   const systemTokens = estimateTextTokens(staticSystemPrompt);

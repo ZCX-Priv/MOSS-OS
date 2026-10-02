@@ -379,6 +379,11 @@ export interface AgentMessage {
   /** 用户消息附带的附件绝对路径（role=user；纯路径引用，供前端渲染附件卡片） */
   attachments?: string[];
   /**
+   * 工具结果附带的图片绝对路径（role=tool；纯路径引用，base64 不落库）。
+   * 发送请求时由 view-builder 实时读盘编码为多模态内容。
+   */
+  images?: string[];
+  /**
    * 前端为该用户消息生成的稳定 id（role=user；前端随消息下发，后端持久化并原样返回）。
    * 前端据此把「乐观写入的本地消息」与「历史回放的同一条消息」视为同一实体，避免重复渲染。
    */

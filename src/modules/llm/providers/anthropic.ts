@@ -9,6 +9,7 @@ import type {
   ModelConfig,
   ProviderFormat,
   StreamDelta,
+  UnifiedImage,
   UnifiedMessage,
   UnifiedRequest,
   UnifiedResponse,
@@ -231,14 +232,19 @@ export function toAnthropicThinking(t: ThinkingConfig): Record<string, unknown> 
 
 function toAnthropicMessage(msg: UnifiedMessage): unknown {
   // Anthropic：tool 结果用 role: 'user' + tool_result content block
+  // 图片内嵌进 tool_result 的 content 块数组（Anthropic 原生支持），避免新增 user 消息破坏角色交替
   if (msg.role === 'tool') {
+    const blocks: unknown[] = [];
+    if (msg.content) blocks.push({ type: 'text', text: msg.content });
+    for (const img of msg.images ?? []) blocks.push(toAnthropicImage(img));
+    if (blocks.length === 0) blocks.push({ type: 'text', text: '' });
     return {
       role: 'user',
       content: [
         {
           type: 'tool_result',
           tool_use_id: msg.toolCallId,
-          content: msg.content,
+          content: blocks,
         },
       ],
     };
@@ -265,8 +271,23 @@ function toAnthropicMessage(msg: UnifiedMessage): unknown {
     }
     return { role: 'assistant', content: blocks };
   }
+  // user 带图片：多模态内容块
+  if (msg.images && msg.images.length > 0) {
+    const blocks: unknown[] = [];
+    if (msg.content) blocks.push({ type: 'text', text: msg.content });
+    for (const img of msg.images) blocks.push(toAnthropicImage(img));
+    return { role: msg.role, content: blocks };
+  }
   // 普通消息
   return { role: msg.role, content: msg.content };
+}
+
+/** 图片 → Anthropic image content block（base64） */
+function toAnthropicImage(img: UnifiedImage): unknown {
+  return {
+    type: 'image',
+    source: { type: 'base64', media_type: img.mimeType, data: img.data },
+  };
 }
 
 function mapStopReason(r: string | undefined): 'stop' | 'tool_use' | 'length' | 'error' {

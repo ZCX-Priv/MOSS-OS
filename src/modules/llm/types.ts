@@ -42,9 +42,23 @@ export interface UnifiedToolCall {
 
 export type UnifiedMessageRole = 'system' | 'user' | 'assistant' | 'tool';
 
+/** 随消息发送的图片（data 为纯 base64，不含 data URI 前缀） */
+export interface UnifiedImage {
+  data: string;
+  mimeType: string;
+  /** 原始文件路径（可选，仅供调试/定位） */
+  path?: string;
+}
+
 export interface UnifiedMessage {
   role: UnifiedMessageRole;
   content: string;
+  /**
+   * 多模态图片（user 消息=附件图片；tool 消息=read 工具读到的图片）。
+   * 与 content 分离：文本管线（修剪/配对/估算）只读 content，不受影响；
+   * 由各 provider 按原生格式映射进请求。
+   */
+  images?: UnifiedImage[];
   /** 工具调用 ID（role=tool 时必填） */
   toolCallId?: string;
   /** 助手消息的工具调用列表 */

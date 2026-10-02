@@ -1,0 +1,357 @@
+// src/modules/voice/engine.ts
+// sherpa-onnx 运行时封装：懒加载原生模块 + 模型文件解析 + 会话（流式 / 非流式）。
+//
+// 关键约束：sherpa-onnx-node 的 decode 为同步原生调用，会占用调用线程；因此
+// 流式会话按「有新音频且就绪」节流解码，非流式会话用 decodeAsync 在原生线程池执行，
+// 避免长期阻塞 Bun 事件循环。
+
+import { readdirSync, statSync } from 'node:fs';
+import { join } from 'node:path';
+import type { VoiceLocalEngine, VoiceResult, VoiceSession } from './types';
+import type {
+  OfflineRecognizer as OfflineRecognizerT,
+  OfflineStream,
+  OnlineRecognizer as OnlineRecognizerT,
+  OnlineStream,
+} from 'sherpa-onnx-node';
+
+export type SherpaModule = typeof import('sherpa-onnx-node');
+
+/** 采样率：全部本地模型统一 16kHz 单声道 */
+export const SAMPLE_RATE = 16000;
+
+/** 环境能量阈值（RMS），低于视为静音 */
+const SILENCE_RMS = 0.006;
+/** 静音多少毫秒判定一段结束 */
+const SILENCE_MS = 900;
+/** 段最小长度（毫秒），过短丢弃（避免噪声触发） */
+const MIN_SEGMENT_MS = 250;
+/** 非流式引擎产生 partial 的最小间隔（毫秒） */
+const PARTIAL_INTERVAL_MS = 800;
+
+// ============================================================================
+// 运行时加载
+// ============================================================================
+
+let cached: SherpaModule | null = null;
+let loadError: string | null = null;
+
+/** 懒加载 sherpa-onnx-node（失败不抛出，返回 null；由上层降级提示） */
+export async function loadSherpa(): Promise<SherpaModule | null> {
+  if (cached) return cached;
+  if (loadError) return null;
+  try {
+    cached = (await import('sherpa-onnx-node')) as SherpaModule;
+    return cached;
+  } catch (err) {
+    loadError = err instanceof Error ? err.message : String(err);
+    return null;
+  }
+}
+
+export function sherpaVersion(mod: SherpaModule | null): string | undefined {
+  return mod?.version;
+}
+
+export function sherpaLoadError(): string | null {
+  return loadError;
+}
+
+// ============================================================================
+// 模型文件解析（动态扫描，不硬编码 epoch/chunk 后缀）
+// ============================================================================
+
+/** 递归列出目录下全部文件绝对路径 */
+export function listFilesRecursive(dir: string): string[] {
+  const out: string[] = [];
+  const walk = (d: string): void => {
+    let entries: string[] = [];
+    try {
+      entries = readdirSync(d);
+    } catch {
+      return;
+    }
+    for (const name of entries) {
+      const p = join(d, name);
+      let isDir = false;
+      try {
+        isDir = statSync(p).isDirectory();
+      } catch {
+        continue;
+      }
+      if (isDir) walk(p);
+      else out.push(p);
+    }
+  };
+  walk(dir);
+  return out;
+}
+
+/** 在候选 onnx 中按关键字挑选（优先 int8 量化版） */
+function pickOnnx(files: string[], keyword: string): string | undefined {
+  const re = new RegExp(keyword, 'i');
+  const matches = files.filter((f) => f.toLowerCase().endsWith('.onnx') && re.test(f));
+  if (matches.length === 0) return undefined;
+  const int8 = matches.find((f) => /int8/i.test(f));
+  return int8 ?? matches[0];
+}
+
+/** 解压后解析模型所需文件（返回绝对路径） */
+export function resolveModelFiles(
+  modelDir: string,
+  engine: VoiceLocalEngine,
+): { tokens: string; encoder?: string; decoder?: string; joiner?: string; model?: string } {
+  const files = listFilesRecursive(modelDir);
+  const tokens = files.find((f) => /tokens\.txt$/i.test(f));
+  if (!tokens) throw new Error(`模型目录缺少 tokens.txt: ${modelDir}`);
+
+  if (engine === 'zipformer') {
+    const encoder = pickOnnx(files, 'encoder');
+    const decoder = pickOnnx(files, 'decoder');
+    const joiner = pickOnnx(files, 'joiner');
+    if (!encoder || !decoder || !joiner) throw new Error('模型缺少 transducer 三件套（encoder/decoder/joiner）');
+    return { tokens, encoder, decoder, joiner };
+  }
+
+  if (engine === 'sensevoice') {
+    const model = pickOnnx(files, 'model');
+    if (!model) throw new Error('模型缺少 model.onnx');
+    return { tokens, model };
+  }
+
+  // whisper
+  const encoder = pickOnnx(files, 'encoder');
+  const decoder = pickOnnx(files, 'decoder');
+  if (!encoder || !decoder) throw new Error('模型缺少 whisper encoder/decoder');
+  return { tokens, encoder, decoder };
+}
+
+// ============================================================================
+// 音频工具
+// ============================================================================
+
+function rms(samples: Float32Array): number {
+  let sum = 0;
+  for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
+  return Math.sqrt(sum / Math.max(1, samples.length));
+}
+
+function concatChunks(chunks: Float32Array[]): Float32Array {
+  let len = 0;
+  for (const c of chunks) len += c.length;
+  const out = new Float32Array(len);
+  let off = 0;
+  for (const c of chunks) {
+    out.set(c, off);
+    off += c.length;
+  }
+  return out;
+}
+
+// ============================================================================
+// 会话实现
+// ============================================================================
+
+/** 流式会话（zipformer transducer）：真流式 partial + endpoint final */
+class StreamingSession implements VoiceSession {
+  private last = '';
+  private closed = false;
+
+  constructor(
+    private readonly recognizer: OnlineRecognizerT,
+    private readonly stream: OnlineStream,
+  ) {}
+
+  acceptSamples(samples: Float32Array): void {
+    if (this.closed) return;
+    this.stream.acceptWaveform({ samples, sampleRate: SAMPLE_RATE });
+  }
+
+  poll(): VoiceResult | null {
+    if (this.closed) return null;
+    if (!this.recognizer.isReady(this.stream)) return null;
+    this.recognizer.decode(this.stream);
+    const text = (this.recognizer.getResult(this.stream).text ?? '').trim();
+    if (this.recognizer.isEndpoint(this.stream)) {
+      this.recognizer.reset(this.stream);
+      this.last = '';
+      return text ? { text, isFinal: true } : null;
+    }
+    if (text && text !== this.last) {
+      this.last = text;
+      return { text, isFinal: false };
+    }
+    return null;
+  }
+
+  async finish(): Promise<VoiceResult | null> {
+    if (this.closed) return null;
+    this.stream.inputFinished();
+    while (this.recognizer.isReady(this.stream)) this.recognizer.decode(this.stream);
+    const text = (this.recognizer.getResult(this.stream).text ?? '').trim();
+    this.last = '';
+    return text ? { text, isFinal: true } : null;
+  }
+
+  close(): void {
+    this.closed = true;
+  }
+}
+
+/** 非流式会话（SenseVoice / Whisper）：能量静音分段 + 尾部窗口重解码伪流式 */
+class OfflineSession implements VoiceSession {
+  private seg: Float32Array[] = [];
+  private segSamples = 0;
+  private silenceMs = 0;
+  private results: VoiceResult[] = [];
+  private busy = false;
+  private lastPartialAt = 0;
+  private lastPartial = '';
+  private closed = false;
+
+  constructor(private readonly recognizer: OfflineRecognizerT) {}
+
+  acceptSamples(samples: Float32Array): void {
+    if (this.closed) return;
+    this.seg.push(samples);
+    this.segSamples += samples.length;
+    if (rms(samples) < SILENCE_RMS) {
+      this.silenceMs += (samples.length / SAMPLE_RATE) * 1000;
+    } else {
+      this.silenceMs = 0;
+    }
+    const minSamples = (SAMPLE_RATE * MIN_SEGMENT_MS) / 1000;
+    if (this.silenceMs >= SILENCE_MS && this.segSamples >= minSamples) {
+      const audio = concatChunks(this.seg);
+      this.seg = [];
+      this.segSamples = 0;
+      this.silenceMs = 0;
+      this.lastPartial = '';
+      void this.decode(audio, true);
+    }
+  }
+
+  poll(): VoiceResult | null {
+    if (this.results.length > 0) return this.results.shift() ?? null;
+    const now = Date.now();
+    const minPartial = (SAMPLE_RATE * 400) / 1000;
+    if (!this.busy && this.segSamples >= minPartial && now - this.lastPartialAt >= PARTIAL_INTERVAL_MS) {
+      this.lastPartialAt = now;
+      void this.decode(concatChunks(this.seg), false);
+    }
+    return null;
+  }
+
+  private async decode(audio: Float32Array, isFinal: boolean): Promise<void> {
+    if (this.busy) return;
+    this.busy = true;
+    try {
+      const stream: OfflineStream = this.recognizer.createStream();
+      stream.acceptWaveform({ samples: audio, sampleRate: SAMPLE_RATE });
+      const res = await this.recognizer.decodeAsync(stream);
+      const text = (res.text ?? '').trim();
+      if (!text) return;
+      if (isFinal) {
+        this.results.push({ text, isFinal: true });
+        this.lastPartial = '';
+      } else if (text !== this.lastPartial) {
+        this.lastPartial = text;
+        this.results.push({ text, isFinal: false });
+      }
+    } catch {
+      // 瞬时解码失败忽略（可能是段过短）
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  async finish(): Promise<VoiceResult | null> {
+    if (this.segSamples > 0) {
+      const audio = concatChunks(this.seg);
+      this.seg = [];
+      this.segSamples = 0;
+      try {
+        const stream = this.recognizer.createStream();
+        stream.acceptWaveform({ samples: audio, sampleRate: SAMPLE_RATE });
+        this.recognizer.decode(stream);
+        const text = (this.recognizer.getResult(stream).text ?? '').trim();
+        if (text) return { text, isFinal: true };
+      } catch {
+        // 忽略
+      }
+    }
+    return this.results.shift() ?? null;
+  }
+
+  close(): void {
+    this.closed = true;
+  }
+}
+
+// ============================================================================
+// 会话工厂
+// ============================================================================
+
+export interface LocalSessionInit {
+  engine: VoiceLocalEngine;
+  /** 模型目录（含解压后的模型文件） */
+  modelDir: string;
+  numThreads: number;
+}
+
+/** 按引擎类型创建本地识别会话 */
+export async function createLocalSession(
+  sherpa: SherpaModule,
+  init: LocalSessionInit,
+): Promise<VoiceSession> {
+  const files = resolveModelFiles(init.modelDir, init.engine);
+  const featConfig = { sampleRate: SAMPLE_RATE, featureDim: 80 };
+
+  if (init.engine === 'zipformer') {
+    const recognizer = new sherpa.OnlineRecognizer({
+      featConfig,
+      modelConfig: {
+        transducer: { encoder: files.encoder, decoder: files.decoder, joiner: files.joiner },
+        tokens: files.tokens,
+        numThreads: init.numThreads,
+        provider: 'cpu',
+        debug: false,
+      },
+      decodingMethod: 'greedy_search',
+      enableEndpoint: true,
+      rule1MinTrailingSilence: 2.4,
+      rule2MinTrailingSilence: 1.2,
+      rule3MinUtteranceLength: 20,
+    });
+    return new StreamingSession(recognizer, recognizer.createStream());
+  }
+
+  const modelConfig =
+    init.engine === 'sensevoice'
+      ? {
+          senseVoice: {
+            model: files.model,
+            language: 'auto',
+            useInverseTextNormalization: 1,
+          },
+          tokens: files.tokens,
+          numThreads: init.numThreads,
+          provider: 'cpu',
+          debug: false,
+        }
+      : {
+          whisper: {
+            encoder: files.encoder,
+            decoder: files.decoder,
+            language: 'zh',
+            task: 'transcribe',
+          },
+          tokens: files.tokens,
+          numThreads: init.numThreads,
+          provider: 'cpu',
+          debug: false,
+        };
+
+  const recognizer = await sherpa.OfflineRecognizer.createAsync({ featConfig, modelConfig });
+  return new OfflineSession(recognizer);
+}

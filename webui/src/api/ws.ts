@@ -195,6 +195,21 @@ export class WSClient {
     this.send({ type: 'session.subscribe', sessionId });
   }
 
+  /**
+   * 发送二进制帧（语音音频 PCM）。仅连接已打开时发送，不排队：
+   * 音频是实时流，积压重放没有意义（断线期间丢弃即可）。
+   */
+  sendBinary(data: ArrayBuffer): void {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(data);
+    }
+  }
+
+  /** 当前是否已连接（可发送数据） */
+  isOpen(): boolean {
+    return this.ws?.readyState === WebSocket.OPEN;
+  }
+
   onMessage(handler: MessageHandler): () => void {
     this.messageHandlers.add(handler);
     return () => this.messageHandlers.delete(handler);

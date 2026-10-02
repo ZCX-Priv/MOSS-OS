@@ -1315,9 +1315,15 @@ export class AgentEngineImpl implements AgentEngine {
     // 阻止 addToolMessage 执行，否则 assistant 的 tool_use 会缺少对应 tool_result，
     // session 复用时会触发 HTTP 400。
     let resultText: string;
+    // 收集工具结果中的图片路径（仅落库路径，base64 不持久化；发送时由 view-builder 读盘编码）
+    const imagePaths: string[] = [];
     try {
       resultText = result.content
-        .map(c => (c.type === 'text' ? c.text : `[image: ${c.source?.mimeType ?? 'unknown'}]`))
+        .map(c => {
+          if (c.type === 'text') return c.text;
+          if (c.path) imagePaths.push(c.path);
+          return `[image: ${c.source?.mimeType ?? 'unknown'}]`;
+        })
         .join('\n');
     } catch (err) {
       resultText = `Error: failed to serialize tool result: ${err instanceof Error ? err.message : String(err)}`;
@@ -1327,7 +1333,11 @@ export class AgentEngineImpl implements AgentEngine {
       toolCallId,
       resultText + healLogText,
       healedName,
-      { isError: result.isError, metadata: result.metadata },
+      {
+        isError: result.isError,
+        metadata: result.metadata,
+        ...(imagePaths.length > 0 ? { images: imagePaths } : {}),
+      },
     );
 
     onEvent({
@@ -1335,7 +1345,7 @@ export class AgentEngineImpl implements AgentEngine {
       sessionId,
       toolName: healedName,
       toolCallId,
-      result,
+      result: this.stripImagesForWs(result),
     });
 
     // 阶段5.1：工具执行副作用 WS 推送（todo-updated / context-updated / file-*）
@@ -1381,6 +1391,25 @@ export class AgentEngineImpl implements AgentEngine {
         });
       }
     }
+  }
+
+  /**
+   * WS 推送前剥离工具结果中的图片 base64：前端不渲染图片内容，避免大包经 WebSocket 传输。
+   * 不影响会话落库的图片路径（发送给 LLM 时由 view-builder 按路径重新读盘编码）。
+   */
+  private stripImagesForWs(result: ToolResult): ToolResult {
+    if (!result.content?.some(c => c.type === 'image')) return result;
+    return {
+      ...result,
+      content: result.content.map(c =>
+        c.type === 'image'
+          ? {
+              type: 'text' as const,
+              text: `[image: ${c.source?.mimeType ?? 'unknown'}${c.path ? `, path=${c.path}` : ''}]`,
+            }
+          : c,
+      ),
+    };
   }
 
   /** 工具调用自愈 WS 通知（context-healed：修复明细推前端） */
