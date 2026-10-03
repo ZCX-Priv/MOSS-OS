@@ -1,20 +1,21 @@
 #!/usr/bin/env node
 /**
- * rebrand-icons.mjs — 清除 MOSS.png 元数据/AIGC 标识、切 22% 圆角并重建 public 品牌图标套件
+ * rebrand-icons.mjs — 清除 MOSS.png 元数据/AIGC 标识，并重建 webui/public 品牌图标套件
  *
  * 流程（全部在内存中处理并校验通过后才写盘，不会产生中间损坏状态）：
- *   A. 清洗根目录 MOSS.png（2048×2048，原地覆盖）：
- *      - 质数中间尺寸双轮重采样（2048→2017→2048，cubic）：全像素插值扰动，破坏像素级频域隐水印
+ *   A. 清洗根目录 MOSS.png（原生尺寸，原地覆盖）：
+ *      - 质数中间尺寸双轮重采样（N→prime→N，cubic）：全像素插值扰动，破坏像素级频域隐水印
+ *        （prime 取靠近 N×0.985 的质数，与母版尺寸解耦，换母版无需改代码）
  *      - 微亮度扰动 ×1.002（不可感知）
- *      - 22% 圆角裁剪（SVG 白色圆角矩形 dest-in 混合，半径 = 边长 × 0.22，四角透明）
- *      - sharp 默认不写入任何元数据 chunk（不调用 withMetadata）
- *   B. 从清洗后的源生成 webui/public/ 图标套件（缩放自动继承 22% 圆角比例）：
+ *      - 保留母版自带的透明圆角（不再叠加任何圆角遮罩，避免二次裁切 over-round）
+ *      - sharp 默认不写入任何元数据 chunk（不调用 withMetadata），并额外做 chunk 白名单重建
+ *   B. 从清洗后的源生成 webui/public/ 图标套件（等比缩放，圆角比例随几何缩放保持）：
  *      - MOSS.png            1024×1024（favicon / boot / sidebar / splash / settings 通用）
  *      - icon-192.png         192×192（PWA any，透明圆角）
  *      - icon-512.png         512×512（PWA any，透明圆角）
- *      - icon-512-maskable.png 512×512（PWA maskable：#09090b 实底 + 内容 410px 居中，安全区 80%）
+ *      - icon-512-maskable.png 512×512（PWA maskable：采样母版边缘蓝实底铺满全出血）
  *   C. 读回校验：PNG chunk 白名单 {IHDR, PLTE, tRNS, IDAT, IEND}、尺寸精确、IEND 后无 trailing 字节、
- *      四角像素 alpha（透明圆角图 = 0 / maskable 实底 = 255 且色值 #09090b）、中心像素 alpha = 255
+ *      四角像素 alpha（透明圆角图 ≈ 0 / maskable 实底 = 边缘蓝且 alpha 255）、中心像素 alpha = 255
  */
 
 import sharp from 'sharp';
@@ -25,10 +26,14 @@ const ROOT = path.resolve(import.meta.dirname, '..');
 const SRC = path.join(ROOT, 'MOSS.png');
 const PUB = path.join(ROOT, 'webui', 'public');
 
-const MASKABLE_BG = { r: 9, g: 9, b: 11, alpha: 1 }; // #09090b，与 PWA manifest background_color 一致
 const CHUNK_WHITELIST = new Set(['IHDR', 'PLTE', 'tRNS', 'IDAT', 'IEND']);
 const PNG_SIG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-const RADIUS_RATIO = 0.22; // 圆角半径 = 边长 × 22%（iOS 图标风格）
+/** 中间重采样比例：原始方案为 2017/2048 ≈ 0.985（约 1.5% 降采样再回采） */
+const RESAMPLE_RATIO = 0.985;
+/** 透明圆角像素 alpha 容差：重采样后极端角像素可能被邻域插值带出个位数 alpha */
+const CORNER_ALPHA_TOL = 16;
+/** maskable 实底色 RGB 容差（flatten 边缘若有极低 alpha 混合，色值可能微偏） */
+const MASKABLE_RGB_TOL = 6;
 
 /** 解析 PNG chunk；返回 { chunks: string[], width, height, trailing } */
 function inspectPng(buf, file) {
@@ -89,14 +94,6 @@ function validateOnDisk(file, expectW, expectH) {
   return validatePng(fs.readFileSync(file), file, expectW, expectH);
 }
 
-/** 22% 圆角遮罩：白色圆角矩形 SVG（fill 必须显式 white，SVG 默认黑色会让 dest-in 全图透明） */
-function roundedMask(size) {
-  const r = size * RADIUS_RATIO;
-  return Buffer.from(
-    `<svg width="${size}" height="${size}"><rect x="0" y="0" width="${size}" height="${size}" rx="${r}" ry="${r}" fill="white"/></svg>`,
-  );
-}
-
 /** 读取单个像素的 RGBA（ensureAlpha 保证 4 通道）；pos 为 [left, top] */
 async function readPixel(input, left, top) {
   const buf = await sharp(input)
@@ -107,12 +104,26 @@ async function readPixel(input, left, top) {
   return { r: buf[0], g: buf[1], b: buf[2], a: buf[3] };
 }
 
+/** 取靠近 target 的质数（不小于 64，避免过小失真） */
+function nearestPrimeAround(target) {
+  const isPrime = (n) => {
+    if (n < 2) return false;
+    for (let d = 2; d * d <= n; d++) if (n % d === 0) return false;
+    return true;
+  };
+  let up = Math.max(64, Math.round(target));
+  let down = up;
+  while (!isPrime(up)) up++;
+  while (!isPrime(down)) down--;
+  return Math.abs(up - target) <= Math.abs(down - target) ? up : down;
+}
+
 /**
  * 圆角/实底像素断言（不信管线声明，读像素实证）：
- * - transparentCorners=true：四角 alpha 必须 0（22% 圆角已生效），中心 alpha 必须 255
- * - transparentCorners=false（maskable 实底）：四角必须为 #09090b 且 alpha 255
+ * - transparentCorners=true：四角 alpha 必须 ≤ 容差（透明圆角已生效），中心 alpha 必须 255
+ * - transparentCorners=false（maskable 实底）：四角必须为 edgeBlue 且 alpha 255
  */
-async function validateCorners(input, file, expectSize, transparentCorners) {
+async function validateCorners(input, file, expectSize, transparentCorners, edgeBlue) {
   const corners = [
     [0, 0],
     [expectSize - 1, 0],
@@ -123,9 +134,17 @@ async function validateCorners(input, file, expectSize, transparentCorners) {
   for (const [x, y] of corners) {
     const px = await readPixel(input, x, y);
     if (transparentCorners) {
-      if (px.a !== 0) problems.push(`角(${x},${y}) alpha=${px.a} ≠ 0（圆角未生效）`);
-    } else if (px.a !== 255 || px.r !== MASKABLE_BG.r || px.g !== MASKABLE_BG.g || px.b !== MASKABLE_BG.b) {
-      problems.push(`角(${x},${y}) rgba(${px.r},${px.g},${px.b},${px.a}) ≠ 实底 #09090b`);
+      if (px.a > CORNER_ALPHA_TOL) problems.push(`角(${x},${y}) alpha=${px.a} > ${CORNER_ALPHA_TOL}（圆角未生效）`);
+    } else {
+      const near =
+        Math.abs(px.r - edgeBlue.r) <= MASKABLE_RGB_TOL &&
+        Math.abs(px.g - edgeBlue.g) <= MASKABLE_RGB_TOL &&
+        Math.abs(px.b - edgeBlue.b) <= MASKABLE_RGB_TOL;
+      if (px.a !== 255 || !near) {
+        problems.push(
+          `角(${x},${y}) rgba(${px.r},${px.g},${px.b},${px.a}) ≠ 实底 rgba(${edgeBlue.r},${edgeBlue.g},${edgeBlue.b},255)`,
+        );
+      }
     }
   }
   const center = await readPixel(input, Math.floor(expectSize / 2), Math.floor(expectSize / 2));
@@ -133,30 +152,62 @@ async function validateCorners(input, file, expectSize, transparentCorners) {
   if (problems.length) {
     throw new Error(`${file}: ${problems.join('；')}`);
   }
-  return `${file}: 四角${transparentCorners ? '透明（22% 圆角生效）' : '实底 #09090b'} + 中心不透明 ✓`;
+  return `${file}: 四角${transparentCorners ? '透明（原生圆角生效）' : `实底 rgba(${edgeBlue.r},${edgeBlue.g},${edgeBlue.b})`} + 中心不透明 ✓`;
+}
+
+/** 采样母版四边中点像素均值，作为 maskable 全出血实底蓝 */
+async function sampleEdgeBlue(input, size) {
+  const mid = Math.floor(size / 2);
+  const pts = [
+    [mid, 2],
+    [mid, size - 3],
+    [2, mid],
+    [size - 3, mid],
+  ];
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  for (const [x, y] of pts) {
+    const px = await readPixel(input, x, y);
+    r += px.r;
+    g += px.g;
+    b += px.b;
+  }
+  return { r: Math.round(r / pts.length), g: Math.round(g / pts.length), b: Math.round(b / pts.length) };
 }
 
 async function main() {
-  console.log('== A. 清洗根目录 MOSS.png（重采样扰动 + 元数据清零 + 22% 圆角） ==');
+  const meta = await sharp(SRC).metadata();
+  const N = meta.width;
+  if (!N || meta.height !== N) {
+    throw new Error(`MOSS.png: 母版必须为正方形，实际 ${meta.width}x${meta.height}`);
+  }
+  const prime = nearestPrimeAround(N * RESAMPLE_RATIO);
+  console.log(`== A. 清洗根目录 MOSS.png（原生 ${N}×${N}，重采样 ${N}→${prime}→${N} + 元数据清零） ==`);
+  if (!meta.hasAlpha) {
+    throw new Error('MOSS.png: 母版缺少 alpha 通道，无法保留透明圆角');
+  }
+
   const cleaned = stripChunks(
     await sharp(SRC)
-      .resize(2017, 2017, { kernel: 'cubic' }) // 质数中间尺寸：破坏频域水印对齐
-      .resize(2048, 2048, { kernel: 'cubic' }) // 回到原尺寸：全像素二次插值
+      .resize(prime, prime, { kernel: 'cubic' }) // 质数中间尺寸：破坏频域水印对齐
+      .resize(N, N, { kernel: 'cubic' }) // 回到原生尺寸：全像素二次插值
       .modulate({ brightness: 1.002 }) // 微亮度扰动（不可感知）
-      .composite([{ input: roundedMask(2048), blend: 'dest-in' }]) // 22% 圆角，四角透明
       .png({ compressionLevel: 9 })
       .toBuffer(),
   );
-  console.log(validatePng(cleaned, 'MOSS.png (内存)', 2048, 2048));
-  console.log(await validateCorners(cleaned, 'MOSS.png (内存)', 2048, true));
+  const edgeBlue = await sampleEdgeBlue(cleaned, N);
+  console.log(validatePng(cleaned, 'MOSS.png (内存)', N, N));
+  console.log(await validateCorners(cleaned, 'MOSS.png (内存)', N, true));
   fs.writeFileSync(SRC, cleaned);
-  console.log(validateOnDisk(SRC, 2048, 2048));
-  console.log(await validateCorners(SRC, 'MOSS.png (磁盘读回)', 2048, true));
+  console.log(validateOnDisk(SRC, N, N));
+  console.log(await validateCorners(SRC, 'MOSS.png (磁盘读回)', N, true));
+  console.log(`maskable 实底蓝（母版边缘采样）: rgba(${edgeBlue.r},${edgeBlue.g},${edgeBlue.b},255)`);
 
-  console.log('\n== B. 生成 webui/public 图标套件（以清洗后的圆角源为基准，缩放继承 22% 圆角） ==');
+  console.log('\n== B. 生成 webui/public 图标套件（以清洗后的圆角源为基准，缩放继承原生圆角） ==');
   const outputs = [];
 
-  // 通用：从清洗 buffer 缩放（透明圆角随几何缩放，比例严格保持 22%）
+  // 通用：从清洗 buffer 缩放（透明圆角随几何缩放，比例严格保持）
   async function derive(size, name) {
     const buf = stripChunks(
       await sharp(cleaned).resize(size, size, { kernel: 'cubic' }).png({ compressionLevel: 9 }).toBuffer(),
@@ -173,28 +224,26 @@ async function main() {
   await derive(192, 'icon-192.png');
   await derive(512, 'icon-512.png');
 
-  // maskable：#09090b 实底画布 + 内容缩至 410px（512×80% 安全区）居中
-  const content410 = await sharp(cleaned).resize(410, 410, { kernel: 'cubic' }).png().toBuffer();
+  // maskable：全出血——整图缩放到 512，透明圆角以边缘蓝 flatten 填满（图案铺满、无安全区留白）
   const maskable = stripChunks(
-    await sharp({
-      create: { width: 512, height: 512, channels: 4, background: MASKABLE_BG },
-    })
-      .composite([{ input: content410, gravity: 'centre' }])
+    await sharp(cleaned)
+      .resize(512, 512, { kernel: 'cubic' })
+      .flatten({ background: edgeBlue })
       .png({ compressionLevel: 9 })
       .toBuffer(),
   );
   {
     const file = path.join(PUB, 'icon-512-maskable.png');
     console.log(validatePng(maskable, 'icon-512-maskable.png (内存)', 512, 512));
-    console.log(await validateCorners(maskable, 'icon-512-maskable.png (内存)', 512, false));
+    console.log(await validateCorners(maskable, 'icon-512-maskable.png (内存)', 512, false, edgeBlue));
     fs.writeFileSync(file, maskable);
     outputs.push(validateOnDisk(file, 512, 512));
-    outputs.push(await validateCorners(file, 'icon-512-maskable.png (磁盘读回)', 512, false));
+    outputs.push(await validateCorners(file, 'icon-512-maskable.png (磁盘读回)', 512, false, edgeBlue));
   }
 
   console.log('\n== C. 写盘后读回校验汇总 ==');
   outputs.forEach((line) => console.log(line));
-  console.log('\n全部通过：零元数据 chunk、尺寸精确、无 trailing 数据、22% 圆角与 maskable 实底经像素级实证。');
+  console.log('\n全部通过：零元数据 chunk、尺寸精确、无 trailing 数据、原生圆角与 maskable 全出血经像素级实证。');
 }
 
 main().catch((err) => {
