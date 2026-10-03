@@ -34,27 +34,32 @@ const PARTIAL_INTERVAL_MS = 800;
 // ============================================================================
 
 let cached: SherpaModule | null = null;
-let loadError: string | null = null;
+let loading: Promise<SherpaModule | null> | null = null;
 
-/** 懒加载 sherpa-onnx-node（失败不抛出，返回 null；由上层降级提示） */
+/**
+ * 懒加载 sherpa-onnx-node（失败不抛出，返回 null；由上层降级提示）。
+ *
+ * 不缓存失败：瞬时失败（依赖尚未就绪等）不应让运行时永久卡在不可用；
+ * 并发调用共享同一个加载 promise，避免重复 import。
+ */
 export async function loadSherpa(): Promise<SherpaModule | null> {
   if (cached) return cached;
-  if (loadError) return null;
-  try {
-    cached = (await import('sherpa-onnx-node')) as SherpaModule;
-    return cached;
-  } catch (err) {
-    loadError = err instanceof Error ? err.message : String(err);
-    return null;
-  }
+  if (loading) return loading;
+  loading = (async () => {
+    try {
+      cached = (await import('sherpa-onnx-node')) as SherpaModule;
+      return cached;
+    } catch {
+      return null;
+    } finally {
+      loading = null;
+    }
+  })();
+  return loading;
 }
 
 export function sherpaVersion(mod: SherpaModule | null): string | undefined {
   return mod?.version;
-}
-
-export function sherpaLoadError(): string | null {
-  return loadError;
 }
 
 // ============================================================================
@@ -205,6 +210,8 @@ class OfflineSession implements VoiceSession {
   private silenceMs = 0;
   private results: VoiceResult[] = [];
   private busy = false;
+  /** 进行中的异步解码：finish 前必须等它结束，避免同一 recognizer 被并发调用 */
+  private inflight: Promise<void> | null = null;
   private lastPartialAt = 0;
   private lastPartial = '';
   private closed = false;
@@ -242,30 +249,38 @@ class OfflineSession implements VoiceSession {
     return null;
   }
 
-  private async decode(audio: Float32Array, isFinal: boolean): Promise<void> {
-    if (this.busy) return;
+  /** 发起一次异步解码；已有解码在进行时返回同一个 promise（不并发调用原生 recognizer） */
+  private decode(audio: Float32Array, isFinal: boolean): Promise<void> {
+    if (this.busy) return this.inflight ?? Promise.resolve();
     this.busy = true;
-    try {
-      const stream: OfflineStream = this.recognizer.createStream();
-      stream.acceptWaveform({ samples: audio, sampleRate: SAMPLE_RATE });
-      const res = await this.recognizer.decodeAsync(stream);
-      const text = (res.text ?? '').trim();
-      if (!text) return;
-      if (isFinal) {
-        this.results.push({ text, isFinal: true });
-        this.lastPartial = '';
-      } else if (text !== this.lastPartial) {
-        this.lastPartial = text;
-        this.results.push({ text, isFinal: false });
+    const task = (async () => {
+      try {
+        const stream: OfflineStream = this.recognizer.createStream();
+        stream.acceptWaveform({ samples: audio, sampleRate: SAMPLE_RATE });
+        const res = await this.recognizer.decodeAsync(stream);
+        const text = (res.text ?? '').trim();
+        if (!text) return;
+        if (isFinal) {
+          this.results.push({ text, isFinal: true });
+          this.lastPartial = '';
+        } else if (text !== this.lastPartial) {
+          this.lastPartial = text;
+          this.results.push({ text, isFinal: false });
+        }
+      } catch {
+        // 瞬时解码失败忽略（可能是段过短）
+      } finally {
+        this.busy = false;
+        this.inflight = null;
       }
-    } catch {
-      // 瞬时解码失败忽略（可能是段过短）
-    } finally {
-      this.busy = false;
-    }
+    })();
+    this.inflight = task;
+    return task;
   }
 
   async finish(): Promise<VoiceResult | null> {
+    // 先等在途异步解码结束：绝不能与 decodeAsync 并发使用同一 recognizer
+    if (this.inflight) await this.inflight.catch(() => undefined);
     if (this.segSamples > 0) {
       const audio = concatChunks(this.seg);
       this.seg = [];

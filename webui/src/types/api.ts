@@ -41,7 +41,7 @@ export interface ToolResult {
 }
 
 /** 右侧边栏标签页类型 */
-export type SidebarTabType = 'summary' | 'terminal' | 'agenteam' | 'file';
+export type SidebarTabType = 'start' | 'summary' | 'terminal' | 'agenteam' | 'file';
 
 /** 右侧边栏标签页 */
 export interface SidebarTab {

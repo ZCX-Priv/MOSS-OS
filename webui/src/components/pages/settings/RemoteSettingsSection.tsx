@@ -8,20 +8,16 @@ import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import QRCode from 'qrcode';
 import {
-  Smartphone,
   RefreshCw,
   Copy,
   Globe,
   Loader2,
   ShieldAlert,
-  QrCode,
   Pencil,
   ChevronDown,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
 import { Progress } from '@/components/ui/progress';
@@ -302,59 +298,49 @@ export function RemoteSettingsSection() {
   }
 
   return (
-    <div className="space-y-6 pb-8">
+    <div className="flex flex-col gap-6 p-6">
+      {/* ============ 页头（与其它设置子页统一） ============ */}
+      <div className="flex flex-col gap-1">
+        <h1 className="text-xl font-semibold text-foreground">{t('settings.remote.title')}</h1>
+        <p className="text-sm text-muted-foreground">{t('settings.remote.desc')}</p>
+      </div>
+
       {/* ============ 总开关 ============ */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Smartphone className="h-4 w-4" />
-            {t('settings.remote.title')}
-          </CardTitle>
-          <CardDescription>{t('settings.remote.desc')}</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="space-y-1">
-              <div className="text-sm font-medium flex items-center gap-2">
-                {t('settings.remote.masterSwitch')}
-                {enabled ? (
-                  <Badge className="bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30">
-                    {t('settings.remote.state.on')}
-                  </Badge>
-                ) : (
-                  <Badge variant="secondary">{t('settings.remote.state.off')}</Badge>
-                )}
-              </div>
-              <p className="text-xs text-muted-foreground leading-relaxed">
-                {enabled ? t('settings.remote.masterOnDesc') : t('settings.remote.masterOffDesc')}
-              </p>
-            </div>
+      <div className="flex flex-col gap-1">
+        <div className="text-sm font-medium text-foreground">{t('settings.remote.masterSwitch')}</div>
+        <div className="text-xs text-muted-foreground">
+          {enabled ? t('settings.remote.masterOnDesc') : t('settings.remote.masterOffDesc')}
+        </div>
+        <div className="mt-2 flex flex-col rounded-lg border border-border px-4">
+          <div className="flex items-center justify-between gap-4 py-3">
+            {enabled ? (
+              <Badge className="border-green-500/30 bg-green-500/15 text-green-600 dark:text-green-400">
+                {t('settings.remote.state.on')}
+              </Badge>
+            ) : (
+              <Badge variant="secondary">{t('settings.remote.state.off')}</Badge>
+            )}
             <Switch
               checked={enabled}
               onCheckedChange={checked => void toggleEnabled(checked)}
               aria-label={t('settings.remote.masterSwitch')}
             />
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
 
       {enabled && (
         <>
           {/* ============ 局域网 ============ */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-base">
-                <QrCode className="h-4 w-4" />
-                {t('settings.remote.lan.title')}
-              </CardTitle>
-              <CardDescription>{t('settings.remote.lan.desc')}</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
+          <div className="flex flex-col gap-1">
+            <div className="text-sm font-medium text-foreground">{t('settings.remote.lan.title')}</div>
+            <div className="text-xs text-muted-foreground">{t('settings.remote.lan.desc')}</div>
+            <div className="mt-2 flex flex-col rounded-lg border border-border px-4">
               {/* 局域网开关 */}
-              <div className="flex items-center justify-between gap-3 py-1">
-                <div className="space-y-0.5">
-                  <div className="text-sm font-medium">{t('settings.remote.lan.switch')}</div>
-                  <p className="text-xs text-muted-foreground">{t('settings.remote.lan.switchDesc')}</p>
+              <div className="flex flex-col gap-2 border-b border-border/60 py-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex min-w-0 flex-col gap-0.5">
+                  <span className="text-sm text-foreground">{t('settings.remote.lan.switch')}</span>
+                  <span className="text-xs text-muted-foreground">{t('settings.remote.lan.switchDesc')}</span>
                 </div>
                 <Switch
                   checked={status.lanEnabled}
@@ -366,29 +352,31 @@ export function RemoteSettingsSection() {
               {status.lanEnabled && (
                 <>
                   {/* 二维码 + URL */}
-                  {lanUrl ? (
-                    <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4 rounded-lg border border-border/60 p-4">
-                      <QrImage url={lanUrl} />
-                      <div className="flex-1 min-w-0 space-y-2 text-center sm:text-left">
-                        <div className="text-xs text-muted-foreground">{t('settings.remote.lan.scanHint')}</div>
-                        <div className="flex items-center justify-center sm:justify-start gap-2 flex-wrap">
-                          <code className="rounded bg-muted px-2 py-1 text-sm break-all">{lanUrl}</code>
-                          <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => copyUrl(lanUrl)}>
-                            <Copy className="h-3.5 w-3.5" />
-                          </Button>
+                  <div className="border-b border-border/60 py-3">
+                    {lanUrl ? (
+                      <div className="flex flex-col items-center gap-4 rounded-lg border border-border/60 p-4 sm:flex-row sm:items-start">
+                        <QrImage url={lanUrl} />
+                        <div className="flex-1 min-w-0 space-y-2 text-center sm:text-left">
+                          <div className="text-xs text-muted-foreground">{t('settings.remote.lan.scanHint')}</div>
+                          <div className="flex items-center justify-center gap-2 flex-wrap sm:justify-start">
+                            <code className="rounded bg-muted px-2 py-1 text-sm break-all">{lanUrl}</code>
+                            <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => copyUrl(lanUrl)}>
+                              <Copy className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                          <div className="text-xs text-muted-foreground">{t('settings.remote.lan.sameWifi')}</div>
                         </div>
-                        <div className="text-xs text-muted-foreground">{t('settings.remote.lan.sameWifi')}</div>
                       </div>
-                    </div>
-                  ) : (
-                    <div className="rounded-lg border border-dashed border-border p-4 text-center text-sm text-muted-foreground">
-                      {t('settings.remote.lan.noIp')}
-                    </div>
-                  )}
+                    ) : (
+                      <div className="rounded-lg border border-dashed border-border p-4 text-center text-sm text-muted-foreground">
+                        {t('settings.remote.lan.noIp')}
+                      </div>
+                    )}
+                  </div>
 
-                  {/* 密码管理 */}
-                  <div>
-                    <Label className="text-sm mb-1 block">{t('settings.remote.pin.title')}</Label>
+                  {/* 密码管理（PinManager 行自带 py-3 分隔） */}
+                  <div className="border-b border-border/60 pt-3">
+                    <div className="text-sm text-foreground">{t('settings.remote.pin.title')}</div>
                     <PinManager
                       scope="lan"
                       pin={passwords?.lan ?? null}
@@ -399,51 +387,48 @@ export function RemoteSettingsSection() {
                   </div>
 
                   {/* 高级：局域网地址选择 */}
-                  <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
-                    <CollapsibleTrigger className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors">
-                      <ChevronDown className={`h-3.5 w-3.5 transition-transform ${advancedOpen ? '' : '-rotate-90'}`} />
-                      {t('settings.remote.lan.advanced')}
-                    </CollapsibleTrigger>
-                    <CollapsibleContent className="pt-3">
-                      <div className="flex flex-col sm:flex-row sm:items-center gap-2">
-                        <span className="text-sm shrink-0">{t('settings.remote.lan.address')}</span>
-                        <Select
-                          value={status.lanIpOverride || status.lanIp || ''}
-                          onValueChange={v => void setLanIp(v === status.lanIp ? '' : v)}
-                        >
-                          <SelectTrigger className="w-full sm:w-64">
-                            <SelectValue placeholder={t('settings.remote.lan.auto')} />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {status.lanCandidates.map(ip => (
-                              <SelectItem key={ip} value={ip}>
-                                {ip}
-                                {ip === status.lanIp ? ` (${t('settings.remote.lan.auto')})` : ''}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <p className="text-xs text-muted-foreground mt-1.5">{t('settings.remote.lan.advancedDesc')}</p>
-                    </CollapsibleContent>
-                  </Collapsible>
+                  <div className="py-3">
+                    <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
+                      <CollapsibleTrigger className="flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground">
+                        <ChevronDown className={`h-3.5 w-3.5 transition-transform ${advancedOpen ? '' : '-rotate-90'}`} />
+                        {t('settings.remote.lan.advanced')}
+                      </CollapsibleTrigger>
+                      <CollapsibleContent className="pt-3">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                          <span className="shrink-0 text-sm">{t('settings.remote.lan.address')}</span>
+                          <Select
+                            value={status.lanIpOverride || status.lanIp || ''}
+                            onValueChange={v => void setLanIp(v === status.lanIp ? '' : v)}
+                          >
+                            <SelectTrigger className="w-full sm:w-64">
+                              <SelectValue placeholder={t('settings.remote.lan.auto')} />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {status.lanCandidates.map(ip => (
+                                <SelectItem key={ip} value={ip}>
+                                  {ip}
+                                  {ip === status.lanIp ? ` (${t('settings.remote.lan.auto')})` : ''}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <p className="mt-1.5 text-xs text-muted-foreground">{t('settings.remote.lan.advancedDesc')}</p>
+                      </CollapsibleContent>
+                    </Collapsible>
+                  </div>
                 </>
               )}
-            </CardContent>
-          </Card>
+            </div>
+          </div>
 
           {/* ============ 公网 ============ */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-base">
-                <Globe className="h-4 w-4" />
-                {t('settings.remote.tunnel.title')}
-              </CardTitle>
-              <CardDescription>{t('settings.remote.tunnel.desc')}</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
+          <div className="flex flex-col gap-1">
+            <div className="text-sm font-medium text-foreground">{t('settings.remote.tunnel.title')}</div>
+            <div className="text-xs text-muted-foreground">{t('settings.remote.tunnel.desc')}</div>
+            <div className="mt-2 flex flex-col rounded-lg border border-border px-4">
               {tunnelPhase === 'idle' && (
-                <div className="flex flex-col items-start gap-3 py-2">
+                <div className="flex flex-col items-start gap-3 py-3">
                   <Button
                     variant="default"
                     disabled={tunnelBusy}
@@ -459,7 +444,7 @@ export function RemoteSettingsSection() {
               )}
 
               {(tunnelPhase === 'downloading' || tunnelPhase === 'starting' || tunnelPhase === 'registering') && (
-                <div className="space-y-3 py-2">
+                <div className="space-y-3 py-3">
                   <div className="flex items-center gap-2 text-sm">
                     <Loader2 className="h-4 w-4 animate-spin text-primary" />
                     {t(`settings.remote.tunnel.phase.${tunnelPhase}`)}
@@ -470,35 +455,41 @@ export function RemoteSettingsSection() {
               )}
 
               {tunnelPhase === 'ready' && tunnelUrl && (
-                <div className="space-y-4">
-                  <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4 rounded-lg border border-border/60 p-4">
-                    <QrImage url={tunnelUrl} />
-                    <div className="flex-1 min-w-0 space-y-2 text-center sm:text-left">
-                      <div className="text-xs text-muted-foreground">{t('settings.remote.tunnel.scanHint')}</div>
-                      <div className="flex items-center justify-center sm:justify-start gap-2 flex-wrap">
-                        <code className="rounded bg-muted px-2 py-1 text-sm break-all">{tunnelUrl}</code>
-                        <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => copyUrl(tunnelUrl)}>
-                          <Copy className="h-3.5 w-3.5" />
-                        </Button>
+                <>
+                  <div className="border-b border-border/60 py-3">
+                    <div className="flex flex-col items-center gap-4 rounded-lg border border-border/60 p-4 sm:flex-row sm:items-start">
+                      <QrImage url={tunnelUrl} />
+                      <div className="flex-1 min-w-0 space-y-2 text-center sm:text-left">
+                        <div className="text-xs text-muted-foreground">{t('settings.remote.tunnel.scanHint')}</div>
+                        <div className="flex items-center justify-center gap-2 flex-wrap sm:justify-start">
+                          <code className="rounded bg-muted px-2 py-1 text-sm break-all">{tunnelUrl}</code>
+                          <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => copyUrl(tunnelUrl)}>
+                            <Copy className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                        <div className="text-xs text-muted-foreground">{t('settings.remote.tunnel.anyNetwork')}</div>
                       </div>
-                      <div className="text-xs text-muted-foreground">{t('settings.remote.tunnel.anyNetwork')}</div>
                     </div>
                   </div>
-                  <PinManager
-                    scope="public"
-                    pin={passwords?.public ?? null}
-                    passwordEnabled
-                    customized={status.publicPasswordCustomized}
-                    onChanged={refreshAll}
-                  />
-                  <Button variant="outline" size="sm" disabled={tunnelBusy} onClick={() => void stopTunnel()}>
-                    {t('settings.remote.tunnel.close')}
-                  </Button>
-                </div>
+                  <div className="border-b border-border/60 pt-3">
+                    <PinManager
+                      scope="public"
+                      pin={passwords?.public ?? null}
+                      passwordEnabled
+                      customized={status.publicPasswordCustomized}
+                      onChanged={refreshAll}
+                    />
+                  </div>
+                  <div className="py-3">
+                    <Button variant="outline" size="sm" disabled={tunnelBusy} onClick={() => void stopTunnel()}>
+                      {t('settings.remote.tunnel.close')}
+                    </Button>
+                  </div>
+                </>
               )}
 
               {tunnelPhase === 'error' && (
-                <div className="space-y-3 py-2">
+                <div className="space-y-3 py-3">
                   <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-sm text-red-600 dark:text-red-400 break-all">
                     {status.tunnel.detail || t('settings.remote.tunnel.errorGeneric')}
                   </div>
@@ -517,23 +508,19 @@ export function RemoteSettingsSection() {
                   </div>
                 </div>
               )}
-            </CardContent>
-          </Card>
+            </div>
+          </div>
 
           {/* ============ 安全提示 ============ */}
-          <Card className="border-amber-500/30">
-            <CardContent className="pt-6">
-              <div className="flex gap-3">
-                <ShieldAlert className="h-5 w-5 shrink-0 text-amber-500" />
-                <div className="space-y-1.5 text-xs text-muted-foreground leading-relaxed">
-                  <div className="text-sm font-medium text-foreground">{t('settings.remote.security.title')}</div>
-                  <p>{t('settings.remote.security.1')}</p>
-                  <p>{t('settings.remote.security.2')}</p>
-                  <p>{t('settings.remote.security.3')}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+          <div className="flex gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-4">
+            <ShieldAlert className="h-5 w-5 shrink-0 text-amber-500" />
+            <div className="space-y-1.5 text-xs text-muted-foreground leading-relaxed">
+              <div className="text-sm font-medium text-foreground">{t('settings.remote.security.title')}</div>
+              <p>{t('settings.remote.security.1')}</p>
+              <p>{t('settings.remote.security.2')}</p>
+              <p>{t('settings.remote.security.3')}</p>
+            </div>
+          </div>
         </>
       )}
 

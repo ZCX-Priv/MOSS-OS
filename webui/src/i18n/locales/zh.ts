@@ -245,7 +245,7 @@ export const zh = {
       voiceProviderFailed: '默认语音服务商更新失败',
       voiceModelFailed: '默认模型更新失败',
       voiceDownloading: '已开始下载，请等待完成',
-      voiceInstallFailed: '模型下载失败',
+      voiceInstallFailed: '模型安装失败（下载或解压）',
       voiceUninstallFailed: '模型卸载失败',
       noMatch: '没有匹配的服务商',
       empty: '暂无服务商，点击右上角"添加服务商"',
@@ -671,6 +671,7 @@ export const zh = {
       deleteFailed: '规则删除失败',
     },
     hooks: {
+      subtitle: '配置生命周期事件钩子，在会话/用户消息/工具调用等节点执行自定义脚本或模块',
       engineTitle: '钩子引擎',
       engineDesc: '生命周期事件钩子：shell 命令（JSON stdin/stdout）或 TS 模块；PreToolUse/UserPromptSubmit 可阻止动作，失败自动放行',
       enabledDesc: '关闭后所有钩子不再执行（定义保留）',
@@ -839,6 +840,8 @@ export const zh = {
     others: '其他',
     collapseRightPanel: '收起侧边栏',
     expandRightPanel: '展开侧边栏',
+    scrollTabsLeft: '向左滚动标签',
+    scrollTabsRight: '向右滚动标签',
     newTask: '新任务',
     emptyMessage: '发送消息开始任务',
     fileIndexBuilding: '文件索引构建中 · {{engine}} {{percent}}%',
@@ -931,6 +934,12 @@ export const zh = {
     toolCallArguments: '参数',
     errorResult: '错误结果',
     result: '结果',
+  },
+  start: {
+    title: '开始',
+    summaryDesc: '查看任务待办与上下文构成',
+    terminalDesc: '在会话工作区运行命令',
+    agenteamDesc: '多智能体协作处理复杂任务',
   },
   terminal: {
     title: '终端',

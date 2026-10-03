@@ -11,6 +11,7 @@ import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import {
+  Box,
   Plus,
   Search,
   Trash2,
@@ -332,22 +333,31 @@ export function ProviderSettings() {
     <div className="flex flex-col gap-6 p-6">
       {/* 页头：移动端筛选独占一行（搜索/添加收纳进全局 header 按钮）；桌面端单行紧凑 */}
       <div className="flex flex-col gap-3">
-        <div className="flex flex-col gap-0.5">
+        <div className="flex flex-col gap-1">
           <h1 className="text-xl font-semibold text-foreground">
             {t('settings.provider.title')}
           </h1>
-          <p className="text-xs text-muted-foreground">{t('settings.provider.subtitle')}</p>
+          <p className="text-sm text-muted-foreground">{t('settings.provider.subtitle')}</p>
         </div>
 
-        {/* 类别胶囊导航：模型 / 搜索 / 语音（同「上下文」区 TabsList 胶囊样式） */}
+        {/* 类别胶囊导航：模型 / 搜索 / 语音（带图标，同「上下文」「外观」区 TabsList 样式） */}
         <Tabs
           value={category}
           onValueChange={(v) => setCategory(v as 'model' | 'search' | 'voice')}
         >
           <TabsList>
-            <TabsTrigger value="model">{t('settings.provider.categoryModel')}</TabsTrigger>
-            <TabsTrigger value="search">{t('settings.provider.categorySearch')}</TabsTrigger>
-            <TabsTrigger value="voice">{t('settings.provider.categoryVoice')}</TabsTrigger>
+            <TabsTrigger value="model" className="gap-1.5">
+              <Box className="size-3.5" />
+              {t('settings.provider.categoryModel')}
+            </TabsTrigger>
+            <TabsTrigger value="search" className="gap-1.5">
+              <Search className="size-3.5" />
+              {t('settings.provider.categorySearch')}
+            </TabsTrigger>
+            <TabsTrigger value="voice" className="gap-1.5">
+              <Mic className="size-3.5" />
+              {t('settings.provider.categoryVoice')}
+            </TabsTrigger>
           </TabsList>
         </Tabs>
 

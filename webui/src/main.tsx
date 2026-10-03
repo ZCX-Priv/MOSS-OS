@@ -61,8 +61,7 @@ const PERSISTED_KEYS = [
   'moss-send-shortcut',
   'moss-follow-up-behavior',
   'moss-permission-mode',
-  'moss-sidebar-tabs',
-  'moss-active-sidebar-tab',
+  'moss-sidebar-tabs-by-session',
   'moss-render-settings',
   'moss-animation-settings',
   // 排队消息队列：刷新后队列不丢，任务结束后按序继续投递
@@ -157,12 +156,9 @@ function buildPersistedState(data: Record<string, unknown>): PersistedState {
       data['moss-permission-mode'] === 'skip'
         ? (data['moss-permission-mode'] as 'ask' | 'auto' | 'skip')
         : undefined,
-    sidebarTabs: Array.isArray(data['moss-sidebar-tabs'])
-      ? (data['moss-sidebar-tabs'] as PersistedState['sidebarTabs'])
-      : undefined,
-    activeSidebarTabId:
-      typeof data['moss-active-sidebar-tab'] === 'string'
-        ? (data['moss-active-sidebar-tab'] as string)
+    sidebarTabsBySession:
+      data['moss-sidebar-tabs-by-session'] && typeof data['moss-sidebar-tabs-by-session'] === 'object'
+        ? (data['moss-sidebar-tabs-by-session'] as PersistedState['sidebarTabsBySession'])
         : undefined,
     renderSettings: isValidRenderSettings(data['moss-render-settings'])
       ? data['moss-render-settings']

@@ -255,6 +255,12 @@ export function HooksSettingsSection() {
 
   return (
     <div className="flex flex-col gap-6 p-6">
+      {/* 页头（与其它设置子页统一：h1 + 副标题） */}
+      <div className="flex flex-col gap-1">
+        <h1 className="text-xl font-semibold text-foreground">{t('settings.nav.hooks')}</h1>
+        <p className="text-sm text-muted-foreground">{t('settings.hooks.subtitle')}</p>
+      </div>
+
       {/* 引擎配置 */}
       <div className="flex flex-col gap-1">
         <div className="text-sm font-medium text-foreground">{t('settings.hooks.engineTitle')}</div>

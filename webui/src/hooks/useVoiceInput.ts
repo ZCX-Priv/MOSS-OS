@@ -141,41 +141,6 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
   /** 就绪前缓冲的音频帧 */
   const pendingFramesRef = useRef<ArrayBuffer[]>([]);
 
-  /** WS 语音事件订阅 */
-  useEffect(() => {
-    const off = wsClient.onMessage((msg) => {
-      const type = (msg as { type?: string }).type;
-      if (!type || !type.startsWith('voice.')) return;
-      const payload = (msg as { payload?: { text?: string; error?: string } }).payload;
-      switch (type) {
-        case 'voice.partial':
-          if (payload?.text) onPartialRef.current(payload.text);
-          break;
-        case 'voice.final':
-          if (payload?.text) onFinalRef.current(payload.text);
-          break;
-        case 'voice.ready': {
-          setBusy(false);
-          readyRef.current = true;
-          // 冲刷就绪前缓冲的音频帧（保证开头语音不丢）
-          const pending = pendingFramesRef.current;
-          pendingFramesRef.current = [];
-          for (const buf of pending) wsClient.sendBinary(buf);
-          break;
-        }
-        case 'voice.error':
-          setBusy(false);
-          onErrorRef.current?.(payload?.error ?? 'VOICE_ERROR');
-          break;
-        case 'voice.stopped':
-          break;
-        default:
-          break;
-      }
-    });
-    return off;
-  }, []);
-
   /** 释放采集资源（幂等） */
   const teardown = useCallback(() => {
     if (rafRef.current !== null) {
@@ -201,6 +166,44 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
     if (ctx) void ctx.close().catch(() => undefined);
     setLevel(0);
   }, []);
+
+  /** WS 语音事件订阅 */
+  useEffect(() => {
+    const off = wsClient.onMessage((msg) => {
+      const type = (msg as { type?: string }).type;
+      if (!type || !type.startsWith('voice.')) return;
+      const payload = (msg as { payload?: { text?: string; error?: string } }).payload;
+      switch (type) {
+        case 'voice.partial':
+          if (payload?.text) onPartialRef.current(payload.text);
+          break;
+        case 'voice.final':
+          if (payload?.text) onFinalRef.current(payload.text);
+          break;
+        case 'voice.ready': {
+          setBusy(false);
+          readyRef.current = true;
+          // 冲刷就绪前缓冲的音频帧（保证开头语音不丢）
+          const pending = pendingFramesRef.current;
+          pendingFramesRef.current = [];
+          for (const buf of pending) wsClient.sendBinary(buf);
+          break;
+        }
+        case 'voice.error':
+          // 会话创建/识别失败：必须退出录音态并释放麦克风，否则会一直占着麦克风
+          teardown();
+          setRecording(false);
+          setBusy(false);
+          onErrorRef.current?.(payload?.error ?? 'VOICE_ERROR');
+          break;
+        case 'voice.stopped':
+          break;
+        default:
+          break;
+      }
+    });
+    return off;
+  }, [teardown]);
 
   const stop = useCallback(() => {
     if (!recording) return;

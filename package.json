@@ -47,6 +47,7 @@
     "tar": "^7.5.22",
     "trash": "^10.1.1",
     "tree-sitter-wasm": "^1.1.4",
+    "unbzip2-stream": "^1.4.3",
     "web-tree-sitter": "^0.26.13",
     "word-extractor": "^1.0.4",
     "xlsx": "^0.18.5",
@@ -55,6 +56,7 @@
   "devDependencies": {
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
+    "@types/unbzip2-stream": "^1.4.3",
     "@vitejs/plugin-react": "^4.3.4",
     "bun-types": "^1.1.42",
     "react": "^18.3.1",

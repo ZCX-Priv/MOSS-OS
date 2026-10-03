@@ -13,6 +13,7 @@ import { VOICE_MODEL_CATALOG, defaultModelId, findModelDef } from './catalog';
 import { downloadAndExtract } from './downloader';
 import { SAMPLE_RATE, createLocalSession, listFilesRecursive, loadSherpa, sherpaVersion } from './engine';
 import type {
+  VoiceModelDef,
   VoiceModelStatus,
   VoiceResult,
   VoiceService,
@@ -166,6 +167,8 @@ export class VoiceServiceImpl implements VoiceService {
   private readonly installing = new Map<string, number>();
   /** 安装失败信息（id → message） */
   private readonly installErrors = new Map<string, string>();
+  /** 安装串行队列尾部：同一时刻只允许一个模型下载/解压 */
+  private installTail: Promise<void> = Promise.resolve();
   private runtime: Awaited<ReturnType<typeof loadSherpa>> = null;
 
   constructor(private readonly deps: VoiceServiceDeps) {
@@ -213,6 +216,17 @@ export class VoiceServiceImpl implements VoiceService {
     }
   }
 
+  /**
+   * 当前有效本地模型：优先「已配置且已安装」→ 任一已安装 → 目录默认项。
+   * 避免卸载默认模型后回退到一个并未安装的模型，导致语音整体不可用。
+   */
+  private activeModelId(): string {
+    const cfg = this.voiceCfg();
+    if (cfg.localModel && this.isInstalled(cfg.localModel)) return cfg.localModel;
+    const installed = VOICE_MODEL_CATALOG.find((m) => this.isInstalled(m.id));
+    return installed ? installed.id : defaultModelId();
+  }
+
   getStatus(): VoiceStatus {
     const cfg = this.voiceCfg();
     const installed = VOICE_MODEL_CATALOG.filter((m) => this.isInstalled(m.id)).map((m) => m.id);
@@ -220,7 +234,7 @@ export class VoiceServiceImpl implements VoiceService {
       enabled: cfg.enabled,
       runtimeAvailable: Boolean(this.runtime),
       runtimeVersion: this.runtime ? sherpaVersion(this.runtime) : undefined,
-      defaultModel: cfg.localModel || defaultModelId(),
+      defaultModel: this.activeModelId(),
       installed,
       providerId: cfg.providerId,
     };
@@ -277,7 +291,27 @@ export class VoiceServiceImpl implements VoiceService {
     if (this.installing.has(id)) throw new Error('该模型正在下载中');
 
     this.installErrors.delete(id);
+    // 入队即置 0：排队中的模型在 UI 上有确定状态（而非无进度地空转）
     this.installing.set(id, 0);
+
+    // 串行执行：并发大文件下载会互相拖慢甚至卡死（且共享镜像带宽），故排队而非并行
+    const run = this.installTail.then(() => this.runInstall(def, onProgress));
+    this.installTail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  /** 实际安装主体（在串行队列内执行） */
+  private async runInstall(def: VoiceModelDef, onProgress?: (p: number) => void): Promise<void> {
+    const id = def.id;
+    // 排队期间可能已被其它路径装好
+    if (this.isInstalled(id)) {
+      this.installing.delete(id);
+      onProgress?.(1);
+      return;
+    }
     try {
       mkdirSync(this.modelsRoot, { recursive: true });
       await downloadAndExtract(def, this.modelsRoot, (p) => {
@@ -330,7 +364,7 @@ export class VoiceServiceImpl implements VoiceService {
     }
 
     // 本地引擎
-    const id = modelId || cfg.localModel || defaultModelId();
+    const id = modelId || this.activeModelId();
     const def = findModelDef(id);
     if (!def) throw new Error(`未知模型：${id}`);
     if (!this.isInstalled(id)) throw new Error(`模型未安装：${id}`);

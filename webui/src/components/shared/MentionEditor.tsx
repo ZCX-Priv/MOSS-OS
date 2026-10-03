@@ -281,6 +281,16 @@ function normalizeNbsp(root: HTMLElement): void {
   });
 }
 
+/** 构造语音草稿的 DOM 节点序列：换行按 <br> 插入（与 wire 口径长度一致） */
+function buildVoiceNodes(text: string): Node[] {
+  const nodes: Node[] = [];
+  text.split('\n').forEach((part, i) => {
+    if (i > 0) nodes.push(document.createElement('br'));
+    if (part) nodes.push(document.createTextNode(part));
+  });
+  return nodes;
+}
+
 /** 在光标处插入节点序列，并把光标落到插入内容之后 */
 function insertNodesAtCaret(root: HTMLElement, nodes: Node[]): void {
   const sel = window.getSelection();
@@ -643,37 +653,43 @@ export const MentionEditor = forwardRef<MentionEditorHandle, MentionEditorProps>
     (text: string) => {
       const root = rootRef.current;
       if (!root) return;
+      // 是否聚焦只影响「锚点取光标还是取末尾」与「是否移动光标」，
+      // 不再调用 root.focus()：异步 WS 回调里抢焦点会破坏选区，导致文本不入框。
+      const focused = document.activeElement === root;
       if (voiceAnchorRef.current === null) {
-        root.focus();
-        voiceAnchorRef.current = caretOffset(root, 'wire') ?? serializeRoot(root, 'wire').length;
+        const caret = focused ? caretOffset(root, 'wire') : null;
+        voiceAnchorRef.current = caret ?? serializeRoot(root, 'wire').length;
         voiceDraftLenRef.current = 0;
       }
       const anchor = voiceAnchorRef.current;
       const range = offsetToRange(root, anchor, anchor + voiceDraftLenRef.current, 'wire');
       range.deleteContents();
 
-      const nodes: Node[] = [];
-      const parts = text.split('\n');
-      parts.forEach((part, i) => {
-        if (i > 0) nodes.push(document.createElement('br'));
-        if (part) nodes.push(document.createTextNode(part));
-      });
       const frag = document.createDocumentFragment();
-      nodes.forEach((n) => frag.appendChild(n));
+      buildVoiceNodes(text).forEach((n) => frag.appendChild(n));
       const insertAt = document.createRange();
       insertAt.setStart(range.startContainer, range.startOffset);
       insertAt.collapse(true);
       insertAt.insertNode(frag);
 
-      // 光标落到草稿末尾（按 wire 口径重算，避免插入后旧 range 失效）
-      const end = offsetToRange(root, anchor + text.length, anchor + text.length, 'wire');
-      const sel = window.getSelection();
-      if (sel) {
-        const after = document.createRange();
-        after.setStart(end.startContainer, end.startOffset);
-        after.collapse(true);
-        sel.removeAllRanges();
-        sel.addRange(after);
+      // 校验：锚点/选区计算异常时兜底追加，保证识别文本一定上屏
+      if (!wireValue(root).includes(text)) {
+        const before = wireValue(root).length;
+        insertNodesAtCaret(root, buildVoiceNodes(text));
+        voiceAnchorRef.current = before;
+      }
+
+      // 仅在编辑器本就有焦点时把光标落到草稿末尾（未聚焦不动选区）
+      if (focused) {
+        const end = offsetToRange(root, anchor + text.length, anchor + text.length, 'wire');
+        const sel = window.getSelection();
+        if (sel) {
+          const after = document.createRange();
+          after.setStart(end.startContainer, end.startOffset);
+          after.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(after);
+        }
       }
       voiceDraftLenRef.current = text.length;
       syncFromDom();

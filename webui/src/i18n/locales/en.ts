@@ -245,7 +245,7 @@ export const en = {
       voiceProviderFailed: 'Failed to update default voice provider',
       voiceModelFailed: 'Failed to update default model',
       voiceDownloading: 'Download started, please wait',
-      voiceInstallFailed: 'Failed to download model',
+      voiceInstallFailed: 'Failed to install model (download or extraction)',
       voiceUninstallFailed: 'Failed to uninstall model',
       noMatch: 'No matching providers',
       empty: 'No providers yet. Click "Add Provider" in the top right',
@@ -670,6 +670,7 @@ export const en = {
       deleteFailed: 'Failed to delete rule',
     },
     hooks: {
+      subtitle: 'Configure lifecycle event hooks that run custom scripts or modules on session, prompt, and tool events',
       engineTitle: 'Hooks Engine',
       engineDesc: 'Lifecycle event hooks: shell commands (JSON stdin/stdout) or TS modules; PreToolUse/UserPromptSubmit can block actions; failures fail-open',
       enabledDesc: 'When off, no hooks are executed (definitions are preserved)',
@@ -838,6 +839,8 @@ export const en = {
     others: 'Others',
     collapseRightPanel: 'Collapse Sidebar',
     expandRightPanel: 'Expand Sidebar',
+    scrollTabsLeft: 'Scroll tabs left',
+    scrollTabsRight: 'Scroll tabs right',
     fileIndexBuilding: 'Building file index · {{engine}} {{percent}}%',
     newTask: 'New Task',
     emptyMessage: 'Send a message to start',
@@ -930,6 +933,12 @@ export const en = {
     toolCallArguments: 'Arguments',
     errorResult: 'Error result',
     result: 'Result',
+  },
+  start: {
+    title: 'Start',
+    summaryDesc: 'View todos and context composition',
+    terminalDesc: 'Run commands in the session workspace',
+    agenteamDesc: 'Multi-agent collaboration for complex tasks',
   },
   terminal: {
     title: 'Terminal',

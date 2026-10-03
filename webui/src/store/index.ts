@@ -191,9 +191,9 @@ interface UIState {
   /** 会话级权限模式覆盖（sessionId → mode；sendMessage 取当前会话值，缺省回退全局） */
   permissionModeBySession: Record<string, PermissionMode | undefined>;
 
-  // --- 右侧边栏标签页（全局，IndexedDB 持久化） ---
-  sidebarTabs: SidebarTab[];
-  activeSidebarTabId: string | null;
+  // --- 右侧边栏标签页（会话级，IndexedDB 持久化） ---
+  /** taskId → 标签集合与活跃标签（各会话独立；'' key = 空白页，无记录时回退默认「开始」） */
+  sidebarTabsBySession: Record<string, SessionSidebarTabs | undefined>;
   /** 右侧面板展开态（会话级内存态：各会话独立互不影响，重挂载不重置；'' key = 空白页） */
   rightPanelOpenBySession: Record<string, boolean | undefined>;
   /** 右侧面板宽度 px（全局内存态；UI 偏好跨会话共享，拖拽调宽后重挂载不重置） */
@@ -219,8 +219,8 @@ export interface PersistedState {
   cornerRadius?: 'small' | 'standard' | 'large';
   sidebarStyle?: 'narrow' | 'standard' | 'wide';
   permissionMode?: PermissionMode;
-  sidebarTabs?: SidebarTab[];
-  activeSidebarTabId?: string;
+  /** 右侧边栏标签页（会话级持久化；不持久化 '' 键） */
+  sidebarTabsBySession?: Record<string, SessionSidebarTabs>;
   renderSettings?: RenderSettings;
   animationSettings?: AnimationSettings;
   /** 排队消息队列（sessionId → 待发送消息）：刷新后不丢，按序继续投递 */
@@ -446,19 +446,21 @@ interface UIActions {
   skillsRefreshSeq: number;
   requestSkillsRefresh: () => void;
 
-  // 右侧边栏标签页
+  // 右侧边栏标签页（全部按会话隔离，首参为 sessionId）
   /** 新建标签页，返回新标签 id；自动设为活跃 */
-  addSidebarTab: (type: SidebarTabType, title: string, toolCallId?: string) => string;
+  addSidebarTab: (sessionId: string, type: SidebarTabType, title: string, toolCallId?: string) => string;
   /** 以文件预览标签打开路径（同一路径已打开则聚焦，不重复建页）；返回标签 id */
-  openFileTab: (path: string) => string;
-  /** 删除标签页；若删的是活跃标签则自动切到最后一个；删空则重建默认 summary */
-  removeSidebarTab: (id: string) => void;
+  openFileTab: (sessionId: string, path: string) => string;
+  /** 删除标签页；若删的是活跃标签则自动切到最后一个；删空则重建默认「开始」 */
+  removeSidebarTab: (sessionId: string, id: string) => void;
   /** 设置活跃标签页 */
-  setActiveSidebarTab: (id: string) => void;
+  setActiveSidebarTab: (sessionId: string, id: string) => void;
   /** 重命名标签页 */
-  renameSidebarTab: (id: string, title: string) => void;
+  renameSidebarTab: (sessionId: string, id: string, title: string) => void;
   /** 拖拽重排标签页顺序 */
-  reorderSidebarTabs: (fromId: string, toId: string) => void;
+  reorderSidebarTabs: (sessionId: string, fromId: string, toId: string) => void;
+  /** 重置某会话标签为默认「开始」（新建任务空白页用） */
+  resetSidebarTabs: (sessionId: string) => void;
 
   // 右侧面板展开态（会话级）/ 宽度（全局），内存态不持久化
   setRightPanelOpen: (sessionId: string, v: boolean) => void;
@@ -485,12 +487,12 @@ export const DEFAULT_WORKING_DIRECTORY = SYSTEM_WORKING_DIRECTORY;
 /** 旧版默认工作目录（C 盘根）：IndexedDB 存量值迁移用 */
 export const LEGACY_DEFAULT_WORKING_DIRECTORY = 'C:\\';
 
-/** 默认右侧边栏 summary 标签 */
+/** 默认右侧边栏「开始」标签（面板启动器：任务摘要 / 终端 / 专家团） */
 function defaultSidebarTab(): SidebarTab {
   return {
-    id: 'default-summary',
-    type: 'summary',
-    title: 'task.taskSummary',
+    id: 'default-start',
+    type: 'start',
+    title: 'start.title',
     createdAt: Date.now(),
   };
 }
@@ -500,6 +502,30 @@ function newTabId(): string {
   return typeof crypto !== 'undefined' && 'randomUUID' in crypto
     ? crypto.randomUUID()
     : `tab-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** 单个会话的右侧边栏标签状态 */
+export interface SessionSidebarTabs {
+  tabs: SidebarTab[];
+  activeId: string | null;
+}
+
+/** 无记录会话的只读回退（仅「开始」）；勿就地修改 */
+export const DEFAULT_SIDEBAR_TABS: SidebarTab[] = [defaultSidebarTab()];
+
+/** 生成某会话的默认标签状态（深拷贝默认标签，避免跨会话共享同一 tab 对象引用） */
+function defaultSessionTabs(): SessionSidebarTabs {
+  return {
+    tabs: DEFAULT_SIDEBAR_TABS.map((t) => ({ ...t })),
+    activeId: DEFAULT_SIDEBAR_TABS[0].id,
+  };
+}
+
+/** 持久化按会话标签状态：过滤 '' 键（空白页）与空值，避免新对话复活旧标签 */
+function persistSidebarTabs(map: Record<string, SessionSidebarTabs | undefined>): void {
+  const clean: Record<string, SessionSidebarTabs> = {};
+  for (const [k, v] of Object.entries(map)) if (k && v) clean[k] = v;
+  void idbSet('moss-sidebar-tabs-by-session', clean);
 }
 
 // ============================================================================
@@ -613,9 +639,8 @@ export const useStore = create<Store>((set, get) => ({
   skillsDialogRequest: false,
   skillsRefreshSeq: 0,
 
-  // --- 右侧边栏标签页（IndexedDB 持久化） ---
-  sidebarTabs: [defaultSidebarTab()],
-  activeSidebarTabId: 'default-summary',
+  // --- 右侧边栏标签页（会话级，IndexedDB 持久化；无记录的会话回退默认「开始」） ---
+  sidebarTabsBySession: {},
 
   // --- 右侧面板展开态/宽度（内存态；默认收起 320px） ---
   rightPanelOpenBySession: {},
@@ -640,6 +665,7 @@ export const useStore = create<Store>((set, get) => ({
       const { [id]: _omitStats, ...restStats } = state.runStatsBySession;
       const { [id]: _omitHub, ...restHub } = state.hubActiveModuleBySession;
       const { [id]: _omitPanel, ...restPanel } = state.rightPanelOpenBySession;
+      const { [id]: _omitTabs, ...restTabs } = state.sidebarTabsBySession;
       return {
         sessions: state.sessions.filter((s) => s.id !== id),
         messagesBySession: restMessages,
@@ -655,6 +681,7 @@ export const useStore = create<Store>((set, get) => ({
         runStatsBySession: restStats,
         hubActiveModuleBySession: restHub,
         rightPanelOpenBySession: restPanel,
+        sidebarTabsBySession: restTabs,
         activeSessionId: state.activeSessionId === id ? null : state.activeSessionId,
       };
     }),
@@ -1260,24 +1287,36 @@ export const useStore = create<Store>((set, get) => ({
   requestSkillsRefresh: () => set((state) => ({ skillsRefreshSeq: state.skillsRefreshSeq + 1 })),
 
   // --- Actions: 右侧边栏标签页 ---
-  addSidebarTab: (type, title, toolCallId) => {
+  addSidebarTab: (sessionId, type, title, toolCallId) => {
     const id = newTabId();
     const tab: SidebarTab = { id, type, title, toolCallId, createdAt: Date.now() };
     set((state) => {
-      const tabs = [...state.sidebarTabs, tab];
-      void idbSet('moss-sidebar-tabs', tabs);
-      void idbSet('moss-active-sidebar-tab', id);
-      return { sidebarTabs: tabs, activeSidebarTabId: id };
+      const cur = state.sidebarTabsBySession[sessionId] ?? defaultSessionTabs();
+      const map = {
+        ...state.sidebarTabsBySession,
+        [sessionId]: { tabs: [...cur.tabs, tab], activeId: id },
+      };
+      persistSidebarTabs(map);
+      return { sidebarTabsBySession: map };
     });
     return id;
   },
 
-  openFileTab: (path) => {
-    // 同一路径已打开 → 聚焦已有标签，不重复建页
-    const existing = get().sidebarTabs.find((t) => t.type === 'file' && t.filePath === path);
+  openFileTab: (sessionId, path) => {
+    // 同一路径已打开 → 聚焦已有标签，不重复建页（仅限当前会话）
+    const existing = (get().sidebarTabsBySession[sessionId] ?? defaultSessionTabs()).tabs.find(
+      (t) => t.type === 'file' && t.filePath === path,
+    );
     if (existing) {
-      void idbSet('moss-active-sidebar-tab', existing.id);
-      set({ activeSidebarTabId: existing.id });
+      set((state) => {
+        const cur = state.sidebarTabsBySession[sessionId] ?? defaultSessionTabs();
+        const map = {
+          ...state.sidebarTabsBySession,
+          [sessionId]: { tabs: cur.tabs, activeId: existing.id },
+        };
+        persistSidebarTabs(map);
+        return { sidebarTabsBySession: map };
+      });
       return existing.id;
     }
     const id = newTabId();
@@ -1289,55 +1328,81 @@ export const useStore = create<Store>((set, get) => ({
       createdAt: Date.now(),
     };
     set((state) => {
-      const tabs = [...state.sidebarTabs, tab];
-      void idbSet('moss-sidebar-tabs', tabs);
-      void idbSet('moss-active-sidebar-tab', id);
-      return { sidebarTabs: tabs, activeSidebarTabId: id };
+      const cur = state.sidebarTabsBySession[sessionId] ?? defaultSessionTabs();
+      const map = {
+        ...state.sidebarTabsBySession,
+        [sessionId]: { tabs: [...cur.tabs, tab], activeId: id },
+      };
+      persistSidebarTabs(map);
+      return { sidebarTabsBySession: map };
     });
     return id;
   },
 
-  removeSidebarTab: (id) =>
+  removeSidebarTab: (sessionId, id) =>
     set((state) => {
-      let tabs = state.sidebarTabs.filter((t) => t.id !== id);
-      let activeId = state.activeSidebarTabId;
-      // 删空则重建默认 summary 标签
+      const cur = state.sidebarTabsBySession[sessionId] ?? defaultSessionTabs();
+      let tabs = cur.tabs.filter((t) => t.id !== id);
+      let activeId = cur.activeId;
+      // 删空则重建默认「开始」标签
       if (tabs.length === 0) {
-        tabs = [defaultSidebarTab()];
-        activeId = 'default-summary';
+        const def = defaultSessionTabs();
+        tabs = def.tabs;
+        activeId = def.activeId;
       } else if (activeId === id) {
         // 删的是活跃标签 → 切到最后一个
         activeId = tabs[tabs.length - 1].id;
       }
-      void idbSet('moss-sidebar-tabs', tabs);
-      void idbSet('moss-active-sidebar-tab', activeId ?? '');
-      return { sidebarTabs: tabs, activeSidebarTabId: activeId };
+      const map = { ...state.sidebarTabsBySession, [sessionId]: { tabs, activeId } };
+      persistSidebarTabs(map);
+      return { sidebarTabsBySession: map };
     }),
 
-  setActiveSidebarTab: (id) => {
-    void idbSet('moss-active-sidebar-tab', id);
-    set({ activeSidebarTabId: id });
-  },
-
-  renameSidebarTab: (id, title) =>
+  setActiveSidebarTab: (sessionId, id) =>
     set((state) => {
-      const tabs = state.sidebarTabs.map((t) =>
-        t.id === id ? { ...t, title } : t,
-      );
-      void idbSet('moss-sidebar-tabs', tabs);
-      return { sidebarTabs: tabs };
+      const cur = state.sidebarTabsBySession[sessionId] ?? defaultSessionTabs();
+      const map = {
+        ...state.sidebarTabsBySession,
+        [sessionId]: { tabs: cur.tabs, activeId: id },
+      };
+      persistSidebarTabs(map);
+      return { sidebarTabsBySession: map };
     }),
 
-  reorderSidebarTabs: (fromId, toId) =>
+  renameSidebarTab: (sessionId, id, title) =>
     set((state) => {
-      const from = state.sidebarTabs.findIndex((t) => t.id === fromId);
-      const to = state.sidebarTabs.findIndex((t) => t.id === toId);
+      const cur = state.sidebarTabsBySession[sessionId] ?? defaultSessionTabs();
+      const tabs = cur.tabs.map((t) => (t.id === id ? { ...t, title } : t));
+      const map = {
+        ...state.sidebarTabsBySession,
+        [sessionId]: { tabs, activeId: cur.activeId },
+      };
+      persistSidebarTabs(map);
+      return { sidebarTabsBySession: map };
+    }),
+
+  reorderSidebarTabs: (sessionId, fromId, toId) =>
+    set((state) => {
+      const cur = state.sidebarTabsBySession[sessionId] ?? defaultSessionTabs();
+      const from = cur.tabs.findIndex((t) => t.id === fromId);
+      const to = cur.tabs.findIndex((t) => t.id === toId);
       if (from < 0 || to < 0 || from === to) return state;
-      const tabs = [...state.sidebarTabs];
+      const tabs = [...cur.tabs];
       const [moved] = tabs.splice(from, 1);
       tabs.splice(to, 0, moved);
-      void idbSet('moss-sidebar-tabs', tabs);
-      return { sidebarTabs: tabs };
+      const map = {
+        ...state.sidebarTabsBySession,
+        [sessionId]: { tabs, activeId: cur.activeId },
+      };
+      persistSidebarTabs(map);
+      return { sidebarTabsBySession: map };
+    }),
+
+  resetSidebarTabs: (sessionId) =>
+    set((state) => {
+      const map = { ...state.sidebarTabsBySession, [sessionId]: defaultSessionTabs() };
+      persistSidebarTabs(map);
+      return { sidebarTabsBySession: map };
     }),
 
   // --- Actions: 右侧面板展开态/宽度（内存态，不持久化） ---
@@ -1351,7 +1416,15 @@ export const useStore = create<Store>((set, get) => ({
       if (fromSessionId === toSessionId) return state;
       const fromOpen = state.rightPanelOpenBySession[fromSessionId] ?? false;
       const { [fromSessionId]: _omit, ...rest } = state.rightPanelOpenBySession;
-      return { rightPanelOpenBySession: { ...rest, [toSessionId]: fromOpen } };
+      // 标签状态随对话转移（'' 空白页 → 新会话）
+      const fromTabs = state.sidebarTabsBySession[fromSessionId];
+      const { [fromSessionId]: _omitTabs, ...restTabs } = state.sidebarTabsBySession;
+      const nextTabs = fromTabs ? { ...restTabs, [toSessionId]: fromTabs } : restTabs;
+      persistSidebarTabs(nextTabs);
+      return {
+        rightPanelOpenBySession: { ...rest, [toSessionId]: fromOpen },
+        sidebarTabsBySession: nextTabs,
+      };
     }),
 
   // --- Actions: 持久化状态注入 ---
@@ -1395,11 +1468,19 @@ export const useStore = create<Store>((set, get) => ({
       ) {
         next.permissionMode = patch.permissionMode;
       }
-      if (Array.isArray(patch.sidebarTabs) && patch.sidebarTabs.length > 0) {
-        next.sidebarTabs = patch.sidebarTabs;
-      }
-      if (typeof patch.activeSidebarTabId === 'string' && patch.activeSidebarTabId.length > 0) {
-        next.activeSidebarTabId = patch.activeSidebarTabId;
+      // 右侧边栏标签页（会话级）：校验并注入按会话 map；无记录的会话运行时回退默认「开始」
+      if (patch.sidebarTabsBySession && typeof patch.sidebarTabsBySession === 'object') {
+        const clean: Record<string, SessionSidebarTabs> = {};
+        for (const [k, v] of Object.entries(patch.sidebarTabsBySession)) {
+          if (!k || !v || !Array.isArray(v.tabs) || v.tabs.length === 0) continue;
+          const tabs = v.tabs as SidebarTab[];
+          const activeId =
+            typeof v.activeId === 'string' && tabs.some((t) => t.id === v.activeId)
+              ? v.activeId
+              : tabs[0].id;
+          clean[k] = { tabs, activeId };
+        }
+        next.sidebarTabsBySession = clean;
       }
       if (isValidRenderSettings(patch.renderSettings)) {
         next.renderSettings = patch.renderSettings;

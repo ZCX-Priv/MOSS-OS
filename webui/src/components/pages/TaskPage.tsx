@@ -4,6 +4,8 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import {
   ChevronRight,
+  ChevronLeft,
+  Compass,
   FileText,
   Info,
   List,
@@ -96,7 +98,7 @@ import { ControlHub } from '../shared/ControlHub';
 import { StatsBar } from '../shared/StatsBar';
 import { CompactionCard } from '../shared/CompactionCard';
 import { MaxTurnsNoticeCard } from '../shared/MaxTurnsNoticeCard';
-import { useStore } from '../../store';
+import { useStore, DEFAULT_SIDEBAR_TABS } from '../../store';
 import { useTask } from '../../hooks/useTask';
 import { useFileIndex } from '../../hooks/useFileIndex';
 import { api } from '../../api/http';
@@ -191,7 +193,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
   const handleTabDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
-    reorderSidebarTabs(String(active.id), String(over.id));
+    reorderSidebarTabs(taskId, String(active.id), String(over.id));
   };
 
   const messages = useStore((s) => s.messagesBySession[taskId] ?? EMPTY_MESSAGES);
@@ -422,20 +424,23 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
   const [compactPreviewLoading, setCompactPreviewLoading] = useState(false);
   const [compacting, setCompacting] = useState(false);
 
-  const sidebarTabs = useStore((s) => s.sidebarTabs);
-  const activeSidebarTabId = useStore((s) => s.activeSidebarTabId);
+  // 右侧边栏标签页：按会话隔离（taskId → { tabs, activeId }）；无记录的会话回退默认「开始」
+  const sessionTabs = useStore((s) => s.sidebarTabsBySession[taskId]);
+  const sidebarTabs = useMemo(() => sessionTabs?.tabs ?? DEFAULT_SIDEBAR_TABS, [sessionTabs]);
+  const activeSidebarTabId = sessionTabs?.activeId ?? sidebarTabs[0]?.id ?? null;
   const addSidebarTab = useStore((s) => s.addSidebarTab);
   const removeSidebarTab = useStore((s) => s.removeSidebarTab);
   const setActiveSidebarTab = useStore((s) => s.setActiveSidebarTab);
   const reorderSidebarTabs = useStore((s) => s.reorderSidebarTabs);
   const openFileTab = useStore((s) => s.openFileTab);
+  const resetSidebarTabs = useStore((s) => s.resetSidebarTabs);
   const toolIconMap = useStore((s) => s.toolIconMap);
   const { sendMessage, abort } = useTask();
 
   // 点击消息流附件卡片：在右侧边栏打开该文件预览标签页并展开面板
   const openAttachment = useCallback(
     (path: string) => {
-      openFileTab(path);
+      openFileTab(taskId, path);
       setRightPanelOpen(taskId, true);
     },
     [openFileTab, setRightPanelOpen, taskId],
@@ -444,10 +449,45 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
   // 当前活跃标签对象
   const activeTab = sidebarTabs.find((t) => t.id === activeSidebarTabId) ?? sidebarTabs[0];
   // 下拉菜单只显示当前标签栏中未打开的标签页类型；两类都已打开时禁用加号按钮
+  const hasStartTab = sidebarTabs.some((tab) => tab.type === 'start');
   const hasSummaryTab = sidebarTabs.some((tab) => tab.type === 'summary');
   const hasTerminalTab = sidebarTabs.some((tab) => tab.type === 'terminal');
   const hasAgenteamTab = sidebarTabs.some((tab) => tab.type === 'agenteam');
-  const allTabTypesOpen = hasSummaryTab && hasTerminalTab && hasAgenteamTab;
+  const allTabTypesOpen = hasStartTab && hasSummaryTab && hasTerminalTab && hasAgenteamTab;
+
+  // 「开始」面板：打开/切换到某类型标签（已开则激活，未开则新建）
+  const openTabType = useCallback(
+    (type: 'summary' | 'terminal' | 'agenteam', titleKey: string) => {
+      const existing = sidebarTabs.find((tab) => tab.type === type);
+      if (existing) setActiveSidebarTab(taskId, existing.id);
+      else addSidebarTab(taskId, type, titleKey);
+    },
+    [sidebarTabs, addSidebarTab, setActiveSidebarTab, taskId],
+  );
+
+  // 标签栏单行横向滚动：哪边还有未滚动到内容，才渲染哪边的箭头（与附件栏同款规则）
+  const tabBarRef = useRef<HTMLDivElement>(null);
+  const [canScrollTabsLeft, setCanScrollTabsLeft] = useState(false);
+  const [canScrollTabsRight, setCanScrollTabsRight] = useState(false);
+  const updateTabBarArrows = useCallback(() => {
+    const el = tabBarRef.current;
+    if (!el) return;
+    const max = el.scrollWidth - el.clientWidth;
+    setCanScrollTabsLeft(el.scrollLeft > 1);
+    setCanScrollTabsRight(max > 1 && el.scrollLeft < max - 1);
+  }, []);
+  const scrollTabs = useCallback((dir: -1 | 1) => {
+    tabBarRef.current?.scrollBy({ left: dir * 220, behavior: 'smooth' });
+  }, []);
+  // 标签增删 / 会话切换 / 面板展开或调宽导致容器尺寸变化时重算箭头显隐
+  useEffect(() => {
+    const el = tabBarRef.current;
+    if (!el) return;
+    updateTabBarArrows();
+    const observer = new ResizeObserver(() => updateTabBarArrows());
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [sidebarTabs.length, taskId, rightPanelOpen, updateTabBarArrows]);
 
   // 隐藏会话标题兜底：store.tasks 无该任务（subagent / agenteam 衍生会话已被侧边栏过滤）时，
   // 直连 /api/tasks/:id 取标题；任务进入 store 后自动让位（task 存在则清空兜底）
@@ -584,6 +624,12 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
     contextTabUserTouchedRef.current = false;
     setContextTab('system');
   }, [taskId]);
+  // 进入空白页（新任务）时重置右侧边栏标签为默认「开始」（覆盖侧边栏/移动端各新任务入口）
+  const prevTabsTaskIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (taskId === '' && prevTabsTaskIdRef.current !== '') resetSidebarTabs('');
+    prevTabsTaskIdRef.current = taskId;
+  }, [taskId, resetSidebarTabs]);
   // 受控值防御：contextTab 指向的条件 tab（summary）消失时回退"系统"
   const contextTabValue =
     (contextTab === 'summary' && !contextStats?.breakdown?.summary)
@@ -751,6 +797,17 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
       {/* Panel Header：标签页栏 + 加号下拉菜单 */}
       <div className="flex h-12 items-center gap-2 border-b border-border px-3">
         {/* 标签页栏 */}
+        {/* 左滚动箭头：仅当左侧还有未滚动到内容时显示（与附件栏同款规则） */}
+        {canScrollTabsLeft && (
+          <button
+            type="button"
+            onClick={() => scrollTabs(-1)}
+            title={t('task.scrollTabsLeft')}
+            className="flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <ChevronLeft className="size-4" />
+          </button>
+        )}
         <DndContext
           sensors={tabSensors}
           collisionDetection={closestCenter}
@@ -758,20 +815,35 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
           onDragEnd={handleTabDragEnd}
         >
           <SortableContext items={sidebarTabs.map((t) => t.id)} strategy={horizontalListSortingStrategy}>
-            <div className="flex flex-1 items-center gap-1.5 overflow-x-auto no-scrollbar">
+            <div
+              ref={tabBarRef}
+              onScroll={updateTabBarArrows}
+              className="flex flex-1 items-center gap-1.5 overflow-x-auto no-scrollbar scroll-smooth"
+            >
               {sidebarTabs.map((tab) => (
                 <SortableTab
                   key={tab.id}
                   tab={tab}
                   isActive={tab.id === activeTab?.id}
                   canShowClose={sidebarTabs.length > 1}
-                  onSelect={setActiveSidebarTab}
-                  onRemove={removeSidebarTab}
+                  onSelect={(id) => setActiveSidebarTab(taskId, id)}
+                  onRemove={(id) => removeSidebarTab(taskId, id)}
                 />
               ))}
             </div>
           </SortableContext>
         </DndContext>
+        {/* 右滚动箭头：仅当右侧还有未滚动到内容时显示 */}
+        {canScrollTabsRight && (
+          <button
+            type="button"
+            onClick={() => scrollTabs(1)}
+            title={t('task.scrollTabsRight')}
+            className="flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <ChevronRight className="size-4" />
+          </button>
+        )}
         {/* 加号下拉菜单：新建标签页（仅显示当前标签栏中未打开的类型） */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -785,9 +857,17 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" sideOffset={4} collisionPadding={8}>
+            {!hasStartTab && (
+              <DropdownMenuItem
+                onSelect={() => addSidebarTab(taskId, 'start', 'start.title')}
+              >
+                <Compass className="size-4" />
+                {t('start.title')}
+              </DropdownMenuItem>
+            )}
             {!hasSummaryTab && (
               <DropdownMenuItem
-                onSelect={() => addSidebarTab('summary', 'task.taskSummary')}
+                onSelect={() => addSidebarTab(taskId, 'summary', 'task.taskSummary')}
               >
                 <List className="size-4" />
                 {t('task.taskSummary')}
@@ -795,7 +875,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
             )}
             {!hasTerminalTab && (
               <DropdownMenuItem
-                onSelect={() => addSidebarTab('terminal', 'terminal.title')}
+                onSelect={() => addSidebarTab(taskId, 'terminal', 'terminal.title')}
               >
                 <Terminal className="size-4" />
                 {t('terminal.title')}
@@ -803,7 +883,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
             )}
             {!hasAgenteamTab && (
               <DropdownMenuItem
-                onSelect={() => addSidebarTab('agenteam', 'agenteam.title')}
+                onSelect={() => addSidebarTab(taskId, 'agenteam', 'agenteam.title')}
               >
                 <Users className="size-4" />
                 {t('agenteam.title')}
@@ -815,6 +895,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
 
       {/* 标签内容路由 */}
       <div className="flex flex-1 flex-col overflow-hidden">
+        {activeTab?.type === 'start' && <StartPanel onOpen={openTabType} />}
         {activeTab?.type === 'summary' && (
           <>
             <TodoProgressCard
@@ -1566,7 +1647,9 @@ function SortableTab({ tab, isActive, canShowClose, onSelect, onRemove }: Sortab
           : 'border-transparent text-muted-foreground hover:bg-muted/50 hover:text-foreground',
       )}
     >
-      {tab.type === 'terminal' ? (
+      {tab.type === 'start' ? (
+        <Compass className="size-3.5" />
+      ) : tab.type === 'terminal' ? (
         <Terminal className="size-3.5" />
       ) : tab.type === 'agenteam' ? (
         <Users className="size-3.5" />
@@ -1581,7 +1664,7 @@ function SortableTab({ tab, isActive, canShowClose, onSelect, onRemove }: Sortab
       >
         {tab.type === 'file' ? tab.title : t(tab.title)}
       </span>
-      {/* hover 时显示 X 关闭按钮（单标签不显示） */}
+      {/* 关闭按钮常亮显示（单标签不显示） */}
       {canShowClose && !isDragging && (
         <button
           type="button"
@@ -1589,11 +1672,72 @@ function SortableTab({ tab, isActive, canShowClose, onSelect, onRemove }: Sortab
             e.stopPropagation();
             onRemove(tab.id);
           }}
-          className="ml-0.5 hidden size-4 items-center justify-center rounded hover:bg-muted group-hover:flex"
+          className="ml-0.5 flex size-4 shrink-0 items-center justify-center rounded hover:bg-muted"
         >
           <X className="size-3" />
         </button>
       )}
+    </div>
+  );
+}
+
+/** 「开始」标签页：面板启动器（任务摘要 / 终端 / 专家团），点击行打开或切换到对应标签 */
+interface StartPanelProps {
+  /** 点击某行：已开该类型标签则激活，未开则新建（title 为 i18n key） */
+  onOpen: (type: 'summary' | 'terminal' | 'agenteam', titleKey: string) => void;
+}
+function StartPanel({ onOpen }: StartPanelProps) {
+  const { t } = useTranslation();
+  const rows: Array<{
+    type: 'summary' | 'terminal' | 'agenteam';
+    titleKey: string;
+    descKey: string;
+    Icon: typeof List;
+    color: string;
+  }> = [
+    {
+      type: 'summary',
+      titleKey: 'task.taskSummary',
+      descKey: 'start.summaryDesc',
+      Icon: List,
+      color: 'text-amber-500',
+    },
+    {
+      type: 'terminal',
+      titleKey: 'terminal.title',
+      descKey: 'start.terminalDesc',
+      Icon: Terminal,
+      color: 'text-blue-500',
+    },
+    {
+      type: 'agenteam',
+      titleKey: 'agenteam.title',
+      descKey: 'start.agenteamDesc',
+      Icon: Users,
+      color: 'text-emerald-500',
+    },
+  ];
+  return (
+    <div className="flex h-full items-center justify-center overflow-y-auto p-4">
+      <div className="flex w-full max-w-xs flex-col items-center">
+        <Compass className="mb-8 size-10 text-muted-foreground/40" strokeWidth={1.5} />
+        <div className="flex w-full flex-col gap-3">
+          {rows.map(({ type, titleKey, descKey, Icon, color }) => (
+            <button
+              key={type}
+              type="button"
+              onClick={() => onOpen(type, titleKey)}
+              className="flex w-full cursor-pointer items-center gap-3 rounded-xl border border-border bg-muted/30 px-3.5 py-3 text-left transition-colors hover:bg-muted"
+            >
+              <Icon className={cn('size-5 shrink-0', color)} />
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="truncate text-sm font-medium text-foreground">{t(titleKey)}</span>
+                <span className="truncate text-xs text-muted-foreground">{t(descKey)}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
