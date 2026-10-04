@@ -513,22 +513,22 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
       </SidebarHeader>
 
       {/* 导航 */}
-      <SidebarContent>
+      <SidebarContent className="overflow-hidden">
         {isSettingsRoute ? (
-          <SidebarGroup>
-            <SidebarGroupContent>
-              <div className="px-2 pb-1 group-data-[collapsible=icon]:hidden">
-                <div className="relative">
-                  <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    type="text"
-                    placeholder={t('settings.searchPlaceholder')}
-                    value={settingsSearch}
-                    onChange={(e) => setSettingsSearch(e.target.value)}
-                    className="h-8 pl-8 text-sm"
-                  />
-                </div>
+          <SidebarGroup className="flex min-h-0 flex-1 flex-col">
+            <div className="shrink-0 px-2 pb-1 group-data-[collapsible=icon]:hidden">
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  type="text"
+                  placeholder={t('settings.searchPlaceholder')}
+                  value={settingsSearch}
+                  onChange={(e) => setSettingsSearch(e.target.value)}
+                  className="h-8 pl-8 text-sm"
+                />
               </div>
+            </div>
+            <SidebarGroupContent className="min-h-0 flex-1 overflow-y-auto no-scrollbar">
               <SidebarMenu>
                 {settingsSearchResults ? (
                   settingsSearchResults.length > 0 ? (
@@ -579,7 +579,7 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
           </SidebarGroup>
         ) : (
           <>
-        <SidebarGroup>
+        <SidebarGroup className="shrink-0">
           <SidebarMenu>
             {navItems.map((item) => {
               const Icon = item.icon;
@@ -613,8 +613,8 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
         </SidebarGroup>
 
         {/* 任务列表（折叠时隐藏） */}
-        <SidebarGroup className="group-data-[collapsible=icon]:hidden">
-          <div className="flex items-center justify-between px-2 pb-1">
+        <SidebarGroup className="flex min-h-0 flex-1 flex-col group-data-[collapsible=icon]:hidden">
+          <div className="shrink-0 flex items-center justify-between px-2 pb-1">
             <SidebarGroupLabel className="h-auto p-0">{t('sidebar.taskList')}</SidebarGroupLabel>
             <div className="flex items-center gap-0.5">
               <Button
@@ -644,7 +644,7 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
               </Button>
             </div>
           </div>
-          <SidebarGroupContent>
+          <SidebarGroupContent className="min-h-0 flex-1 overflow-y-auto no-scrollbar">
             {manageMode && (
               <div className="flex items-center gap-1 px-2 pb-1">
                 <Button variant="ghost" size="sm" className="h-7 gap-1 px-2 text-xs" onClick={toggleSelectAll}>
