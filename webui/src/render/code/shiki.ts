@@ -1,6 +1,6 @@
 // render/code/shiki.ts
-// Shiki 引擎懒加载：dynamic import + 语言按需注册 + 双主题（github-light/github-dark）。
-// 双主题输出 CSS vars（--shiki-light / --shiki-dark），亮暗切换由 CSS 完成，零重渲。
+// Shiki 引擎懒加载：dynamic import + 语言按需注册 + 双主题（catppuccin-latte/catppuccin-mocha）。
+// 双主题以 defaultColor:false 输出纯 CSS vars（--shiki-light / --shiki-dark），亮暗切换由 CSS 完成，零重渲。
 
 import type { Highlighter } from 'shiki';
 
@@ -73,6 +73,38 @@ const LANG_ALIAS: Record<string, string> = {
   wrl: 'vrml',
   log: 'log',
   properties: 'properties',
+  // C/C++ 家族补充
+  cxx: 'cpp',
+  hh: 'cpp',
+  // Python / PowerShell
+  python3: 'python',
+  // 构建 / 脚本
+  ksh: 'shellscript',
+  'shell-session': 'shellsession',
+  // 函数式 / 动态语言
+  edn: 'clojure',
+  erl: 'erlang',
+  hrl: 'erlang',
+  ml: 'ocaml',
+  mli: 'ocaml',
+  mll: 'ocaml',
+  mly: 'ocaml',
+  fsx: 'fsharp',
+  fsi: 'fsharp',
+  // 标记 / 配置
+  editorconfig: 'ini',
+  nomad: 'hcl',
+  gradle: 'groovy',
+  sol: 'solidity',
+  s: 'asm',
+  // fence 常见写法
+  golang: 'go',
+  node: 'javascript',
+  nodejs: 'javascript',
+  objc: 'objective-c',
+  'obj-c': 'objective-c',
+  'objective-c++': 'objective-cpp',
+  'obj-c++': 'objective-cpp',
 };
 
 /** 文件名（无扩展名 / 特殊文件名）→ Shiki 语言 id */
@@ -124,7 +156,7 @@ function getHighlighter(): Promise<Highlighter> {
   if (!highlighterPromise) {
     highlighterPromise = import('shiki').then((shiki) =>
       shiki.createHighlighter({
-        themes: ['github-light', 'github-dark'],
+        themes: ['catppuccin-latte', 'catppuccin-mocha'],
         langs: [],
       }),
     );
@@ -159,7 +191,10 @@ export async function highlightCode(code: string, lang: string): Promise<string 
     }
     const html = highlighter.codeToHtml(code, {
       lang: resolved,
-      themes: { light: 'github-light', dark: 'github-dark' },
+      themes: { light: 'catppuccin-latte', dark: 'catppuccin-mocha' },
+      // 只输出 --shiki-light/--shiki-dark 变量，不写内联 color：
+      // 内联 color 会压过 .dark 的主题覆盖，导致夜间渲染成亮色（历史 bug）
+      defaultColor: false,
     });
     // 写缓存：同一 (lang, code) 再次出现时可由 getCachedHighlight 同步命中（首帧即高亮）
     htmlCache.set(cacheKey(code, lang), html);

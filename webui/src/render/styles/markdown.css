@@ -80,7 +80,7 @@
   margin: 0 0.1em;
   border-radius: 4px;
   background: var(--muted);
-  font-family: 'Geist Variable', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
   font-size: 0.88em;
   color: var(--foreground);
 }
@@ -140,26 +140,34 @@
   border-bottom: none;
 }
 
-/* ============ 代码块（Shiki） ============ */
+/* ============ 代码块（Shiki 双主题：catppuccin-latte / catppuccin-mocha） ============
+   引擎侧以 defaultColor:false 输出纯 CSS 变量（--shiki-light / --shiki-dark），
+   本处按 .dark 切换取值：明暗切换零重渲，且不存在「内联 color 压过主题变量」的优先级问题。
+   span 级不设 background：pre 上的 --shiki-*-bg 会被继承，若 span 读取它
+   会导致每行 inline span 染上条状块背景，行间露缝。 */
 .shiki-wrap pre,
 .shiki-wrap .shiki {
   margin: 0;
   padding: 0;
+  /* 底色统一交给外层 .code-block（bg-muted/40），shiki 主题底色不参与 */
   background: transparent !important;
-  font-family: 'Geist Variable', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
 }
 
-/* Shiki 双主题：light 色为默认 color，.dark 切到 --shiki-dark 变量。
-   span 级不设 background：pre 上的 --shiki-dark-bg 会被继承，若 span 读取它
-   会导致每行 inline span 染上条状块背景（github-dark 底色），行间露缝。 */
-.dark .shiki {
-  color: var(--shiki-dark, inherit);
-  background-color: var(--shiki-dark-bg, transparent);
+.shiki,
+.shiki span {
+  color: var(--shiki-light, inherit);
+  font-style: var(--shiki-light-font-style, inherit);
+  font-weight: var(--shiki-light-font-weight, inherit);
+  text-decoration: var(--shiki-light-text-decoration, inherit);
 }
+
+.dark .shiki,
 .dark .shiki span {
   color: var(--shiki-dark, inherit);
   font-style: var(--shiki-dark-font-style, inherit);
   font-weight: var(--shiki-dark-font-weight, inherit);
+  text-decoration: var(--shiki-dark-text-decoration, inherit);
 }
 
 .code-cursor {
@@ -181,7 +189,7 @@
   padding: 0.1em 0.3em;
   border-radius: 4px;
   background: var(--muted);
-  font-family: 'Geist Variable', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
   font-size: 0.88em;
 }
 .math-raw-block {
@@ -190,7 +198,7 @@
   overflow-x: auto;
   border-radius: 6px;
   background: var(--muted);
-  font-family: 'Geist Variable', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
   font-size: 0.88em;
 }
 .math-failed {

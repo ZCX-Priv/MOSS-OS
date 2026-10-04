@@ -9,7 +9,7 @@
 
 /* ============ 代码文件：行号 + 高亮 ============ */
 .code-file-viewer {
-  font-family: 'Geist Variable', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
   font-size: 12.5px;
   line-height: 1.6;
 }
