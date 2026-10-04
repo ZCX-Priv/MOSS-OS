@@ -450,6 +450,21 @@ export function applyWsMessage(msg: WSMessage): void {
             st.setMessages(sessionId, [...existing, cardMessage]);
           }
         }
+        // 输出长度触顶：模型因 max_tokens 上限被截断（思考与回复共用该预算），插入提示卡（幂等防重）
+        if (doneEvent.finishReason === 'length') {
+          const st = useStore.getState();
+          const cardMessage: TaskMessage = {
+            id: `output_limit_${doneEvent.runId ?? Date.now()}`,
+            role: 'assistant',
+            content: '',
+            timestamp: new Date().toISOString(),
+            outputLimitNotice: {},
+          };
+          const existing = st.messagesBySession[sessionId] ?? [];
+          if (!existing.some((m) => m.id === cardMessage.id)) {
+            st.setMessages(sessionId, [...existing, cardMessage]);
+          }
+        }
         emitSettled(sessionId, 'done');
       }
       break;

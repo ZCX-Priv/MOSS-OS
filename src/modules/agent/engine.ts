@@ -368,6 +368,11 @@ export class AgentEngineImpl implements AgentEngine {
     // 构建会话（系统提示词由 context 引擎构建/缓存；fallback 见 buildFallbackMessages）
     const apiCfg = this.config.getApiConfig();
     const modelDisplayName = resolveModelDisplayName(apiCfg, model);
+    // 请求 max_tokens：模型输出窗口（设置中可配）优先，缺省回退全局 agent.maxTokens 兜底。
+    // 旧实现无条件用 agent.maxTokens（默认 8192，且无 UI 可改），会覆盖模型声明的输出窗口；
+    // 对开启思考的推理模型，思考 token 与回复 token 共用该预算 → 思考/回复被硬性截断
+    // （finish_reason=length）。详见 .trae/documents/修复MOSS生成中途截断的严重bug.md
+    const maxOutputTokens = resolveRequestMaxTokens(apiCfg, model, cfg.maxTokens);
     const session = this.sessions.getOrCreate(sessionId);
     // clientMessageId 随消息持久化：前端本地乐观副本与历史副本据此同身份去重
     this.sessions.addUserMessage(session, userMessage, input.attachments, input.clientMessageId);
@@ -487,7 +492,7 @@ export class AgentEngineImpl implements AgentEngine {
         messages,
         tools: tools.length > 0 ? tools : undefined,
         stream: true,
-        max_tokens: cfg.maxTokens,
+        max_tokens: maxOutputTokens,
         toolChoice: 'auto',
       };
 
@@ -2080,4 +2085,25 @@ function resolveModelDisplayName(apiConfig: ApiConfig, model: string): string {
   const byModel = models.find(m => m.model === model);
   if (byModel) return byModel.name;
   return model;
+}
+
+/**
+ * 解析本次请求的 max_tokens：模型输出窗口（outputTokens，设置中可配）优先，
+ * 缺省回退全局 agent.maxTokens 兜底。非法值（<=0 / 非有限数）一律回退，
+ * 避免把 NaN/0 传给 API。
+ *
+ * 为什么模型优先：outputTokens 是模型维度、用户可在「模型编辑」中配置的真实输出能力，
+ * 其类型注释即定义为「请求 max_tokens 默认值」；agent.maxTokens 是隐藏且前端无入口的全局值，
+ * 应仅作兜底。否则推理模型的思考与回复会共用过小的全局预算而被截断。
+ */
+export function resolveRequestMaxTokens(
+  apiConfig: ApiConfig,
+  model: string,
+  fallbackMaxTokens: number,
+): number {
+  const models = flattenModels(apiConfig);
+  const cfg = models.find(m => m.id === model) ?? models.find(m => m.model === model);
+  const out = cfg?.outputTokens;
+  if (typeof out === 'number' && Number.isFinite(out) && out > 0) return out;
+  return fallbackMaxTokens;
 }

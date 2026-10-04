@@ -35,8 +35,10 @@ export async function* parseSSEStream(
 
   // 空闲超时：响应头已返回但流中途停滞（弱网半开连接）时取消读取，
   // 并向上游抛出明确错误（而非静默截断——静默会让 engine 当作流正常结束，
-  // 用户侧表现为「回复莫名断掉且无任何提示」）。120s 容忍思考型模型的长停顿。
-  const IDLE_TIMEOUT_MS = 120_000;
+  // 用户侧表现为「回复莫名断掉且无任何提示」）。300s 容忍思考型模型的长停顿
+  // （长推理 / 长 prefill / 代理空档）；过激的阈值会在模型仍在思考时误切断
+  // 与模型 API 的连接，表现为「后端莫名断开与模型的通信」。
+  const IDLE_TIMEOUT_MS = 300_000;
   let idleTimer: ReturnType<typeof setTimeout> | null = null;
   const resetIdle = (): void => {
     if (idleTimer) clearTimeout(idleTimer);

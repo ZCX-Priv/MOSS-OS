@@ -93,6 +93,8 @@ export interface TaskMessage {
   compaction?: CompactionRecord;
   /** 轮数触顶提示卡数据（达到 agent.maxTurns 上限时插入；驱动 MaxTurnsNoticeCard 渲染 + 继续按钮） */
   maxTurnsNotice?: { maxTurns: number };
+  /** 输出长度触顶提示卡数据（finishReason==='length' 时插入；驱动 OutputLimitNoticeCard 渲染 + 继续按钮） */
+  outputLimitNotice?: { maxTokens?: number };
   /**
    * 服务端权威消息 id：
    * - 历史消息：`h<historyIndex>`（分页合并 / 虚拟列表 key 的稳定标识）

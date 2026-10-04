@@ -102,6 +102,7 @@ import { ControlHub } from '../shared/ControlHub';
 import { StatsBar } from '../shared/StatsBar';
 import { CompactionCard } from '../shared/CompactionCard';
 import { MaxTurnsNoticeCard } from '../shared/MaxTurnsNoticeCard';
+import { OutputLimitNoticeCard } from '../shared/OutputLimitNoticeCard';
 import { useStore, DEFAULT_SIDEBAR_TABS } from '../../store';
 import { useTask } from '../../hooks/useTask';
 import { useFileIndex } from '../../hooks/useFileIndex';
@@ -1978,6 +1979,16 @@ const MessageBubble = memo(function MessageBubble({ message, todos, toolIconMap,
     return (
       <MaxTurnsNoticeCard
         notice={message.maxTurnsNotice}
+        onContinue={onContinue}
+        disabled={continueDisabled}
+      />
+    );
+  }
+  // 输出长度触顶提示卡：居中卡片（截断说明 + 继续生成按钮）
+  if (message.outputLimitNotice) {
+    return (
+      <OutputLimitNoticeCard
+        notice={message.outputLimitNotice}
         onContinue={onContinue}
         disabled={continueDisabled}
       />
