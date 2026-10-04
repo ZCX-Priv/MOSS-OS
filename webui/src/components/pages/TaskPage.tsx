@@ -7,6 +7,8 @@ import {
   ChevronLeft,
   Compass,
   FileText,
+  FileDiff,
+  Folder,
   Info,
   List,
   PanelRight,
@@ -89,6 +91,8 @@ import { TodoProgressCard, TodoRow } from '../shared/TodoProgressCard';
 import { AskPromptCard } from '../shared/AskPromptCard';
 import { ConfirmPromptCard } from '../shared/ConfirmPromptCard';
 import { TerminalView } from '../shared/TerminalView';
+import { FileBrowserPanel } from '../shared/FileBrowserPanel';
+import { FileChangesPanel } from '../shared/FileChangesPanel';
 import { AgenteamPanel } from '../agenteam/AgenteamPanel';
 import { AgenteamInlineCard, type InlineTeamPlan } from '../agenteam/AgenteamInlineCard';
 import { SubagentInlineCard } from '../agenteam/SubagentInlineCard';
@@ -449,15 +453,18 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
 
   // 当前活跃标签对象
   const activeTab = sidebarTabs.find((t) => t.id === activeSidebarTabId) ?? sidebarTabs[0];
-  // 下拉菜单只显示当前标签栏中未打开的类型；三种类型都已打开时禁用加号按钮
+  // 下拉菜单只显示当前标签栏中未打开的类型；全部类型都已打开时禁用加号按钮
   const hasSummaryTab = sidebarTabs.some((tab) => tab.type === 'summary');
   const hasTerminalTab = sidebarTabs.some((tab) => tab.type === 'terminal');
   const hasAgenteamTab = sidebarTabs.some((tab) => tab.type === 'agenteam');
-  const allTabTypesOpen = hasSummaryTab && hasTerminalTab && hasAgenteamTab;
+  const hasFilesTab = sidebarTabs.some((tab) => tab.type === 'files');
+  const hasChangesTab = sidebarTabs.some((tab) => tab.type === 'changes');
+  const allTabTypesOpen =
+    hasSummaryTab && hasTerminalTab && hasAgenteamTab && hasFilesTab && hasChangesTab;
 
   // 「开始」面板：打开/切换到某类型标签；「开始」标签存在时原地变身，不再新开标签
   const openTabType = useCallback(
-    (type: 'summary' | 'terminal' | 'agenteam', titleKey: string) => {
+    (type: 'summary' | 'terminal' | 'agenteam' | 'files' | 'changes', titleKey: string) => {
       // 已开该类型 → 直接切换
       const existing = sidebarTabs.find((tab) => tab.type === type);
       if (existing) {
@@ -888,6 +895,22 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
                 {t('agenteam.title')}
               </DropdownMenuItem>
             )}
+            {!hasFilesTab && (
+              <DropdownMenuItem
+                onSelect={() => addSidebarTab(taskId, 'files', 'task.files')}
+              >
+                <Folder className="size-4" />
+                {t('task.files')}
+              </DropdownMenuItem>
+            )}
+            {!hasChangesTab && (
+              <DropdownMenuItem
+                onSelect={() => addSidebarTab(taskId, 'changes', 'task.fileChanges')}
+              >
+                <FileDiff className="size-4" />
+                {t('task.fileChanges')}
+              </DropdownMenuItem>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
@@ -1043,6 +1066,8 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
           <TerminalView toolCallId={activeTab.toolCallId} />
         )}
         {activeTab?.type === 'agenteam' && <AgenteamPanel />}
+        {activeTab?.type === 'files' && <FileBrowserPanel key={taskId} sessionId={taskId} />}
+        {activeTab?.type === 'changes' && <FileChangesPanel key={taskId} sessionId={taskId} />}
         {activeTab?.type === 'file' && activeTab.filePath && (
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <FilePreviewPane path={activeTab.filePath} active />
@@ -1652,6 +1677,10 @@ function SortableTab({ tab, isActive, canShowClose, onSelect, onRemove }: Sortab
         <Terminal className="size-3.5" />
       ) : tab.type === 'agenteam' ? (
         <Users className="size-3.5" />
+      ) : tab.type === 'files' ? (
+        <Folder className="size-3.5" />
+      ) : tab.type === 'changes' ? (
+        <FileDiff className="size-3.5" />
       ) : tab.type === 'file' ? (
         <FileTypeIcon fileName={tab.title} size={14} className="shrink-0" />
       ) : (
@@ -1680,15 +1709,15 @@ function SortableTab({ tab, isActive, canShowClose, onSelect, onRemove }: Sortab
   );
 }
 
-/** 「开始」标签页：面板启动器（任务摘要 / 终端 / 专家团），点击行打开或切换到对应标签 */
+/** 「开始」标签页：面板启动器（任务摘要 / 终端 / 专家团 / 文件 / 文件变更），点击行打开或切换到对应标签 */
 interface StartPanelProps {
   /** 点击某行：已开该类型标签则激活，未开则新建（title 为 i18n key） */
-  onOpen: (type: 'summary' | 'terminal' | 'agenteam', titleKey: string) => void;
+  onOpen: (type: 'summary' | 'terminal' | 'agenteam' | 'files' | 'changes', titleKey: string) => void;
 }
 function StartPanel({ onOpen }: StartPanelProps) {
   const { t } = useTranslation();
   const rows: Array<{
-    type: 'summary' | 'terminal' | 'agenteam';
+    type: 'summary' | 'terminal' | 'agenteam' | 'files' | 'changes';
     titleKey: string;
     descKey: string;
     Icon: typeof List;
@@ -1710,6 +1739,18 @@ function StartPanel({ onOpen }: StartPanelProps) {
       titleKey: 'agenteam.title',
       descKey: 'start.agenteamDesc',
       Icon: Users,
+    },
+    {
+      type: 'files',
+      titleKey: 'task.files',
+      descKey: 'start.filesDesc',
+      Icon: Folder,
+    },
+    {
+      type: 'changes',
+      titleKey: 'task.fileChanges',
+      descKey: 'start.changesDesc',
+      Icon: FileDiff,
     },
   ];
   return (

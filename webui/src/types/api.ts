@@ -41,13 +41,23 @@ export interface ToolResult {
 }
 
 /** 右侧边栏标签页类型 */
-export type SidebarTabType = 'start' | 'summary' | 'terminal' | 'agenteam' | 'file';
+export type SidebarTabType =
+  | 'start'
+  | 'summary'
+  | 'terminal'
+  | 'agenteam'
+  | 'file'
+  /** 文件浏览器（列目录 + 点击文件打开预览标签） */
+  | 'files'
+  /** 该任务的文件变更总览（按文件聚合 + 展开 diff） */
+  | 'changes';
 
 /** 右侧边栏标签页 */
 export interface SidebarTab {
   id: string;
   type: SidebarTabType;
-  /** 标题 i18n key（如 'task.taskSummary' / 'terminal.title'）；type==='file' 时为文件完整名称（不参与 i18n） */
+  /** 标题 i18n key（如 'task.taskSummary' / 'terminal.title'）；
+   *  type==='file' 时为文件完整名称（不参与 i18n）；type==='files'|'changes' 时为 i18n key */
   title: string;
   /** 仅 terminal 类型：绑定特定 toolCallId（可选，缺省显示当前 session 所有 shell 调用） */
   toolCallId?: string;
@@ -749,6 +759,59 @@ export interface ContextFile {
   reason?: 'read' | 'edit' | 'write' | 'grep' | 'glob' | 'delete' | 'move' | 'copy';
   /** 后端存在性校验标记：文件已被删除/移走（HTTP 恢复与 WS 推送时计算） */
   missing?: boolean;
+}
+
+/** 目录条目（GET /api/filesystem/list；文件浏览器列表项） */
+export interface DirectoryEntry {
+  name: string;
+  /** 条目绝对路径 */
+  path: string;
+  kind: 'directory' | 'file';
+  /** 小写扩展名（无扩展名为空串） */
+  ext: string;
+  /** 文件字节数（目录恒为 0） */
+  size: number;
+  /** 文件修改时间（ms；目录恒为 0） */
+  mtimeMs: number;
+}
+
+/** 目录列表响应（GET /api/filesystem/list） */
+export interface DirectoryListing {
+  /** 实际解析后的绝对目录路径 */
+  path: string;
+  /** 导航根目录绝对路径（不可上溯越过它；未传 root 时为该次解析结果） */
+  root: string;
+  /** 上级目录绝对路径（到达 root 或文件系统根为 null） */
+  parent: string | null;
+  entries: DirectoryEntry[];
+  /** 条目数超过后端上限被截断 */
+  truncated?: boolean;
+}
+
+/** 文件历史条目（GET /api/file-history/:sessionId；与后端 file-history/types.ts 对齐） */
+export interface FileHistoryEntry {
+  id: string;
+  sessionId: string;
+  absPath: string;
+  toolCallId: string;
+  toolName: 'write' | 'edit' | 'delete' | 'rollback' | 'move' | 'copy' | 'shell';
+  timestamp: string;
+  operation: 'create' | 'overwrite' | 'edit' | 'delete' | 'move' | 'shell-change';
+  hashBefore: string | null;
+  hashAfter: string | null;
+  backupPath: string | null;
+  bytesBefore: number;
+  bytesAfter: number;
+  /** unified diff 文本（仅 overwrite/edit 存在） */
+  diff?: string;
+  /** 是否为目录操作 */
+  isDirectory?: boolean;
+  /** move 操作的目标路径 */
+  destPath?: string;
+  /** 消息撤回回滚标记（存在即已回滚，不计入「生效中」变更） */
+  rolledBackAt?: string;
+  /** 仅 R 条目（toolName='rollback'）：指向被回滚的原始条目 id */
+  rollbackOf?: string;
 }
 
 // ============================================================================

@@ -15,7 +15,7 @@ import type { HttpRequest, HttpResponse, RouteHandler } from '../types';
 import type { ConfigService, Environment, ServiceRegistry } from '../../../core/types';
 import { ServiceNames } from '../../../core/types';
 import { readdirSync, existsSync, statSync, openSync, readSync, closeSync, mkdirSync, writeFileSync, type Dirent } from 'node:fs';
-import { isAbsolute, join, normalize, extname } from 'node:path';
+import { isAbsolute, join, normalize, extname, dirname, relative, sep } from 'node:path';
 import * as nfd from 'nativefiledialog-for-bun';
 import { ErrorCode } from '../../../core/error-codes';
 import { SYSTEM_SCOPE } from '../../filesys/roots';
@@ -295,6 +295,143 @@ export function createSearchFilesHandler(_env: Environment): RouteHandler {
     const files = q ? searchRecursive(dir, q, _env.isWindows) : searchShallow(dir);
     sfCacheSet(key, files);
     return { status: 200, body: { files } };
+  };
+}
+
+// ============================================================================
+// GET /api/filesystem/list?path=<目录>&root=<可选，导航根>&cwd=<可选，默认 __system__>
+// 文件浏览器数据源：列出目标目录的直接子项（目录 + 文件），用于右侧面板「文件」标签
+// 逐级浏览。权限与 /raw、/text 一致：走 filesys.resolve（roots 越权 / .moss 硬屏蔽 → 403）。
+// path 为空时回落到 root（若有）或 cwd 解析结果（__system__ → 用户主目录）。
+// 导航边界：传 root 时 path 必须位于 root 内，到达 root 后 parent=null（不能上溯到磁盘根）；
+// 首次请求（path/root 均空）以解析结果自身为根，前端据此固定「灰显根前缀」。
+// ============================================================================
+
+/** 单次列目录返回的最大条目数（防超大目录撑爆面板） */
+const MAX_LIST_ENTRIES = 2000;
+
+interface DirectoryEntry {
+  name: string;
+  path: string;
+  kind: 'directory' | 'file';
+  ext: string;
+  size: number;
+  mtimeMs: number;
+}
+
+/** 路径同一化比较（Windows 忽略大小写 + 统一分隔符） */
+function samePath(a: string, b: string): boolean {
+  const key = (p: string): string => normalize(p).replace(/\\/g, '/').toLowerCase();
+  return key(a) === key(b);
+}
+
+/**
+ * 严格「在根之内」判断（含根自身）。
+ * 不复用 utils/fs 的 isPathInside：后者判据为 `rel.startsWith('..' + sep)`，而当目标恰好是
+ * 父目录时 path.relative 返回 `'..'`（不含分隔符），会被误判为「在内部」→ 根边界被上溯一级。
+ */
+function isInsideRoot(target: string, root: string): boolean {
+  const rel = relative(root, target);
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+}
+
+export function createListDirectoryHandler(services: ServiceRegistry): RouteHandler {
+  return async (req: HttpRequest): Promise<HttpResponse> => {
+    const rawPath = (req.query.path ?? '').trim();
+    const rootParam = (req.query.root ?? '').trim();
+    const cwd = (req.query.cwd ?? '').trim() || SYSTEM_SCOPE;
+
+    const filesys = services.tryResolve<FilesysService>(ServiceNames.FILESYS);
+    if (!filesys) {
+      return { status: 503, body: { error: 'filesys service unavailable' } };
+    }
+
+    // 解析导航根（可选）：越权/屏蔽 → 403
+    const rootAbs = rootParam ? filesys.resolve(rootParam, cwd) : null;
+    if (rootParam && !rootAbs) {
+      return { status: 403, body: { error: 'Access denied: root outside allowed roots or blocked' } };
+    }
+
+    // 解析目标目录：path 为空时回落到 root（若有）或 cwd 解析结果
+    const targetAbs = rawPath ? filesys.resolve(rawPath, cwd) : (rootAbs ?? filesys.resolve('', cwd));
+    if (!targetAbs) {
+      return { status: 403, body: { error: 'Access denied: path outside allowed roots or blocked' } };
+    }
+
+    // 首次请求（无 path 无 root）→ 目标自身即根（把当前工作目录当作根）
+    const effectiveRoot = rootAbs ?? (rawPath ? null : targetAbs);
+
+    // 导航边界：目标必须位于根之内
+    if (effectiveRoot && !isInsideRoot(targetAbs, effectiveRoot)) {
+      return { status: 403, body: { error: 'Path outside root' } };
+    }
+
+    let isDir = false;
+    try {
+      isDir = existsSync(targetAbs) && statSync(targetAbs).isDirectory();
+    } catch {
+      isDir = false;
+    }
+    if (!isDir) {
+      return { status: 404, body: { error: `Not a directory: ${targetAbs}` } };
+    }
+
+    let dirents: Dirent[];
+    try {
+      dirents = readdirSync(targetAbs, { withFileTypes: true });
+    } catch (err) {
+      return { status: 500, body: { error: err instanceof Error ? err.message : String(err) } };
+    }
+
+    const entries: DirectoryEntry[] = [];
+    for (const ent of dirents) {
+      if (entries.length >= MAX_LIST_ENTRIES) break;
+      const childPath = join(targetAbs, ent.name);
+      const isDirectory = ent.isDirectory();
+      // 目录 size 恒为 0（不做无谓 stat）；文件取 size/mtime，失败降级为 0
+      let size = 0;
+      let mtimeMs = 0;
+      if (!isDirectory) {
+        try {
+          const st = statSync(childPath);
+          size = st.size;
+          mtimeMs = st.mtimeMs;
+        } catch {
+          // 权限/竞态：保持 0，不阻断列表
+        }
+      }
+      entries.push({
+        name: ent.name,
+        path: childPath,
+        kind: isDirectory ? 'directory' : 'file',
+        ext: extname(ent.name).slice(1).toLowerCase(),
+        size,
+        mtimeMs,
+      });
+    }
+
+    // 排序：目录在前、文件在后，各自按名称（大小写不敏感）
+    entries.sort((a, b) => {
+      if (a.kind !== b.kind) return a.kind === 'directory' ? -1 : 1;
+      return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+    });
+
+    const truncated = dirents.length > entries.length;
+
+    // parent：到达根 → null（禁止上溯越过根）；否则取上级目录并再次校验不越界
+    const parentCandidate = dirname(targetAbs);
+    let parent: string | null = parentCandidate === targetAbs ? null : parentCandidate;
+    if (parent && effectiveRoot && !isInsideRoot(parent, effectiveRoot)) {
+      parent = null;
+    }
+    if (effectiveRoot && samePath(targetAbs, effectiveRoot)) {
+      parent = null;
+    }
+
+    return {
+      status: 200,
+      body: { path: targetAbs, root: effectiveRoot ?? targetAbs, parent, entries, truncated },
+    };
   };
 }
 

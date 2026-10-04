@@ -131,6 +131,7 @@ import {
   createPickFileHandler,
   createSaveAttachmentHandler,
   createSearchFilesHandler,
+  createListDirectoryHandler,
   createGetRootsHandler,
   createUpdateRootsHandler,
   createReadFileHandler,
@@ -441,6 +442,8 @@ class ServerModule implements Module {
     this.router.addRoute({ method: 'GET', pattern: '/api/filesystem/suggest-paths', handler: createSuggestPathsHandler(env), auth: true });
     // # 文件提及菜单：工作目录递归文件名搜索
     this.router.addRoute({ method: 'GET', pattern: '/api/filesystem/search-files', handler: createSearchFilesHandler(env), auth: true });
+    // 文件浏览器：列出目标目录直接子项（目录 + 文件；走 filesys roots 权限）
+    this.router.addRoute({ method: 'GET', pattern: '/api/filesystem/list', handler: createListDirectoryHandler(this.ctx.services), auth: true });
     // 文件只读预览（渲染模块取 docx/pdf/图片/3D 模型二进制；走 filesys roots 权限 + 白名单）
     this.router.addRoute({ method: 'GET', pattern: '/api/filesystem/raw', handler: createReadFileHandler(this.ctx.services), auth: true });
     // 视频/音频直链：<video>/<audio> 无法携带 Authorization 头 → query token 鉴权（handler 内校验）

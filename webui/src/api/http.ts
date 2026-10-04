@@ -38,6 +38,8 @@ import type {
   SuggestPath,
   SearchedFile,
   PickedFile,
+  DirectoryListing,
+  FileHistoryEntry,
   RunStats,
   LogFileInfo,
   LogQueryResult,
@@ -657,6 +659,25 @@ export const api = {
     request<{ files: SearchedFile[] }>(
       'GET',
       `/api/filesystem/search-files?dir=${encodeURIComponent(dir)}&q=${encodeURIComponent(q)}`,
+    ),
+  /**
+   * 列目录（文件浏览器数据源）：返回目标目录的直接子项（目录 + 文件）。
+   * path 缺省时后端回落到 root（若有）或 cwd 解析结果（__system__ → 用户主目录）；cwd 缺省为 __system__。
+   * root 为导航根（不可上溯越过；传后端强制边界，越界返回 403）；首次不传时后端以解析结果自身为根。
+   */
+  listDirectory: (path?: string, cwd?: string, root?: string) => {
+    const qs = new URLSearchParams();
+    if (path) qs.set('path', path);
+    if (cwd) qs.set('cwd', cwd);
+    if (root) qs.set('root', root);
+    const q = qs.toString();
+    return request<DirectoryListing>('GET', `/api/filesystem/list${q ? `?${q}` : ''}`);
+  },
+  /** 某会话的文件变更历史（文件变更标签页数据源） */
+  listFileHistory: (sessionId: string) =>
+    request<{ sessionId: string; entries: FileHistoryEntry[]; count: number }>(
+      'GET',
+      `/api/file-history/${encodeURIComponent(sessionId)}`,
     ),
 
   // ==========================================================================
