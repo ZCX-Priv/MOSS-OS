@@ -936,6 +936,7 @@ export const en = {
   },
   start: {
     title: 'Start',
+    hint: 'Start here',
     summaryDesc: 'View todos and context composition',
     terminalDesc: 'Run commands in the session workspace',
     agenteamDesc: 'Multi-agent collaboration for complex tasks',

@@ -461,6 +461,8 @@ interface UIActions {
   reorderSidebarTabs: (sessionId: string, fromId: string, toId: string) => void;
   /** 重置某会话标签为默认「开始」（新建任务空白页用） */
   resetSidebarTabs: (sessionId: string) => void;
+  /** 原地转换某标签的类型/标题（「开始」页点入口 → 原地变身，不新增标签） */
+  convertSidebarTab: (sessionId: string, id: string, type: SidebarTabType, title: string) => void;
 
   // 右侧面板展开态（会话级）/ 宽度（全局），内存态不持久化
   setRightPanelOpen: (sessionId: string, v: boolean) => void;
@@ -1377,6 +1379,18 @@ export const useStore = create<Store>((set, get) => ({
         ...state.sidebarTabsBySession,
         [sessionId]: { tabs, activeId: cur.activeId },
       };
+      persistSidebarTabs(map);
+      return { sidebarTabsBySession: map };
+    }),
+
+  convertSidebarTab: (sessionId, id, type, title) =>
+    set((state) => {
+      const cur = state.sidebarTabsBySession[sessionId] ?? defaultSessionTabs();
+      const tabs = cur.tabs.map((t) =>
+        // 显式重建对象：保留 id/createdAt，清除可能残留的 filePath/toolCallId
+        t.id === id ? { id: t.id, type, title, createdAt: t.createdAt } : t,
+      );
+      const map = { ...state.sidebarTabsBySession, [sessionId]: { tabs, activeId: id } };
       persistSidebarTabs(map);
       return { sidebarTabsBySession: map };
     }),

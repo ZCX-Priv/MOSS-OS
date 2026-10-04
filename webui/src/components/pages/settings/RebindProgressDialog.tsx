@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogHeader,
@@ -136,7 +137,7 @@ export function RebindProgressDialog({ open, onCompleteReload = true }: RebindPr
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4 py-2">
+        <DialogBody className="gap-4">
           <Progress value={STAGE_PROGRESS[stage]} className="h-2" />
           <div className="flex items-center justify-between text-sm">
             <span className={stage === 'timeout' ? 'text-amber-500' : 'text-muted-foreground'}>
@@ -162,7 +163,7 @@ export function RebindProgressDialog({ open, onCompleteReload = true }: RebindPr
               {t('settings.remote.rebind.taskSafe')}
             </p>
           )}
-        </div>
+        </DialogBody>
       </DialogContent>
     </Dialog>
   );

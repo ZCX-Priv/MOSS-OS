@@ -264,13 +264,14 @@ export default function App() {
               <Route index element={<Navigate to="skills" replace />} />
               <Route path="skills" element={<SkillsTab />} />
               <Route path="mcp" element={<McpTab />} />
-              <Route path="*" element={<Navigate to="skills" replace />} />
+              {/* 绝对路径：splat 内相对 to 会以完整 pathname 为基准，导致 URL 无限追加 */}
+              <Route path="*" element={<Navigate to="/plugins/skills" replace />} />
             </Route>
             <Route path="/automation" element={<AutomationPage />}>
               <Route index element={<Navigate to="configured" replace />} />
               <Route path="configured" element={<ConfiguredTab />} />
               <Route path="history" element={<HistoryTab />} />
-              <Route path="*" element={<Navigate to="configured" replace />} />
+              <Route path="*" element={<Navigate to="/automation/configured" replace />} />
             </Route>
             <Route path="/settings" element={<SettingsPage />}>
               <Route index element={<Navigate to="general" replace />} />
@@ -282,7 +283,12 @@ export default function App() {
                 <Route path="anim" element={<AnimSettingsSection />} />
               </Route>
               <Route path="agent" element={<AgentSettings />} />
+              {/* 服务商：Tab 容器（模型 / 搜索 / 语音；路由驱动，刷新/直达保持）。
+                  基路径 = 模型页（与 /settings/context、/settings/appearance 约定一致） */}
               <Route path="provider" element={<ProviderSettings />} />
+              <Route path="provider/search" element={<ProviderSettings />} />
+              <Route path="provider/voice" element={<ProviderSettings />} />
+              <Route path="provider/*" element={<Navigate to="/settings/provider" replace />} />
               {/* 旧路径兼容：模型设置并入服务商 */}
               <Route path="model" element={<Navigate to="/settings/provider" replace />} />
               {/* 上下文：Tab 容器（引擎 / 索引 / 规则 / 记忆） */}
@@ -305,7 +311,7 @@ export default function App() {
               <Route path="index" element={<Navigate to="/settings/context/index" replace />} />
               <Route path="rules" element={<Navigate to="/settings/context/rules" replace />} />
               <Route path="memory" element={<Navigate to="/settings/context/memory" replace />} />
-              <Route path="*" element={<Navigate to="general" replace />} />
+              <Route path="*" element={<Navigate to="/settings/general" replace />} />
             </Route>
             <Route path="*" element={<Navigate to="/task" replace />} />
             </Routes>

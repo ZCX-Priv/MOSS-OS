@@ -26,6 +26,7 @@ import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/component
 import {
   AlertDialog,
   AlertDialogAction,
+  AlertDialogBody,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
@@ -536,15 +537,17 @@ export function RemoteSettingsSection() {
               {t('settings.remote.tunnel.disclaimer.body')}
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <label className="flex items-start gap-2 rounded-md border border-border p-3 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={disclaimerChecked}
-              onChange={e => setDisclaimerChecked(e.target.checked)}
-              className="mt-0.5 h-4 w-4 accent-primary"
-            />
-            <span className="text-sm">{t('settings.remote.tunnel.disclaimer.confirm')}</span>
-          </label>
+          <AlertDialogBody>
+            <label className="flex items-start gap-2 rounded-md border border-border p-3 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={disclaimerChecked}
+                onChange={e => setDisclaimerChecked(e.target.checked)}
+                className="mt-0.5 h-4 w-4 accent-primary"
+              />
+              <span className="text-sm">{t('settings.remote.tunnel.disclaimer.confirm')}</span>
+            </label>
+          </AlertDialogBody>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={tunnelBusy}>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction

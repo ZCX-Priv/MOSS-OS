@@ -555,7 +555,10 @@ export function Sidebar({ onOpenOverlay }: SidebarProps) {
                   )
                 ) : (
                   settingsNavItems.map((item) => {
-                    const isActive = pathname === `/settings/${item.id}`;
+                    // 前缀匹配（带尾斜杠）：子路由（如 /settings/context/rules、/settings/provider/search）下仍高亮
+                    const isActive =
+                      pathname === `/settings/${item.id}` ||
+                      pathname.startsWith(`/settings/${item.id}/`);
                     const label = t(item.labelKey);
                     return (
                       <SidebarMenuItem key={item.id}>

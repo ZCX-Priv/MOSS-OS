@@ -97,7 +97,7 @@ export function CreateAgentDialog({ open, onOpenChange, editing, onSaved }: Crea
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[85vh] w-full max-w-lg flex-col">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>
             {isEdit ? t('settings.agent.editAgent') : t('settings.agent.createAgent')}

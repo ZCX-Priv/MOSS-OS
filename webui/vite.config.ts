@@ -42,7 +42,12 @@ export default defineConfig({
         ],
       },
       workbox: {
-        globPatterns: ['**/*.{js,css,png,svg,ico,woff2}'],
+        // 含 html：保证 index.html 进入 precache。
+        // 这是此前「硬刷新/更新拿不到新版本」的致命根因修复——旧配置漏了 html，
+        // 导致 index.html 不在 precache，而 vite-plugin-pwa 仍注入
+        // NavigationRoute(createHandlerBoundToURL('index.html'))，SW 启动求值时同步抛
+        // non-precached-url → 新 SW 安装/更新必然失败 → 旧 SW 永久接管返回旧 shell。
+        globPatterns: ['**/*.{js,css,html,png,svg,ico,woff2}'],
         navigateFallbackDenylist: [/^\/api\//, /^\/ws/],
         // 主 chunk 含 @lobehub/icons 品牌图标（约 +0.8MB raw）+ react-material-icon-theme
         // 文件类型图标数据（约 +1.1MB minified，见 components/shared/FileTypeIcon），放宽预缓存上限
@@ -55,6 +60,7 @@ export default defineConfig({
         skipWaiting: false,
         clientsClaim: false,
       },
+      // dev 模式启用 SW：用于调试 PWA 安装/离线行为（生产同款 SW 逻辑）
       devOptions: { enabled: true },
     }),
   ],
@@ -65,6 +71,10 @@ export default defineConfig({
   },
   server: {
     port: 3000,
+    // 监听所有地址（含 IPv4 0.0.0.0）：Vite 默认 host='localhost' 在 Windows 上可能只绑定 IPv6 ::1，
+    // 导致 http://127.0.0.1:3000 访问不了（只有 localhost 能用）。设为 true 后
+    // localhost / 127.0.0.1 / 局域网 IP 均可访问，与 scripts/dev.mjs 横幅提示的 127.0.0.1 对齐。
+    host: true,
     proxy: {
       '/api': {
         target: backendHttp,

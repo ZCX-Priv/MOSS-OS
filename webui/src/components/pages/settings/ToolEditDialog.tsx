@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 import { Pencil, RotateCcw, Wrench } from 'lucide-react';
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -125,7 +126,7 @@ export function ToolEditDialog({ tool, open, onOpenChange, onSave }: ToolEditDia
           <DialogDescription className="line-clamp-2">{tool.description}</DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-col gap-1">
+        <DialogBody className="gap-1">
           {/* 通用行为：所有工具都可编辑 */}
           <div className="text-sm font-medium text-foreground">
             {t('settings.tools.behaviorSection')}
@@ -216,7 +217,7 @@ export function ToolEditDialog({ tool, open, onOpenChange, onSave }: ToolEditDia
               </div>
             </>
           )}
-        </div>
+        </DialogBody>
 
         <DialogFooter className="flex-row items-center gap-2 sm:justify-between">
           <Button

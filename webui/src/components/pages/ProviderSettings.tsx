@@ -8,6 +8,7 @@
 // - 思考强度标签化（服务商级等级库，可增删，至少保留 1 个，删除自动回退）
 
 import { useState, useEffect } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import {
@@ -139,6 +140,9 @@ function ProviderLogo({ icon, className, size = 20 }: { icon?: string; className
   return <Logo size={size} className={className} />;
 }
 
+/** 服务商类别（胶囊导航：模型 / 搜索 / 语音） */
+type ProviderCategory = 'model' | 'search' | 'voice';
+
 /* ===== 服务商设置页 ===== */
 export function ProviderSettings() {
   const { t } = useTranslation();
@@ -152,8 +156,14 @@ export function ProviderSettings() {
     deleteProvider,
     fetchProviderModels,
   } = useProviders();
-  // 类别胶囊导航：模型 / 搜索 / 语音（与「上下文」区分区同款 TabsList 胶囊样式）
-  const [category, setCategory] = useState<'model' | 'search' | 'voice'>('model');
+  // 类别胶囊导航：模型 / 搜索 / 语音（路由驱动，刷新/直达/前进后退均保持；与「上下文」区分区同款 TabsList 样式）
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const category: ProviderCategory = pathname.startsWith('/settings/provider/search')
+    ? 'search'
+    : pathname.startsWith('/settings/provider/voice')
+      ? 'voice'
+      : 'model';
   const { status: voiceStatus, refresh: refreshVoiceStatus } = useVoiceStatus();
   const { models: voiceModels, refresh: refreshVoiceModels } = useVoiceModels();
   const [providerDialogOpen, setProviderDialogOpen] = useState(false);
@@ -343,7 +353,10 @@ export function ProviderSettings() {
         {/* 类别胶囊导航：模型 / 搜索 / 语音（带图标，同「上下文」「外观」区 TabsList 样式） */}
         <Tabs
           value={category}
-          onValueChange={(v) => setCategory(v as 'model' | 'search' | 'voice')}
+          onValueChange={(v) => {
+            const next = v as ProviderCategory;
+            navigate(next === 'model' ? '/settings/provider' : `/settings/provider/${next}`);
+          }}
         >
           <TabsList>
             <TabsTrigger value="model" className="gap-1.5">

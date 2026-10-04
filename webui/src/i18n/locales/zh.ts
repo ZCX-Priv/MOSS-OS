@@ -937,6 +937,7 @@ export const zh = {
   },
   start: {
     title: '开始',
+    hint: '从这里开始',
     summaryDesc: '查看任务待办与上下文构成',
     terminalDesc: '在会话工作区运行命令',
     agenteamDesc: '多智能体协作处理复杂任务',

@@ -304,7 +304,7 @@ export function RulesSettingsSection() {
 
       {/* 新建/编辑弹窗 */}
       <Dialog open={dialogOpen} onOpenChange={(o) => !saving && setDialogOpen(o)}>
-        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+        <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>
               {editingId ? t('settings.rules.editTitle') : t('settings.rules.createTitle')}

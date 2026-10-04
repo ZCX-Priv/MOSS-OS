@@ -459,7 +459,7 @@ export function MemorySettingsSection() {
 
       {/* 新建/编辑弹窗 */}
       <Dialog open={dialogOpen} onOpenChange={(o) => !saving && setDialogOpen(o)}>
-        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-xl">
+        <DialogContent className="sm:max-w-xl">
           <DialogHeader>
             <DialogTitle>
               {editingId ? t('settings.memory.editTitle') : t('settings.memory.createTitle')}

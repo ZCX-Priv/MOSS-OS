@@ -434,6 +434,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
   const reorderSidebarTabs = useStore((s) => s.reorderSidebarTabs);
   const openFileTab = useStore((s) => s.openFileTab);
   const resetSidebarTabs = useStore((s) => s.resetSidebarTabs);
+  const convertSidebarTab = useStore((s) => s.convertSidebarTab);
   const toolIconMap = useStore((s) => s.toolIconMap);
   const { sendMessage, abort } = useTask();
 
@@ -448,21 +449,27 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
 
   // 当前活跃标签对象
   const activeTab = sidebarTabs.find((t) => t.id === activeSidebarTabId) ?? sidebarTabs[0];
-  // 下拉菜单只显示当前标签栏中未打开的标签页类型；两类都已打开时禁用加号按钮
-  const hasStartTab = sidebarTabs.some((tab) => tab.type === 'start');
+  // 下拉菜单只显示当前标签栏中未打开的类型；三种类型都已打开时禁用加号按钮
   const hasSummaryTab = sidebarTabs.some((tab) => tab.type === 'summary');
   const hasTerminalTab = sidebarTabs.some((tab) => tab.type === 'terminal');
   const hasAgenteamTab = sidebarTabs.some((tab) => tab.type === 'agenteam');
-  const allTabTypesOpen = hasStartTab && hasSummaryTab && hasTerminalTab && hasAgenteamTab;
+  const allTabTypesOpen = hasSummaryTab && hasTerminalTab && hasAgenteamTab;
 
-  // 「开始」面板：打开/切换到某类型标签（已开则激活，未开则新建）
+  // 「开始」面板：打开/切换到某类型标签；「开始」标签存在时原地变身，不再新开标签
   const openTabType = useCallback(
     (type: 'summary' | 'terminal' | 'agenteam', titleKey: string) => {
+      // 已开该类型 → 直接切换
       const existing = sidebarTabs.find((tab) => tab.type === type);
-      if (existing) setActiveSidebarTab(taskId, existing.id);
+      if (existing) {
+        setActiveSidebarTab(taskId, existing.id);
+        return;
+      }
+      // 未开 → 若当前有「开始」标签则原地转换，否则新增
+      const startTab = sidebarTabs.find((tab) => tab.type === 'start');
+      if (startTab) convertSidebarTab(taskId, startTab.id, type, titleKey);
       else addSidebarTab(taskId, type, titleKey);
     },
-    [sidebarTabs, addSidebarTab, setActiveSidebarTab, taskId],
+    [sidebarTabs, addSidebarTab, setActiveSidebarTab, convertSidebarTab, taskId],
   );
 
   // 标签栏单行横向滚动：哪边还有未滚动到内容，才渲染哪边的箭头（与附件栏同款规则）
@@ -825,7 +832,7 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
                   key={tab.id}
                   tab={tab}
                   isActive={tab.id === activeTab?.id}
-                  canShowClose={sidebarTabs.length > 1}
+                  canShowClose={tab.type !== 'start'}
                   onSelect={(id) => setActiveSidebarTab(taskId, id)}
                   onRemove={(id) => removeSidebarTab(taskId, id)}
                 />
@@ -857,14 +864,6 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" sideOffset={4} collisionPadding={8}>
-            {!hasStartTab && (
-              <DropdownMenuItem
-                onSelect={() => addSidebarTab(taskId, 'start', 'start.title')}
-              >
-                <Compass className="size-4" />
-                {t('start.title')}
-              </DropdownMenuItem>
-            )}
             {!hasSummaryTab && (
               <DropdownMenuItem
                 onSelect={() => addSidebarTab(taskId, 'summary', 'task.taskSummary')}
@@ -1693,43 +1692,40 @@ function StartPanel({ onOpen }: StartPanelProps) {
     titleKey: string;
     descKey: string;
     Icon: typeof List;
-    color: string;
   }> = [
     {
       type: 'summary',
       titleKey: 'task.taskSummary',
       descKey: 'start.summaryDesc',
       Icon: List,
-      color: 'text-amber-500',
     },
     {
       type: 'terminal',
       titleKey: 'terminal.title',
       descKey: 'start.terminalDesc',
       Icon: Terminal,
-      color: 'text-blue-500',
     },
     {
       type: 'agenteam',
       titleKey: 'agenteam.title',
       descKey: 'start.agenteamDesc',
       Icon: Users,
-      color: 'text-emerald-500',
     },
   ];
   return (
     <div className="flex h-full items-center justify-center overflow-y-auto p-4">
       <div className="flex w-full max-w-xs flex-col items-center">
-        <Compass className="mb-8 size-10 text-muted-foreground/40" strokeWidth={1.5} />
+        <Compass className="mb-3 size-10 text-muted-foreground/40" strokeWidth={1.5} />
+        <p className="mb-8 text-xs text-muted-foreground">{t('start.hint')}</p>
         <div className="flex w-full flex-col gap-3">
-          {rows.map(({ type, titleKey, descKey, Icon, color }) => (
+          {rows.map(({ type, titleKey, descKey, Icon }) => (
             <button
               key={type}
               type="button"
               onClick={() => onOpen(type, titleKey)}
               className="flex w-full cursor-pointer items-center gap-3 rounded-xl border border-border bg-muted/30 px-3.5 py-3 text-left transition-colors hover:bg-muted"
             >
-              <Icon className={cn('size-5 shrink-0', color)} />
+              <Icon className="size-5 shrink-0 text-muted-foreground" />
               <span className="flex min-w-0 flex-1 flex-col">
                 <span className="truncate text-sm font-medium text-foreground">{t(titleKey)}</span>
                 <span className="truncate text-xs text-muted-foreground">{t(descKey)}</span>

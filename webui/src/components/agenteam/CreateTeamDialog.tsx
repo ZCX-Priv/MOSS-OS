@@ -192,7 +192,7 @@ export function CreateTeamDialog({ open, onOpenChange, onCreated }: CreateTeamDi
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[85vh] w-full max-w-lg flex-col">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{t('agenteam.createDialogTitle')}</DialogTitle>
         </DialogHeader>
