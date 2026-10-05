@@ -7,16 +7,26 @@ import {
   Archive,
   BookOpen,
   Box,
+  Calendar,
+  Captions,
   Code,
+  Contact,
+  Database,
+  DraftingCompass,
   File,
   FileImage,
   FileSpreadsheet,
   FileText,
+  MapPin,
   Music,
+  Palette,
   Presentation,
+  ShieldCheck,
+  Sigma,
   Table,
   Type,
   Video,
+  Zap,
 } from 'lucide-react';
 import { detectFileKind, fileNameOf } from './detector';
 import { fetchFileObjectUrl, getCachedObjectUrl, mimeOfPath } from './fetcher';
@@ -57,6 +67,26 @@ function iconOf(kind: RendererKind) {
       return Box;
     case 'image':
       return FileImage;
+    case 'subtitle':
+      return Captions;
+    case 'calendar':
+      return Calendar;
+    case 'contact':
+      return Contact;
+    case 'geo':
+      return MapPin;
+    case 'certificate':
+      return ShieldCheck;
+    case 'colorprofile':
+      return Palette;
+    case 'cad':
+      return DraftingCompass;
+    case 'sqlite':
+      return Database;
+    case 'flash':
+      return Zap;
+    case 'latex':
+      return Sigma;
     default:
       return File;
   }
@@ -74,12 +104,22 @@ const KIND_LABEL: Record<RendererKind, string> = {
   audio: 'AUDIO',
   html: 'HTML',
   markdown: 'MD',
+  latex: 'TEX',
   code: 'CODE',
   data: 'CSV',
   font: 'FONT',
   archive: 'ZIP',
   'three-d': '3D',
   image: 'IMG',
+  subtitle: 'SUB',
+  calendar: 'ICS',
+  contact: 'VCF',
+  geo: 'GEO',
+  certificate: 'CERT',
+  colorprofile: 'ICC',
+  cad: 'DXF',
+  sqlite: 'DB',
+  flash: 'SWF',
   text: 'TXT',
   unknown: 'FILE',
 };

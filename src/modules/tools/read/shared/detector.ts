@@ -16,19 +16,24 @@ const IMAGE_EXTS = new Set<string>([
  * Office/文档扩展名集合。
  * - Word OOXML：.docx/.docm/.dotx；Word OLE 旧版：.doc（word-extractor 解析）
  * - Excel OOXML：.xlsx/.xlsm/.xltx/.xltm；Excel OLE 旧版：.xls（SheetJS 原生支持读）
- * - PPT OOXML：.pptx/.pptm/.potx/.ppsx（officeparser）；PPT OLE 旧版：.ppt（不支持，报错提示转换）
+ * - PPT OOXML：.pptx/.pptm/.potx/.ppsx（officeparser）；PPT OLE 旧版：.ppt/.pot（OLE 文本提取）
+ * - WPS：.wps/.wpt（文字）、.et/.ett（表格）、.dps/.dpt（演示），按容器 magic 分派
  * - OpenDocument：.odt/.ods/.odp；RTF（officeparser）
  * 未列出的扩展名回退 'text'，由 text handler 做二进制兜底检测。
  */
 const OFFICE_EXTS = new Set<string>([
   // Word
-  '.docx', '.docm', '.dotx', '.doc',
-  // Excel
-  '.xlsx', '.xlsm', '.xltx', '.xltm', '.xls',
+  '.docx', '.docm', '.dotx', '.doc', '.dot',
+  // WPS 文字（OOXML 或 OLE，按 magic 分派）
+  '.wps', '.wpt',
+  // Excel（含二进制 .xlsb 与模板 .xlt/.ots）+ WPS 表格
+  '.xlsx', '.xlsm', '.xltx', '.xltm', '.xls', '.xlsb', '.xlt', '.et', '.ett',
   // PowerPoint
-  '.pptx', '.pptm', '.potx', '.ppsx', '.ppt',
+  '.pptx', '.pptm', '.potx', '.ppsx', '.ppt', '.pot',
+  // WPS 演示
+  '.dps', '.dpt',
   // OpenDocument / RTF
-  '.odt', '.ods', '.odp', '.rtf',
+  '.odt', '.ods', '.odp', '.ott', '.ots', '.otp', '.rtf',
 ]);
 
 /**

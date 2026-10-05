@@ -224,8 +224,3 @@
   max-width: 100%;
   height: auto;
 }
-
-/* ============ xlsx 表格 ============ */
-.xlsx-table td {
-  white-space: nowrap;
-}

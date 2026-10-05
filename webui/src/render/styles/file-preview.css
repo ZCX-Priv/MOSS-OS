@@ -87,3 +87,87 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* ============ 电子表格（统一观感组件 WorkbookViewer，两个引擎共用） ============ */
+.sheet-grid {
+  border-collapse: separate;
+  font-variant-numeric: tabular-nums;
+  min-width: max-content;
+}
+
+.sheet-grid th,
+.sheet-grid td {
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.sheet-hdr {
+  background: var(--muted);
+  color: var(--muted-foreground);
+}
+
+.sheet-cell {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-width: 320px;
+}
+
+/* 选中单元格/合并区域：浅底 + 描边 */
+.sheet-cell-sel {
+  background: color-mix(in oklab, var(--primary) 14%, transparent);
+}
+
+.sheet-cell-active {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+  position: relative;
+  z-index: 1;
+}
+
+/* 公式栏名称框 */
+.sheet-namebox {
+  background: var(--muted);
+}
+
+/* 底部工作表标签（Excel 风格） */
+.sheet-tab {
+  flex: 0 0 auto;
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-bottom: 2px solid transparent;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+  transition:
+    color 120ms ease,
+    border-color 120ms ease,
+    background-color 120ms ease;
+}
+
+.sheet-tab:hover {
+  background: var(--muted);
+  color: var(--foreground);
+}
+
+.sheet-tab-active {
+  border-bottom-color: var(--primary);
+  color: var(--foreground);
+  font-weight: 500;
+  background: color-mix(in oklab, var(--primary) 8%, transparent);
+}
+
+/* ============ 媒体宿主（图片查看器 / 视频 Video.js / 音频波形） ============ */
+.image-viewer-host {
+  position: relative;
+}
+
+.video-js-host .video-js {
+  width: 100%;
+  height: 100%;
+}
+
+.audio-waveform {
+  min-height: 88px;
+}

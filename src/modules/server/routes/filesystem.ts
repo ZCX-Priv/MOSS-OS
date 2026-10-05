@@ -21,7 +21,7 @@ import { ErrorCode } from '../../../core/error-codes';
 import { SYSTEM_SCOPE } from '../../filesys/roots';
 import { decodeShellOutput } from '../../../utils/encoding';
 import { parseRangeHeader, clampChunk } from './range';
-import { RAW_MIME_MAP, MEDIA_EXTS, isTextualExt } from './preview-mime';
+import { RAW_MIME_MAP, MEDIA_EXTS, isTextualExt, extOfFile } from './preview-mime';
 import type { FilesysService } from '../../filesys/types';
 
 interface ResolveBody {
@@ -227,7 +227,7 @@ function searchShallow(dir: string): SearchedFile[] {
       path: join(dir, e.name),
       name: e.name,
       dir,
-      ext: extname(e.name).slice(1).toLowerCase(),
+      ext: extOfFile(e.name),
     }));
   return files;
 }
@@ -259,7 +259,7 @@ function searchRecursive(dir: string, q: string, isWin: boolean): SearchedFile[]
             path: full,
             name: ent.name,
             dir: cur,
-            ext: extname(ent.name).slice(1).toLowerCase(),
+            ext: extOfFile(ent.name),
           });
         }
       } else if (ent.isDirectory()) {
@@ -404,7 +404,7 @@ export function createListDirectoryHandler(services: ServiceRegistry): RouteHand
         name: ent.name,
         path: childPath,
         kind: isDirectory ? 'directory' : 'file',
-        ext: extname(ent.name).slice(1).toLowerCase(),
+        ext: extOfFile(ent.name),
         size,
         mtimeMs,
       });
@@ -789,7 +789,7 @@ export function createReadFileHandler(services: ServiceRegistry): RouteHandler {
       return { status: 403, body: { error: 'Access denied: path outside allowed roots or blocked' } };
     }
 
-    const ext = extname(absPath).slice(1).toLowerCase();
+    const ext = extOfFile(absPath);
     const mime = RAW_MIME_MAP[ext];
     if (!mime) {
       return { status: 415, body: { error: `Unsupported preview type: .${ext || '(none)'}` } };
@@ -869,7 +869,7 @@ export function createMediaHandler(services: ServiceRegistry, config: ConfigServ
       return { status: 403, body: { error: 'Access denied: path outside allowed roots or blocked' } };
     }
 
-    const ext = extname(absPath).slice(1).toLowerCase();
+    const ext = extOfFile(absPath);
     const mime = RAW_MIME_MAP[ext];
     if (!mime || !MEDIA_EXTS.has(ext)) {
       return { status: 415, body: { error: `Unsupported media type: .${ext || '(none)'}` } };
@@ -955,7 +955,7 @@ export function createTextExtractHandler(services: ServiceRegistry): RouteHandle
     }
 
     // 仅接受已知预览类型（防止把任意文件当文本读）
-    const ext = extname(absPath).slice(1).toLowerCase();
+    const ext = extOfFile(absPath);
     if (!(ext in RAW_MIME_MAP)) {
       return { status: 415, body: { error: `Unsupported text extraction type: .${ext || '(none)'}` } };
     }
@@ -986,7 +986,7 @@ export function createTextExtractHandler(services: ServiceRegistry): RouteHandle
       const { readEbook } = await import('../../tools/read/handlers/ebook');
       let result;
       const officeExts = new Set([
-        'docx', 'docm', 'dotx', 'doc', 'dot', 'xlsx', 'xlsm', 'xltx', 'xltm', 'xls', 'xlt',
+        'docx', 'docm', 'dotx', 'doc', 'dot', 'xlsx', 'xlsm', 'xltx', 'xltm', 'xls', 'xlt', 'xlsb',
         'pptx', 'pptm', 'potx', 'ppsx', 'ppt', 'pot', 'odt', 'ods', 'odp', 'ott', 'ots', 'otp', 'rtf',
       ]);
       const ebookExts = new Set(['epub', 'opf', 'mobi', 'azw3', 'azw', 'fb2']);

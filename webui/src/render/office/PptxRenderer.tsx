@@ -14,6 +14,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { PreviewErrorBoundary } from '../core/PreviewErrorBoundary';
+import { DocumentToolbar } from './DocumentToolbar';
 import { PptxOutline } from './PptxOutline';
 
 /** 渲染器实例的最小结构约束（避免 any） */
@@ -25,10 +26,15 @@ export interface PptxRendererProps {
   buffer: ArrayBuffer;
 }
 
+const MIN_ZOOM = 0.5;
+const MAX_ZOOM = 2.5;
+const ZOOM_STEP = 0.1;
+
 export function PptxRenderer({ buffer }: PptxRendererProps) {
   const { t } = useTranslation();
   const hostRef = useRef<HTMLDivElement>(null);
   const [failed, setFailed] = useState(false);
+  const [zoom, setZoom] = useState(1);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -88,7 +94,15 @@ export function PptxRenderer({ buffer }: PptxRendererProps) {
 
   return (
     <PreviewErrorBoundary fallback={degraded} resetKey={String(buffer.byteLength)}>
-      <div ref={hostRef} className="pptx-viewer-host h-full w-full overflow-auto" />
+      <div className="grid h-full min-h-0 grid-rows-[auto_1fr] gap-2">
+        <DocumentToolbar
+          zoom={zoom}
+          onZoomIn={() => setZoom((z) => Math.min(MAX_ZOOM, z + ZOOM_STEP))}
+          onZoomOut={() => setZoom((z) => Math.max(MIN_ZOOM, z - ZOOM_STEP))}
+          onZoomReset={() => setZoom(1)}
+        />
+        <div ref={hostRef} className="pptx-viewer-host min-h-0 w-full overflow-auto" style={{ zoom }} />
+      </div>
     </PreviewErrorBoundary>
   );
 }

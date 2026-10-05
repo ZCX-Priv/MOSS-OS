@@ -7,11 +7,28 @@ import { ThemeProvider } from './contexts/ThemeContext'
 import { I18nProvider } from './contexts/I18nContext'
 import { idbGet, idbSet, migrateLegacyDatabase } from './utils/idb'
 import { normalizeShortcut } from './utils/shortcut'
+import { waitForBackendReady } from './api/readiness'
 import { useStore, type PersistedState, LEGACY_DEFAULT_WORKING_DIRECTORY, DEFAULT_WORKING_DIRECTORY } from './store'
 import { isValidRenderSettings } from './render/core/types'
 import { isValidAnimationSettings } from './types/animation'
 import i18n, { type Locale, resolveLocale, LOCALE_STORAGE_KEY } from './i18n'
 import './styles/global.css'
+
+// dev 兜底：Vite 重新预构建依赖后，此前引用的 ?v=<hash> chunk 会 404（懒加载渲染器报
+// “Failed to fetch dynamically imported module”）。捕获 vite:preloadError 后做一次
+// 节流整页重载自愈；10s 内只重载一次，防止异常情况下重载循环。
+window.addEventListener('vite:preloadError', (event) => {
+  event.preventDefault();
+  try {
+    const KEY = 'moss-preload-reload-at';
+    const last = Number(sessionStorage.getItem(KEY) ?? '0');
+    if (Date.now() - last < 10_000) return;
+    sessionStorage.setItem(KEY, String(Date.now()));
+  } catch {
+    // sessionStorage 不可用时不节流（仍重载一次）
+  }
+  window.location.reload();
+});
 
 type ThemeMode = 'light' | 'dark' | 'system';
 
@@ -201,7 +218,10 @@ async function resetStaleServiceWorker(): Promise<void> {
 // 启动即执行（非阻塞，与主题/语言/持久化初始化并行）
 void resetStaleServiceWorker();
 
-Promise.all([initTheme(), initLocale(), initPersisted()]).then((results) => {
+// 后端就绪门控：内核按序初始化（server 早于 agent），若在 agent 引擎注册前渲染应用，
+// 首批列表/历史请求会拿到 503（未就绪）→ 首屏侧边栏与消息列表为空，需刷新才恢复。
+// 这里与其他初始化并行等待就绪（有 12s 上限，后端不可用时不无限阻塞；期间 #moss-boot 骨架可见）。
+Promise.all([initTheme(), initLocale(), initPersisted(), waitForBackendReady()]).then((results) => {
   const persisted = results[2];
   useStore.getState().hydratePersisted(buildPersistedState(persisted));
   createRoot(document.getElementById('root')!).render(

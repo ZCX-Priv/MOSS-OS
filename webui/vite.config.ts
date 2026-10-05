@@ -64,6 +64,18 @@ export default defineConfig({
       devOptions: { enabled: true },
     }),
   ],
+  // dev 预构建全部「懒加载重依赖」：避免运行中首次访问某依赖时触发重新预构建，
+  // 使此前引用的 ?v=<hash> 模块 URL 失效 → 懒加载渲染器报
+  // “Failed to fetch dynamically imported module”（需重启 dev 生效）。
+  optimizeDeps: {
+    include: [
+      'sql.js', 'xlsx', 'epubjs', 'mermaid', 'shiki', 'pdfjs-dist', 'three',
+      'docx-preview', 'libarchive.js', '@aiden0z/pptx-renderer', 'jszip',
+      'fontkit', 'flv.js', 'video.js', 'wavesurfer.js', 'utif', 'heic2any',
+      '@cornerstonejs/codec-openjpeg', 'smiles-drawer', 'dxf-render',
+      'mathjax/es5/tex-mml-chtml.js',
+    ],
+  },
   resolve: {
     alias: {
       '@': path.resolve(import.meta.dirname, './src'),

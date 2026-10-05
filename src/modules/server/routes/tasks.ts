@@ -146,7 +146,10 @@ export function createListTasksHandler(services: ServiceRegistry): RouteHandler 
   return (req): HttpResponse => {
     const engine = resolveEngine(services);
     if (!engine) {
-      return { status: 200, body: { groups: [], tasks: [] } };
+      // 503 语义：内核按序初始化，server 早于 agent 注册，启动窗口内引擎可能尚未就绪。
+      // 此时必须返回可重试错误而非 200 空列表——否则前端会把「未就绪」当成「确实为空」，
+      // 首屏侧边栏呈现空列表且不重试（需手动刷新才恢复）。
+      return { status: 503, body: { error: ErrorCode.AGENT_ENGINE_UNAVAILABLE } };
     }
     // 运行态随列表一并返回（权威来源为 server 实例的 activeRuns）：
     // 刷新后首屏即可渲染「运行中」转圈，彻底修复「任务在后台跑却显示已完成」。
@@ -348,7 +351,8 @@ export function createListTaskGroupsHandler(services: ServiceRegistry): RouteHan
   return async (): Promise<HttpResponse> => {
     const engine = resolveEngine(services);
     if (!engine) {
-      return { status: 200, body: { groups: [] } };
+      // 同 createListTasksHandler：引擎未就绪时返回可重试错误
+      return { status: 503, body: { error: ErrorCode.AGENT_ENGINE_UNAVAILABLE } };
     }
     const groups = (engine.listTaskGroups?.() ?? []).filter((g) => g.hidden !== true);
     return { status: 200, body: { groups } };

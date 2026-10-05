@@ -53,6 +53,24 @@ export function getCachedObjectUrl(path: string): string | null {
   return objectUrlCache.get(path) ?? null;
 }
 
+/**
+ * 获取文件二进制「副本」。
+ * 供会把输入 ArrayBuffer `transfer` 给 Worker 的渲染器使用（当前为 pdfjs）：
+ * 若直接传 LRU 缓存里的 buffer，Worker 会 detach 它 → 二次打开同一文件时报
+ * `ArrayBuffer at index 0 is already detached`。故这里始终返回副本。
+ * 若缓存中的 buffer 已被 detach（历史遗留/异常），删除缓存并重新拉取。
+ */
+export async function fetchFileBufferCopy(path: string): Promise<ArrayBuffer> {
+  const buf = await fetchFileBuffer(path);
+  try {
+    return buf.slice(0);
+  } catch {
+    bufferCache.delete(path);
+    const fresh = await fetchFileBuffer(path);
+    return fresh.slice(0);
+  }
+}
+
 /** 获取文件 objectURL（图片/3D 模型加载器用；mime 用于 Blob 类型） */
 export async function fetchFileObjectUrl(path: string, mime: string): Promise<string> {
   const cached = objectUrlCache.get(path);
@@ -107,12 +125,20 @@ const MIME_BY_EXT: Record<string, string> = {
   dotx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.template',
   xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   xlsm: 'application/vnd.ms-excel.sheet.macroenabled.12',
+  xlsb: 'application/vnd.ms-excel.sheet.binary.macroenabled.12',
   xltx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.template',
   xltm: 'application/vnd.ms-excel.template.macroenabled.12',
   pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
   pptm: 'application/vnd.ms-powerpoint.presentation.macroenabled.12',
   potx: 'application/vnd.openxmlformats-officedocument.presentationml.template',
   ppsx: 'application/vnd.openxmlformats-officedocument.presentationml.slideshow',
+  // WPS（文字/表格/演示；同一扩展名可能为 OOXML 或 OLE）
+  wps: 'application/msword',
+  wpt: 'application/msword',
+  et: 'application/vnd.ms-excel',
+  ett: 'application/vnd.ms-excel',
+  dps: 'application/vnd.ms-powerpoint',
+  dpt: 'application/vnd.ms-powerpoint',
   // 电子书
   epub: 'application/epub+zip',
   opf: 'application/oebps-package+xml',
@@ -126,9 +152,17 @@ const MIME_BY_EXT: Record<string, string> = {
   xhtml: 'application/xhtml+xml',
   ttf: 'font/ttf',
   otf: 'font/otf',
+  ttc: 'font/collection',
+  otc: 'font/collection',
+  otb: 'font/otf',
   woff: 'font/woff',
   woff2: 'font/woff2',
   eot: 'application/vnd.ms-fontobject',
+  dfont: 'application/x-dfont',
+  fon: 'application/x-fon',
+  fnt: 'application/x-fon',
+  pfb: 'application/x-font-type1',
+  pfm: 'application/x-font-type1',
   zip: 'application/zip',
   // 3D
   glb: 'model/gltf-binary',
@@ -176,6 +210,7 @@ const MIME_BY_EXT: Record<string, string> = {
   m2ts: 'video/mp2t',
   mpg: 'video/mpeg',
   mpeg: 'video/mpeg',
+  m3u8: 'application/vnd.apple.mpegurl',
   rmvb: 'application/vnd.rn-realmedia-vbr',
   // 音频
   mp3: 'audio/mpeg',
@@ -198,6 +233,38 @@ const MIME_BY_EXT: Record<string, string> = {
   md: 'text/plain; charset=utf-8',
   csv: 'text/csv; charset=utf-8',
   tsv: 'text/tab-separated-values; charset=utf-8',
+  // 图像（新增：需前端解码）
+  pbm: 'image/x-portable-bitmap',
+  pgm: 'image/x-portable-graymap',
+  ppm: 'image/x-portable-pixmap',
+  pnm: 'image/x-portable-anymap',
+  pam: 'image/x-portable-arbitrarymap',
+  tga: 'image/x-tga',
+  jp2: 'image/jp2',
+  j2k: 'image/jp2',
+  jpf: 'image/jp2',
+  jpx: 'image/jp2',
+  // Flash / 压缩包 / 数据库
+  swf: 'application/x-shockwave-flash',
+  cab: 'application/vnd.ms-cab-compressed',
+  sqlite: 'application/vnd.sqlite3',
+  sqlite3: 'application/vnd.sqlite3',
+  db: 'application/vnd.sqlite3',
+  db3: 'application/vnd.sqlite3',
+  // 3D（新增）
+  '3dm': 'application/octet-stream',
+  bvh: 'application/octet-stream',
+  drc: 'application/octet-stream',
+  kmz: 'application/vnd.google-earth.kmz',
+  md2: 'application/octet-stream',
+  mdd: 'application/octet-stream',
+  nrrd: 'application/octet-stream',
+  pcd: 'application/octet-stream',
+  pdb: 'chemical/x-pdb',
+  usdz: 'model/vnd.usdz+zip',
+  vox: 'application/octet-stream',
+  gcode: 'text/plain; charset=utf-8',
+  xyz: 'text/plain; charset=utf-8',
 };
 
 export function mimeOfPath(path: string): string {

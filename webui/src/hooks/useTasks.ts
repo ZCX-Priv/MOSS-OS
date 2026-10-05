@@ -5,6 +5,7 @@
 import { useEffect, useCallback, useRef, useState } from 'react';
 import { useStore } from '../store';
 import { api } from '../api/http';
+import { withRetry } from '../lib/retry';
 import type { TaskItem } from '../types/api';
 
 /** 列表每页条数：首载与滚动追加共用（百级内首屏秒开，超出滚动加载） */
@@ -20,9 +21,10 @@ export function useTasks() {
   const loadingMoreRef = useRef(false);
 
   const load = useCallback(async () => {
-    // 优先分页首载（首页 TASKS_PAGE_SIZE 条；WS 广播与全量调用方不受影响）
+    // 优先分页首载（首页 TASKS_PAGE_SIZE 条；WS 广播与全量调用方不受影响）。
+    // withRetry：后端内核启动窗口内 agent 引擎未就绪会返回 503，退避重试后无需刷新即可自愈。
     try {
-      const { groups, tasks, page } = await api.listTasks({ limit: TASKS_PAGE_SIZE });
+      const { groups, tasks, page } = await withRetry(() => api.listTasks({ limit: TASKS_PAGE_SIZE }));
       setTaskGroups(groups);
       setTasks(tasks);
       setHasMore(page?.hasMore ?? false);
@@ -31,9 +33,9 @@ export function useTasks() {
       // 后端 tasks 路由未就绪，降级到 session 适配
     }
 
-    // 降级：api.listSessions() 适配为 TaskItem[]
+    // 降级：api.listSessions() 适配为 TaskItem[]（attempts 取小值：到达此处多为路由缺失而非瞬时故障）
     try {
-      const { sessions } = await api.listSessions();
+      const { sessions } = await withRetry(() => api.listSessions(), { attempts: 2 });
       const tasks: TaskItem[] = sessions.map((s) => ({
         id: s.id,
         title: `任务 ${s.id.slice(-6)}`,

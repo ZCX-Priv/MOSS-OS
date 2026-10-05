@@ -55,7 +55,9 @@ export function createListSessionsHandler(services: ServiceRegistry): RouteHandl
   return async (): Promise<HttpResponse> => {
     const agent = services.tryResolve<AgentEngine & { listSessions?: () => unknown[] }>('agent.engine');
     if (!agent?.listSessions) {
-      return { status: 200, body: { sessions: [] } };
+      // 503 语义：agent 模块晚于 server 初始化，启动窗口内引擎可能尚未注册。
+      // 返回可重试错误而非 200 空列表，避免前端把「未就绪」当成「无会话」而不再重试。
+      return { status: 503, body: { error: ErrorCode.AGENT_ENGINE_UNAVAILABLE } };
     }
     return { status: 200, body: { sessions: agent.listSessions() } };
   };
@@ -89,7 +91,8 @@ export function createSessionHistoryHandler(services: ServiceRegistry): RouteHan
     }
     const agent = services.tryResolve<AgentEngineExt>('agent.engine');
     if (!agent?.getHistory) {
-      return { status: 200, body: { sessionId, messages: [] } };
+      // 503 语义：引擎未就绪（启动窗口）→ 可重试错误，避免前端误判为「该会话没有消息」
+      return { status: 503, body: { error: ErrorCode.AGENT_ENGINE_UNAVAILABLE } };
     }
 
     const limit = toIndex(req.query?.limit);
@@ -149,6 +152,11 @@ export function createSessionStateHandler(services: ServiceRegistry): RouteHandl
       return { status: 400, body: { error: ErrorCode.SESSION_ID_REQUIRED } };
     }
     const agent = services.tryResolve<AgentEngineExt>('agent.engine');
+    if (!agent) {
+      // 503 语义：引擎未就绪（启动窗口）→ 可重试错误。
+      // 若返回 200 空快照，前端会把「未就绪」当成「无消息/无运行态」并置 loaded=true，不再重试。
+      return { status: 503, body: { error: ErrorCode.AGENT_ENGINE_UNAVAILABLE } };
+    }
 
     let running = false;
     try {

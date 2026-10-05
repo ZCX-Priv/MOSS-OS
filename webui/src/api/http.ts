@@ -107,6 +107,20 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   return (await resp.json()) as T;
 }
 
+/**
+ * 瞬时失败判定（供退避重试使用，见 lib/retry.ts）：
+ * - 网络层失败：fetch 抛 TypeError（后端未监听 / 连接被重置 / dev 代理 ECONNREFUSED）
+ * - 503 服务暂不可用：后端内核启动窗口内 agent 引擎尚未注册（AGENT_ENGINE_UNAVAILABLE）
+ * 其余（4xx 业务错误、参数错误、解析错误）不应重试。
+ */
+export function isTransientFailure(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  // fetch 网络失败统一抛 TypeError（request 内唯一的 TypeError 来源）
+  if (err.name === 'TypeError') return true;
+  const msg = err.message;
+  return msg.startsWith('503') || msg.includes('AGENT_ENGINE_UNAVAILABLE');
+}
+
 // 消息适配（AgentMessage[] → TaskMessage[]）已抽离至 ./adapt-messages.ts：
 // http.ts 顶部 import i18n 有模块级副作用（读 navigator），纯函数抽离后可在测试环境直接单测。
 import { adaptAgentMessages } from './adapt-messages';

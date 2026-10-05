@@ -27,6 +27,7 @@ import {
   onStreamSettled,
 } from '../lib/ws-events';
 import { diag } from '../lib/diag';
+import { withRetry } from '../lib/retry';
 import type { VirtualListApi } from '../lib/virtual-list/VirtualList';
 import type { SessionState, TaskMessage } from '../types/api';
 
@@ -108,7 +109,8 @@ export function useSessionHistory(
     flushPending();
     useStore.getState().resetHistory(taskId);
     try {
-      const resp = await api.getSessionHistory(taskId, { limit: HISTORY_PAGE_SIZE });
+      // withRetry：后端内核启动窗口内 agent 引擎未就绪会返回 503（可重试）
+      const resp = await withRetry(() => api.getSessionHistory(taskId, { limit: HISTORY_PAGE_SIZE }));
       const st = useStore.getState();
       if (st.activeSessionId && st.activeSessionId !== taskId) return;
       st.mergeHistory(
@@ -134,7 +136,7 @@ export function useSessionHistory(
   const reconcileFromState = useCallback(async (sessionId: string): Promise<void> => {
     let state: SessionState;
     try {
-      state = await api.getSessionState(sessionId);
+      state = await withRetry(() => api.getSessionState(sessionId));
     } catch {
       return;
     }
@@ -192,12 +194,13 @@ export function useSessionHistory(
   /** 首屏历史（空结果重试版）：新任务发送后 fetch 可能先于 user 消息持久化到达 → 返回空 */
   const fetchFirstPage = useCallback(async (sid: string) => {
     const localCount = () => useStore.getState().messagesBySession[sid]?.length ?? 0;
-    let resp = await api.getSessionHistory(sid, { limit: HISTORY_PAGE_SIZE });
+    // withRetry：引擎未就绪返回 503 时退避重试；下方循环处理「服务端已就绪但消息尚未持久化」的空结果
+    let resp = await withRetry(() => api.getSessionHistory(sid, { limit: HISTORY_PAGE_SIZE }));
     for (let attempt = 0; attempt < 2; attempt++) {
       if (!((resp.page?.total ?? resp.messages.length) === 0 && localCount() > 0)) break;
       diag('first-page-empty-retry', { sid, attempt });
       await new Promise<void>((resolve) => setTimeout(resolve, FIRST_PAGE_RETRY_DELAY_MS));
-      resp = await api.getSessionHistory(sid, { limit: HISTORY_PAGE_SIZE });
+      resp = await withRetry(() => api.getSessionHistory(sid, { limit: HISTORY_PAGE_SIZE }));
     }
     return resp;
   }, []);

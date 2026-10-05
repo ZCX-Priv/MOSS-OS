@@ -451,6 +451,14 @@ interface UIActions {
   addSidebarTab: (sessionId: string, type: SidebarTabType, title: string, toolCallId?: string) => string;
   /** 以文件预览标签打开路径（同一路径已打开则聚焦，不重复建页）；返回标签 id */
   openFileTab: (sessionId: string, path: string) => string;
+  /**
+   * 以「压缩包内层条目」打开标签页（可持久化：仅记录 archivePath+innerPath，
+   * 刷新后由渲染器重新提取内容）；同一 archivePath+innerPath 已打开则聚焦。
+   */
+  openArchiveEntryTab: (
+    sessionId: string,
+    entry: { archivePath: string; innerPath: string; name: string },
+  ) => string;
   /** 删除标签页；若删的是活跃标签则自动切到最后一个；删空则重建默认「开始」 */
   removeSidebarTab: (sessionId: string, id: string) => void;
   /** 设置活跃标签页 */
@@ -1327,6 +1335,46 @@ export const useStore = create<Store>((set, get) => ({
       type: 'file',
       title: fileNameOf(path),
       filePath: path,
+      createdAt: Date.now(),
+    };
+    set((state) => {
+      const cur = state.sidebarTabsBySession[sessionId] ?? defaultSessionTabs();
+      const map = {
+        ...state.sidebarTabsBySession,
+        [sessionId]: { tabs: [...cur.tabs, tab], activeId: id },
+      };
+      persistSidebarTabs(map);
+      return { sidebarTabsBySession: map };
+    });
+    return id;
+  },
+
+  openArchiveEntryTab: (sessionId, entry) => {
+    // 同一 archivePath+innerPath 已打开 → 聚焦已有标签
+    const existing = (get().sidebarTabsBySession[sessionId] ?? defaultSessionTabs()).tabs.find(
+      (t) =>
+        t.type === 'file' &&
+        t.archiveEntry?.archivePath === entry.archivePath &&
+        t.archiveEntry?.innerPath === entry.innerPath,
+    );
+    if (existing) {
+      set((state) => {
+        const cur = state.sidebarTabsBySession[sessionId] ?? defaultSessionTabs();
+        const map = {
+          ...state.sidebarTabsBySession,
+          [sessionId]: { tabs: cur.tabs, activeId: existing.id },
+        };
+        persistSidebarTabs(map);
+        return { sidebarTabsBySession: map };
+      });
+      return existing.id;
+    }
+    const id = newTabId();
+    const tab: SidebarTab = {
+      id,
+      type: 'file',
+      title: entry.name,
+      archiveEntry: entry,
       createdAt: Date.now(),
     };
     set((state) => {

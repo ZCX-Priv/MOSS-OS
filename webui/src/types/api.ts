@@ -63,6 +63,11 @@ export interface SidebarTab {
   toolCallId?: string;
   /** 仅 file 类型：文件绝对路径（预览数据源） */
   filePath?: string;
+  /**
+   * 仅 file 类型：压缩包内层条目来源（持久化用）。
+   * 存在时以 archivePath + innerPath 重新提取内容；filePath 仅为展示占位，不用于取数据。
+   */
+  archiveEntry?: { archivePath: string; innerPath: string; name: string };
   createdAt: number;
 }
 

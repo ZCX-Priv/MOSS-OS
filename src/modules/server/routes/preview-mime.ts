@@ -27,6 +27,10 @@ const TEXT_EXTS: readonly string[] = [
   // 配置 / 数据
   'json', 'jsonc', 'json5', 'yaml', 'yml', 'toml', 'ini', 'conf', 'cfg', 'env',
   'properties', 'gitignore', 'gitattributes', 'editorconfig', 'lock', 'dotenv',
+  // 常见点文件（无基名、仅扩展名）：其扩展名需配合 extOfFile 才能正确取得（见下方）
+  'prettierrc', 'prettierignore', 'eslintrc', 'eslintignore', 'stylelintrc', 'babelrc',
+  'npmrc', 'yarnrc', 'pnpmrc', 'nvmrc', 'dockerignore', 'gitmodules', 'gitkeep',
+  'htaccess', 'jshintrc', 'browserslistrc', 'commitlintrc', 'lintstagedrc',
   'makefile', 'dockerfile', 'cmake', 'gradle', 'bazel', 'tf', 'tfvars', 'hcl', 'nomad',
   // 代码
   'sh', 'bash', 'zsh', 'fish', 'bat', 'cmd', 'ps1', 'psm1', 'nu',
@@ -39,6 +43,22 @@ const TEXT_EXTS: readonly string[] = [
   // 标记 / 样式 / 补丁
   'css', 'scss', 'sass', 'less', 'styl', 'xml', 'xsl', 'xslt', 'dtd', 'plist', 'svgz',
   'http', 'rest', 'diff', 'patch',
+  // LaTeX（前端按公式渲染）
+  'tex', 'latex', 'ltx',
+  // 字幕 / 歌词
+  'srt', 'vtt', 'ass', 'ssa', 'lrc',
+  // 日历 / 名片
+  'ics', 'ifb', 'vcf', 'vcard',
+  // 地理数据（GeoJSON/KML/GPX 为 XML/JSON 文本）
+  'gpx', 'kml', 'geojson',
+  // 证书（PEM 文本；DER 走二进制通道，见 BASE_MIME）
+  'pem', 'crt', 'csr', 'p7b',
+  // JSON Lines（逐行 JSON）
+  'ndjson', 'jsonl',
+  // 2D 矢量图纸（ASCII DXF）
+  'dxf',
+  // 3D 文本格式（three loader 直接解析）
+  'gcode', 'xyz',
 ];
 
 /**
@@ -53,6 +73,7 @@ const BASE_MIME: Record<string, string> = {
   dotx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.template',
   xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   xlsm: 'application/vnd.ms-excel.sheet.macroenabled.12',
+  xlsb: 'application/vnd.ms-excel.sheet.binary.macroenabled.12',
   xltx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.template',
   xltm: 'application/vnd.ms-excel.template.macroenabled.12',
   pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
@@ -66,6 +87,13 @@ const BASE_MIME: Record<string, string> = {
   dot: 'application/msword',
   xlt: 'application/vnd.ms-excel',
   pot: 'application/vnd.ms-powerpoint',
+  // WPS（文字/表格/演示；同一扩展名可能为 OOXML 或 OLE，按 magic 解析）
+  wps: 'application/msword',
+  wpt: 'application/msword',
+  et: 'application/vnd.ms-excel',
+  ett: 'application/vnd.ms-excel',
+  dps: 'application/vnd.ms-powerpoint',
+  dpt: 'application/vnd.ms-powerpoint',
   // OpenDocument / RTF（含模板族；fodt/fods/fodp 为扁平 XML，归入文本类见 TEXT_EXTS）
   odt: 'application/vnd.oasis.opendocument.text',
   ods: 'application/vnd.oasis.opendocument.spreadsheet',
@@ -88,9 +116,17 @@ const BASE_MIME: Record<string, string> = {
   // 字体
   ttf: 'font/ttf',
   otf: 'font/otf',
+  ttc: 'font/collection',
+  otc: 'font/collection',
+  otb: 'font/otf',
   woff: 'font/woff',
   woff2: 'font/woff2',
   eot: 'application/vnd.ms-fontobject',
+  dfont: 'application/x-dfont',
+  fon: 'application/x-fon',
+  fnt: 'application/x-fon',
+  pfb: 'application/x-font-type1',
+  pfm: 'application/x-font-type1',
   // 压缩包
   zip: 'application/zip',
   tar: 'application/x-tar',
@@ -146,6 +182,7 @@ const BASE_MIME: Record<string, string> = {
   m2ts: 'video/mp2t',
   mpg: 'video/mpeg',
   mpeg: 'video/mpeg',
+  m3u8: 'application/vnd.apple.mpegurl',
   rmvb: 'application/vnd.rn-realmedia-vbr',
   // 音频
   mp3: 'audio/mpeg',
@@ -163,6 +200,62 @@ const BASE_MIME: Record<string, string> = {
   midi: 'audio/midi',
   aiff: 'audio/aiff',
   aif: 'audio/aiff',
+  // ── 图像（新增：前端自解码 netpbm/tga，或 openjpeg WASM 解 jp2） ──
+  pbm: 'image/x-portable-bitmap',
+  pgm: 'image/x-portable-graymap',
+  ppm: 'image/x-portable-pixmap',
+  pnm: 'image/x-portable-anymap',
+  pam: 'image/x-portable-arbitrarymap',
+  tga: 'image/x-tga',
+  jp2: 'image/jp2',
+  j2k: 'image/jp2',
+  jpf: 'image/jp2',
+  jpx: 'image/jp2',
+  // ── Flash / 压缩包 ──
+  swf: 'application/x-shockwave-flash',
+  cab: 'application/vnd.ms-cab-compressed',
+  // ── 3D（three examples/jsm loader 直接解析） ──
+  '3dm': 'application/octet-stream',
+  bvh: 'application/octet-stream',
+  drc: 'application/octet-stream',
+  kmz: 'application/vnd.google-earth.kmz',
+  md2: 'application/octet-stream',
+  mdd: 'application/octet-stream',
+  nrrd: 'application/octet-stream',
+  pcd: 'application/octet-stream',
+  pdb: 'chemical/x-pdb',
+  usdz: 'model/vnd.usdz+zip',
+  vox: 'application/octet-stream',
+  // ── 数据库 ──
+  sqlite: 'application/vnd.sqlite3',
+  sqlite3: 'application/vnd.sqlite3',
+  db: 'application/vnd.sqlite3',
+  db3: 'application/vnd.sqlite3',
+  // ── 证书（二进制 DER，渲染器内部识别 PEM/DER） ──
+  cer: 'application/pkix-cert',
+  der: 'application/pkix-cert',
+  // ── ICC 色彩配置文件 ──
+  icc: 'application/vnd.iccprofile',
+  icm: 'application/vnd.iccprofile',
+  // ── 明确「不接入原生渲染」：仍放行 /raw，保证可下载、可回退（前端 kind=unknown） ──
+  stp: 'application/step',
+  step: 'application/step',
+  ifc: 'application/x-step',
+  splat: 'application/octet-stream',
+  spz: 'application/octet-stream',
+  jxl: 'image/jxl',
+  bpg: 'image/bpg',
+  mng: 'video/x-mng',
+  wmf: 'image/wmf',
+  emf: 'image/emf',
+  dcm: 'application/dicom',
+  ac3: 'audio/ac3',
+  chm: 'application/vnd.ms-htmlhelp',
+  mdb: 'application/x-msaccess',
+  accdb: 'application/x-msaccess',
+  wri: 'application/x-mswrite',
+  lha: 'application/x-lzh-compressed',
+  lzh: 'application/x-lzh-compressed',
 };
 
 /**
@@ -185,11 +278,26 @@ export function isTextualExt(ext: string): boolean {
   return TEXT_PREVIEW_EXTS.has(ext.toLowerCase());
 }
 
+/**
+ * 取预览用扩展名（小写、无点），与前端 detector.fileExtension 语义一致。
+ *
+ * 关键：Node `path.extname('.gitignore')` 返回 `''`（把以点开头的文件当作无扩展名的隐藏文件），
+ * 会导致 `.gitignore` / `.env` / `.prettierrc` 等点文件被误判为「无扩展名」→ 白名单查不到 → 415。
+ * 这里对「以点开头且不含其它点」的纯点文件特判：整段去点即为扩展名。
+ */
+export function extOfFile(nameOrPath: string): string {
+  const base = nameOrPath.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? '';
+  const dot = base.lastIndexOf('.');
+  if (dot === -1) return '';
+  if (dot === 0) return base.slice(1).toLowerCase();
+  return base.slice(dot + 1).toLowerCase();
+}
+
 /** 视频/音频扩展名（/api/filesystem/media 白名单，防退化为任意文件下载器）
  *  注意：不含 'ts'——它在前端归属 TypeScript（文本），MPEG-TS 由 'm2ts' 承载。 */
 export const MEDIA_EXTS = new Set<string>([
   'mp4', 'm4v', 'webm', 'ogv', 'mov', 'mkv', 'avi', 'wmv', 'flv', '3gp', '3g2',
-  'm2ts', 'mpg', 'mpeg', 'rmvb',
+  'm2ts', 'mpg', 'mpeg', 'rmvb', 'm3u8',
   'mp3', 'wav', 'ogg', 'oga', 'opus', 'flac', 'm4a', 'aac', 'weba', 'wma', 'amr',
   'mid', 'midi', 'aiff', 'aif',
 ]);

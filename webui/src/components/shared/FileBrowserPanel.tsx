@@ -5,7 +5,7 @@
 // 点击文件经 openFileTab 在右侧面板新建「文件预览」标签（复用 file 类型 + FilePreviewPane）。
 // 数据源 GET /api/filesystem/list（root 边界由服务端强制，越界返回 403）。
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ArrowRight, ArrowUp, Folder, Loader2, RotateCw, TriangleAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -13,7 +13,8 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { FileTypeIcon } from './FileTypeIcon';
 import { useStore } from '../../store';
 import { api } from '../../api/http';
-import type { DirectoryListing } from '../../types/api';
+import { wsClient } from '../../api/ws';
+import type { DirectoryListing, WSMessage } from '../../types/api';
 
 export interface FileBrowserPanelProps {
   /** 会话 id（= taskId）；用于打开文件标签与会话级面板控制 */
@@ -76,6 +77,13 @@ function samePathLoose(a: string, b: string): boolean {
   return key(a) === key(b);
 }
 
+/** 取路径的父目录（统一 / 分隔、去末尾分隔符；无分隔符时返回空串） */
+function parentDirOf(p: string): string {
+  const norm = p.replace(/\\/g, '/').replace(/\/+$/, '');
+  const idx = norm.lastIndexOf('/');
+  return idx === -1 ? '' : norm.slice(0, idx);
+}
+
 export function FileBrowserPanel({ sessionId }: FileBrowserPanelProps) {
   const { t } = useTranslation();
   const workingDirectory = useStore((s) => s.workingDirectory);
@@ -87,6 +95,10 @@ export function FileBrowserPanel({ sessionId }: FileBrowserPanelProps) {
   const [error, setError] = useState<string | null>(null);
   /** 地址栏可编辑部分：相对根的子路径 */
   const [subPath, setSubPath] = useState('');
+  /** 最新目录列表（WS 事件回调读取，避免闭包过期） */
+  const listingRef = useRef<DirectoryListing | null>(null);
+  /** 静默刷新防抖定时器 */
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(
     async (target: string | null, root: string | null) => {
@@ -98,6 +110,7 @@ export function FileBrowserPanel({ sessionId }: FileBrowserPanelProps) {
           workingDirectory || undefined,
           root ?? undefined,
         );
+        listingRef.current = resp;
         setListing(resp);
         setSubPath(toSuffixDisplay(resp.root, resp.path));
         lastBySession.set(sessionId, { wd: workingDirectory, root: resp.root, path: resp.path });
@@ -109,6 +122,83 @@ export function FileBrowserPanel({ sessionId }: FileBrowserPanelProps) {
     },
     [workingDirectory, sessionId],
   );
+
+  /**
+   * 静默刷新：拉取当前展示目录并更新列表，但**不重设地址栏输入**（避免打断正在输入的路径）。
+   * 失败静默忽略，不覆盖现有错误态。
+   */
+  const silentRefresh = useCallback(async () => {
+    const cur = listingRef.current;
+    if (!cur) return;
+    try {
+      const resp = await api.listDirectory(cur.path, workingDirectory || undefined, cur.root);
+      listingRef.current = resp;
+      setListing(resp);
+      lastBySession.set(sessionId, { wd: workingDirectory, root: resp.root, path: resp.path });
+    } catch {
+      // 静默刷新失败：保持当前列表
+    }
+  }, [workingDirectory, sessionId]);
+
+  // 实时刷新：订阅本会话的文件变更 WS 事件；变更落在当前目录时防抖静默刷新。
+  // 事件源见后端 engine.onFilesysChange（file-created/edited/deleted/moved/shell-changed）。
+  useEffect(() => {
+    const schedule = (): void => {
+      if (refreshTimer.current) clearTimeout(refreshTimer.current);
+      refreshTimer.current = setTimeout(() => {
+        refreshTimer.current = null;
+        void silentRefresh();
+      }, 250);
+    };
+    const affectsCurrentDir = (paths: string[]): boolean => {
+      const cur = listingRef.current;
+      if (!cur) return false;
+      return paths.some((p) => p.length > 0 && samePathLoose(parentDirOf(p), cur.path));
+    };
+    const handle = (msg: WSMessage): void => {
+      if (msg.sessionId !== sessionId) return;
+      const payload = (msg.payload ?? {}) as {
+        path?: string;
+        destPath?: string;
+        report?: { created?: string[]; modified?: string[]; deleted?: string[] };
+      };
+      let paths: string[];
+      switch (msg.type) {
+        case 'file-created':
+        case 'file-edited':
+        case 'file-deleted':
+          paths = payload.path ? [payload.path] : [];
+          break;
+        case 'file-moved':
+          paths = [payload.path, payload.destPath].filter((x): x is string => typeof x === 'string');
+          break;
+        case 'shell-changed':
+          paths = [
+            ...(payload.report?.created ?? []),
+            ...(payload.report?.modified ?? []),
+            ...(payload.report?.deleted ?? []),
+          ];
+          break;
+        default:
+          return;
+      }
+      if (affectsCurrentDir(paths)) schedule();
+    };
+    const unsub = wsClient.onMessage(handle);
+    // 兜底：页面重新可见时补一次（WS 断连期可能丢事件）
+    const onVisible = (): void => {
+      if (document.visibilityState === 'visible') void silentRefresh();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      unsub();
+      document.removeEventListener('visibilitychange', onVisible);
+      if (refreshTimer.current) {
+        clearTimeout(refreshTimer.current);
+        refreshTimer.current = null;
+      }
+    };
+  }, [sessionId, silentRefresh]);
 
   // 进入标签：同一工作目录下恢复该会话上次位置；否则首次定位（后端以工作目录为根）
   useEffect(() => {

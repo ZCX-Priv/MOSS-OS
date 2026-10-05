@@ -4,12 +4,16 @@
 // - Word OLE 旧版（doc）：word-extractor 提取正文/脚注/页眉页脚
 // - Excel（xls/xlsx/xlsm/xltx/xltm）：SheetJS 转 CSV（原生支持读旧版 .xls BIFF）
 // - PPT OOXML（pptx/pptm/potx/ppsx）+ ODF（odt/ods/odp）+ RTF：officeparser 提取文本
-// - PPT OLE 旧版（ppt）：无成熟纯 JS 解析方案，明确报错提示转换
+// - PPT OLE 旧版（ppt/pot）与 WPS 演示（dps/dpt）：OLE 记录树文本提取（ole.ts）
+// - WPS 文字（wps/wpt）：OOXML(ZIP) → mammoth；OLE → word-extractor 失败后退回 OLE 文本
+// - WPS 表格（et/ett）：SheetJS（兼容 BIFF8/OOXML），失败退回 OLE 文本
+// - Word 6/95 等旧格式：word-extractor 抛错时自动退回 OLE 文本提取，绝不报错
 // 所有库均通过 await import() 动态懒加载，避免未安装时启动失败。
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, openSync, readSync, closeSync } from 'node:fs';
 import { extname, basename } from 'node:path';
 import type { ToolResult } from '../../types';
+import { extractOleText } from './ole';
 
 /** mammoth.extractRawText 返回结构 */
 interface MammothResult {
@@ -44,14 +48,56 @@ const WORD_OOXML_EXTS = new Set(['.docx', '.docm', '.dotx']);
 /** 旧版 OLE Word 家族（word-extractor 按内容解析，模板 .dot 同容器） */
 const WORD_OLE_EXTS = new Set(['.doc', '.dot']);
 
-/** Excel 家族扩展名（SheetJS 原生支持读 OOXML、旧版 BIFF .xls 与模板 .xlt） */
-const EXCEL_EXTS = new Set(['.xlsx', '.xlsm', '.xltx', '.xltm', '.xls', '.xlt']);
+/** Excel 家族扩展名（SheetJS 原生支持读 OOXML、二进制 .xlsb(BIFF12)、旧版 BIFF .xls、模板 .xlt，以及 ODS） */
+const EXCEL_EXTS = new Set(['.xlsx', '.xlsm', '.xltx', '.xltm', '.xls', '.xlsb', '.xlt', '.ods', '.ots']);
 
-/** officeparser 处理的扩展名（PPT OOXML / OpenDocument（含模板族）/ RTF） */
+/** officeparser 处理的扩展名（PPT OOXML / OpenDocument 文本与演示（.ods/.ots 已由 SheetJS 处理）/ RTF） */
 const OFFICEPARSER_EXTS = new Set([
   '.pptx', '.pptm', '.potx', '.ppsx',
-  '.odt', '.ods', '.odp', '.ott', '.ots', '.otp', '.rtf',
+  '.odt', '.odp', '.ott', '.otp', '.rtf',
 ]);
+
+/** WPS 各族的扩展名（同一扩展名可能是 OOXML(ZIP) 或 OLE，按容器 magic 分派） */
+const WPS_WORD_EXTS = new Set(['.wps', '.wpt']);
+const WPS_EXCEL_EXTS = new Set(['.et', '.ett']);
+const WPS_PPT_EXTS = new Set(['.dps', '.dpt']);
+
+/** 依据文件头 magic 判断容器类型：zip(OOXML) / ole(复合文档) / other */
+function sniffContainer(path: string): 'zip' | 'ole' | 'other' {
+  let fd: number | null = null;
+  try {
+    fd = openSync(path, 'r');
+    const head = Buffer.alloc(8);
+    const n = readSync(fd, head, 0, 8, 0);
+    if (n >= 4 && head[0] === 0x50 && head[1] === 0x4b) return 'zip';
+    if (n >= 4 && head[0] === 0xd0 && head[1] === 0xcf && head[2] === 0x11 && head[3] === 0xe0) return 'ole';
+  } catch {
+    // 读取失败按 other 处理
+  } finally {
+    if (fd !== null) {
+      try {
+        closeSync(fd);
+      } catch {
+        // 忽略关闭失败
+      }
+    }
+  }
+  return 'other';
+}
+
+/** OLE 文本提取结果 → ToolResult（永不为 isError） */
+function oleTextResult(path: string, label: string, kind: 'word' | 'ppt'): ToolResult {
+  const text = extractOleText(path, kind);
+  return {
+    content: [
+      {
+        type: 'text',
+        text: `${path} (${label})\n${text || '（未能从该文件中提取到可读文本，可能为加密或非标准结构）'}`,
+      },
+    ],
+    metadata: { type: label.toLowerCase(), legacy: true },
+  };
+}
 
 /**
  * 读取 Office/文档文件，提取文本。
@@ -66,21 +112,34 @@ export async function readOffice(path: string): Promise<ToolResult> {
     if (WORD_OLE_EXTS.has(ext)) {
       return await readLegacyDoc(path);
     }
+    // WPS 文字：ZIP → mammoth；OLE → word-extractor（失败自动退回 OLE 文本）
+    if (WPS_WORD_EXTS.has(ext)) {
+      if (sniffContainer(path) === 'zip') return await readDocx(path);
+      return await readLegacyDoc(path);
+    }
+    // WPS 表格：SheetJS 兼容 OOXML/BIFF8；失败退回 OLE 文本
+    if (WPS_EXCEL_EXTS.has(ext)) {
+      try {
+        return await readXlsx(path);
+      } catch {
+        return oleTextResult(path, ext.slice(1).toUpperCase(), 'word');
+      }
+    }
     if (EXCEL_EXTS.has(ext)) {
       return await readXlsx(path);
     }
     if (OFFICEPARSER_EXTS.has(ext)) {
       return await readWithOfficeParser(path, ext);
     }
+    // PPT OLE 旧版 / WPS 演示：ZIP → officeparser；OLE → 记录树文本提取
+    if (WPS_PPT_EXTS.has(ext)) {
+      if (sniffContainer(path) === 'zip') return await readWithOfficeParser(path, ext);
+      return oleTextResult(path, ext.slice(1).toUpperCase(), 'ppt');
+    }
     if (ext === '.ppt' || ext === '.pot') {
-      return {
-        content: [{
-          type: 'text',
-          text: `Error: legacy PowerPoint (${ext}) is not supported. Please convert the file to .pptx (open in PowerPoint/WPS and "Save As" .pptx), then read again: ${path}`,
-        }],
-        isError: true,
-        metadata: { type: 'ppt', supported: false },
-      };
+      // 被改名的 OOXML(.pptx) 走 officeparser；否则 OLE 记录树文本提取
+      if (sniffContainer(path) === 'zip') return await readWithOfficeParser(path, ext);
+      return oleTextResult(path, ext.slice(1).toUpperCase(), 'ppt');
     }
     return {
       content: [{ type: 'text', text: `Error: unsupported office format: ${ext}` }],
@@ -115,27 +174,41 @@ async function readDocx(path: string): Promise<ToolResult> {
  * 正文之外，脚注/页眉页脚非空时附加输出。
  */
 async function readLegacyDoc(path: string): Promise<ToolResult> {
-  // CJS 包（module.exports = 构造函数），经 default 互操作获取
-  const mod = await import('word-extractor');
-  const WordExtractor = mod.default;
-  const extractor = new WordExtractor();
-  const buf = readFileSync(path);
-  const doc = await extractor.extract(buf);
+  // Word 6/95（magic 0xA5DC）等旧格式，word-extractor 会抛 "Invalid magic number"；
+  // 这里先尝试 word-extractor（排版抽取更优），失败则退回 OLE 自解文本，绝不向上抛错。
+  try {
+    // CJS 包（module.exports = 构造函数），经 default 互操作获取
+    const mod = await import('word-extractor');
+    const WordExtractor = mod.default;
+    const extractor = new WordExtractor();
+    const buf = readFileSync(path);
+    const doc = await extractor.extract(buf);
 
-  const sections: string[] = [doc.getBody()];
-  const footnotes = doc.getFootnotes();
-  if (footnotes && footnotes.trim()) {
-    sections.push(`\n--- Footnotes ---\n${footnotes}`);
-  }
-  const headers = doc.getHeaders();
-  if (headers && headers.trim()) {
-    sections.push(`\n--- Headers & Footers ---\n${headers}`);
-  }
+    const sections: string[] = [doc.getBody()];
+    const footnotes = doc.getFootnotes();
+    if (footnotes && footnotes.trim()) {
+      sections.push(`\n--- Footnotes ---\n${footnotes}`);
+    }
+    const headers = doc.getHeaders();
+    if (headers && headers.trim()) {
+      sections.push(`\n--- Headers & Footers ---\n${headers}`);
+    }
 
-  return {
-    content: [{ type: 'text', text: `${path} (DOC)\n${sections.join('\n')}` }],
-    metadata: { type: 'doc' },
-  };
+    return {
+      content: [{ type: 'text', text: `${path} (DOC)\n${sections.join('\n')}` }],
+      metadata: { type: 'doc' },
+    };
+  } catch {
+    // 旧式 .doc 也可能是被改名的 OOXML(.docx)：按容器 magic 再试一次
+    if (sniffContainer(path) === 'zip') {
+      try {
+        return await readDocx(path);
+      } catch {
+        // 落入 OLE 文本兜底
+      }
+    }
+    return oleTextResult(path, extname(path).slice(1).toUpperCase(), 'word');
+  }
 }
 
 /**

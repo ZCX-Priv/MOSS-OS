@@ -1,6 +1,6 @@
 // render/index.ts
 // 渲染模块唯一公共出口 —— 外部（消息区/设置页/其他页面）只准从这里 import。
-// 重依赖（shiki/mermaid/mathjax/pdfjs/three/docx/exceljs）全部在各子模块内部 dynamic import，
+// 重依赖（shiki/mermaid/mathjax/pdfjs/three/docx/video.js）全部在各子模块内部 dynamic import，
 // 引用本模块本身的首屏成本仅 markdown-it + katex css。
 
 // Markdown 渲染
@@ -12,6 +12,8 @@ export { FilePreviewCard } from './file/FilePreviewCard';
 export { FilePreviewDialog } from './file/FilePreviewDialog';
 export { FilePreviewPane } from './file/FilePreviewPane';
 export { detectFileKind, fileNameOf, fileExtension } from './file/detector';
+export { pathSource, memorySource, archiveEntrySource, nameOfSource, extOfSource } from './core/source';
+export type { PreviewSource } from './core/source';
 
 // 设置
 export { useRenderSettings } from './core/settings';

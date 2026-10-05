@@ -42,7 +42,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { resolveToolIcon } from '@/lib/tool-icons';
-import { FilePreviewPane, fileNameOf, MarkdownRenderer } from '../../render';
+import { FilePreviewPane, archiveEntrySource, fileNameOf, MarkdownRenderer } from '../../render';
 import { subscribeDrained } from '../../render/core/hydration-scheduler';
 import type { OverlayType } from '../../types';
 import { cn } from '@/lib/utils';
@@ -454,6 +454,9 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
 
   // 当前活跃标签对象
   const activeTab = sidebarTabs.find((t) => t.id === activeSidebarTabId) ?? sidebarTabs[0];
+  // 压缩包内层标签：稳定引用地构造其内容源（否则 effect 依赖抖动 → 反复重新提取）
+  const archiveEntry = activeTab?.type === 'file' ? activeTab.archiveEntry : undefined;
+  const fileTabSource = useMemo(() => (archiveEntry ? archiveEntrySource(archiveEntry) : undefined), [archiveEntry]);
   // 下拉菜单只显示当前标签栏中未打开的类型；全部类型都已打开时禁用加号按钮
   const hasSummaryTab = sidebarTabs.some((tab) => tab.type === 'summary');
   const hasTerminalTab = sidebarTabs.some((tab) => tab.type === 'terminal');
@@ -1069,9 +1072,13 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
         {activeTab?.type === 'agenteam' && <AgenteamPanel />}
         {activeTab?.type === 'files' && <FileBrowserPanel key={taskId} sessionId={taskId} />}
         {activeTab?.type === 'changes' && <FileChangesPanel key={taskId} sessionId={taskId} />}
-        {activeTab?.type === 'file' && activeTab.filePath && (
+        {activeTab?.type === 'file' && (activeTab.filePath || activeTab.archiveEntry) && (
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            <FilePreviewPane path={activeTab.filePath} active />
+            {fileTabSource ? (
+              <FilePreviewPane source={fileTabSource} active sessionId={taskId} />
+            ) : (
+              <FilePreviewPane path={activeTab.filePath} active sessionId={taskId} />
+            )}
           </div>
         )}
       </div>

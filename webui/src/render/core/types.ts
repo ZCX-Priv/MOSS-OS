@@ -27,12 +27,24 @@ export type RendererKind =
   | 'audio'
   | 'html'
   | 'markdown'
+  | 'latex'
   | 'code'
   | 'data'
   | 'font'
   | 'archive'
   | 'three-d'
   | 'image'
+  // ── 结构化文本（专用渲染器，非纯文本） ──
+  | 'subtitle'
+  | 'calendar'
+  | 'contact'
+  | 'geo'
+  | 'certificate'
+  | 'colorprofile'
+  // ── 专用格式 ──
+  | 'cad'
+  | 'sqlite'
+  | 'flash'
   | 'text'
   | 'unknown';
 
