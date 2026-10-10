@@ -13,7 +13,7 @@ import { hostname, arch, cpus, release } from 'node:os';
 import type { Environment, Platform } from '../../../core/types';
 import type { ContextMessage, ContextSessionLike } from '../types';
 import { buildShellInfoText, buildDevToolsText, buildEncodingText } from './env-probe';
-import { SYSTEM_SCOPE } from '../../filesys/roots';
+import { SYSTEM_SCOPE, systemRoot } from '../../filesys/roots';
 
 /** 消息 name 标识 */
 export const ENV_CONTEXT_MSG_NAME = 'env-context';
@@ -44,6 +44,7 @@ function prettyPlatform(p: Platform): string {
     case 'win32': return 'Windows';
     case 'darwin': return 'macOS';
     case 'linux': return 'Linux';
+    case 'android': return 'Android';
     default: return 'Other';
   }
 }
@@ -85,9 +86,9 @@ function buildGitSnapshot(cwd: string): string | null {
 }
 
 /** 工作目录展示文案（System 作用域特殊说明，语义与旧 system.md 变量一致） */
-function cwdText(cwd: string, env: Environment): string {
+function cwdText(cwd: string): string {
   return cwd === SYSTEM_SCOPE
-    ? `System-wide access mode (full filesystem access; default working directory: ${env.homeDir}; under ~/.moss only the agent/, mcps/, skills/ subdirectories are accessible)`
+    ? `System-wide access mode (full filesystem access; default working directory: ${systemRoot()}; under ~/.moss only the agent/, mcps/, skills/ subdirectories are accessible)`
     : cwd;
 }
 
@@ -111,7 +112,7 @@ export function buildEnvContextMessage(
   const parts: string[] = [
     '[环境上下文]',
     `平台: ${prettyPlatform(env.platform)}（${env.platform}, ${arch()}，${release()}）`,
-    `工作目录: ${cwdText(cwd, env)}`,
+    `工作目录: ${cwdText(cwd)}`,
     `设备信息: ${hostname()} / ${arch()} / ${cpuModel}`,
     `语言/编码: ${buildEncodingText(env)}`,
   ];

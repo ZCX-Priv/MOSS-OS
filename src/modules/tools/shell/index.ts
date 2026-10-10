@@ -9,10 +9,9 @@
 import { t } from '../../../core/i18n';
 import { ServiceNames } from '../../../core/types';
 import { statSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { decodeShellOutput } from '../../../utils/encoding';
 import type { FilesysService, ShellChangeReport } from '../../contracts';
-import { SYSTEM_SCOPE } from '../../filesys/roots';
+import { SYSTEM_SCOPE, systemRoot } from '../../filesys/roots';
 import { probeShells, type ShellId } from '../../context/compiler/env-probe';
 import type { ToolContext, ToolResult } from '../types';
 
@@ -186,11 +185,11 @@ export default {
     }
 
     // cwd 解析：filesys roots 机制（相对路径基于 ctx.cwd；必须在 cwd 或授权 roots 内）
-    // System 作用域（本机模式）：未显式指定 cwd 时默认在用户主目录执行
+    // System 作用域（本机模式）：未显式指定 cwd 时默认在系统盘根执行
     const cwd = p.cwd
       ? filesys.resolve(p.cwd, ctx.cwd)
       : ctx.cwd === SYSTEM_SCOPE
-        ? homedir()
+        ? systemRoot()
         : ctx.cwd || process.cwd();
     if (!cwd) {
       return {

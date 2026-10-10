@@ -36,6 +36,7 @@ import { ModelSelector } from '../overlays/ModelSelector';
 import { PermissionModeSelector } from '../overlays/PermissionModeSelector';
 import { useDirectoryPicker } from '../../hooks/useDirectoryPicker';
 import { DirectoryPickerDialog } from '../overlays/DirectoryPickerDialog';
+import { DirectoryBrowserDialog } from '../overlays/DirectoryBrowserDialog';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   resolveWorkingDirectoryName,
@@ -164,6 +165,9 @@ export function TaskInput({
     candidates,
     selectCandidate,
     cancel,
+    browseOpen,
+    onBrowserPicked,
+    closeBrowser,
   } = useDirectoryPicker();
 
   // ==========================================================================
@@ -768,6 +772,11 @@ export function TaskInput({
       candidates={candidates}
       onSelect={selectCandidate}
       onClose={cancel}
+    />
+    <DirectoryBrowserDialog
+      open={browseOpen}
+      onSelect={onBrowserPicked}
+      onClose={closeBrowser}
     />
     </>
   );

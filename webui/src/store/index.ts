@@ -198,6 +198,11 @@ interface UIState {
   rightPanelOpenBySession: Record<string, boolean | undefined>;
   /** 右侧面板宽度 px（全局内存态；UI 偏好跨会话共享，拖拽调宽后重挂载不重置） */
   rightPanelWidth: number;
+  /**
+   * 文件预览弹层路径（内存态；仅移动端从「非侧边栏」入口触发时使用）。
+   * null = 关闭。桌面端统一走右侧边栏标签，不使用该弹层。
+   */
+  filePreviewDialogPath: string | null;
 
   // --- 渲染设置（render 模块，IndexedDB 持久化） ---
   renderSettings: RenderSettings;
@@ -478,6 +483,12 @@ interface UIActions {
   /** 面板开合状态随对话转移：空白页（''）发送首条消息创建新会话时继承，避免导航重挂载后收起 */
   migrateRightPanelState: (fromSessionId: string, toSessionId: string) => void;
 
+  // 文件预览弹层（移动端非侧边栏入口；桌面端不使用）
+  /** 打开文件预览弹层（path 为文件绝对路径） */
+  showFilePreviewDialog: (path: string) => void;
+  /** 关闭文件预览弹层 */
+  hideFilePreviewDialog: () => void;
+
   // 持久化状态注入（main.tsx 预填充 IndexedDB 后、渲染前调用）
   hydratePersisted: (patch: PersistedState) => void;
 }
@@ -655,6 +666,7 @@ export const useStore = create<Store>((set, get) => ({
   // --- 右侧面板展开态/宽度（内存态；默认收起 320px） ---
   rightPanelOpenBySession: {},
   rightPanelWidth: 320,
+  filePreviewDialogPath: null,
 
   // --- Actions: 会话 ---
   setActiveSession: (id) => set({ activeSessionId: id }),
@@ -1473,6 +1485,8 @@ export const useStore = create<Store>((set, get) => ({
       rightPanelOpenBySession: { ...state.rightPanelOpenBySession, [sessionId]: v },
     })),
   setRightPanelWidth: (v) => set({ rightPanelWidth: v }),
+  showFilePreviewDialog: (path) => set({ filePreviewDialogPath: path }),
+  hideFilePreviewDialog: () => set({ filePreviewDialogPath: null }),
   migrateRightPanelState: (fromSessionId, toSessionId) =>
     set((state) => {
       if (fromSessionId === toSessionId) return state;

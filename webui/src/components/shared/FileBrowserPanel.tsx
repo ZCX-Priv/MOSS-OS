@@ -1,33 +1,45 @@
 // components/shared/FileBrowserPanel.tsx
 // 文件浏览器面板（右侧面板「文件」标签）。
-// 以当前工作目录为「导航根」：可逐级进入子目录、返回上级；不能上溯越过根，也不能回到磁盘根。
-// 地址栏 = 灰色只读的根前缀 + 可编辑的子路径后缀（根之后可改，根之前不可改）。
+// 两种模式：
+//  - 普通模式（工作目录为具体目录）：以当前工作目录为「导航根」，可逐级进入子目录、返回上级；
+//    不能上溯越过根，也不能回到磁盘根。地址栏 = 灰色只读的根前缀 + 可编辑的子路径后缀。
+//  - 本机模式（工作目录为 __system__/空）：显示「本机」驱动器视图（盘符 + 容量），
+//    点击磁盘进入其根目录，可跨盘自由浏览；「上级」到盘根后返回驱动器视图。
 // 点击文件经 openFileTab 在右侧面板新建「文件预览」标签（复用 file 类型 + FilePreviewPane）。
-// 数据源 GET /api/filesystem/list（root 边界由服务端强制，越界返回 403）。
+// 数据源 GET /api/filesystem/list 与 GET /api/filesystem/drives（root 边界由服务端强制，越界返回 403）。
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ArrowRight, ArrowUp, Folder, Loader2, RotateCw, TriangleAlert } from 'lucide-react';
+import { ArrowRight, ArrowUp, Folder, HardDrive, Loader2, RotateCw, TriangleAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { FileTypeIcon } from './FileTypeIcon';
-import { useStore } from '../../store';
+import { useStore, SYSTEM_WORKING_DIRECTORY } from '../../store';
 import { api } from '../../api/http';
 import { wsClient } from '../../api/ws';
-import type { DirectoryListing, WSMessage } from '../../types/api';
+import type { DirectoryListing, DriveInfo, WSMessage } from '../../types/api';
 
 export interface FileBrowserPanelProps {
   /** 会话 id（= taskId）；用于打开文件标签与会话级面板控制 */
   sessionId: string;
 }
 
+/** 当前视图：驱动器列表 / 目录列表 */
+type BrowserView = 'drives' | 'dir';
+
+/** 平台路径分隔符（与后端 DirectoryListing.sep 对齐） */
+type Sep = '\\' | '/';
+
 /**
  * 每会话浏览位置记忆（模块级内存）。
  * 面板随标签激活状态挂载/卸载：点文件打开预览标签会卸载本面板，切回时若无记忆会被
- * 拉回根、丢失所在子目录 → 按会话记住位置用于恢复。
+ * 拉回根、丢失所在子目录 → 按会话记住位置用于恢复（含驱动器视图/所在目录）。
  * 同时记录当时的 workingDirectory：工作目录变了则记忆失效（旧路径可能已越界到新根之外）。
  */
-const lastBySession = new Map<string, { wd: string; root: string; path: string }>();
+const lastBySession = new Map<
+  string,
+  { wd: string; root: string; path: string; view: BrowserView }
+>();
 
 /** 文件大小人性化（1024 进制，保留 1 位小数） */
 function formatSize(bytes: number): string {
@@ -50,25 +62,25 @@ function relPath(root: string, full: string): string {
   return f.startsWith(`${r}/`) ? f.slice(r.length + 1) : '';
 }
 
-/** 根显示形式：末尾用 \ 闭合（根自身即完整闭合路径，避免空尾） */
-function rootDisplay(root: string): string {
+/** 根显示形式：末尾用平台分隔符闭合（根自身即完整闭合路径，避免空尾） */
+function rootDisplay(root: string, sep: Sep = '\\'): string {
   if (!root) return '';
-  return /[\\/]$/.test(root) ? root : `${root}\\`;
+  return /[\\/]$/.test(root) ? root : `${root}${sep}`;
 }
 
-/** 后缀显示形式：\ 分隔且末尾闭合（根时为空串，闭合由根前缀负责） */
-function toSuffixDisplay(root: string, full: string): string {
+/** 后缀显示形式：平台分隔符分隔且末尾闭合（根时为空串，闭合由根前缀负责） */
+function toSuffixDisplay(root: string, full: string, sep: Sep = '\\'): string {
   const rel = relPath(root, full); // 'a/b' 或 ''
   if (!rel) return '';
-  return `${rel.replace(/\//g, '\\')}\\`;
+  return `${rel.replace(/\//g, sep)}${sep}`;
 }
 
-/** 拼接根 + 后缀（去首尾分隔符后拼接；空后缀 = 根；盘符根回补分隔符） */
-function joinPath(root: string, suffix: string): string {
+/** 拼接根 + 后缀（去首尾分隔符后按平台分隔符拼接；空后缀 = 根；盘符根回补分隔符） */
+function joinPath(root: string, suffix: string, sep: Sep = '\\'): string {
   const base = root.replace(/[\\/]+$/, '');
   const tail = suffix.replace(/^[\\/]+/, '').replace(/[\\/]+$/, '');
-  if (!tail) return base.endsWith(':') ? `${base}\\` : base;
-  return `${base}/${tail}`;
+  if (!tail) return base.endsWith(':') ? `${base}${sep}` : base;
+  return `${base}${sep}${tail}`;
 }
 
 /** 路径等价比较（忽略大小写、分隔符差异与末尾斜杠） */
@@ -84,21 +96,46 @@ function parentDirOf(p: string): string {
   return idx === -1 ? '' : norm.slice(0, idx);
 }
 
+/** 是否为驱动器根 / 文件系统根（C:\、D:\ 或 /） */
+function isDriveRoot(p: string): boolean {
+  return /^[A-Za-z]:[\\/]?$/.test(p) || p === '/';
+}
+
 export function FileBrowserPanel({ sessionId }: FileBrowserPanelProps) {
   const { t } = useTranslation();
   const workingDirectory = useStore((s) => s.workingDirectory);
   const openFileTab = useStore((s) => s.openFileTab);
   const setRightPanelOpen = useStore((s) => s.setRightPanelOpen);
 
+  /** 本机模式：工作目录为空或 __system__（全盘访问，显示「本机」驱动器视图） */
+  const systemMode = !workingDirectory || workingDirectory === SYSTEM_WORKING_DIRECTORY;
+
   const [listing, setListing] = useState<DirectoryListing | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  /** 地址栏可编辑部分：相对根的子路径 */
+  /** 地址栏输入：普通模式 = 相对根的子路径后缀；本机模式 = 可编辑的绝对路径 */
   const [subPath, setSubPath] = useState('');
+  /** 当前视图（本机模式可在驱动器/目录间切换；普通模式恒为 dir） */
+  const [view, setView] = useState<BrowserView>('dir');
+  /** 驱动器列表（本机模式） */
+  const [drives, setDrives] = useState<DriveInfo[] | null>(null);
+  const [drivesLoading, setDrivesLoading] = useState(false);
+  const [drivesError, setDrivesError] = useState<string | null>(null);
+
   /** 最新目录列表（WS 事件回调读取，避免闭包过期） */
   const listingRef = useRef<DirectoryListing | null>(null);
+  /** 最新视图（定时回调读取，避免闭包过期） */
+  const viewRef = useRef<BrowserView>(view);
+  viewRef.current = view;
   /** 静默刷新防抖定时器 */
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const remember = useCallback(
+    (rec: { root: string; path: string; view: BrowserView }) => {
+      lastBySession.set(sessionId, { wd: workingDirectory, ...rec });
+    },
+    [sessionId, workingDirectory],
+  );
 
   const load = useCallback(
     async (target: string | null, root: string | null) => {
@@ -112,33 +149,59 @@ export function FileBrowserPanel({ sessionId }: FileBrowserPanelProps) {
         );
         listingRef.current = resp;
         setListing(resp);
-        setSubPath(toSuffixDisplay(resp.root, resp.path));
-        lastBySession.set(sessionId, { wd: workingDirectory, root: resp.root, path: resp.path });
+        setView('dir');
+        setSubPath(systemMode ? resp.path : toSuffixDisplay(resp.root, resp.path, resp.sep));
+        remember({ root: resp.root, path: resp.path, view: 'dir' });
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       } finally {
         setLoading(false);
       }
     },
-    [workingDirectory, sessionId],
+    [workingDirectory, systemMode, remember],
   );
+
+  /** 加载驱动器列表（本机模式「本机」视图） */
+  const loadDrives = useCallback(async () => {
+    setDrivesLoading(true);
+    setDrivesError(null);
+    try {
+      const resp = await api.listDrives();
+      setDrives(resp.drives);
+    } catch (err) {
+      setDrivesError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDrivesLoading(false);
+    }
+  }, []);
+
+  /** 回到「本机」驱动器视图（本机模式） */
+  const goDrives = useCallback(() => {
+    listingRef.current = null;
+    setListing(null);
+    setError(null);
+    setView('drives');
+    setSubPath('');
+    remember({ root: '', path: '', view: 'drives' });
+    void loadDrives();
+  }, [loadDrives, remember]);
 
   /**
    * 静默刷新：拉取当前展示目录并更新列表，但**不重设地址栏输入**（避免打断正在输入的路径）。
-   * 失败静默忽略，不覆盖现有错误态。
+   * 失败静默忽略，不覆盖现有错误态；驱动器视图下不适用。
    */
   const silentRefresh = useCallback(async () => {
     const cur = listingRef.current;
-    if (!cur) return;
+    if (!cur || viewRef.current !== 'dir') return;
     try {
-      const resp = await api.listDirectory(cur.path, workingDirectory || undefined, cur.root);
+      const resp = await api.listDirectory(cur.path, workingDirectory || undefined, systemMode ? undefined : cur.root);
       listingRef.current = resp;
       setListing(resp);
-      lastBySession.set(sessionId, { wd: workingDirectory, root: resp.root, path: resp.path });
+      remember({ root: resp.root, path: resp.path, view: 'dir' });
     } catch {
       // 静默刷新失败：保持当前列表
     }
-  }, [workingDirectory, sessionId]);
+  }, [workingDirectory, systemMode, remember]);
 
   // 实时刷新：订阅本会话的文件变更 WS 事件；变更落在当前目录时防抖静默刷新。
   // 事件源见后端 engine.onFilesysChange（file-created/edited/deleted/moved/shell-changed）。
@@ -200,12 +263,20 @@ export function FileBrowserPanel({ sessionId }: FileBrowserPanelProps) {
     };
   }, [sessionId, silentRefresh]);
 
-  // 进入标签：同一工作目录下恢复该会话上次位置；否则首次定位（后端以工作目录为根）
+  // 进入标签：恢复该会话上次位置；否则按模式首次定位
+  // （本机模式 → 驱动器视图；普通模式 → 以工作目录为根）
   useEffect(() => {
     const rec = lastBySession.get(sessionId);
-    if (rec && rec.wd === workingDirectory) void load(rec.path, rec.root);
-    else void load(null, null);
-  }, [load, sessionId, workingDirectory]);
+    const valid = rec && rec.wd === workingDirectory;
+    if (systemMode) {
+      if (valid && rec.view === 'dir' && rec.path) void load(rec.path, null);
+      else goDrives();
+    } else if (valid && rec.view === 'dir' && rec.path) {
+      void load(rec.path, rec.root);
+    } else {
+      void load(null, null);
+    }
+  }, [load, goDrives, sessionId, workingDirectory, systemMode]);
 
   const handleOpenFile = useCallback(
     (path: string) => {
@@ -215,44 +286,102 @@ export function FileBrowserPanel({ sessionId }: FileBrowserPanelProps) {
     [openFileTab, setRightPanelOpen, sessionId],
   );
 
-  /** 提交子路径：仅在根范围内跳转（越界由后端 403 拦下并在错误区展示） */
-  const submitSubPath = useCallback(() => {
-    if (!listing) return;
-    void load(joinPath(listing.root, subPath.trim()), listing.root);
-  }, [listing, subPath, load]);
+  /** 点击驱动器：进入其根目录（本机模式，跨盘自由浏览） */
+  const openDrive = useCallback(
+    (drive: DriveInfo) => {
+      void load(drive.path, null);
+    },
+    [load],
+  );
 
-  /** 已在导航根（上级按钮禁用；后端在根时 parent 为 null，双保险） */
+  /** 提交地址栏：本机模式按绝对路径跳转；普通模式仅在根范围内跳转（越界由后端 403 拦下） */
+  const submitSubPath = useCallback(() => {
+    if (systemMode) {
+      const typed = subPath.trim();
+      if (!typed) return;
+      void load(typed, null);
+      return;
+    }
+    if (!listing) return;
+    void load(joinPath(listing.root, subPath.trim(), listing.sep), listing.root);
+  }, [systemMode, listing, subPath, load]);
+
+  // ── 上级 / 根状态 ──
+  /** 普通模式：已在导航根（上级按钮禁用；后端在根时 parent 为 null，双保险） */
   const atRoot = !!listing && relPath(listing.root, listing.path) === '';
+  /** 本机模式：当前目录已是某盘/卷根（再上级应回到「本机」视图） */
+  const atDriveRoot =
+    systemMode &&
+    view === 'dir' &&
+    !!listing &&
+    (!listing.parent ||
+      isDriveRoot(listing.path) ||
+      (drives?.some((d) => samePathLoose(d.path, listing.path)) ?? false));
+
+  const handleUp = useCallback(() => {
+    if (view === 'drives') return;
+    if (systemMode) {
+      if (atDriveRoot || !listing?.parent) {
+        goDrives();
+        return;
+      }
+      void load(listing.parent, null);
+      return;
+    }
+    void load(listing?.parent ?? null, listing?.root ?? null);
+  }, [view, systemMode, atDriveRoot, listing, goDrives, load]);
+
+  const upDisabled =
+    view === 'drives'
+      ? true
+      : loading || !listing
+        ? true
+        : systemMode
+          ? false
+          : atRoot || !listing.parent;
 
   // 地址栏内容 ≠ 当前所在目录 → 视为有未提交的新地址（右侧按钮变为「前进」）
-  const typedTarget = listing ? joinPath(listing.root, subPath.trim()) : null;
-  const jumpPending = !!listing && !!typedTarget && !samePathLoose(typedTarget, listing.path);
+  const typedTarget = systemMode
+    ? subPath.trim()
+    : listing
+      ? joinPath(listing.root, subPath.trim(), listing.sep)
+      : '';
+  const jumpPending =
+    view === 'dir' && !!listing && !!typedTarget && !samePathLoose(typedTarget, listing.path);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      {/* 工具条：上级 / 地址（灰显根 + 可编辑子路径）/ 刷新（有未提交地址时变为前进） */}
+      {/* 工具条：上级 / 地址（灰显根 + 可编辑路径）/ 刷新（有未提交地址时变为前进） */}
       <div className="flex shrink-0 items-center gap-1.5 border-b border-border p-2">
         <Button
           variant="ghost"
           size="icon-sm"
           title={t('fileBrowser.parent')}
           aria-label={t('fileBrowser.parent')}
-          disabled={atRoot || !listing?.parent || loading}
-          onClick={() => void load(listing?.parent ?? null, listing?.root ?? null)}
+          disabled={upDisabled}
+          onClick={handleUp}
         >
           <ArrowUp className="size-4" />
         </Button>
-        {/* 地址栏：根前缀只读灰显（不可改），其后子路径可编辑 */}
+        {/* 地址栏：本机视图显示「本机」；进入磁盘/目录后只显示绝对路径；普通模式显示灰显根前缀 + 可编辑后缀 */}
         <div className="flex h-8 min-w-0 flex-1 items-center overflow-hidden rounded-lg border border-input bg-muted/40 px-2">
-          <span
-            className="max-w-[50%] shrink-0 truncate font-mono text-xs text-muted-foreground"
-            title={listing ? rootDisplay(listing.root) : ''}
-          >
-            {listing ? rootDisplay(listing.root) : ''}
-          </span>
+          {view === 'drives' ? (
+            <span className="max-w-[50%] shrink-0 truncate font-mono text-xs text-muted-foreground">
+              {t('fileBrowser.localMachine')}
+            </span>
+          ) : systemMode ? null : (
+            <span
+              className="max-w-[50%] shrink-0 truncate font-mono text-xs text-muted-foreground"
+              title={listing ? rootDisplay(listing.root, listing.sep) : ''}
+            >
+              {listing ? rootDisplay(listing.root, listing.sep) : ''}
+            </span>
+          )}
           <input
-            className="min-w-0 flex-1 bg-transparent font-mono text-xs text-foreground outline-none"
+            className="min-w-0 flex-1 bg-transparent font-mono text-xs text-foreground outline-none disabled:cursor-not-allowed"
             value={subPath}
+            disabled={view === 'drives'}
+            placeholder={view === 'drives' ? '' : undefined}
             onChange={(e) => setSubPath(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') submitSubPath();
@@ -262,17 +391,22 @@ export function FileBrowserPanel({ sessionId }: FileBrowserPanelProps) {
         <Button
           variant="ghost"
           size="icon-sm"
-          title={jumpPending ? t('fileBrowser.go') : t('fileBrowser.refresh')}
-          aria-label={jumpPending ? t('fileBrowser.go') : t('fileBrowser.refresh')}
-          disabled={loading}
+          title={view === 'drives' ? t('fileBrowser.refresh') : jumpPending ? t('fileBrowser.go') : t('fileBrowser.refresh')}
+          aria-label={view === 'drives' ? t('fileBrowser.refresh') : jumpPending ? t('fileBrowser.go') : t('fileBrowser.refresh')}
+          disabled={view === 'drives' ? drivesLoading : loading}
           onClick={() => {
-            if (jumpPending) submitSubPath();
-            else void load(listing?.path ?? null, listing?.root ?? null);
+            if (view === 'drives') {
+              void loadDrives();
+            } else if (jumpPending) {
+              submitSubPath();
+            } else if (listing) {
+              void load(listing.path, systemMode ? null : listing.root);
+            }
           }}
         >
-          {loading ? (
+          {(view === 'drives' ? drivesLoading : loading) ? (
             <Loader2 className="size-4 animate-spin" />
-          ) : jumpPending ? (
+          ) : view === 'dir' && jumpPending ? (
             <ArrowRight className="size-4" />
           ) : (
             <RotateCw className="size-4" />
@@ -281,14 +415,68 @@ export function FileBrowserPanel({ sessionId }: FileBrowserPanelProps) {
       </div>
 
       {/* 条目数超上限截断提示 */}
-      {listing?.truncated && (
+      {view === 'dir' && listing?.truncated && (
         <div className="shrink-0 border-b border-border bg-muted/40 px-2 py-1 text-[11px] text-muted-foreground">
           {t('fileBrowser.truncated')}
         </div>
       )}
 
       <ScrollArea className="min-h-0 flex-1">
-        {error ? (
+        {view === 'drives' ? (
+          drivesError ? (
+            <div className="flex flex-col items-center gap-2 px-4 py-8 text-center text-destructive">
+              <TriangleAlert className="size-5" />
+              <span className="break-all text-xs">{drivesError}</span>
+            </div>
+          ) : !drives && drivesLoading ? (
+            <div className="flex items-center justify-center gap-2 py-8 text-muted-foreground">
+              <Loader2 className="size-4 animate-spin" />
+              <span className="text-xs">{t('fileBrowser.loading')}</span>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2 p-3">
+              {(drives ?? []).map((drive) => {
+                const used = Math.max(0, drive.totalBytes - drive.freeBytes);
+                const pct = drive.totalBytes > 0 ? Math.min(100, (used / drive.totalBytes) * 100) : 0;
+                const label =
+                  drive.kind === 'drive'
+                    ? t('fileBrowser.driveLabel', { letter: drive.letter })
+                    : drive.kind === 'root'
+                      ? t('fileBrowser.filesystemRoot')
+                      : drive.kind === 'home'
+                        ? t('fileBrowser.homeDir')
+                        : drive.letter;
+                return (
+                  <button
+                    key={drive.path}
+                    type="button"
+                    title={drive.path}
+                    onClick={() => openDrive(drive)}
+                    className="flex w-full cursor-pointer items-start gap-3 rounded-md px-2 py-2 text-left transition-colors hover:bg-muted"
+                  >
+                    <HardDrive className="mt-0.5 size-5 shrink-0 text-primary-strong" />
+                    <div className="flex min-w-0 flex-1 flex-col gap-1">
+                      <span className="truncate text-xs text-foreground">{label}</span>
+                      {drive.totalBytes > 0 && (
+                        <>
+                          <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+                            <div className="h-full rounded-full bg-primary" style={{ width: `${pct}%` }} />
+                          </div>
+                          <span className="tabular-nums text-[10px] text-muted-foreground">
+                            {t('fileBrowser.driveFree', {
+                              free: formatSize(drive.freeBytes),
+                              total: formatSize(drive.totalBytes),
+                            })}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )
+        ) : error ? (
           <div className="flex flex-col items-center gap-2 px-4 py-8 text-center text-destructive">
             <TriangleAlert className="size-5" />
             <span className="break-all text-xs">{error}</span>
@@ -310,7 +498,7 @@ export function FileBrowserPanel({ sessionId }: FileBrowserPanelProps) {
                 type="button"
                 title={entry.path}
                 onClick={() => {
-                  if (entry.kind === 'directory') void load(entry.path, listing.root);
+                  if (entry.kind === 'directory') void load(entry.path, systemMode ? null : listing.root);
                   else handleOpenFile(entry.path);
                 }}
                 className="flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-muted"

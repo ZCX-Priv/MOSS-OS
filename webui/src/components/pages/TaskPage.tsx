@@ -21,6 +21,7 @@ import {
   X,
   Copy,
   Undo2,
+  Trash2,
   FileWarning,
   Sparkles,
   ListTodo,
@@ -63,6 +64,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useResizable } from '@/hooks/use-resizable';
+import { useOpenFilePreview } from '@/hooks/useOpenFilePreview';
 import {
   DndContext,
   closestCenter,
@@ -437,19 +439,19 @@ export function TaskPage({ onOpenOverlay }: TaskPageProps) {
   const removeSidebarTab = useStore((s) => s.removeSidebarTab);
   const setActiveSidebarTab = useStore((s) => s.setActiveSidebarTab);
   const reorderSidebarTabs = useStore((s) => s.reorderSidebarTabs);
-  const openFileTab = useStore((s) => s.openFileTab);
   const resetSidebarTabs = useStore((s) => s.resetSidebarTabs);
   const convertSidebarTab = useStore((s) => s.convertSidebarTab);
   const toolIconMap = useStore((s) => s.toolIconMap);
   const { sendMessage, abort } = useTask();
+  // 统一文件预览入口：桌面端 → 右侧边栏标签；移动端 → 仅侧边栏入口走标签，其余走弹层
+  const openFilePreview = useOpenFilePreview();
 
-  // 点击消息流附件卡片：在右侧边栏打开该文件预览标签页并展开面板
+  // 点击消息流附件卡片：按平台/来源决定预览方式并展开面板
   const openAttachment = useCallback(
     (path: string) => {
-      openFileTab(taskId, path);
-      setRightPanelOpen(taskId, true);
+      openFilePreview(taskId, path);
     },
-    [openFileTab, setRightPanelOpen, taskId],
+    [openFilePreview, taskId],
   );
 
   // 当前活跃标签对象
@@ -1641,6 +1643,7 @@ interface SortableTabProps {
 }
 function SortableTab({ tab, isActive, canShowClose, onSelect, onRemove }: SortableTabProps) {
   const { t } = useTranslation();
+  const isMobile = useIsMobile();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: tab.id,
   });
@@ -1654,13 +1657,102 @@ function SortableTab({ tab, isActive, canShowClose, onSelect, onRemove }: Sortab
       return () => clearTimeout(timer);
     }
   }, [isDragging]);
+
+  // ── 移动端：长按 → 显示删除按钮（桌面端仍为常亮 × 按钮） ──
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const [showDelete, setShowDelete] = useState(false);
+  /** 长按计时器 */
+  const pressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** 长按起始坐标（位移超阈值即取消，交给拖拽） */
+  const pressStartRef = useRef<{ x: number; y: number } | null>(null);
+  /** 本次长按已触发（抑制长按释放时紧随的 click，避免刚出现就被点掉） */
+  const longPressFiredRef = useRef(false);
+  /** 长按判定时长 */
+  const LONG_PRESS_MS = 500;
+  /** 位移阈值（超过则视为拖拽，取消长按） */
+  const MOVE_CANCEL_PX = 8;
+
+  const clearPressTimer = useCallback(() => {
+    if (pressTimerRef.current !== null) {
+      clearTimeout(pressTimerRef.current);
+      pressTimerRef.current = null;
+    }
+  }, []);
+
+  // 合并 ref（本组件根节点 + dnd 排序节点）：稳定引用，避免每次渲染重建导致节点 detach/attach
+  const mergedRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      rootRef.current = node;
+      setNodeRef(node);
+    },
+    [setNodeRef],
+  );
+
+  // 长按监听：原生 pointer 事件（不侵入 dnd-kit 的 listeners，二者共存）
+  useEffect(() => {
+    if (!isMobile || !canShowClose) return;
+    const el = rootRef.current;
+    if (!el) return;
+    const onDown = (e: PointerEvent) => {
+      longPressFiredRef.current = false;
+      pressStartRef.current = { x: e.clientX, y: e.clientY };
+      clearPressTimer();
+      pressTimerRef.current = setTimeout(() => {
+        pressTimerRef.current = null;
+        longPressFiredRef.current = true;
+        setShowDelete(true);
+      }, LONG_PRESS_MS);
+    };
+    const onMove = (e: PointerEvent) => {
+      const start = pressStartRef.current;
+      if (!start) return;
+      if (Math.abs(e.clientX - start.x) > MOVE_CANCEL_PX || Math.abs(e.clientY - start.y) > MOVE_CANCEL_PX) {
+        clearPressTimer();
+      }
+    };
+    el.addEventListener('pointerdown', onDown);
+    el.addEventListener('pointermove', onMove);
+    el.addEventListener('pointerup', clearPressTimer);
+    el.addEventListener('pointercancel', clearPressTimer);
+    el.addEventListener('pointerleave', clearPressTimer);
+    return () => {
+      clearPressTimer();
+      el.removeEventListener('pointerdown', onDown);
+      el.removeEventListener('pointermove', onMove);
+      el.removeEventListener('pointerup', clearPressTimer);
+      el.removeEventListener('pointercancel', clearPressTimer);
+      el.removeEventListener('pointerleave', clearPressTimer);
+    };
+  }, [isMobile, canShowClose, clearPressTimer]);
+
+  // 组件卸载清理计时器
+  useEffect(() => clearPressTimer, [clearPressTimer]);
+
+  // 拖拽开始：取消长按并隐藏删除按钮（拖拽排序优先）
+  useEffect(() => {
+    if (isDragging) {
+      clearPressTimer();
+      setShowDelete(false);
+    }
+  }, [isDragging, clearPressTimer]);
+
+  // 删除按钮显示期间：点击标签外部任意处 → 收起
+  useEffect(() => {
+    if (!showDelete) return;
+    const onDown = (e: PointerEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setShowDelete(false);
+    };
+    document.addEventListener('pointerdown', onDown, true);
+    return () => document.removeEventListener('pointerdown', onDown, true);
+  }, [showDelete]);
+
   const style = {
     transform: CSS.Translate.toString(transform),
     transition,
   };
   return (
     <div
-      ref={setNodeRef}
+      ref={mergedRef}
       style={style}
       {...attributes}
       {...listeners}
@@ -1669,10 +1761,20 @@ function SortableTab({ tab, isActive, canShowClose, onSelect, onRemove }: Sortab
           wasDragRef.current = false;
           return;
         }
+        // 长按释放紧随的 click：不切换也不收起（保留刚出现的删除按钮）
+        if (longPressFiredRef.current) {
+          longPressFiredRef.current = false;
+          return;
+        }
+        // 移动端已显示删除按钮时，点击标签本体 → 收起
+        if (isMobile && showDelete) {
+          setShowDelete(false);
+          return;
+        }
         onSelect(tab.id);
       }}
       className={cn(
-        'group relative flex cursor-grab items-center gap-1.5 rounded-lg border px-3 py-1 text-sm transition-colors',
+        'group relative flex cursor-grab select-none items-center gap-1.5 rounded-lg border px-3 py-1 text-sm transition-colors',
         isDragging && 'z-10 border-border bg-muted text-foreground shadow-sm',
         isActive
           ? 'border-border bg-muted text-foreground'
@@ -1700,18 +1802,38 @@ function SortableTab({ tab, isActive, canShowClose, onSelect, onRemove }: Sortab
       >
         {tab.type === 'file' ? tab.title : t(tab.title)}
       </span>
-      {/* 关闭按钮常亮显示（单标签不显示） */}
+      {/* 关闭/删除：桌面端常亮 × 按钮；移动端长按后浮现删除按钮（单标签不显示） */}
       {canShowClose && !isDragging && (
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onRemove(tab.id);
-          }}
-          className="ml-0.5 flex size-4 shrink-0 items-center justify-center rounded hover:bg-muted"
-        >
-          <X className="size-3" />
-        </button>
+        isMobile ? (
+          showDelete ? (
+            <button
+              type="button"
+              aria-label={t('task.deleteTab')}
+              title={t('task.deleteTab')}
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowDelete(false);
+                onRemove(tab.id);
+              }}
+              className="ml-0.5 flex size-5 shrink-0 items-center justify-center rounded text-destructive hover:bg-destructive/10"
+            >
+              <Trash2 className="size-3.5" />
+            </button>
+          ) : null
+        ) : (
+          <button
+            type="button"
+            aria-label={t('task.deleteTab')}
+            title={t('task.deleteTab')}
+            onClick={(e) => {
+              e.stopPropagation();
+              onRemove(tab.id);
+            }}
+            className="ml-0.5 flex size-4 shrink-0 items-center justify-center rounded hover:bg-muted"
+          >
+            <X className="size-3" />
+          </button>
+        )
       )}
     </div>
   );

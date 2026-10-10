@@ -39,6 +39,7 @@ import {
 } from './components/pages/SettingsPage';
 import { SearchModal } from './components/overlays/SearchModal';
 import { SplashScreen } from './components/shared/SplashScreen';
+import { FilePreviewDialog } from './render';
 import { SidebarProvider, SidebarInset, SidebarTrigger } from '@/components/ui/sidebar';
 import { Button } from '@/components/ui/button';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -321,7 +322,27 @@ export default function App() {
         {/* 受控 overlay：各组件自带 Dialog/Sheet，由 overlay state 驱动开关 */}
         <SearchModal open={overlay === 'search'} onClose={closeOverlay} />
       </SidebarProvider>
+      {/* 全局文件预览弹层：移动端从消息流/附件等非侧边栏入口打开时使用 */}
+      <GlobalFilePreviewDialog />
       <Toaster position="top-center" />
     </TooltipProvider>
+  );
+}
+
+/**
+ * 全局文件预览弹层（移动端非侧边栏入口）。
+ * 独立订阅 store：弹层开合只重渲染本组件，不影响 App 整树（流式期间尤其重要）。
+ */
+function GlobalFilePreviewDialog() {
+  const path = useStore((s) => s.filePreviewDialogPath);
+  const hideFilePreviewDialog = useStore((s) => s.hideFilePreviewDialog);
+  return (
+    <FilePreviewDialog
+      path={path ?? ''}
+      open={path !== null}
+      onOpenChange={(open) => {
+        if (!open) hideFilePreviewDialog();
+      }}
+    />
   );
 }

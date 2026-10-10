@@ -843,6 +843,7 @@ export const zh = {
     expandRightPanel: '展开侧边栏',
     scrollTabsLeft: '向左滚动标签',
     scrollTabsRight: '向右滚动标签',
+    deleteTab: '删除标签',
     newTask: '新任务',
     emptyMessage: '发送消息开始任务',
     fileIndexBuilding: '文件索引构建中 · {{engine}} {{percent}}%',
@@ -955,6 +956,12 @@ export const zh = {
     empty: '此目录为空',
     loading: '加载中…',
     truncated: '目录条目过多，仅显示前 2000 项',
+    localMachine: '本机',
+    filesystemRoot: '文件系统根',
+    homeDir: '主目录',
+    driveLabel: '本地磁盘 ({{letter}}:)',
+    driveFree: '{{free}} 可用，共 {{total}}',
+    drivesFailed: '无法读取磁盘信息',
   },
   fileChanges: {
     refresh: '刷新',
@@ -1336,11 +1343,9 @@ export const zh = {
     codeLines: '{{count}} 行',
     // 网页
     htmlSandboxNotice: '已在沙箱中渲染，页面脚本无法访问宿主应用',
-    htmlSource: '源码',
-    htmlPreview: '预览',
-    // LaTeX
-    latexRendered: '渲染',
-    latexSource: '源码',
+    // 预览/代码 胶囊导航（Markdown / LaTeX / HTML 共用）
+    modePreview: '预览',
+    modeCode: '代码',
     // 字体
     fontSampleText: '字体样张',
     fontUnsupported: '无法解析该字体格式（可下载后用本地字体工具查看）',
@@ -1521,6 +1526,9 @@ export const zh = {
     system: '本机',
     systemTitle: '本机（全盘访问）',
     systemDesc: '全盘访问',
+    browseTitle: '浏览文件夹',
+    selectCurrent: '选择当前文件夹',
+    pathHint: '输入路径后回车跳转',
   },
   errors: {
     INVALID_BODY: '请求体无效，期望对象',

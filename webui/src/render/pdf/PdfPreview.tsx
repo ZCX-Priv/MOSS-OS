@@ -115,6 +115,8 @@ export function PdfPreview({ buffer }: PdfPreviewProps) {
   const [scrollTop, setScrollTop] = useState(0);
 
   const scrollRef = useRef<HTMLDivElement>(null);
+  /** 打开新文档后是否已完成一次「自动适应宽度」（每次 buffer 变化重置） */
+  const autoFittedRef = useRef(false);
 
   // ── 加载文档（每次 buffer 变化重建；卸载/切换时销毁旧文档释放 worker） ──
   useEffect(() => {
@@ -123,6 +125,7 @@ export function PdfPreview({ buffer }: PdfPreviewProps) {
     setError(null);
     setPage(1);
     setBaseSize(null);
+    autoFittedRef.current = false;
     void (async () => {
       try {
         const pdfjs = await import('pdfjs-dist');
@@ -246,6 +249,13 @@ export function PdfPreview({ buffer }: PdfPreviewProps) {
     const targetScale = (containerWidth - PAD) / baseW;
     setZoom(clamp(targetScale / BASE_SCALE, MIN_ZOOM, MAX_ZOOM));
   }, [baseSize, containerWidth, rotation]);
+
+  // 打开文档后自动「适应宽度」一次（等首页尺寸与容器宽度都就绪后触发；每个 buffer 仅一次）
+  useEffect(() => {
+    if (!doc || !baseSize || containerWidth <= 0 || autoFittedRef.current) return;
+    autoFittedRef.current = true;
+    fitWidth();
+  }, [doc, baseSize, containerWidth, fitWidth]);
 
   const toggleContinuous = useCallback(() => {
     setContinuous((c) => {

@@ -84,6 +84,8 @@ export interface PolicyEnv {
   protectedPaths: string[];
   /** 用户主目录 */
   home: string;
+  /** 系统作用域（本机模式）的相对路径基准：Windows 为系统盘根（C:\），POSIX 为 / */
+  systemRoot: string;
   /** MOSS 配置目录（~/.moss/config 硬保护） */
   configDir: string;
   /** MOSS 数据目录（~/.moss；shell 命令 .moss 访问检测用） */
@@ -120,8 +122,8 @@ export function evaluate(req: SafetyRequest, env: PolicyEnv): SafetyDecision {
   const sessionRules = env.sessionRules ?? EMPTY_RULES;
   const globalRules = env.globalRules ?? EMPTY_RULES;
   const isShell = req.toolName === 'shell';
-  // System 作用域哨兵下规则路径匹配以主目录为基准（与 filesys 相对路径解析一致）
-  const ruleCwd = req.cwd === SYSTEM_SCOPE ? env.home : req.cwd;
+  // System 作用域哨兵下规则路径匹配以系统盘根为基准（与 filesys 相对路径解析一致）
+  const ruleCwd = req.cwd === SYSTEM_SCOPE ? env.systemRoot : req.cwd;
 
   // 3. deny 规则（会话 > 全局）
   for (const rule of [...sessionRules.deny, ...globalRules.deny]) {

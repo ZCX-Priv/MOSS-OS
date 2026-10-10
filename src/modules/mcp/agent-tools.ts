@@ -327,7 +327,7 @@ export function createAgentTools(registry: McpTaskRegistry | null): AgentTool[] 
         systemScope: {
           value: SYSTEM_SCOPE,
           label: '本机（全盘可访问）',
-          note: `full-disk access; relative paths resolve from the user home directory. MOSS's own ~/.moss data directory stays blocked.`,
+          note: `full-disk access; relative paths resolve from the system drive root (C:\\ on Windows, / otherwise). MOSS's own ~/.moss data directory stays blocked.`,
         },
         workspaces,
         note: reg

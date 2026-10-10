@@ -793,6 +793,30 @@ export interface DirectoryListing {
   entries: DirectoryEntry[];
   /** 条目数超过后端上限被截断 */
   truncated?: boolean;
+  /** 平台路径分隔符（Windows '\\'，POSIX '/'）：前端据此生成地址栏/相对路径展示 */
+  sep: '\\' | '/';
+}
+
+/** 驱动器/卷条目类型（前端据此选择文案） */
+export type DriveKind = 'drive' | 'root' | 'volume' | 'storage' | 'home';
+
+/** 驱动器/卷信息（GET /api/filesystem/drives；「本机」视图） */
+export interface DriveInfo {
+  /** 展示 token：Windows 盘符 'C'；其余平台为卷名/挂载点/主目录路径 */
+  letter: string;
+  /** 条目类型：drive=Windows 盘符；root=文件系统根；volume=挂载卷；storage=Android 存储；home=主目录 */
+  kind: DriveKind;
+  /** 驱动器/卷根绝对路径（'C:\' / '/' / '/Volumes/X' / '/storage/emulated/0'） */
+  path: string;
+  /** 总字节数（0 = 未知，隐藏用量条） */
+  totalBytes: number;
+  /** 可用字节数（0 = 未知） */
+  freeBytes: number;
+}
+
+/** 驱动器列表响应（GET /api/filesystem/drives） */
+export interface DriveListing {
+  drives: DriveInfo[];
 }
 
 /** 文件历史条目（GET /api/file-history/:sessionId；与后端 file-history/types.ts 对齐） */

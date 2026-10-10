@@ -65,7 +65,7 @@ export interface LogService {
 // 环境检测
 // ============================================================================
 
-export type Platform = 'win32' | 'darwin' | 'linux' | 'other';
+export type Platform = 'win32' | 'darwin' | 'linux' | 'android' | 'other';
 
 export interface Environment {
   readonly platform: Platform;
@@ -73,6 +73,8 @@ export interface Environment {
   readonly isWindows: boolean;
   readonly isMac: boolean;
   readonly isLinux: boolean;
+  /** Android（Termux/proot 等）：POSIX 特例，存储路径与卷枚举规则不同 */
+  readonly isAndroid: boolean;
   /** 用户主目录 */
   readonly homeDir: string;
   /** MOSS 用户数据目录：~/.moss */

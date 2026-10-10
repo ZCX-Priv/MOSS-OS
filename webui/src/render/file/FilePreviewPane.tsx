@@ -21,7 +21,6 @@ import {
 import { decodeImageToObjectUrl } from '../image/decode';
 import { extractArchiveEntryByPath } from '../archive/libarchive';
 import { PreviewErrorBoundary } from '../core/PreviewErrorBoundary';
-import { MarkdownRenderer } from '../markdown/MarkdownRenderer';
 import { pathSource, nameOfSource, extOfSource, type PreviewSource } from '../core/source';
 import type { RendererKind } from '../core/types';
 
@@ -40,6 +39,7 @@ const FlvPlayer = lazy(() => import('../media/FlvPlayer').then((m) => ({ default
 const HtmlPreview = lazy(() => import('../html/HtmlPreview').then((m) => ({ default: m.HtmlPreview })));
 const CodeFileViewer = lazy(() => import('../code/CodeFileViewer').then((m) => ({ default: m.CodeFileViewer })));
 const LatexPreview = lazy(() => import('../latex/LatexPreview').then((m) => ({ default: m.LatexPreview })));
+const MarkdownFilePreview = lazy(() => import('../markdown/MarkdownFilePreview').then((m) => ({ default: m.MarkdownFilePreview })));
 const CsvPreview = lazy(() => import('../data/CsvPreview').then((m) => ({ default: m.CsvPreview })));
 const NdjsonPreview = lazy(() => import('../data/NdjsonPreview').then((m) => ({ default: m.NdjsonPreview })));
 const SqlitePreview = lazy(() => import('../data/SqlitePreview').then((m) => ({ default: m.SqlitePreview })));
@@ -411,11 +411,7 @@ export function FilePreviewPane({
       case 'markdown':
         return guard(
           content.text !== null
-            ? withTruncationNotice(
-                <div className="h-full overflow-y-auto p-2">
-                  <MarkdownRenderer text={content.text} streaming={false} />
-                </div>,
-              )
+            ? withTruncationNotice(<MarkdownFilePreview text={content.text} path={name} />)
             : loading,
           textFallback,
         );

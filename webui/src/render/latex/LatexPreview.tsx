@@ -13,10 +13,9 @@
 
 import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { FileCode2, Sigma } from 'lucide-react';
-import { Button } from '../../components/ui/button';
 import { MathSpan } from '../math/MathSpan';
 import { CodeFileViewer } from '../code/CodeFileViewer';
+import { PreviewModeToggle, type PreviewMode } from '../core/PreviewModeToggle';
 
 export interface LatexPreviewProps {
   text: string;
@@ -388,25 +387,11 @@ export function LatexPreview({ text, path }: LatexPreviewProps) {
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-2">
-      <div className="flex shrink-0 items-center gap-1.5 rounded-md border border-border bg-muted/30 px-2 py-1.5">
-        <Button
-          variant={mode === 'render' ? 'default' : 'outline'}
-          size="sm"
-          className="h-7 gap-1 px-2.5 text-xs"
-          onClick={() => setMode('render')}
-        >
-          <Sigma className="size-3.5" />
-          {t('preview.latexRendered')}
-        </Button>
-        <Button
-          variant={mode === 'source' ? 'default' : 'outline'}
-          size="sm"
-          className="h-7 gap-1 px-2.5 text-xs"
-          onClick={() => setMode('source')}
-        >
-          <FileCode2 className="size-3.5" />
-          {t('preview.latexSource')}
-        </Button>
+      <div className="flex shrink-0 items-center">
+        <PreviewModeToggle
+          mode={mode === 'source' ? 'code' : 'preview'}
+          onChange={(m: PreviewMode) => setMode(m === 'code' ? 'source' : 'render')}
+        />
       </div>
 
       {mode === 'source' ? (

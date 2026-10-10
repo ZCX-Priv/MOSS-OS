@@ -39,6 +39,7 @@ import type {
   SearchedFile,
   PickedFile,
   DirectoryListing,
+  DriveListing,
   FileHistoryEntry,
   RunStats,
   LogFileInfo,
@@ -651,7 +652,7 @@ export const api = {
   // 文件系统（浏览器端文件夹选择：后端原生对话框拿真实绝对路径 + 搜索回退）
   // ==========================================================================
   pickDirectory: () =>
-    request<{ path: string | null }>('POST', '/api/filesystem/pick-directory'),
+    request<{ path: string | null; unsupported?: boolean }>('POST', '/api/filesystem/pick-directory'),
   /** 原生多文件选择对话框（附件"纯路径引用"数据源；后端自动授权父目录进 filesys roots） */
   pickFiles: () =>
     request<{ files: PickedFile[]; grantedRoots?: string[] }>('POST', '/api/filesystem/pick-file'),
@@ -676,7 +677,7 @@ export const api = {
     ),
   /**
    * 列目录（文件浏览器数据源）：返回目标目录的直接子项（目录 + 文件）。
-   * path 缺省时后端回落到 root（若有）或 cwd 解析结果（__system__ → 用户主目录）；cwd 缺省为 __system__。
+   * path 缺省时后端回落到 root（若有）或 cwd 解析结果（__system__ → 系统盘根）；cwd 缺省为 __system__。
    * root 为导航根（不可上溯越过；传后端强制边界，越界返回 403）；首次不传时后端以解析结果自身为根。
    */
   listDirectory: (path?: string, cwd?: string, root?: string) => {
@@ -687,6 +688,8 @@ export const api = {
     const q = qs.toString();
     return request<DirectoryListing>('GET', `/api/filesystem/list${q ? `?${q}` : ''}`);
   },
+  /** 驱动器枚举（文件浏览器「此电脑」视图数据源） */
+  listDrives: () => request<DriveListing>('GET', '/api/filesystem/drives'),
   /** 某会话的文件变更历史（文件变更标签页数据源） */
   listFileHistory: (sessionId: string) =>
     request<{ sessionId: string; entries: FileHistoryEntry[]; count: number }>(

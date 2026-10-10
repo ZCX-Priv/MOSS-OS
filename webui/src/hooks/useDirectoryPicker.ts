@@ -25,6 +25,8 @@ export function useDirectoryPicker() {
   const [isResolving, setIsResolving] = useState(false);
   const [candidates, setCandidates] = useState<DirectoryCandidate[]>([]);
   const [error, setError] = useState<string | null>(null);
+  /** 内置目录浏览器弹窗开关（无原生对话框的平台，如 Android） */
+  const [browseOpen, setBrowseOpen] = useState(false);
 
   /** 用文件夹名调后端 resolve-directory 搜索候选绝对路径（回退路径专用） */
   const resolveByName = useCallback(
@@ -79,7 +81,12 @@ export function useDirectoryPicker() {
     setIsResolving(true);
     try {
       // 主路径：后端原生对话框（本机场景，跨盘符精准）
-      const { path } = await api.pickDirectory();
+      const { path, unsupported } = await api.pickDirectory();
+      if (unsupported) {
+        // 无原生对话框的平台（Android）：改用内置目录浏览器弹窗
+        setBrowseOpen(true);
+        return;
+      }
       if (path) {
         setWorkingDirectory(path);
         addRecentDirectory(path);
@@ -93,6 +100,19 @@ export function useDirectoryPicker() {
       setIsResolving(false);
     }
   }, [setWorkingDirectory, addRecentDirectory, t, fallbackViaBrowser]);
+
+  /** 内置目录浏览器弹窗：选中路径后落地（工作目录 + 最近使用） */
+  const onBrowserPicked = useCallback(
+    (path: string) => {
+      setWorkingDirectory(path);
+      addRecentDirectory(path);
+      setBrowseOpen(false);
+      toast.success(t('directoryPicker.resolved'));
+    },
+    [setWorkingDirectory, addRecentDirectory, t],
+  );
+
+  const closeBrowser = useCallback(() => setBrowseOpen(false), []);
 
   /** webkitdirectory input 的 change 处理（回退路径） */
   const onInputPicked = useCallback(
@@ -129,5 +149,9 @@ export function useDirectoryPicker() {
     selectCandidate,
     cancel,
     error,
+    /** 内置目录浏览器（Android 等无原生对话框平台） */
+    browseOpen,
+    onBrowserPicked,
+    closeBrowser,
   };
 }

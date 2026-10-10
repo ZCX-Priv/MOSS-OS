@@ -6,6 +6,7 @@
 import type { Logger, ConfigService, Environment } from '../../core/types';
 import type { SafetyDecision, SafetyRequest, SafetyRules, SafetyConfig, PermissionMode } from './types';
 import { evaluate as evaluatePolicy, normalizeMode } from './policy';
+import { systemRoot } from '../filesys/roots';
 
 /** 会话级规则存储（内存；刷新即失效——设计决策） */
 interface SessionRuleEntry {
@@ -82,6 +83,7 @@ export class SafetyService {
       cautionPolicy: safetyCfg.cautionPolicy,
       protectedPaths: safetyCfg.protectedPaths,
       home: this.env.homeDir,
+      systemRoot: systemRoot(),
       configDir: this.env.configDir,
       dataDir: this.env.dataDir,
     });

@@ -14,9 +14,8 @@
 import type { HttpRequest, HttpResponse, RouteHandler } from '../types';
 import type { ConfigService, Environment, ServiceRegistry } from '../../../core/types';
 import { ServiceNames } from '../../../core/types';
-import { readdirSync, existsSync, statSync, openSync, readSync, closeSync, mkdirSync, writeFileSync, type Dirent } from 'node:fs';
+import { readdirSync, existsSync, statSync, statfsSync, openSync, readSync, closeSync, mkdirSync, writeFileSync, readFileSync, lstatSync, type Dirent } from 'node:fs';
 import { isAbsolute, join, normalize, extname, dirname, relative, sep } from 'node:path';
-import * as nfd from 'nativefiledialog-for-bun';
 import { ErrorCode } from '../../../core/error-codes';
 import { SYSTEM_SCOPE } from '../../filesys/roots';
 import { decodeShellOutput } from '../../../utils/encoding';
@@ -106,6 +105,8 @@ export function createResolveDirectoryHandler(env: Environment): RouteHandler {
     pushRoot(join(env.homeDir, 'Desktop'));
     pushRoot(join(env.homeDir, 'Documents'));
     pushRoot(join(env.homeDir, 'Downloads'));
+    // Android：追加内置共享存储（用户文件主要落在这里，而非 Termux home）
+    if (env.isAndroid) pushRoot('/storage/emulated/0');
     pushRoot(process.cwd());
 
     // BFS（同步遍历 + 时间检查实现软超时）
@@ -161,6 +162,8 @@ export function createSuggestPathsHandler(env: Environment): RouteHandler {
     tryAdd(join(env.homeDir, 'Desktop'), '桌面');
     tryAdd(join(env.homeDir, 'Documents'), '文档');
     tryAdd(join(env.homeDir, 'Downloads'), '下载');
+    // Android：内置共享存储（Termux 需先 termux-setup-storage 才有权限）
+    if (env.isAndroid) tryAdd('/storage/emulated/0', '内部存储');
     tryAdd(process.cwd(), '当前目录');
     return { status: 200, body: { paths } };
   };
@@ -302,7 +305,7 @@ export function createSearchFilesHandler(_env: Environment): RouteHandler {
 // GET /api/filesystem/list?path=<目录>&root=<可选，导航根>&cwd=<可选，默认 __system__>
 // 文件浏览器数据源：列出目标目录的直接子项（目录 + 文件），用于右侧面板「文件」标签
 // 逐级浏览。权限与 /raw、/text 一致：走 filesys.resolve（roots 越权 / .moss 硬屏蔽 → 403）。
-// path 为空时回落到 root（若有）或 cwd 解析结果（__system__ → 用户主目录）。
+// path 为空时回落到 root（若有）或 cwd 解析结果（__system__ → 系统盘根）。
 // 导航边界：传 root 时 path 必须位于 root 内，到达 root 后 parent=null（不能上溯到磁盘根）；
 // 首次请求（path/root 均空）以解析结果自身为根，前端据此固定「灰显根前缀」。
 // ============================================================================
@@ -430,8 +433,193 @@ export function createListDirectoryHandler(services: ServiceRegistry): RouteHand
 
     return {
       status: 200,
-      body: { path: targetAbs, root: effectiveRoot ?? targetAbs, parent, entries, truncated },
+      body: {
+        path: targetAbs,
+        root: effectiveRoot ?? targetAbs,
+        parent,
+        entries,
+        truncated,
+        // 平台路径分隔符：前端据此生成地址栏/相对路径展示（不再硬编码 `\`）
+        sep: process.platform === 'win32' ? '\\' : '/',
+      },
     };
+  };
+}
+
+// ============================================================================
+// GET /api/filesystem/drives
+// 驱动器/卷枚举（文件浏览器「本机」视图数据源）：列出本机盘符/卷/存储入口 + 容量。
+// - Windows：遍历 A..Z 探测存在的盘符（C:\ 等），kind='drive'
+// - macOS：根 '/'（kind='root'）+ /Volumes 下真实挂载卷（kind='volume'，排除指向 / 的链接）
+// - Linux/其它 POSIX：根 '/'（kind='root'）+ /proc/mounts 真实挂载点（kind='volume'）
+// - Android：/storage/emulated/0 + /storage 其它卷（kind='storage'）+ 主目录（kind='home'）
+// 容量经 statfsSync 计算；运行期不可用/异常时容量置 0（前端隐藏用量条），绝不让接口失败。
+// ============================================================================
+
+/** 驱动器/卷条目类型（前端据此选择文案） */
+export type DriveKind = 'drive' | 'root' | 'volume' | 'storage' | 'home';
+
+/** 驱动器/卷信息（前端「本机」视图渲染用） */
+export interface DriveInfo {
+  /** 展示 token：Windows 盘符 'C'；其余平台为卷名/挂载点/主目录路径 */
+  letter: string;
+  /** 条目类型：drive=Windows 盘符；root=文件系统根；volume=挂载卷；storage=Android 存储；home=主目录 */
+  kind: DriveKind;
+  /** 驱动器/卷根绝对路径（'C:\' / '/' / '/Volumes/X' / '/storage/emulated/0'） */
+  path: string;
+  /** 总字节数（0 = 未知） */
+  totalBytes: number;
+  /** 可用字节数（0 = 未知） */
+  freeBytes: number;
+}
+
+/** 读取驱动器容量（statfsSync；不可用/失败返回 0） */
+function driveCapacity(p: string): { totalBytes: number; freeBytes: number } {
+  try {
+    if (typeof statfsSync !== 'function') return { totalBytes: 0, freeBytes: 0 };
+    const s = statfsSync(p);
+    return { totalBytes: s.bsize * s.blocks, freeBytes: s.bsize * s.bavail };
+  } catch {
+    return { totalBytes: 0, freeBytes: 0 };
+  }
+}
+
+/** 伪文件系统类型：不作为「本机」卷展示（proc/sysfs/tmpfs/overlay 等） */
+const PSEUDO_FS_TYPES = new Set([
+  'proc', 'sysfs', 'tmpfs', 'devtmpfs', 'devpts', 'cgroup', 'cgroup2', 'overlay',
+  'squashfs', 'autofs', 'mqueue', 'hugetlbfs', 'debugfs', 'tracefs', 'securityfs',
+  'pstore', 'bpf', 'configfs', 'fusectl', 'ramfs', 'nsfs', 'rpc_pipefs', 'selinuxfs',
+  'efivarfs',
+]);
+
+/** 挂载点前缀：系统/临时目录不展示（/run/media 属可移动介质，不在此列） */
+const SKIP_MOUNT_PREFIXES = ['/proc', '/sys', '/dev', '/snap'];
+
+/**
+ * 解析 /proc/mounts 或 /etc/mtab 文本，返回需展示的真实挂载点（去重、排除 '/'）。
+ * 纯函数（可单测）。行格式：device mountpoint fstype options dump pass。
+ */
+export function parseLinuxMounts(text: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const line of text.split('\n')) {
+    const parts = line.trim().split(/\s+/);
+    if (parts.length < 3) continue;
+    const mountPoint = parts[1];
+    const fstype = parts[2];
+    if (!mountPoint || !mountPoint.startsWith('/')) continue;
+    if (mountPoint === '/') continue;
+    if (PSEUDO_FS_TYPES.has(fstype)) continue;
+    if (SKIP_MOUNT_PREFIXES.some((p) => mountPoint === p || mountPoint.startsWith(`${p}/`))) continue;
+    const key = mountPoint.replace(/\/+$/, '');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(key);
+  }
+  return out;
+}
+
+/**
+ * 从 /Volumes 目录项筛选真实卷：排除符号链接（Macintosh HD 是指向 / 的链接）与非目录。
+ * 纯函数（可单测）。
+ */
+export function selectDarwinVolumes(
+  entries: ReadonlyArray<{ name: string; isSymlink: boolean; isDirectory: boolean }>,
+): string[] {
+  return entries
+    .filter((e) => e.isDirectory && !e.isSymlink && e.name.length > 0 && !e.name.startsWith('.'))
+    .map((e) => e.name);
+}
+
+/** 读取 macOS /Volumes 下真实卷名（IO 失败返回空） */
+function listDarwinVolumes(): string[] {
+  try {
+    if (!isDirectorySafe('/Volumes')) return [];
+    const dirents = readdirSync('/Volumes', { withFileTypes: true });
+    const entries = dirents.map((d) => {
+      const full = join('/Volumes', d.name);
+      let isSymlink = false;
+      try {
+        isSymlink = lstatSync(full).isSymbolicLink();
+      } catch {
+        isSymlink = false;
+      }
+      return { name: d.name, isSymlink, isDirectory: isDirectorySafe(full) };
+    });
+    return selectDarwinVolumes(entries);
+  } catch {
+    return [];
+  }
+}
+
+/** 读取 Linux 真实挂载点（/proc/mounts → /etc/mtab；均失败返回空） */
+function listLinuxMounts(): string[] {
+  for (const file of ['/proc/mounts', '/etc/mtab']) {
+    try {
+      const text = readFileSync(file, 'utf8');
+      const mounts = parseLinuxMounts(text).filter((p) => isDirectorySafe(p));
+      if (mounts.length > 0) return mounts;
+    } catch {
+      // 读取失败：尝试下一个来源
+    }
+  }
+  return [];
+}
+
+/** 读取 Android /storage 下除 emulated 外的存储卷名（外置 SD/USB；符号链接由 isDirectory 自动排除） */
+function listAndroidVolumes(): string[] {
+  const base = '/storage';
+  if (!isDirectorySafe(base)) return [];
+  try {
+    const dirents = readdirSync(base, { withFileTypes: true });
+    return dirents
+      .filter((d) => d.isDirectory() && d.name !== 'emulated' && d.name !== 'self')
+      .map((d) => d.name)
+      .filter((name) => isDirectorySafe(join(base, name)));
+  } catch {
+    return [];
+  }
+}
+
+export function createListDrivesHandler(env: Environment): RouteHandler {
+  return async (): Promise<HttpResponse> => {
+    const drives: DriveInfo[] = [];
+    if (env.isWindows) {
+      for (let code = 65; code <= 90; code++) {
+        const letter = String.fromCharCode(code);
+        const root = `${letter}:\\`;
+        if (!existsSync(root)) continue;
+        drives.push({ letter, kind: 'drive', path: root, ...driveCapacity(root) });
+      }
+    } else if (env.isMac) {
+      if (isDirectorySafe('/')) {
+        drives.push({ letter: '/', kind: 'root', path: '/', ...driveCapacity('/') });
+      }
+      for (const name of listDarwinVolumes()) {
+        const p = join('/Volumes', name);
+        drives.push({ letter: name, kind: 'volume', path: p, ...driveCapacity(p) });
+      }
+    } else if (env.isAndroid) {
+      const internal = '/storage/emulated/0';
+      if (isDirectorySafe(internal)) {
+        drives.push({ letter: internal, kind: 'storage', path: internal, ...driveCapacity(internal) });
+      }
+      for (const name of listAndroidVolumes()) {
+        const p = join('/storage', name);
+        drives.push({ letter: p, kind: 'storage', path: p, ...driveCapacity(p) });
+      }
+      if (isDirectorySafe(env.homeDir)) {
+        drives.push({ letter: env.homeDir, kind: 'home', path: env.homeDir, ...driveCapacity(env.homeDir) });
+      }
+    } else {
+      if (isDirectorySafe('/')) {
+        drives.push({ letter: '/', kind: 'root', path: '/', ...driveCapacity('/') });
+      }
+      for (const mp of listLinuxMounts()) {
+        drives.push({ letter: mp, kind: 'volume', path: mp, ...driveCapacity(mp) });
+      }
+    }
+    return { status: 200, body: { drives } };
   };
 }
 
@@ -442,11 +630,30 @@ export function createListDirectoryHandler(services: ServiceRegistry): RouteHand
 // （Windows IFileDialog / macOS AppKit / Linux GTK），FFI 不可用时回退到脚本
 // （PowerShell FolderBrowserDialog / osascript / zenity）。
 // 跨盘符精准无误（系统对话框能浏览所有盘符/位置），不依赖搜索猜测。
+//
+// Android（Termux/proot）无可用原生对话框：直接返回 { path: null, unsupported: true }，
+// 由前端改用内置目录浏览器弹窗逐级点选。
 // ============================================================================
+
+type NfdModule = typeof import('nativefiledialog-for-bun');
+
+/** nfd 模块惰性单例：加载失败（缺平台二进制/Android）返回 null，绝不阻断路由模块加载 */
+let nfdModule: NfdModule | null = null;
+async function loadNfd(): Promise<NfdModule | null> {
+  if (nfdModule) return nfdModule;
+  try {
+    nfdModule = await import('nativefiledialog-for-bun');
+    return nfdModule;
+  } catch {
+    return null;
+  }
+}
 
 /** 调用系统原生对话框，返回选中的绝对路径；用户取消/失败返回 null */
 async function pickDirectoryNative(_env: Environment): Promise<string | null> {
   try {
+    const nfd = await loadNfd();
+    if (!nfd) return null; // 无可用后端（含 Android）
     // nfd.pickFolder：用户取消返回 null，成功返回绝对路径，错误抛 NativeDialogError
     const folder = await nfd.pickFolder();
     if (!folder) return null; // 用户取消
@@ -454,13 +661,17 @@ async function pickDirectoryNative(_env: Environment): Promise<string | null> {
     if (!isDirectorySafe(folder)) return null;
     return folder;
   } catch {
-    // FFI 加载失败 / 对话框异常 → 返回 null，前端回退浏览器 API
+    // FFI 加载失败 / 对话框异常 → 返回 null，前端回退
     return null;
   }
 }
 
 export function createPickDirectoryHandler(env: Environment): RouteHandler {
   return async (): Promise<HttpResponse> => {
+    // Android：无原生文件夹对话框 → 标记 unsupported，前端切内置目录浏览器
+    if (env.isAndroid) {
+      return { status: 200, body: { path: null, unsupported: true } };
+    }
     const path = await pickDirectoryNative(env);
     return { status: 200, body: { path } };
   };
@@ -484,8 +695,14 @@ export function createPickFileHandler(
   config: ConfigService,
 ): RouteHandler {
   return async (): Promise<HttpResponse> => {
+    // Android：无原生文件对话框 → 标记 unsupported（前端按需提示）
+    if (env.isAndroid) {
+      return { status: 200, body: { files: [], unsupported: true } };
+    }
     let picked: string[] | null;
     try {
+      const nfd = await loadNfd();
+      if (!nfd) return { status: 200, body: { files: [], unsupported: true } };
       // openFiles：用户取消返回 null，成功返回绝对路径数组，错误抛 NativeDialogError
       picked = await nfd.openFiles();
     } catch {

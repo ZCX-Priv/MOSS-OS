@@ -40,6 +40,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { IconPicker } from '../../common/IconPicker';
+import { DirectoryBrowserDialog } from '../../overlays/DirectoryBrowserDialog';
 import { useStore, SYSTEM_WORKING_DIRECTORY } from '../../../store';
 import { useAutomations } from '../../../hooks/useAutomations';
 import { api } from '../../../api/http';
@@ -135,6 +136,8 @@ export function AutomationFormDialog() {
   const [agents, setAgents] = useState<AgentItem[]>([]);
   const [saving, setSaving] = useState(false);
   const [pickingCwd, setPickingCwd] = useState(false);
+  /** 内置目录浏览器弹窗开关（无原生对话框的平台，如 Android） */
+  const [browseCwdOpen, setBrowseCwdOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [form, setForm] = useState<FormState>(() => {
@@ -199,7 +202,12 @@ export function AutomationFormDialog() {
   const handlePickCwd = async () => {
     setPickingCwd(true);
     try {
-      const { path } = await api.pickDirectory();
+      const { path, unsupported } = await api.pickDirectory();
+      if (unsupported) {
+        // 无原生对话框的平台（Android）：改用内置目录浏览器弹窗
+        setBrowseCwdOpen(true);
+        return;
+      }
       if (path) {
         setField('cwd', path);
         addRecentDirectory(path);
@@ -296,6 +304,7 @@ export function AutomationFormDialog() {
   };
 
   return (
+    <>
     <Dialog open={open} onOpenChange={(o) => !o && closeAutomationForm()}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
@@ -603,5 +612,15 @@ export function AutomationFormDialog() {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+    <DirectoryBrowserDialog
+      open={browseCwdOpen}
+      onSelect={(path) => {
+        setField('cwd', path);
+        addRecentDirectory(path);
+        setBrowseCwdOpen(false);
+      }}
+      onClose={() => setBrowseCwdOpen(false)}
+    />
+    </>
   );
 }

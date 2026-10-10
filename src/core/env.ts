@@ -13,9 +13,19 @@ import type { Environment, Platform } from './types';
  */
 export function detectEnvironment(): Environment {
   const nodePlatform = platform();
+  // Android 检测：Termux/proot 下 process.platform 仍为 'linux'，需靠环境特征区分。
+  // 依据（任一命中即判定）：Android 框架导出的 ANDROID_ROOT/ANDROID_DATA；Termux 的
+  // TERMUX_VERSION；Termux 前缀（PREFIX 指向 com.termux）。避免误伤普通 Linux。
+  const isAndroid =
+    nodePlatform === 'linux' &&
+    (!!process.env.ANDROID_ROOT ||
+      !!process.env.ANDROID_DATA ||
+      !!process.env.TERMUX_VERSION ||
+      (process.env.PREFIX ?? '').includes('com.termux'));
   let p: Platform = 'other';
   if (nodePlatform === 'win32') p = 'win32';
   else if (nodePlatform === 'darwin') p = 'darwin';
+  else if (isAndroid) p = 'android';
   else if (nodePlatform === 'linux') p = 'linux';
 
   const home = homedir();
@@ -34,6 +44,7 @@ export function detectEnvironment(): Environment {
     isWindows: p === 'win32',
     isMac: p === 'darwin',
     isLinux: p === 'linux',
+    isAndroid: p === 'android',
     homeDir: home,
     dataDir,
     configDir,
